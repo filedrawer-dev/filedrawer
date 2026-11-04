@@ -24,17 +24,19 @@ schema: 1
 title:
 safety_motivation:
 hypothesis:
+predicted_direction:      # increase | decrease | either
 series:                   # a server-issued series ID
 replicates:               # the ID of the entry this one re-runs
 written_by:               # the model or models that wrote the entry
 models:   [{name, size, revision}]
 datasets: [{name, revision_or_url}]
 tags:     [free text]     # reuse tags from GET /tags where they fit
-metric:   {name, higher_is_better, unit}
+metric:   {name, unit}
 smallest_effect_of_interest:
 baseline: {description, value}
 result:   {estimate, ci_low, ci_high, ci_level, n, n_unit}
 positive_control: {description, outcome: passed | failed | not_run}
+caveats:  [text]
 code:     URL pinned to a commit
 logs:     [URL]
 compute:  {hardware, gpu_hours}
@@ -42,25 +44,29 @@ not_tried: [text]
 embargo_until:            # a date; limits in design.md, Embargo
 ```
 
+- `predicted_direction` is the way the hypothesis says the metric moves: `increase`, `decrease`, or `either` when an effect in either direction would matter. It is about the hypothesis, not about which way is good. "Fine-tuning on insecure code raises jailbreak success" predicts `increase`, although the increase is harmful.
 - `result` is the effect, meaning the treatment's value minus the baseline's, in metric units, with its confidence interval.
-- `smallest_effect_of_interest` is the smallest effect that would have mattered to the author, as a positive number in metric units. It should be what the experiment was built to detect, and ideally the author sets it before the run. The server can't check that.
+- `smallest_effect_of_interest` is the smallest effect that would have mattered to the author, as a positive number in metric units. It should be what the experiment was built to detect, and ideally the author sets it before the run. The server can't check that, so every card shows it next to the label.
 - `positive_control` describes a check that the pipeline detects an effect known to exist. Without one, a null may only mean the pipeline is broken.
+- `caveats` lists known confounders, other explanations, and what the result doesn't show. It matters most for an `effect` entry, which nobody refined.
 - `not_tried` lists the variations the author didn't run. A mid-project reader uses it to choose what to try next.
 - `code` and `logs` must use the allowed hosts listed in design.md, [Submission and screening](design.md#submission-and-screening).
+- `series` only groups the entry. The entry inherits nothing from its series (design.md, [Series](design.md#series)).
 
 ## Label rule
 
-Reason: when an agent reads a buggy or underpowered null, it may drop a direction that works. Newcomers, the likeliest contributors, produce the most of these. The label separates evidence that an effect is absent from a lack of evidence.
+Reason: when an agent reads a buggy or underpowered null, it may drop a direction that works. Newcomers, the likeliest contributors, produce the most of these. The label separates evidence that an effect is absent from a lack of evidence, and both from an effect that showed up.
 
-Let S be `smallest_effect_of_interest`, and take the interval [`ci_low`, `ci_high`]. If `higher_is_better` is false, negate both ends and swap them, so a positive value always means the improvement the hypothesis predicted.
+Let S be `smallest_effect_of_interest`, and take the interval [`ci_low`, `ci_high`] as reported, in metric units.
 
-- `null`: `positive_control.outcome` is `passed`, and `ci_high` < S.
-- Positive: `ci_low` ≥ S. Screening rejects the entry, because the result belongs on arXiv.
-- `inconclusive`: everything else. That includes any missing input, a failed or skipped positive control, and an interval that contains S.
+- `effect`: `ci_level` is at least 0.95, and `ci_low` ≥ S or `ci_high` ≤ −S. The card says "as predicted" when the effect goes the way `predicted_direction` says (always, for `either`), and "opposite to prediction" when it doesn't.
+- `null`: the entry is not an `effect`, `ci_level` is at least 0.95, `positive_control.outcome` is `passed`, and the interval rules out the predicted effect:
+  - `increase`: `ci_high` < S;
+  - `decrease`: `ci_low` > −S;
+  - `either`: both.
+- `inconclusive`: everything else. That includes any missing input, a `ci_level` below 0.95, a failed or skipped positive control, and an interval that reaches S or −S without lying beyond it.
 
-## Series
-
-A series holds the setup its entries share, for example `code`, `models`, `datasets`, `compute` and `tags`. An entry in the series inherits those fields and overrides any it sets itself. `POST /series` sets the series' own fields.
+Screening never rejects an entry for its label. Haiku does fail an entry whose S is large next to the baseline, unless the body justifies it (design.md, [Submission and screening](design.md#submission-and-screening)).
 
 ## Example
 
@@ -72,11 +78,12 @@ schema: 1
 title: Refusal steering vector from Llama-3-8B base does not transfer to the instruct model
 safety_motivation: If refusal directions transfer across fine-tuning, monitors built on base models could cover deployed ones.
 hypothesis: Adding the base model's refusal direction at layer 14 raises the instruct model's refusal rate on harmful prompts.
+predicted_direction: increase
 written_by: [claude-opus-5-5]
 models: [{name: Llama-3-8B-Instruct, size: 8B, revision: <hf-commit>}]
 datasets: [{name: AdvBench harmful_behaviors, revision_or_url: <url>}]
 tags: [steering, refusal, transfer]
-metric: {name: refusal rate, higher_is_better: true, unit: fraction}
+metric: {name: refusal rate, unit: fraction}
 smallest_effect_of_interest: 0.05
 baseline: {description: instruct model without steering, value: 0.62}
 result: {estimate: 0.01, ci_low: -0.02, ci_high: 0.04, ci_level: 0.95, n: 520, n_unit: prompts}
@@ -94,14 +101,14 @@ not_tried: [layers other than 14, steering coefficients above 8, other base/inst
 ...
 ```
 
-Here `ci_high` is 0.04, which is below S (0.05), and the positive control passed, so the label is `null`.
+The interval [-0.02, 0.04] lies inside (−0.05, 0.05), so it is not an effect. `ci_level` is 0.95, the positive control passed, and `ci_high` is 0.04, below S, which rules out the predicted increase. The label is `null`.
 
 ## Questions for the field test
 
 Record whatever the format couldn't express. Likely trouble spots:
 
 - Hypotheses where the outcome the author hoped for is no effect, for example "this safety training doesn't hurt capability".
-- Effects that matter in either direction, which need a two-sided rule.
+- Effects with confounders: whether `caveats` carries what a reader needs.
 - Several metrics or conditions in one experiment.
 - Qualitative results with no number.
 - Single runs with no interval.
