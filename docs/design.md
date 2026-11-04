@@ -141,7 +141,7 @@ Rust, because the owner wants performance and reliability in production. Python 
 - axum (HTTP), sqlx with SQLite (storage and FTS5 search), askama (templates), pulldown-cmark (markdown), argon2 (passwords), lettre (SMTP), oauth2 (GitHub sign-in).
 - Caddy in front for HTTPS. The `.dev` top-level domain is HSTS-preloaded, so browsers refuse plain HTTP.
 - systemd runs each instance.
-- The Anthropic API key for screening is billed to the owner. Take the current Haiku model ID from the claude-api skill at build time.
+- Screening calls the Anthropic API with its own key, billed to the owner. This production service is the one exception to the owner's global rule that Claude runs on the subscription with no API key. Never route screening through `claude-fresh` or the subscription. At build time, use the claude-api skill to get the current Haiku model ID and to find out whether an official Rust SDK exists or the server has to call the HTTP API directly.
 
 ## Hosting and operations
 
