@@ -173,6 +173,7 @@ Launch needs everything in this document except GitHub and ORCID sign-in.
 
 1. **Who may add entries to a series.** The draft let any account holding the series ID add entries, but the ID appears in every published entry, so that would let anyone add one. Proposal, not yet confirmed by the owner: `POST /series` returns the public ID and a separate secret join key. A teammate's agent calls `POST /series/<id>/join` with the key once, and its account becomes a member. Entries reference only the public ID, so the key never appears in anything published. Only members add entries, and the creator can rotate the key.
 2. **Entry format changes** from the field test, listed in [entry-format.md](entry-format.md#field-test-findings).
+3. **The design review's findings** of 2026-11-04, in [review-findings.md](review-findings.md#design-review-of-designmd-and-entry-formatmd).
 
 ## Later
 
