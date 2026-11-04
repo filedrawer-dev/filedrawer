@@ -1,0 +1,34 @@
+# Every check the commit hooks run, over every file, on each push to main and each pull
+# request: the pre-commit hooks (slop-lint, cargo fmt), lychee, then the tests and
+# clippy through bin/agent-pre-commit, which does nothing until Cargo.toml exists.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - if: hashFiles('Cargo.toml') != ''
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - if: hashFiles('Cargo.toml') != ''
+        uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v6
+      # lychee runs in the next step, from a pinned release.
+      - run: SKIP=lychee uvx pre-commit@4.7.0 run --all-files
+      - uses: lycheeverse/lychee-action@v2
+        with:
+          lycheeVersion: v0.24.2
+          args: --no-progress --offline --include-fragments --exclude-path target './**/*.md'
+      - run: bin/agent-pre-commit

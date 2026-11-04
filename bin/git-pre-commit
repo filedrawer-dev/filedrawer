@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Git's pre-commit hook. Link both hooks in once per clone:
+#   ln -sf ../../bin/git-pre-commit .git/hooks/pre-commit
+#   ln -sf ../../bin/agent-pre-commit .git/hooks/agent-pre-commit
+# A commit runs the quick checks in .pre-commit-config.yaml (slop-lint, lychee, and
+# cargo fmt when a .rs file is staged) through bin/pre-commit-run.
+# Agents' commits ($AI_AGENT set) also run the slower agent-pre-commit, which adds
+# clippy and the tests; those take too long for a person's commit.
+# bin/pre-commit-run and bin/slop-lint are copies from llm-toolbox, so the hooks work
+# for anyone with Python 3 and uv, on the host and in the sandbox. Every refusal ends
+# with a COMMIT REFUSED line.
+
+refuse() {
+  echo "COMMIT REFUSED: $1" >&2
+  exit 1
+}
+
+root=$(git rev-parse --show-toplevel)
+command -v python3 >/dev/null || refuse "the hooks need python3 (and uv)"
+[ -x "$root/bin/pre-commit-run" ] || refuse "no bin/pre-commit-run in $root; this checkout predates the hooks"
+
+"$root/bin/pre-commit-run" || exit 1
+
+if [ -n "${AI_AGENT:-}" ] && [ -z "${AGENT_PRE_COMMIT:-}" ]; then if command -v agent-commit-gate >/dev/null; then AGENT_PRE_COMMIT=1 agent-commit-gate --run "$(dirname "$0")/agent-pre-commit" || exit; else AGENT_PRE_COMMIT=1 "$(dirname "$0")/agent-pre-commit" || { echo "COMMIT REFUSED: agent-pre-commit failed" >&2; exit 1; }; fi; fi

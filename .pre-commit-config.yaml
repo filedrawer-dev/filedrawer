@@ -1,0 +1,38 @@
+# The checks bin/git-pre-commit runs on every commit, through bin/pre-commit-run, on
+# what's staged: pre-commit stashes unstaged changes first. CI runs them over every
+# file. bin/slop-lint is a copy of llm-toolbox's.
+repos:
+  - repo: local
+    hooks:
+      - id: slop-lint
+        name: slop-lint (the unslop skill's mechanical tells)
+        entry: bin/slop-lint
+        language: script
+        types: [markdown]
+      # Only when a .rs file is staged, so a docs commit needs no cargo.
+      - id: cargo-fmt
+        name: cargo fmt --check
+        entry: cargo fmt --check
+        language: system
+        types: [rust]
+        pass_filenames: false
+  - repo: https://github.com/lycheeverse/lychee
+    rev: lychee-v0.24.2
+    hooks:
+      # Every markdown file on every commit (milliseconds), so renaming a heading or
+      # deleting a file that another doc links to is refused too. The field test's
+      # drafts in field-test/ are skipped. CI runs lychee-action instead, which pins the
+      # release; this hook installs lychee through a script piped to bash.
+      - id: lychee
+        name: lychee (links and anchors, offline)
+        args:
+          - --no-progress
+          - --offline
+          - --include-fragments
+          - --exclude-path
+          - field-test
+          - --exclude-path
+          - target
+          - "**/*.md"
+        pass_filenames: false
+        always_run: true

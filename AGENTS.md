@@ -19,3 +19,9 @@ Status: designed, not built. The owner and an agent settled the design on 2026-1
 - `docs/prior-art.md`: related projects as of 2026-11-03. Read it before claiming novelty or adding a feature that may already exist elsewhere.
 
 When the owner settles a question, move it from Open questions into its section of `docs/design.md`.
+
+## Checks
+
+Committing runs the checks, so commit and read the hook's output instead of running them first. Every commit runs `bin/slop-lint` on staged markdown, lychee (links and anchors, offline) over every markdown file, and `cargo fmt --check` when a `.rs` file is staged. Agents' commits add clippy and `cargo test` (`bin/agent-pre-commit`). CI runs all of them. Link the hooks once per clone with the two `ln -sf` lines at the top of `bin/git-pre-commit`.
+
+To keep a line `slop-lint` flags, end it with `<!-- slop-lint: ignore -->`. `bin/pre-commit-run` and `bin/slop-lint` are copies of llm-toolbox's tools. Update them by copying from there.
