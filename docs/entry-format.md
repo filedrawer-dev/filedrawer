@@ -86,14 +86,16 @@ The card then says, for a `null` or `effect` entry:
 
 Haiku's judgements, made during screening (design.md, [Submission and screening](design.md#submission-and-screening)), add to the mark without rejecting anything:
 
-- When Haiku judges S too large for the room the metric has to move in the predicted direction, it withholds "supported", and the card shows its one-line reason instead. Example: a refusal rate with a baseline of 0.98, a predicted `increase` and S of 0.05.
-- When Haiku judges that the body contradicts the `outcome`, the card shows its one-line doubt.
+- When Haiku judges S too large for the room the metric has to move in the predicted direction, it withholds "supported", and the card shows its one-line reason instead, as quoted text labelled "screening note". Example: a refusal rate with a baseline of 0.98, a predicted `increase` and S of 0.05.
+- When Haiku judges that the body contradicts the `outcome`, the card shows its one-line doubt as a screening note.
+
+Reason for the label and quotes: Haiku writes these notes from the author's text, so they can carry injected instructions, and a reader must not take them for the server's own words.
 
 A supported null says what it rules out, such as "rules out an increase of S or more". An `effect` card says "as predicted" when the effect goes the way `predicted_direction` says (always, for `either`), and "opposite to prediction" when it doesn't.
 
 ### Replications
 
-The original entry's card lists each replication with its outcome, and marks one posted by the original's own account "self-replication".
+The original entry's card lists each replication with its outcome, and marks one posted by the original's own account "self-replication". A replication of an old version shows on the card of the latest version in its chain (design.md, [Entry lifecycle](design.md#entry-lifecycle)).
 
 The server also judges the replication when three things hold: the original's numbers show a null or an effect, the replication gives valid numbers, and Haiku finds both use the same metric. It uses the original's S and `predicted_direction` with the replication's own interval, `ci_level`, `n` and positive control. The mark is:
 
