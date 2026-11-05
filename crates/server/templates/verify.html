@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Verify your email{% endblock %}
+{% block content %}
+<h1>Verify your email</h1>
+<form method="post" action="/verify">
+<input type="hidden" name="token" value="{{ token }}">
+<button type="submit">Verify my email</button>
+</form>
+{% endblock %}

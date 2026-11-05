@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE accounts SET email_verified_at = COALESCE(email_verified_at, ?) WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "7bea47cfa6d6ae190f87e9a71e41bdd8b16dd246557aa50aedea67e8f807e0e8"
+}

@@ -1,7 +1,8 @@
 //! Sending email: verification and password-reset links (design.md, Accounts;
 //! Hosting and operations: Purelymail SMTP).
 
-use std::sync::{Arc, Mutex};
+use std::future::Future;
+use std::pin::Pin;
 
 use lettre::message::Mailbox;
 use lettre::transport::smtp::authentication::Credentials;
@@ -17,32 +18,13 @@ pub struct Email {
     pub body: String,
 }
 
-/// Emails a test can read back.
-#[derive(Debug, Clone, Default)]
-pub struct Outbox(Arc<Mutex<Vec<Email>>>);
+/// What sending an email returns.
+pub type Sending<'a> = Pin<Box<dyn Future<Output = Result<(), MailError>> + Send + 'a>>;
 
-impl Outbox {
-    /// Every email sent so far, oldest first.
-    pub fn sent(&self) -> Vec<Email> {
-        self.0
-            .lock()
-            .expect("no test panics while holding the outbox")
-            .clone()
-    }
-}
-
-/// Where email goes.
-#[derive(Clone)]
-pub enum Mailer {
-    /// Through an SMTP server, over implicit TLS.
-    Smtp {
-        transport: Box<AsyncSmtpTransport<Tokio1Executor>>,
-        from: Mailbox,
-    },
-    /// To the log, for dev and for staging before SMTP is set up.
-    Log,
-    /// Into an outbox the tests read.
-    Memory(Outbox),
+/// Where email goes. The server holds one as `Arc<dyn Mailer>`; tests pass a fake that
+/// keeps what it was sent.
+pub trait Mailer: Send + Sync {
+    fn send(&self, email: Email) -> Sending<'_>;
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -55,9 +37,15 @@ pub enum MailError {
     Build(#[from] lettre::error::Error),
 }
 
-impl Mailer {
+/// Sends through an SMTP server, over implicit TLS.
+pub struct SmtpMailer {
+    transport: AsyncSmtpTransport<Tokio1Executor>,
+    from: Mailbox,
+}
+
+impl SmtpMailer {
     /// An SMTP mailer for `settings`. Errors name the setting, never the password.
-    pub fn smtp(settings: &SmtpSettings) -> Result<Mailer, MailError> {
+    pub fn new(settings: &SmtpSettings) -> Result<SmtpMailer, MailError> {
         let from: Mailbox = settings
             .from
             .parse()
@@ -69,35 +57,34 @@ impl Mailer {
                 settings.password.clone(),
             ))
             .build();
-        Ok(Mailer::Smtp {
-            transport: Box::new(transport),
-            from,
+        Ok(SmtpMailer { transport, from })
+    }
+}
+
+impl Mailer for SmtpMailer {
+    fn send(&self, email: Email) -> Sending<'_> {
+        Box::pin(async move {
+            let to: Mailbox = email
+                .to
+                .parse()
+                .map_err(|_| MailError::Address(email.to.clone()))?;
+            let message = Message::builder()
+                .from(self.from.clone())
+                .to(to)
+                .subject(email.subject)
+                .body(email.body)?;
+            self.transport.send(message).await?;
+            Ok(())
         })
     }
+}
 
-    pub async fn send(&self, email: Email) -> Result<(), MailError> {
-        match self {
-            Mailer::Smtp { transport, from } => {
-                let to: Mailbox = email
-                    .to
-                    .parse()
-                    .map_err(|_| MailError::Address(email.to.clone()))?;
-                let message = Message::builder()
-                    .from(from.clone())
-                    .to(to)
-                    .subject(email.subject)
-                    .body(email.body)?;
-                transport.send(message).await?;
-            }
-            Mailer::Log => {
-                tracing::info!(to = %email.to, subject = %email.subject, body = %email.body, "email (not sent: no SMTP settings)");
-            }
-            Mailer::Memory(outbox) => outbox
-                .0
-                .lock()
-                .expect("no test panics while holding the outbox")
-                .push(email),
-        }
-        Ok(())
+/// Writes each email to the log: for dev, and for staging before SMTP is set up.
+pub struct LogMailer;
+
+impl Mailer for LogMailer {
+    fn send(&self, email: Email) -> Sending<'_> {
+        tracing::info!(to = %email.to, subject = %email.subject, body = %email.body, "email (not sent: no SMTP settings)");
+        Box::pin(async { Ok(()) })
     }
 }

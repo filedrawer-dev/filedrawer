@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email_tokens SET used_at = ?\n         WHERE hash = ? AND purpose = ? AND used_at IS NULL AND expires_at > ?\n         RETURNING account_id",
+  "describe": {
+    "columns": [
+      {
+        "name": "account_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email_tokens",
+            "name": "account_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "8e1792f7f1dbe48b68bb2ea6cea420c5a9482788b31c7401b71283110d7d26a4"
+}

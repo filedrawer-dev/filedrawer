@@ -24,10 +24,13 @@ pub async fn create_account(pool: &SqlitePool, display_name: &str) -> Result<Str
     }
     let id = ids::new_account_id();
     let created_at = now();
+    // The owner made it, so it counts as verified; it has no email to verify.
     sqlx::query!(
-        "INSERT INTO accounts (id, display_name, created_at) VALUES (?, ?, ?)",
+        "INSERT INTO accounts (id, display_name, created_at, email_verified_at)
+         VALUES (?, ?, ?, ?)",
         id,
         display_name,
+        created_at,
         created_at
     )
     .execute(pool)

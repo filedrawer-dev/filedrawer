@@ -64,10 +64,11 @@ async fn admin_commands_make_an_account_and_a_token_the_server_accepts() {
     assert!(token.starts_with("fdt_") && token.len() == 56, "{token}");
 
     let pool = db::open(database.to_str().unwrap()).await.unwrap();
-    let outbox = filedrawer_server::mail::Outbox::default();
-    let router = app(common::state(pool, &outbox));
+    let outbox = common::Outbox::default();
+    let router = app(common::state(pool.clone(), &outbox));
     let test = common::TestApp {
         router,
+        pool,
         account,
         token,
         outbox,
@@ -141,4 +142,22 @@ fn serve_names_a_missing_setting() {
     );
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("FILEDRAWER_LISTEN is not set"));
+}
+
+#[test]
+fn production_without_smtp_settings_refuses_to_start() {
+    let database = scratch_database("no-smtp");
+    let output = filedrawer(
+        &database,
+        &["serve"],
+        &[
+            ("FILEDRAWER_LISTEN", "127.0.0.1:0"),
+            ("FILEDRAWER_PUBLIC_URL", "https://filedrawer.dev"),
+            ("FILEDRAWER_ENVIRONMENT", "production"),
+            ("FILEDRAWER_SCREENER", "pass-all"),
+        ],
+    );
+    assert!(!output.status.success());
+    let err = String::from_utf8_lossy(&output.stderr);
+    assert!(err.contains("FILEDRAWER_SMTP_HOST"), "{err}");
 }

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO email_tokens (hash, account_id, purpose, created_at, expires_at)\n         VALUES (?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "3e59ce0cd83537baa4c2c811406d5d44d771aa70b167f7ba4221dd08f30f985e"
+}

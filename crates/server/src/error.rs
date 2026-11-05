@@ -10,6 +10,8 @@ pub enum AppError {
     #[error("not found")]
     NotFound,
     #[error("{0}")]
+    Forbidden(String),
+    #[error("{0}")]
     BadRequest(String),
     /// The entry or request is refused, with every reason.
     #[error("refused:\n{}", .reasons.iter().map(|reason| format!("- {reason}")).collect::<Vec<_>>().join("\n"))]
@@ -26,6 +28,7 @@ impl IntoResponse for AppError {
         let status = match &self {
             AppError::Unauthorized => StatusCode::UNAUTHORIZED,
             AppError::NotFound => StatusCode::NOT_FOUND,
+            AppError::Forbidden(_) => StatusCode::FORBIDDEN,
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
             AppError::Refused { status, .. } => *status,
             AppError::Database(error) => {

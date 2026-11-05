@@ -74,27 +74,18 @@ pub enum ConfigError {
 fn smtp_settings(
     var: &impl Fn(&str) -> Option<String>,
 ) -> Result<Option<SmtpSettings>, ConfigError> {
-    const NAMES: [&str; 4] = [
-        "FILEDRAWER_SMTP_HOST",
-        "FILEDRAWER_SMTP_USER",
-        "FILEDRAWER_SMTP_PASSWORD",
-        "FILEDRAWER_MAIL_FROM",
-    ];
-    let values: Vec<Option<String>> = NAMES
-        .iter()
-        .map(|name| var(name).filter(|value| !value.is_empty()))
-        .collect();
-    if values.iter().all(Option::is_none) {
-        return Ok(None);
-    }
-    let missing = NAMES.iter().zip(&values).find(|(_, value)| value.is_none());
-    if let Some((name, _)) = missing {
-        return Err(ConfigError::PartialSmtp(name));
-    }
-    let [Some(host), Some(user), Some(password), Some(from)] =
-        <[Option<String>; 4]>::try_from(values).expect("four names, four values")
-    else {
-        unreachable!("every value was checked above");
+    let get = |name| var(name).filter(|value| !value.is_empty());
+    let host = get("FILEDRAWER_SMTP_HOST");
+    let user = get("FILEDRAWER_SMTP_USER");
+    let password = get("FILEDRAWER_SMTP_PASSWORD");
+    let from = get("FILEDRAWER_MAIL_FROM");
+    let (host, user, password, from) = match (host, user, password, from) {
+        (None, None, None, None) => return Ok(None),
+        (Some(host), Some(user), Some(password), Some(from)) => (host, user, password, from),
+        (None, ..) => return Err(ConfigError::PartialSmtp("FILEDRAWER_SMTP_HOST")),
+        (_, None, ..) => return Err(ConfigError::PartialSmtp("FILEDRAWER_SMTP_USER")),
+        (_, _, None, _) => return Err(ConfigError::PartialSmtp("FILEDRAWER_SMTP_PASSWORD")),
+        (.., None) => return Err(ConfigError::PartialSmtp("FILEDRAWER_MAIL_FROM")),
     };
     let port = match var("FILEDRAWER_SMTP_PORT") {
         None => 465,

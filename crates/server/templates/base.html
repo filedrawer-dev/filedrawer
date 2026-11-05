@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}File Drawer{% endblock %} · File Drawer</title>
+<style>
+body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
+label { display: block; margin-top: 1rem; }
+input[type=text], input[type=email], input[type=password] { width: 100%; padding: .4rem; box-sizing: border-box; }
+button { margin-top: 1rem; padding: .4rem 1rem; }
+.error { color: #a00; }
+code { background: #f3f3f3; padding: .1rem .3rem; word-break: break-all; }
+table { border-collapse: collapse; width: 100%; }
+td, th { text-align: left; padding: .3rem; border-bottom: 1px solid #ddd; }
+</style>
+</head>
+<body>
+<p><a href="/">File Drawer</a></p>
+{% block content %}{% endblock %}
+</body>
+</html>

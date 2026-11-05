@@ -5,3 +5,10 @@ members = ["crates/*"]
 [workspace.package]
 edition = "2024"
 license = "AGPL-3.0-only"
+
+# Password hashing is slow by design; unoptimised, it makes the account tests crawl.
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3

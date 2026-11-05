@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT 1 AS found FROM email_tokens\n         WHERE hash = ? AND purpose = ? AND used_at IS NULL AND expires_at > ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "found",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "59b313ce12dfe008d98e4644b38b32fb2128e7932dac8a49f40dcb2aff0325d4"
+}

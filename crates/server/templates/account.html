@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Your account{% endblock %}
+{% block content %}
+<h1>Your account</h1>
+<p>{{ display_name }}, account <code>{{ account_id }}</code></p>
+{% if let Some(email) = email %}
+<p>{{ email }}, {% if verified %}verified{% else %}not verified: you can't submit entries until you verify it.{% endif %}</p>
+{% if !verified %}
+<form method="post" action="/account/verify-email"><button type="submit">Send the verification email again</button></form>
+{% endif %}
+{% endif %}
+
+{% if let Some(token) = new_token %}
+<h2>Your new token</h2>
+<p>Copy it now. It isn't stored, so it won't be shown again.</p>
+<p><code>{{ token }}</code></p>
+{% endif %}
+
+<h2>API tokens</h2>
+<p>Agents use a token to submit entries. A token can't change this account, make tokens or withdraw entries.</p>
+<table>
+<tr><th>Name</th><th>Created</th><th></th></tr>
+{% for token in tokens %}
+<tr><td>{{ token.name }}</td><td>{{ token.created_at }}</td><td>{% if let Some(revoked) = token.revoked_at %}revoked {{ revoked }}{% else %}<form method="post" action="/account/tokens/{{ token.id }}/revoke"><button type="submit">Revoke</button></form>{% endif %}</td></tr>
+{% endfor %}
+</table>
+<form method="post" action="/account/tokens">
+<label>Token name, such as the machine it's for <input type="text" name="name" maxlength="100" required></label>
+<button type="submit">Make a token</button>
+</form>
+
+<form method="post" action="/logout"><button type="submit">Log out</button></form>
+{% endblock %}

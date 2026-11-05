@@ -30,7 +30,12 @@ pub fn new_token() -> String {
     format!("fdt_{}", random_text(52))
 }
 
-/// What the database keeps of a token.
+/// A new secret for a session cookie or an email link: 52 characters, 260 bits.
+pub fn new_secret() -> String {
+    random_text(52)
+}
+
+/// What the database keeps of a token or secret.
 pub fn token_hash(token: &str) -> Vec<u8> {
     Sha256::digest(token.as_bytes()).to_vec()
 }

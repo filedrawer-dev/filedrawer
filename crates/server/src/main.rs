@@ -4,7 +4,9 @@
 use std::process::ExitCode;
 
 use filedrawer_server::config::Config;
-use filedrawer_server::mail::Mailer;
+use std::sync::Arc;
+
+use filedrawer_server::mail::{LogMailer, Mailer, SmtpMailer};
 use filedrawer_server::{AppState, admin, app, db};
 
 const USAGE: &str = "\
@@ -117,14 +119,14 @@ async fn serve() -> ExitCode {
         Err(error) => return fail(&format!("can't listen on {}: {error}", config.listen)),
     };
     tracing::info!(listen = %config.listen, environment = ?config.environment, "serving");
-    let mailer = match &config.smtp {
-        Some(settings) => match Mailer::smtp(settings) {
-            Ok(mailer) => mailer,
+    let mailer: Arc<dyn Mailer> = match &config.smtp {
+        Some(settings) => match SmtpMailer::new(settings) {
+            Ok(mailer) => Arc::new(mailer),
             Err(error) => return fail(&format!("can't set up SMTP: {error}")),
         },
         None => {
             tracing::warn!("no SMTP settings: emails go to the log");
-            Mailer::Log
+            Arc::new(LogMailer)
         }
     };
     let router = app(AppState {

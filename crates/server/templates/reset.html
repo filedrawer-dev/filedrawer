@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Reset your password{% endblock %}
+{% block content %}
+<h1>Reset your password</h1>
+<form method="post" action="/reset">
+<label>Email <input type="email" name="email" autocomplete="email" required></label>
+<button type="submit">Email me a link</button>
+</form>
+{% endblock %}

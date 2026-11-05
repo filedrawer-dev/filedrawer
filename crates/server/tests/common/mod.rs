@@ -4,8 +4,27 @@
 use axum::Router;
 use axum::body::Body;
 use axum::http::{HeaderMap, Request, StatusCode};
-use filedrawer_server::mail::{Email, Mailer, Outbox};
+use std::sync::{Arc, Mutex};
+
+use filedrawer_server::mail::{Email, Mailer, Sending};
 use filedrawer_server::{AppState, Screener, admin, app, db};
+
+/// A mailer that keeps every email it is sent, for tests to read back.
+#[derive(Clone, Default)]
+pub struct Outbox(Arc<Mutex<Vec<Email>>>);
+
+impl Outbox {
+    pub fn sent(&self) -> Vec<Email> {
+        self.0.lock().unwrap().clone()
+    }
+}
+
+impl Mailer for Outbox {
+    fn send(&self, email: Email) -> Sending<'_> {
+        self.0.lock().unwrap().push(email);
+        Box::pin(async { Ok(()) })
+    }
+}
 use http_body_util::BodyExt;
 use tower::ServiceExt;
 
@@ -14,6 +33,7 @@ pub const PUBLIC_URL: &str = "http://localhost";
 
 pub struct TestApp {
     pub router: Router,
+    pub pool: sqlx::SqlitePool,
     pub account: String,
     pub token: String,
     pub outbox: Outbox,
@@ -24,7 +44,7 @@ pub fn state(pool: sqlx::SqlitePool, outbox: &Outbox) -> AppState {
     AppState {
         pool,
         screener: Screener::PassAll,
-        mailer: Mailer::Memory(outbox.clone()),
+        mailer: Arc::new(outbox.clone()),
         public_url: PUBLIC_URL.to_string(),
     }
 }
@@ -36,9 +56,10 @@ pub async fn test_app() -> TestApp {
         .await
         .unwrap();
     let outbox = Outbox::default();
-    let router = app(state(pool, &outbox));
+    let router = app(state(pool.clone(), &outbox));
     TestApp {
         router,
+        pool,
         account,
         token,
         outbox,
@@ -102,15 +123,21 @@ impl TestApp {
         self.send(request.body(Body::from(body)).unwrap()).await
     }
 
-    /// Every email sent so far.
-    pub fn sent(&self) -> Vec<Email> {
+    /// Every email sent so far. The server sends in spawned tasks, so this first gives
+    /// them the chance to run.
+    pub async fn sent(&self) -> Vec<Email> {
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         self.outbox.sent()
     }
 
     /// The one link to this site in the last email to `to`.
-    pub fn link_in_last_email_to(&self, to: &str) -> String {
+    pub async fn link_in_last_email_to(&self, to: &str) -> String {
         let email = self
             .sent()
+            .await
             .into_iter()
             .rev()
             .find(|email| email.to == to)
