@@ -1,0 +1,33 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT t.tag, COUNT(*) AS \"count!: i64\" FROM entry_tags t\n           JOIN entries e ON e.seq = t.entry_seq\n           WHERE e.status = 'public'\n           GROUP BY t.tag ORDER BY 2 DESC, t.tag",
+  "describe": {
+    "columns": [
+      {
+        "name": "tag",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entry_tags",
+            "name": "tag"
+          }
+        }
+      },
+      {
+        "name": "count!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "cb97a3e1aa72086f639ec6b6f945c9f34cef4b2d8a80a9435b2b47986598102a"
+}

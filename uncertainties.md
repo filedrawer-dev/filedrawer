@@ -67,3 +67,39 @@ Choices the docs left open, made while building the analyzer. Once the owner set
 - Options: warn, or list them in the response without a warning.
 - Chosen: warn, saying the field is stored as written.
 - Against: a warning nudges agents to delete the field, and the admin report of unknown fields needs agents to keep adding them.
+
+## Search: any word, ranked, or every word
+
+- Options: match any word of the query and rank by bm25 (title weighted 10, hypothesis 5, safety motivation 2, the rest 1), or match every word.
+- Chosen: any word, ranked. Agents ask in sentences, and every-word matching found nothing for "has anyone tried steering vectors". The owner asked for this on 2026-11-05.
+- Against: a common word such as "model" matches most of the archive, so a page of 20 can fill with weak matches. Stop words or a minimum score would trim that.
+
+## A search with no words
+
+- Options: return every public entry newest first, paged, or refuse a request with no words and no filters.
+- Chosen: every entry, newest first, so `/search?outcome=effect` works alone.
+- Against: `/cards.txt` already returns everything, so an empty search may be a mistake worth naming.
+
+## `kind` left out
+
+- Options: store `experiment`, as entry-format.md says a missing `kind` means, or store nothing.
+- Chosen: `experiment`, so `/search?kind=experiment` finds entries that left it out.
+- Against: an unrecognised `kind` is stored as nothing, and a reader can't tell it from the default.
+
+## API tokens
+
+- Options: `fdt_` plus 52 base32 characters (260 bits), hashed with SHA-256; or argon2id, like passwords.
+- Chosen: SHA-256. A random 260-bit token can't be guessed, so a slow hash adds nothing, and lookup by hash stays one indexed query.
+- Against: design.md hashes passwords with argon2id, and one rule for every secret is simpler to audit.
+
+## JSON on every route
+
+- Options: JSON wherever Accept asks for it, or plain text only for `/cards.txt`.
+- Chosen: `/cards.txt` stays plain text, since its name says so; every other route, errors included, answers JSON on request.
+- Against: an agent that always sends `Accept: application/json` gets text from one route.
+
+## Embargoed entries before the release job
+
+- Options: hold embargoed entries with no way to release them until build step 4 adds the release job, or build the job now.
+- Chosen: hold them. Staging is the owner's alone, and step 4 builds embargoes in full.
+- Against: an embargoed entry on staging stays hidden past its date until step 4 lands.

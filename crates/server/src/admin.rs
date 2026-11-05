@@ -1,0 +1,66 @@
+//! What the owner does from a shell on the server until accounts arrive in slice 2:
+//! create an account and give it a token.
+
+use sqlx::SqlitePool;
+
+use crate::ids;
+use crate::time::now;
+
+#[derive(Debug, thiserror::Error)]
+pub enum AdminError {
+    #[error("a display name is 1 to 50 characters")]
+    DisplayName,
+    #[error("no account {0}")]
+    NoAccount(String),
+    #[error(transparent)]
+    Database(#[from] sqlx::Error),
+}
+
+/// Creates an account and returns its ID.
+pub async fn create_account(pool: &SqlitePool, display_name: &str) -> Result<String, AdminError> {
+    let length = display_name.chars().count();
+    if length == 0 || length > 50 {
+        return Err(AdminError::DisplayName);
+    }
+    let id = ids::new_account_id();
+    let created_at = now();
+    sqlx::query!(
+        "INSERT INTO accounts (id, display_name, created_at) VALUES (?, ?, ?)",
+        id,
+        display_name,
+        created_at
+    )
+    .execute(pool)
+    .await?;
+    Ok(id)
+}
+
+/// Creates a token for `account_id` and returns it. Only its hash is stored, so this
+/// is the one time anyone sees it.
+pub async fn create_token(
+    pool: &SqlitePool,
+    account_id: &str,
+    name: &str,
+) -> Result<String, AdminError> {
+    let exists = sqlx::query_scalar!("SELECT 1 AS found FROM accounts WHERE id = ?", account_id)
+        .fetch_optional(pool)
+        .await?;
+    if exists.is_none() {
+        return Err(AdminError::NoAccount(account_id.to_string()));
+    }
+    let token = ids::new_token();
+    let id = ids::new_id();
+    let hash = ids::token_hash(&token);
+    let created_at = now();
+    sqlx::query!(
+        "INSERT INTO tokens (id, account_id, name, hash, created_at) VALUES (?, ?, ?, ?, ?)",
+        id,
+        account_id,
+        name,
+        hash,
+        created_at
+    )
+    .execute(pool)
+    .await?;
+    Ok(token)
+}

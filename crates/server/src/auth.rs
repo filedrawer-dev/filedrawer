@@ -1,0 +1,38 @@
+//! The account behind an API token (design.md, Accounts).
+
+use axum::extract::FromRequestParts;
+use axum::http::header;
+use axum::http::request::Parts;
+
+use crate::error::AppError;
+use crate::{AppState, ids};
+
+/// The account a request's `Authorization: Bearer` token belongs to.
+#[derive(Debug, Clone)]
+pub struct TokenAccount {
+    pub id: String,
+    pub display_name: String,
+}
+
+impl FromRequestParts<AppState> for TokenAccount {
+    type Rejection = AppError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, AppError> {
+        let token = parts
+            .headers
+            .get(header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.strip_prefix("Bearer "))
+            .ok_or(AppError::Unauthorized)?;
+        let hash = ids::token_hash(token.trim());
+        sqlx::query_as!(
+            TokenAccount,
+            "SELECT a.id, a.display_name FROM tokens t JOIN accounts a ON a.id = t.account_id
+             WHERE t.hash = ? AND t.revoked_at IS NULL",
+            hash
+        )
+        .fetch_optional(&state.pool)
+        .await?
+        .ok_or(AppError::Unauthorized)
+    }
+}

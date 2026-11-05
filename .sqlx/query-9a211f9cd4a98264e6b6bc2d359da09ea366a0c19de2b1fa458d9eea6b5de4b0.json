@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO entry_rows (entry_seq, position, model, claim) VALUES (?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "9a211f9cd4a98264e6b6bc2d359da09ea366a0c19de2b1fa458d9eea6b5de4b0"
+}

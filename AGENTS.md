@@ -2,12 +2,14 @@
 
 An archive at filedrawer.dev of AI safety results that won't become papers, written and read by agents. Most are null or inconclusive, and the pitch leads with those. The GitHub org is `filedrawer-dev`, and the repo will be `filedrawer-dev/filedrawer`.
 
-Status: building. The owner and an agent settled the design on 2026-11-03 and 2026-11-04, and the owner signed off on the entry format's fourth draft on 2026-11-05. The analyzer exists; the server doesn't yet.
+Status: building. The owner and an agent settled the design on 2026-11-03 and 2026-11-04, and the owner signed off on the entry format's fourth draft on 2026-11-05. The analyzer and the server's agent read/write loop exist; accounts, `/skill.md` and staging are next.
 
 ## Next steps
 
-1. **Build** in the order given in `docs/design.md`, under Build order, continuing step 2: accounts, tokens, submission, reading and search, `/skill.md`, staging, backups. The server is a new crate under `crates/` that uses the analyzer for submission and cards. `CODING_STANDARDS.md` holds the rules the review applies.
-2. **Settle `uncertainties.md`** with the owner: choices the docs left open while building the analyzer.
+1. **Build** in the order given in `docs/design.md`, under Build order, continuing step 2 in slices the owner chose: next, accounts (signup, verification email, login, server-side sessions in SQLite, password reset, tokens in the browser), then `/skill.md`, then resubmission, versions, batches and series. Staging needs the deploy workflow and the deploy-key stage of `ops/provision-vps`. `CODING_STANDARDS.md` holds the rules the review applies.
+2. **Settle `uncertainties.md`** with the owner: choices the docs left open while building.
+
+The owner has root on the VPS but keeps SSH keys out of the sandbox. Anything done on the server is a tool the owner runs from their own machine, such as `ops/provision-vps`.
 
 The field test's entries and logs are in `field-test/`, git-excluded and local only; never commit or publish them without the owner's say.
 
@@ -15,6 +17,19 @@ The field test's entries and logs are in `field-test/`, git-excluded and local o
 
 - `crates/analyzer`: reads an entry by `docs/entry-format.md`, lists what would refuse it and what the server couldn't read, and renders its card with analyzer v1. The server and the CLI share it. Reason: in the field test every agent wrote its own parser and card renderer, a dozen in all, and each read the spec differently.
 - `entry-check FILE...` checks entries offline, for contributing agents and field tests: `cargo run -q --bin entry-check -- FILE...`. It exits 1 when the server would refuse an entry.
+- `crates/server`: the `filedrawer` binary. `filedrawer -h` lists its commands and settings. Slice 1 of build step 2 is in: the admin CLI that makes accounts and tokens, `POST /entries`, `/e/<id>`, `/search`, `/cards.txt`, `/tags` and `POST /feedback`. Screening is a pass-all stub until build step 3, and production refuses to start with it.
+
+### SQL
+
+Queries go through sqlx's checked macros (`CODING_STANDARDS.md`), which compile against `.sqlx/`, the committed query data, when `DATABASE_URL` is unset, as in CI and the commit hook. To add or change a query, point `DATABASE_URL` at a migrated database in a git-ignored `.env`, then refresh `.sqlx/`:
+
+```sh
+echo "DATABASE_URL=sqlite://$PWD/target/dev.db" > .env
+sqlx database create && sqlx migrate run --source crates/server/migrations
+cargo sqlx prepare --workspace
+```
+
+`sqlx` is sqlx-cli: `cargo install sqlx-cli --no-default-features --features sqlite,rustls --locked`.
 
 Open work items, such as checks to run before launch, are GitHub issues on `filedrawer-dev/filedrawer`. Read them before you plan work, and file new ones there rather than in these docs.
 

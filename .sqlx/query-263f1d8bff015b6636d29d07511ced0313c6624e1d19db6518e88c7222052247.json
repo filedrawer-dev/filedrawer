@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO feedback (id, account_id, experiment, wanted, workaround, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "263f1d8bff015b6636d29d07511ced0313c6624e1d19db6518e88c7222052247"
+}

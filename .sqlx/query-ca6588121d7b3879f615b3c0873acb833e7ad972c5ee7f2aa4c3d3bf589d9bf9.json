@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO entries (id, account_id, status, source, submitted_at, first_submitted_at,\n               embargo_until, analyzer_version, outcome, kind, stage)\n           VALUES (?, ?, 'screening', ?, ?, ?, ?, ?, ?, ?, ?)\n           RETURNING seq AS \"seq!: i64\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "seq!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "seq"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 10
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "ca6588121d7b3879f615b3c0873acb833e7ad972c5ee7f2aa4c3d3bf589d9bf9"
+}

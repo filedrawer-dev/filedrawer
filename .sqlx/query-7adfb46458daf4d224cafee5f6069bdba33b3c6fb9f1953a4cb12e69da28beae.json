@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO entries_fts (rowid, title, hypothesis, safety_motivation, body)\n         VALUES (?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "7adfb46458daf4d224cafee5f6069bdba33b3c6fb9f1953a4cb12e69da28beae"
+}
