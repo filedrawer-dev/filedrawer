@@ -22,6 +22,7 @@ pub use links::{LISTED_HOSTS, Pin, code_pin};
 pub use report::{MAX_ENTRY_BYTES, MAX_LOGS, Refusal, Warning, WarningKind};
 pub use results::{
     CORE_COLUMNS, Interval, Intervals, NoEffect, Reading, Results, ResultsTable, Row, Tally,
+    row_note,
 };
 
 /// Everything the analyzer read from one entry.
@@ -59,6 +60,24 @@ impl Analysis {
             Results::Read(table) => table.rows.first(),
             Results::NotRead(_) => None,
         }
+    }
+
+    /// The primary row as the analyzer read it, for the submitting agent to check
+    /// (entry-format.md, The Results table). Holds author text.
+    pub fn primary_row_summary(&self) -> String {
+        let Some(row) = self.primary_row() else {
+            return "none (Results table not read)".to_string();
+        };
+        let cells: Vec<String> = CORE_COLUMNS
+            .iter()
+            .map(|column| format!("{column} {}", row.cell(column)))
+            .collect();
+        let claim = row.claim.map_or("none", Claim::card_word);
+        let reading = match &row.reading {
+            Reading::Read(_) => String::new(),
+            Reading::NotRead(why) => format!("; not read: {why}"),
+        };
+        format!("{}; claim {claim}{reading}", cells.join("; "))
     }
 
     /// How many rows make each claim.

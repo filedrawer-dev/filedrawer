@@ -4,7 +4,7 @@
 
 use std::process::ExitCode;
 
-use analyzer::{Analysis, CORE_COLUMNS, CardContext, Claim, Reading, analyze, render_card};
+use analyzer::{Analysis, CardContext, analyze, render_card};
 
 const USAGE: &str = "\
 usage: entry-check FILE...
@@ -73,26 +73,12 @@ fn report(path: &str, analysis: &Analysis) -> String {
     for line in render_card(analysis, &CardContext::default()).lines() {
         out.push_str(&format!("  {line}\n"));
     }
-    out.push_str(&format!("primary row: {}\n", primary_row(analysis)));
+    out.push_str(&format!(
+        "primary row: {}\n",
+        analysis.primary_row_summary()
+    ));
     for warning in &analysis.warnings {
         out.push_str(&format!("warning: {warning}\n"));
     }
     out
-}
-
-/// The primary row as the analyzer read it, so the author can check it.
-fn primary_row(analysis: &Analysis) -> String {
-    let Some(row) = analysis.primary_row() else {
-        return "none (Results table not read)".to_string();
-    };
-    let cells: Vec<String> = CORE_COLUMNS
-        .iter()
-        .map(|column| format!("{column} {}", row.cell(column)))
-        .collect();
-    let claim = row.claim.map_or("none", Claim::card_word);
-    let reading = match &row.reading {
-        Reading::Read(_) => String::new(),
-        Reading::NotRead(why) => format!("; not read: {why}"),
-    };
-    format!("{}; claim {claim}{reading}", cells.join("; "))
 }

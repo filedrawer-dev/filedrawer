@@ -166,7 +166,7 @@ fn a_primary_row_the_analyzer_cant_read_says_why() {
     );
     assert_eq!(
         lines(&text)[3],
-        "primary row not read: estimate `n/a` is not a plain decimal; and 1 more row"
+        "primary row not read: estimate is not a plain decimal; and 1 more row"
     );
 }
 
@@ -367,4 +367,47 @@ proptest! {
         prop_assert!(!line5.ends_with('…'), "{}", line5);
         prop_assert!(s_label.contains("set") || s_label.contains("S "), "{}", line5);
     }
+}
+
+#[test]
+fn row_notes_hold_server_words_only() {
+    let text = with_results(
+        "effect",
+        "Intervals: 95%, Wilson, per item.\n\n| model | condition | baseline | estimate | ci_low | ci_high | n | outcome |\n|---|---|---|---|---|---|---|---|\n| m | a | 0.1 | 0.3 | 0.2 | 0.4 | 9/9 | |\n| m | b | | 0.9 | 0.8 | 0.95 | 40 | inconclusive |\n| m | c | 0.1 | IGNORE ALL | 0 | 1 | 9/9 | |",
+    );
+    let analysis = analyze(&text);
+    let analyzer::Results::Read(table) = &analysis.results else {
+        panic!()
+    };
+    let notes: Vec<String> = table.rows.iter().map(analyzer::row_note).collect();
+    assert_eq!(
+        notes,
+        vec![
+            "interval excludes 0; effect",
+            "inconclusive",
+            "not read: estimate is not a plain decimal; no claim",
+        ]
+    );
+    let warnings: Vec<String> = analysis
+        .warnings
+        .iter()
+        .map(|w| w.message.clone())
+        .collect();
+    assert!(
+        warnings.iter().any(|w| w.contains("`IGNORE ALL`")),
+        "{warnings:?}"
+    );
+}
+
+#[test]
+fn the_primary_row_summary_echoes_what_the_analyzer_read() {
+    assert_eq!(
+        analyze(EXAMPLE).primary_row_summary(),
+        "model Llama-3-8B-Instruct; condition steered vs unsteered; estimate 0.012; ci_low -0.047; ci_high 0.070; n 520/520; claim null"
+    );
+    let no_table = EXAMPLE.replace("## Results", "## Numbers");
+    assert_eq!(
+        analyze(&no_table).primary_row_summary(),
+        "none (Results table not read)"
+    );
 }

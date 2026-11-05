@@ -81,6 +81,30 @@ pub struct NoEffect {
     pub included: bool,
 }
 
+/// The analyzer's note on one row, as `/e/<id>` shows it beside the row
+/// (entry-format.md, Outcome and the card's numbers): whether the interval includes
+/// the no-effect value, then the claim. It holds no author text, so the server can
+/// show it above the author-text delimiter. The no-effect value was read as a plain
+/// decimal, so it is digits only.
+pub fn row_note(row: &Row) -> String {
+    let claim = row.claim.map_or("no claim", Claim::card_word);
+    match &row.reading {
+        Reading::NotRead(why) => format!("not read: {why}; {claim}"),
+        Reading::Read(Interval {
+            no_effect: Some(no_effect),
+            ..
+        }) => {
+            let verb = if no_effect.included {
+                "includes"
+            } else {
+                "excludes"
+            };
+            format!("interval {verb} {}; {claim}", no_effect.value_text)
+        }
+        Reading::Read(_) => claim.to_string(),
+    }
+}
+
 /// How many rows make each claim, for the card's tally.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Tally {
@@ -306,7 +330,12 @@ fn row(
         Err(why) => {
             warnings.push(Warning::new(
                 WarningKind::RowNotRead,
-                format!("{name} not read: {why}"),
+                format!(
+                    "{name} not read: {why} (estimate `{}`, ci_low `{}`, ci_high `{}`)",
+                    row.cell("estimate"),
+                    row.cell("ci_low"),
+                    row.cell("ci_high")
+                ),
             ));
             Reading::NotRead(why)
         }
@@ -376,7 +405,7 @@ fn number(row: &Row, column: &str) -> Result<f64, String> {
     if text.is_empty() {
         return Err(format!("{column} is empty"));
     }
-    decimal(text).ok_or_else(|| format!("{column} `{text}` is not a plain decimal"))
+    decimal(text).ok_or_else(|| format!("{column} is not a plain decimal"))
 }
 
 /// A plain decimal: an optional sign (`+`, `-` or U+2212), digits and an optional
