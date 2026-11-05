@@ -215,3 +215,21 @@ def test_every_secret_and_variable_the_workflow_reads_is_one_the_wizard_sets():
     )
     assert read, "the workflow reads no secrets or variables"
     assert read <= set_by_wizard, read - set_by_wizard
+
+
+def test_the_settings_the_vps_scripts_write_are_the_ones_the_server_reads():
+    written = set()
+    for script in ("staging-service.sh", "mail.sh"):
+        text = (REPO / "ops/remote" / script).read_text()
+        written |= set(re.findall(r"^(FILEDRAWER_\w+)=", text, re.MULTILINE))
+    config = (REPO / "crates/server/src/config.rs").read_text()
+    read = set(re.findall(r'"(FILEDRAWER_\w+)"', config))
+    assert written <= read, written - read
+    required = {
+        "FILEDRAWER_DATABASE",
+        "FILEDRAWER_LISTEN",
+        "FILEDRAWER_ENVIRONMENT",
+        "FILEDRAWER_SCREENER",
+        "FILEDRAWER_PUBLIC_URL",
+    }
+    assert required <= written, required - written

@@ -206,7 +206,7 @@ run_wizard() {
 # password is never saved. Every remote step is a script in ops/remote/ that is safe
 # to rerun, so rerunning the wizard repairs a half-finished setup.
 
-TOTAL_STAGES=8
+TOTAL_STAGES=9
 ENV_FILE="ops/.vps.env"
 REMOTE="$(dirname "$0")/remote"
 [[ -d "$REMOTE" ]] || { echo "run this from the repo: $REMOTE is missing" >&2; exit 1; }
@@ -216,6 +216,28 @@ remote() {
   local script="$1"; shift
   # ssh joins its arguments into one remote command line, so quote each one.
   ssh -o BatchMode=yes "root@$VPS_HOST" "env $(printf '%q ' "$@")bash -s" < "$REMOTE/$script"
+}
+
+# remote_with_secret SCRIPT NAME SECRET [ENV=VALUE...]: like remote, but SECRET goes
+# as the first line of stdin, ahead of the script, and the remote shell reads it into
+# $NAME. It never sits in a command line on either machine.
+remote_with_secret() {
+  local script="$1" name="$2" secret="$3"; shift 3
+  { printf '%s\n' "$secret"; cat "$REMOTE/$script"; } | ssh -o BatchMode=yes "root@$VPS_HOST" \
+    "IFS= read -r $name; export $name; env $(printf '%q ' "$@")bash -s"
+}
+
+# ask_new_secret KEY "Prompt": asks twice, and stops the wizard if the two differ or
+# are empty.
+ask_new_secret() {
+  local again
+  ask_secret "$1" "$2"
+  ask_secret _AGAIN "The same again:"
+  again="$_AGAIN"; unset _AGAIN
+  if [[ -z "${!1}" || "${!1}" != "$again" ]]; then
+    warn "The two differ or are empty. Rerun the wizard to try again."
+    exit 1
+  fi
 }
 
 banner "File Drawer VPS: staging setup"
@@ -282,17 +304,32 @@ say "password on every request, reads included. Keep the password in your passwo
 say "manager: the wizard never saves it, and the server keeps only its hash."
 ask STAGING_USER "Basic-auth user name:"
 write_env STAGING_USER "$STAGING_USER"
-ask_secret STAGING_PASSWORD "Basic-auth password:"
-ask_secret STAGING_PASSWORD_AGAIN "The same password again:"
-if [[ "$STAGING_PASSWORD" != "$STAGING_PASSWORD_AGAIN" || -z "$STAGING_PASSWORD" ]]; then
-  warn "The passwords differ or are empty. Rerun the wizard to try again."
-  exit 1
-fi
-# The password goes as the first line of stdin, ahead of the script, so it never
-# sits in a command line on either machine.
-{ printf '%s\n' "$STAGING_PASSWORD"; cat "$REMOTE/caddy.sh"; } | ssh -o BatchMode=yes "root@$VPS_HOST" \
-  "IFS= read -r STAGING_PASSWORD; export STAGING_PASSWORD; STAGING_USER=$(printf '%q' "$STAGING_USER") exec bash -s"
-unset STAGING_PASSWORD STAGING_PASSWORD_AGAIN
+ask_new_secret STAGING_PASSWORD "Basic-auth password:"
+remote_with_secret caddy.sh STAGING_PASSWORD "$STAGING_PASSWORD" "STAGING_USER=$STAGING_USER"
+unset STAGING_PASSWORD
+pause
+
+stage "Mail through Purelymail"
+say "Staging sends verification and password-reset email through Purelymail SMTP."
+say "Purelymail must know filedrawer.dev, and the registrar needs the DNS records it"
+say "asks for, or mail lands in spam."
+open_url "https://purelymail.com/manage/domains"
+step "Add filedrawer.dev as a domain, then add every DNS record Purelymail lists for"
+step "it (MX, SPF, DKIM and DMARC) at your registrar, and wait for Purelymail to show"
+step "them as valid."
+step "Add a user for sending, such as noreply@filedrawer.dev, with a password of its"
+step "own (Purelymail's 'app password' works too). It mustn't contain a single quote."
+note "The server connects to smtp.purelymail.com on port 465 (TLS). Check that against"
+note "Purelymail's own SMTP settings page if it has changed."
+ask SMTP_USER "The sending user's address (the SMTP login):"
+write_env SMTP_USER "$SMTP_USER"
+ask MAIL_FROM "The From line, such as File Drawer <noreply@filedrawer.dev>:"
+write_env MAIL_FROM "$MAIL_FROM"
+ask_new_secret SMTP_PASSWORD "The sending user's password:"
+remote_with_secret mail.sh SMTP_PASSWORD "$SMTP_PASSWORD" "SMTP_USER=$SMTP_USER" "MAIL_FROM=$MAIL_FROM"
+unset SMTP_PASSWORD
+note "To test it later: sign up at https://staging.filedrawer.dev/signup and watch"
+note "for the verification email."
 pause
 
 stage "Deploy key for GitHub Actions"

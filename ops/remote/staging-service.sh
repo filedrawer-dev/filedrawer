@@ -8,6 +8,7 @@ FILEDRAWER_DATABASE=/srv/filedrawer/staging/data/filedrawer.db
 FILEDRAWER_LISTEN=127.0.0.1:8081
 FILEDRAWER_ENVIRONMENT=staging
 FILEDRAWER_SCREENER=pass-all
+FILEDRAWER_PUBLIC_URL=https://staging.filedrawer.dev
 RUST_LOG=info
 CONF
 chown root:filedrawer /etc/filedrawer/staging.env
@@ -24,6 +25,8 @@ ConditionPathIsExecutable=/srv/filedrawer/staging/bin/filedrawer
 User=filedrawer
 Group=filedrawer
 EnvironmentFile=/etc/filedrawer/staging.env
+# The SMTP settings, which ops/remote/mail.sh writes; without them email goes to the log.
+EnvironmentFile=-/etc/filedrawer/staging-mail.env
 ExecStart=/srv/filedrawer/staging/bin/filedrawer serve
 Restart=on-failure
 RestartSec=2

@@ -103,3 +103,21 @@ Choices the docs left open, made while building the analyzer. Once the owner set
 - Options: hold embargoed entries with no way to release them until build step 4 adds the release job, or build the job now.
 - Chosen: hold them. Staging is the owner's alone, and step 4 builds embargoes in full.
 - Against: an embargoed entry on staging stays hidden past its date until step 4 lands.
+
+## Session length
+
+- Options: 30 days from login, fixed; a shorter idle timeout that each visit renews; or both.
+- Chosen: 30 days fixed. The owner and the people they invite log in to make tokens and release embargoes, rarely, and agents use tokens, not sessions.
+- Against: a stolen cookie works for the whole 30 days. An idle timeout of a few days would cut that, at the cost of more logins.
+
+## Passwords
+
+- Options: 12 to 1024 characters with no rules on content, as here; a check against known-breached passwords too; or a lower minimum, as NIST allows (8).
+- Chosen: 12, no composition rules, no breach check. A breach check needs the k-anonymity API of a third party, or a large list on the VPS.
+- Against: "password1234" passes.
+
+## Mail when SMTP fails
+
+- Options: show the same page and log the error, as here, or tell the person the email didn't go.
+- Chosen: the same page, so the signup and reset pages never reveal whether an account exists. The account page can resend the verification email.
+- Against: a person whose email never arrives has no hint why.

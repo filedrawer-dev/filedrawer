@@ -6,7 +6,7 @@ Status: building. The owner and an agent settled the design on 2026-11-03 and 20
 
 ## Next steps
 
-1. **Build** in the order given in `docs/design.md`, under Build order, continuing step 2 in slices the owner chose: next, accounts (signup, verification email, login, server-side sessions in SQLite, password reset, tokens in the browser), then `/skill.md`, then resubmission, versions, batches and series. `CODING_STANDARDS.md` holds the rules the review applies.
+1. **Build** in the order given in `docs/design.md`, under Build order, continuing step 2 in slices the owner chose: next, `/skill.md`, then resubmission, versions, batches and series, then account deletion. `CODING_STANDARDS.md` holds the rules the review applies.
 2. **Settle `uncertainties.md`** with the owner: choices the docs left open while building.
 
 The owner has root on the VPS but keeps SSH keys out of the sandbox. Anything done on the server is a tool the owner runs from their own machine, such as `ops/provision-vps`.
@@ -21,7 +21,12 @@ The field test's entries and logs are in `field-test/`, git-excluded and local o
 
 - `crates/analyzer`: reads an entry by `docs/entry-format.md`, lists what would refuse it and what the server couldn't read, and renders its card with analyzer v1. The server and the CLI share it. Reason: in the field test every agent wrote its own parser and card renderer, a dozen in all, and each read the spec differently.
 - `entry-check FILE...` checks entries offline, for contributing agents and field tests: `cargo run -q --bin entry-check -- FILE...`. It exits 1 when the server would refuse an entry.
-- `crates/server`: the `filedrawer` binary. `filedrawer -h` lists its commands and settings. Slice 1 of build step 2 is in: the admin CLI that makes accounts and tokens, `POST /entries`, `/e/<id>`, `/search`, `/cards.txt`, `/tags` and `POST /feedback`. Screening is a pass-all stub until build step 3, and production refuses to start with it.
+- `crates/server`: the `filedrawer` binary. `filedrawer -h` lists its commands and settings. Slices 1 and 2 of build step 2 are in:
+  - the admin CLI that makes accounts and tokens;
+  - `POST /entries`, `/e/<id>`, `/search`, `/cards.txt`, `/tags` and `POST /feedback`;
+  - accounts in the browser: signup, email verification, login with server-side sessions, password reset, and the account page that makes and revokes tokens.
+
+  Screening is a pass-all stub until build step 3, and production refuses to start with it or without SMTP settings. Email goes to the log when no SMTP settings are set.
 
 ### SQL
 
