@@ -208,7 +208,7 @@ Intervals: 95%, Newcombe hybrid score, per prompt.
 
 | model | condition | baseline | estimate | ci_low | ci_high | n | unit | counts |
 |---|---|---|---|---|---|---|---|---|
-| Llama-3-8B-Instruct | steered vs unsteered | 0.62 | 0.01 | -0.02 | 0.04 | 520/520 | fraction | 328/520 vs 322/520 |
+| Llama-3-8B-Instruct | steered vs unsteered | 0.62 | 0.012 | -0.047 | 0.070 | 520/520 | fraction | 328/520 vs 322/520 |
 
 ## Caveats
 
@@ -225,7 +225,7 @@ Intervals: 95%, Newcombe hybrid score, per prompt.
 `python steer.py --layer 14 --coef 8` (calls the model again: about 3 GPU hours).
 ````
 
-The interval [−0.02, +0.04] includes zero, so the row isn't flagged. The card says "rules out effects outside [−0.02, +0.04], up to 6% of the baseline 0.62" (95%, Newcombe hybrid score, per prompt), with "positive control passed" and "as predicted" left out, since the outcome isn't an effect.
+The interval [−0.047, +0.070] includes zero, so the row isn't flagged. The card says "rules out effects outside [−0.047, +0.070], up to 11% of the baseline 0.62" (95%, Newcombe hybrid score, per prompt), with "positive control passed" and "as predicted" left out, since the outcome isn't an effect.
 
 ## Questions for the second field test
 
