@@ -364,3 +364,13 @@ fn reproduce_code_that_fetches_a_script_at_a_branch_is_refused() {
     let text = example_with("`python steer.py", &format!("{block}\n\n`python steer.py"));
     assert_eq!(analyze(&text).refusals.len(), 1);
 }
+
+#[test]
+fn stored_text_strips_label_and_fd_fields_and_keeps_their_neighbours() {
+    let text = "---\ntitle: T\nlabel: supported null\nfd_status: public\nfd_flags:\n  - verified\n  - safe\nhypothesis: H\n---\n\n## Setup\n\nlabel: stays in the body\n";
+    assert_eq!(
+        analyzer::stored_text(text),
+        "---\ntitle: T\nhypothesis: H\n---\n\n## Setup\n\nlabel: stays in the body\n"
+    );
+    assert_eq!(analyzer::stored_text(EXAMPLE), EXAMPLE);
+}
