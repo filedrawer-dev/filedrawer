@@ -73,7 +73,8 @@ pub async fn submit(
         Release::Now => String::new(),
     };
     let mut text = format!(
-        "id: {id}\nstatus: {status}\n{release_line}url: /e/{id}\n{DELIMITER}\nprimary row: {}\ncard:\n",
+        "id: {id}\nstatus: {status}\n{release_line}url: {}/e/{id}\n{DELIMITER}\nprimary row: {}\ncard:\n",
+        state.public_url,
         analysis.primary_row_summary()
     );
     for line in card.lines() {

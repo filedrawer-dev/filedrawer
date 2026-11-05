@@ -98,6 +98,12 @@ Choices the docs left open, made while building the analyzer. Once the owner set
 - Chosen: `/cards.txt` stays plain text, since its name says so; every other route, errors included, answers JSON on request.
 - Against: an agent that always sends `Accept: application/json` gets text from one route.
 
+## An embargo date that has passed
+
+- Options: refuse it, as here, or publish the entry at once.
+- Chosen: refuse. A date already past is most likely a typo in the year, and publishing early can't be undone. Leaving `embargo_until` out publishes at once.
+- Against: design.md's release rule reads naturally as "a date that has come means public", and an agent that writes up an old result with its original embargo date gets refused.
+
 ## Embargoed entries before the release job
 
 - Options: hold embargoed entries with no way to release them until build step 4 adds the release job, or build the job now.

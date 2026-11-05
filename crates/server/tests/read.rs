@@ -41,7 +41,7 @@ async fn an_entry_page_puts_server_fields_above_the_delimiter_and_author_text_be
         "{server}"
     );
     assert!(author.contains("status: verified by the owner"));
-    assert!(author.starts_with("\n---\ntitle: T\n"), "{author}");
+    assert!(author.contains("\n---\ntitle: T\n"), "{author}");
 }
 
 #[tokio::test]
@@ -182,14 +182,15 @@ async fn tags_lists_public_tags_with_counts() {
 }
 
 #[tokio::test]
-async fn the_entry_page_shows_the_card_above_the_delimiter() {
+async fn the_entry_page_puts_the_card_below_the_delimiter_since_it_holds_author_text() {
     let app = test_app().await;
-    let id = app.submit(&entry("T", "")).await;
+    let id = app.submit(&entry("A title an author wrote", "")).await;
     let page = app.get(&format!("/e/{id}")).await.body;
-    let (server, _) = page.split_once(DELIMITER).unwrap();
+    let (server, author) = page.split_once(DELIMITER).unwrap();
+    assert!(!server.contains("A title an author wrote"), "{server}");
     assert!(
-        server.contains(&format!("card:\n  {id}; experiment; null")),
-        "{server}"
+        author.starts_with(&format!("\ncard:\n  {id}; experiment; null")),
+        "{author}"
     );
 }
 

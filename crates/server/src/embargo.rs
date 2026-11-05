@@ -5,8 +5,7 @@ use time::{Date, Month, OffsetDateTime, Time, UtcOffset, macros::format_descript
 /// What an entry's `embargo_until` means for it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Release {
-    /// No embargo, or one whose release time has passed: public once it passes
-    /// screening.
+    /// No embargo: public once it passes screening.
     Now,
     /// Held until this date's release time.
     On(Date),
@@ -22,6 +21,9 @@ pub enum EmbargoError {
         "`embargo_until: {date}` is more than 3 months away; the latest a first embargo may run is {latest}"
     )]
     TooLong { date: Date, latest: Date },
+    /// Most likely a typo in the date, and publishing early can't be undone.
+    #[error("`embargo_until: {0}` has passed; to publish at once, leave embargo_until out")]
+    Passed(Date),
 }
 
 /// When an embargo dated `date` ends: 23:59 at UTC−12 on that date, when the day has
@@ -32,8 +34,8 @@ pub fn release_time(date: Date) -> OffsetDateTime {
         .assume_offset(utc_minus_12)
 }
 
-/// Reads `embargo_until` at `now`. A date more than 3 months after today (UTC) is
-/// refused.
+/// Reads `embargo_until` at `now`. A date more than 3 months after today (UTC), or
+/// one whose release time has passed, is refused.
 pub fn release(embargo_until: Option<&str>, now: OffsetDateTime) -> Result<Release, EmbargoError> {
     let Some(text) = embargo_until else {
         return Ok(Release::Now);
@@ -45,11 +47,10 @@ pub fn release(embargo_until: Option<&str>, now: OffsetDateTime) -> Result<Relea
     if date > latest {
         return Err(EmbargoError::TooLong { date, latest });
     }
-    Ok(if now < release_time(date) {
-        Release::On(date)
-    } else {
-        Release::Now
-    })
+    if now >= release_time(date) {
+        return Err(EmbargoError::Passed(date));
+    }
+    Ok(Release::On(date))
 }
 
 /// The same day `months` later, or the month's last day when it is shorter.

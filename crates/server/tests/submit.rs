@@ -128,9 +128,10 @@ async fn an_embargoed_entry_is_held_and_invisible() {
 }
 
 #[tokio::test]
-async fn an_embargo_holds_through_its_date_everywhere_on_earth() {
+async fn an_embargo_holds_through_its_date_and_one_already_past_is_refused() {
     // Release comes at 23:59 at UTC-12 on the date (design.md, Embargo), so an
-    // embargo dated today is still held, and one dated two days ago has passed.
+    // embargo dated today is still held. One whose release time has passed is
+    // refused: it is most likely a typo, and publishing early can't be undone.
     let app = test_app().await;
     let today = app
         .post(
@@ -145,7 +146,30 @@ async fn an_embargo_holds_through_its_date_everywhere_on_earth() {
             entry("T", &format!("embargo_until: {}\n", date_in(-2))),
         )
         .await;
-    assert!(past.body.contains("status: public\n"), "{}", past.body);
+    assert_eq!(
+        past.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        past.body
+    );
+    assert!(past.body.contains("has passed"), "{}", past.body);
+}
+
+#[tokio::test]
+async fn the_reply_gives_the_entrys_full_address() {
+    let app = test_app().await;
+    let id = app.submit(&entry("T", "")).await;
+    let reply = app.get(&format!("/e/{id}")).await;
+    assert_eq!(reply.status, StatusCode::OK);
+    let submitted = app.post("/entries", entry("U", "")).await.body;
+    let url = submitted
+        .lines()
+        .find_map(|l| l.strip_prefix("url: "))
+        .unwrap();
+    assert!(
+        url.starts_with(&format!("{}/e/", common::PUBLIC_URL)),
+        "{url}"
+    );
 }
 
 #[tokio::test]

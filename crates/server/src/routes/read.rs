@@ -42,11 +42,13 @@ pub async fn entry(
     for (number, note) in (1..).zip(&notes) {
         text.push_str(&format!("row {number}: {note}\n"));
     }
-    text.push_str("card:\n");
+    // The card holds author text (the title, hypothesis, tags and more), so it goes
+    // below the delimiter with the entry itself.
+    text.push_str(&format!("{DELIMITER}\ncard:\n"));
     for line in card.lines() {
         text.push_str(&format!("  {line}\n"));
     }
-    text.push_str(&format!("{DELIMITER}\n{}", entry.source));
+    text.push_str(&format!("\n{}", entry.source));
     let json = json!({
         "id": entry.id,
         "status": "public",
