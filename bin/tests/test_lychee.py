@@ -29,16 +29,19 @@ def load_script():
 
 
 HOOK = load_script()
-FAKE_LYCHEE = b'#!/bin/sh\necho "fake lychee: $*"\nexit "${FAKE_LYCHEE_EXIT:-0}"\n'
 
 
-def fake_archive(path: Path) -> str:
-    """Write a release archive holding the fake lychee; return its SHA-256."""
+def fake_archive(path: Path, greeting: str = "fake lychee") -> str:
+    """Write a release archive whose lychee prints greeting and its arguments.
+
+    Returns the archive's SHA-256.
+    """
+    script = f'#!/bin/sh\necho "{greeting}: $*"\nexit "${{FAKE_LYCHEE_EXIT:-0}}"\n'
     top = f"lychee-{HOOK.target(platform.system(), platform.machine())}"
     with tarfile.open(path, "w:gz") as tar:
         for name, data, mode in [
             (f"{top}/README.md", b"readme\n", 0o644),
-            (f"{top}/lychee", FAKE_LYCHEE, 0o755),
+            (f"{top}/lychee", script.encode(), 0o755),
         ]:
             info = tarfile.TarInfo(name)
             info.size = len(data)
@@ -65,9 +68,8 @@ def run(env: dict[str, str], *args: str) -> subprocess.CompletedProcess:
     )
 
 
-def cached_files(env: dict[str, str]) -> list[Path]:
-    cache = Path(env["XDG_CACHE_HOME"])
-    return sorted(p for p in cache.rglob("*") if p.is_file()) if cache.exists() else []
+def nothing_cached(env: dict[str, str]) -> bool:
+    return not Path(env["XDG_CACHE_HOME"]).exists()
 
 
 def test_first_run_downloads_checks_and_runs_lychee_with_its_arguments(env):
@@ -96,7 +98,7 @@ def test_hash_mismatch_refuses_and_caches_nothing(env):
     assert "fake lychee" not in result.stdout
     assert "SHA-256" in result.stderr
     assert "SKIP=lychee" in result.stderr
-    assert cached_files(env) == []
+    assert nothing_cached(env)
 
 
 def test_failed_download_refuses_with_the_skip_hint(env, tmp_path):
@@ -105,7 +107,7 @@ def test_failed_download_refuses_with_the_skip_hint(env, tmp_path):
     assert result.returncode != 0
     assert "fake lychee" not in result.stdout
     assert "SKIP=lychee" in result.stderr
-    assert cached_files(env) == []
+    assert nothing_cached(env)
 
 
 def test_overridden_url_alone_is_still_checked_against_the_pinned_hash(env):
@@ -114,7 +116,21 @@ def test_overridden_url_alone_is_still_checked_against_the_pinned_hash(env):
     assert result.returncode != 0
     assert "fake lychee" not in result.stdout
     assert "SHA-256" in result.stderr
-    assert cached_files(env) == []
+    assert nothing_cached(env)
+
+
+def test_a_new_pin_never_runs_the_binary_cached_under_the_old_one(env, tmp_path):
+    assert run(env, "x.md").stdout == "fake lychee: x.md\n"
+    newer = tmp_path / "newer.tar.gz"
+    sha = fake_archive(newer, greeting="newer lychee")
+    repinned = {
+        **env,
+        "FILEDRAWER_LYCHEE_URL": newer.as_uri(),
+        "FILEDRAWER_LYCHEE_SHA256": sha,
+    }
+    result = run(repinned, "x.md")
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "newer lychee: x.md\n"
 
 
 @pytest.mark.parametrize(

@@ -84,9 +84,11 @@ def download(url: str, dest: Path) -> None:
 
 
 def install(url: str, sha256: str, member: str, binary: Path) -> None:
-    """Download the archive at url, check its hash, and put its member at binary."""
-    cache_dir().mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(dir=cache_dir()) as tmp:
+    """Download the archive at url, check its hash, and put its member at binary.
+
+    Nothing touches the cache until the hash has matched, so a refusal leaves no trace.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
         archive = Path(tmp) / "lychee.tar.gz"
         download(url, archive)
         actual = hashlib.sha256(archive.read_bytes()).hexdigest()
@@ -101,11 +103,13 @@ def install(url: str, sha256: str, member: str, binary: Path) -> None:
                 source = None
             if source is None:
                 raise InstallError(f"{url} has no file {member}")
-            staged = Path(tmp) / "lychee"
-            staged.write_bytes(source.read())
-        staged.chmod(0o755)
-        binary.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(staged, binary)
+            contents = source.read()
+    binary.parent.mkdir(parents=True, exist_ok=True)
+    # Written beside the binary and renamed, so a run alongside never sees half a file.
+    staged = binary.with_name(f".lychee-{os.getpid()}")
+    staged.write_bytes(contents)
+    staged.chmod(0o755)
+    os.replace(staged, binary)
 
 
 def fail(why: str) -> int:
