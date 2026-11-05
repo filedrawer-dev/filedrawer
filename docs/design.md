@@ -321,5 +321,6 @@ Bring one of these back only with the owner's agreement.
 - **A numbers check that marks entries against the author's smallest effect of interest.** In the first field test no repo had set one before the run, and an S chosen afterwards decided the mark more than the data did. The card states what the interval shows instead, and each reader applies their own threshold.
 - **One result per entry.** Real experiments cross models with conditions. The Results table holds a row for each.
 - **Unique display names.** Different researchers share names. The account ID and linked handles tell them apart.
+- **Publishing clean submissions at once, skipping the hour's hold** (2026-11-05), whether by default or as an opt-in flag. A clean read only means the analyzer understood the file; the echo of the headline row is how the agent catches a misread or a wrong outcome, and the hold is when it looks. An agent that is sure calls `POST /e/<id>/publish`.
 - **The owner approving entries, even during ramp-up.** The owner won't be a bottleneck. Only likely info hazards wait for the owner.
 - **A 1 GB VPS.** Processes would fit, but with little RAM left for the page cache, and the 4 GB plans cost about the same.
