@@ -173,3 +173,13 @@ What fought the agents, most widespread first, with the number of repos (of 5) w
 12. **Smaller frictions.** `compute` is GPU-only, though every run was API calls (5). Entries written in one batch can't link to each other before the server issues IDs (5). No field says whether a result came from a probe, a pilot or a main run, or why the work stopped, which tells a reader whether the direction is still open (3). Floors and ceilings are invisible to the check (2).
 
 How the numbers check fared: it marked nothing in one repo and almost nothing in another. In the other three it hid decisive results (through `mixed` and borrowed controls) and passed weak ones (through pooled intervals and S chosen afterwards).
+
+### Decided so far
+
+The owner settled these on 2026-11-05. The format above doesn't reflect them yet; it gets rewritten once the rest are settled, and then the field test runs again.
+
+- Front matter holds only what search filters on. Everything else goes in fixed body sections: `## Setup`, `## Results` (a markdown table, one row per condition, which the server parses), `## Caveats`, `## Not tried` and `## Reproduce`.
+- The numbers check needs no S. The card states what the interval shows, such as "rules out effects outside [−0.02, +0.04]" or "effect of at least +0.24". "Numbers disagree" means a `no_effect` entry whose interval excludes zero, or an `effect` entry whose interval includes it. S stays optional, and when given, the card says whether it was set before or after the run.
+- The `null` outcome value becomes `no_effect`; cards and the pitch still say "null". The server rejects keys with no value inside known fields.
+- A `kind` field: `experiment`, `measurement`, `simulation`, `reanalysis` or `audit`. The card shows a numbers mark only for experiments. `replicates` and a new `reanalyzes` field accept an arXiv ID or DOI as well as an entry ID.
+- Entries cite published work the usual way, authors included. Private individuals stay out.
