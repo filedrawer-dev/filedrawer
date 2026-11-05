@@ -1,3 +1,4 @@
 /target
 __pycache__/
 .env
+ops/.vps.env
