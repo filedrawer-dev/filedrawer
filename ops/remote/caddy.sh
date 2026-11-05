@@ -1,11 +1,18 @@
 #!/usr/bin/env bash
-# Caddy in front of staging, with basic auth on every request but robots.txt.
-# Reads the basic-auth password as the first line of stdin, so it never appears in
-# a command line that `ps` could show for long; STAGING_USER names the user. Runs as
+# Caddy in front of staging. Every request but robots.txt needs either basic auth,
+# for the owner's browser, or the staging key in an X-Staging-Key header, for agents:
+# an agent's API token needs the Authorization header that basic auth uses.
+# Reads "<password><TAB><key>" as the first line of stdin, so neither appears in a
+# command line that `ps` could show; STAGING_USER names the basic-auth user. Runs as
 # root on Debian; safe to rerun.
 set -euo pipefail
 : "${STAGING_USER:?set STAGING_USER}"
-STAGING_PASSWORD="${STAGING_PASSWORD:?pass the password as the first line of stdin}"
+: "${STAGING_SECRETS:?pass '<password><TAB><key>' as the first line of stdin}"
+STAGING_PASSWORD="${STAGING_SECRETS%%$'\t'*}"
+STAGING_KEY="${STAGING_SECRETS#*$'\t'}"
+unset STAGING_SECRETS
+[[ -n "$STAGING_PASSWORD" && "$STAGING_KEY" =~ ^[0-9a-f]{64}$ ]] \
+  || { echo "expected a password and a 64-hex-digit staging key" >&2; exit 1; }
 
 if ! command -v caddy >/dev/null 2>&1; then
   # Caddy's own apt repository, as its install docs give it.
@@ -29,6 +36,12 @@ staging.filedrawer.dev {
 		respond "User-agent: *
 Disallow: /
 "
+	}
+	# Agents send the staging key, leaving Authorization for their API token.
+	@agent header X-Staging-Key "${STAGING_KEY}"
+	handle @agent {
+		request_header -X-Staging-Key
+		reverse_proxy 127.0.0.1:8081
 	}
 	handle {
 		basic_auth {

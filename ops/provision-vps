@@ -329,11 +329,24 @@ stage "Caddy and basic auth"
 say "Caddy serves staging.filedrawer.dev over HTTPS and asks for a user name and"
 say "password on every request, reads included. Keep the password in your password"
 say "manager: the wizard never saves it, and the server keeps only its hash."
+say "Agents get in with a staging key instead, sent as an X-Staging-Key header, since"
+say "their API token needs the Authorization header that basic auth uses."
 ask STAGING_USER "Basic-auth user name:"
 write_env STAGING_USER "$STAGING_USER"
 ask_new_secret STAGING_PASSWORD "Basic-auth password:"
-remote_with_secret caddy.sh STAGING_PASSWORD "$STAGING_PASSWORD" "STAGING_USER=$STAGING_USER"
+if [[ "$STAGING_PASSWORD" == *$'\t'* ]]; then
+  warn "The password holds a tab, which the wizard can't send. Rerun with another."
+  exit 1
+fi
+STAGING_KEY=$(_existing STAGING_KEY || true)
+if [[ ! "$STAGING_KEY" =~ ^[0-9a-f]{64}$ ]]; then
+  STAGING_KEY=$(od -An -tx1 -N32 /dev/urandom | tr -d ' \n')
+fi
+write_env STAGING_KEY "$STAGING_KEY"
+remote_with_secret caddy.sh STAGING_SECRETS "$STAGING_PASSWORD"$'\t'"$STAGING_KEY" \
+  "STAGING_USER=$STAGING_USER"
 unset STAGING_PASSWORD
+note "The staging key is in $ENV_FILE. Give it to agents with their API token."
 pause
 
 stage "Mail through Purelymail"
@@ -410,6 +423,15 @@ else
   warn "'journalctl -u caddy -n 50' shows why, often a certificate still being issued."
   SKIPPED+=("staging HTTPS check: robots.txt $robots, / $root")
 fi
+step "With the staging key, /tags should get past Caddy..."
+keyed=$(curl -s -o /dev/null -w '%{http_code}' -H "X-Staging-Key: $STAGING_KEY" \
+  https://staging.filedrawer.dev/tags || true)
+case "$keyed" in
+  200) say "The staging key works, and the server answers. ✓" ;;
+  502) say "The staging key works; the server answers once it is deployed. ✓" ;;
+  *) warn "With the staging key, /tags answered $keyed."
+     SKIPPED+=("staging key check: /tags answered $keyed") ;;
+esac
 note "With the password, / answers 502 until the first deploy starts the server."
 note "That happens on the next push to main once CI passes."
 pause
