@@ -260,3 +260,22 @@ What fought the agents, most widespread first, with the number of repos (of 5) w
 How the first draft's numbers check fared: it marked nothing in one repo and almost nothing in another. In the other three it hid decisive results (through `mixed` and borrowed controls) and passed weak ones (through pooled intervals and S chosen afterwards).
 
 The owner settled the changes on 2026-11-05, and this second draft carries them: the front matter and body split, the Results table, the check without S, `no_effect`, `kind`, the new fields, attached code, and batch submission. Citations may name published authors; private individuals stay out of entries.
+
+### Round 2
+
+The second round ran on 2026-11-05 over the same five repos, on this draft. The agents started from round 1's inventories but took every number from the repos again. They wrote 198 entries, including about 20 for the unsubmitted report's results and analyses round 1 had missed. Their logs are in `field-test/round2/<repo>/FINDINGS.md`, local only.
+
+Fixed since round 1: the Results table holds every model and condition; no entry needed an S; `no_effect` parses; Setup and Reproduce accept "not recorded"; `stage`, `stopped_because` and model roles were filled in naturally; batches and slugs linked families within a batch; and the three repos with no remote attached their code, 2.7 KB to 930 KB per family.
+
+What still fought the agents, most widespread first, with the number of repos (of 5):
+
+1. **Most cards show no numbers (5).** Rows claiming neither `effect` nor `no_effect`, and every entry whose `kind` isn't `experiment`, get no reading, even with valid intervals: 49 of 74 experiment cards in one repo, 31 of 46 cards in another.
+2. **A row can't be `inconclusive`, and a blank row inherits the entry's outcome (5).** Agents declared `mixed` to escape, left rows blank, or moved them into tables the server ignores. Blank rows also escaped the flag count: one repo's 1,966 rows produced no flags.
+3. **The share of the baseline misleads (5).** It reads 310% to 1,786% on near-zero baselines and chance rates, about 3% on prices where the meaningful scale is the margin above cost, and nothing flags a baseline at a ceiling.
+4. **One interval method and sampling unit per table (5).** Real tables mix bootstrap, exact and paired rows. Paired designs and pilots of 1 or 2 days have no way to say so in `n`, and the check passes an `n` of 160 that is really 2 days.
+5. **Attachments (4).** Lock files, full of hashes, would trip the high-entropy screen. Data doesn't fit the 1 MB cap and has no field. The code attached at HEAD often isn't the code that ran. Scripts outside the repo, including the writing agent's own analysis, have no place. Attaching a repo with no licence makes it MIT.
+6. **What a row claims and how it was set (4).** No per-row field says pre-registered or exploratory, gives a corrected p, or names a bar a measurement had to clear. `hypothesis_set` was `unknown` for 66 of 91 entries in one repo, because the predictions sat in files never committed. `either` and `before_run` print "as predicted" whichever way the effect went.
+7. **`positive_control` (5).** One value can't say whether the control checked the pipeline or the manipulation, whether it was borrowed, or which models it covered.
+8. **Model identity (3).** The same model appears as `haiku`, `claude-cli:haiku` and `claude-haiku-5-5`, so model filters and replication pairs miss each other. A model under validation as a judge has no subject role.
+9. **Links (4).** `shares_data_with` grew to about 170 links in one 16-entry family without saying what is shared. `slug:` doesn't cross batches, which a repo of 91 entries needed. `replicates` compares only primary rows. Setup repeated across a family, up to 38 KB an entry.
+10. **Smaller ones.** YAML reads a bare arXiv ID as a number (`2507.01410` becomes 2507.0141). The `no_effect_at` reading reads backwards for an AUROC below 0.5. Card line 5 has no length cap. `stage: pilot` means both "before the sprint" and "superseded".
