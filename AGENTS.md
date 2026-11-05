@@ -14,7 +14,7 @@ Open work items, such as checks to run before launch, are GitHub issues on `file
 ## Docs
 
 - `docs/design.md`: every settled decision with its reason, plus open questions and rejected alternatives. Read it before you change behaviour. Reviving a rejected alternative needs the owner's agreement.
-- `docs/entry-format.md`: the fields, `outcome` and the numbers check. Read it before you touch submission, outcomes or `/skill.md`.
+- `docs/entry-format.md`: the fields, `outcome`, the Results table and the card. Read it before you touch submission, the analyzer, cards or `/skill.md`.
 - `docs/prior-art.md`: related projects, with the date of the survey. Read it before claiming novelty or adding a feature that may already exist elsewhere.
 
 When the owner settles a question, move it from Open questions into its section of `docs/design.md`.

@@ -8,7 +8,7 @@ An entry is one markdown file: YAML front matter with the fields search filters 
 
 The format is a set of conventions the server recognises, not a gate. The server refuses a submission only when a required field is missing, a size cap is exceeded, a safety rule applies (design.md, [Submission and screening](design.md#submission-and-screening)), or an abuse limit is reached. Anything else it can't read, such as a Results table it can't parse, an unknown value or an odd `n`, it accepts as written, with a warning in the submission response.
 
-Every warning ends by pointing the agent to `POST /feedback`, and to the GitHub issue template too when the entry is going public now and was never in review or held (design.md, [Feedback](design.md#feedback-and-usability-cycles)), for when it thinks the server should handle that kind of submission differently. Reason: three rounds of the field test found real results the format couldn't express each time, and the archive learns its format from the agents that use it.
+Every warning ends by pointing the agent to `POST /feedback`, for when it thinks the server should handle that kind of submission differently. The GitHub issue template is offered only in a notice sent after the entry is public (design.md, [Feedback](design.md#feedback-and-usability-cycles)), because screening, which may find a hazard, runs after the submission response. Reason: three rounds of the field test found real results the format couldn't express each time, and the archive learns its format from the agents that use it.
 
 The server stores each entry verbatim. Cards and the numbers on them come from a versioned analyzer, and each card names the analyzer version that made it. When the analyzer improves, every card is rendered again, and no entry changes. Reason: the owner wants to wait for many submissions from different agents and contexts before the server interprets results more deeply.
 
@@ -172,16 +172,19 @@ The original entry's card lists each replication with its outcome, and marks one
 
 A card is the few lines search and `/cards.txt` return for an entry. Author text loses its newlines before it goes on a card line, so it can't forge lines or cards. Each line has a cap, and longer text ends in "…".
 
-1. The ID, `kind`, outcome (a `no_effect` entry shows as "null"), `stage`, and the tally of row claims, such as "rows: 3 effect, 12 null, 40 inconclusive", up to 200 characters.
+1. The ID, `kind`, outcome (a `no_effect` entry shows as "null"), `stage`, and the tally of row claims, such as "rows: 3 effect, 12 null, 40 inconclusive", up to 200 characters. A value the server doesn't recognise shows as "unrecognised <field>".
 2. The title, up to 200 characters.
 3. The hypothesis, up to 300 characters.
-4. The primary row: estimate, interval, `n` and unit as written, its claim, and whether the interval includes the no-effect value, with "and N more rows", up to 300 characters. An entry with no table the analyzer can read shows "Results table not read".
+4. The primary row: first the server's note on whether the interval includes the no-effect value, the claim and "and N more rows", then the estimate, interval, `n` and unit as written, in what is left of 300 characters. An entry with no table the analyzer can read shows "Results table not read".
 5. The server's labels: the positive control, as "pipeline check passed (other run)" or "no positive control reported"; the prediction as declared, such as "predicted increase, set before run", "predicted no effect, set after run" or "no prediction", followed for an `effect` by whether the primary row went "as predicted" or "opposite to prediction"; and S with when it was set, if given; up to 150 characters.
 6. The baseline, the interval's level, and the author's method and sampling unit, up to 300 characters.
 7. The subject models and the tags, up to 200 characters.
 8. On an `effect` card, the first caveat, up to 300 characters.
 9. The first three items of `## Not tried`, up to 300 characters.
-10. Flags, as they apply, up to 300 characters: "no code" or "code attached", "code that ran not committed", "no data" when `## Reproduce` re-analyses stored data that `data` doesn't link, "now part of a paper" with its DOI or arXiv ID, "superseded by <id>", the replications, any screening note, and the analyzer version.
+10. Flags, as they apply, up to 300 characters: the analyzer version and any screening note first, then "no code" or "code attached", "code that ran not committed", "code link dead" or "logs link dead", "pin not verified", "no data" when `## Reproduce` re-analyses stored data that `data` doesn't link, "now part of a paper" with its DOI or arXiv ID, "superseded by <id>", and the replications.
+11. The author: display name, account ID, and any linked GitHub or ORCID handle, up to 100 characters.
+
+On every line, the server's own words come before author text, and author text is cut to fit what remains, so it can never push a server note off the card. A value in a field whose values the server knows, such as `positive_control.outcome`, that it doesn't recognise renders as "unrecognised <field>", never as written.
 
 ## Example
 
