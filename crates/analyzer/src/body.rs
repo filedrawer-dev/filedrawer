@@ -58,3 +58,37 @@ pub(crate) fn sections(body: &str) -> Sections {
     }
     sections
 }
+
+/// The text of each top-level list item in `markdown`, or the whole text as one item
+/// when it has no list. Used for the card's first caveat and `## Not tried`.
+pub(crate) fn items(markdown: &str) -> Vec<String> {
+    let mut items = Vec::new();
+    let mut depth = 0usize;
+    for event in Parser::new_ext(markdown, options()) {
+        match event {
+            Event::Start(Tag::Item) => {
+                depth += 1;
+                if depth == 1 {
+                    items.push(String::new());
+                }
+            }
+            Event::End(TagEnd::Item) => depth = depth.saturating_sub(1),
+            Event::Text(text) | Event::Code(text) if depth >= 1 => {
+                if let Some(item) = items.last_mut() {
+                    item.push_str(&text);
+                }
+            }
+            Event::SoftBreak | Event::HardBreak if depth >= 1 => {
+                if let Some(item) = items.last_mut() {
+                    item.push(' ');
+                }
+            }
+            _ => {}
+        }
+    }
+    items.retain(|item| !item.trim().is_empty());
+    if items.is_empty() && !markdown.trim().is_empty() {
+        items.push(markdown.trim().to_string());
+    }
+    items
+}

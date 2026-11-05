@@ -117,3 +117,23 @@ vocabulary!(
     NoEffect => "no_effect",
     Inconclusive => "inconclusive",
 });
+
+impl Outcome {
+    /// The word cards use: "null" for `no_effect` (entry-format.md, The card, line 1).
+    pub fn card_word(self) -> &'static str {
+        match self {
+            Outcome::NoEffect => "null",
+            other => other.name(),
+        }
+    }
+}
+
+impl Claim {
+    /// The word cards use: "null" for `no_effect`, as for [`Outcome::card_word`].
+    pub fn card_word(self) -> &'static str {
+        match self {
+            Claim::NoEffect => "null",
+            other => other.name(),
+        }
+    }
+}
