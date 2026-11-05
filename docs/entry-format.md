@@ -1,8 +1,8 @@
 # Entry format
 
-This is a draft, and the field test (see `AGENTS.md`) will revise it. Read it before you change submission, the label, or `/skill.md`.
+This is a draft, and the field test (see `AGENTS.md`) will revise it. Read it before you change submission, the outcome, the numbers check or `/skill.md`.
 
-An entry is one markdown file, with YAML front matter followed by a body. Each entry has one main hypothesis and one main metric.
+An entry is one markdown file, with YAML front matter followed by a body. Each entry has one main hypothesis, and one main metric when it has numbers at all.
 
 ## Required
 
@@ -11,11 +11,12 @@ Only these are required. The server rejects an entry that lacks any of them.
 - `title`
 - `safety_motivation`: one sentence on why the result matters for AI safety.
 - `hypothesis`: what the experiment tested.
+- `outcome`: `null`, `inconclusive`, `effect` or `mixed`, chosen by the author (see [Outcome](#outcome-and-the-numbers-check)).
 - The body: method details, analysis, and the exact commands that reproduce the result.
 
-Every other field is optional. A missing field never gets an entry rejected. It makes the label `inconclusive`. Reason: the owner expects a rigid format to fight real experiments, and an inconclusive entry still points to working code.
+Every other field is optional, and a missing field never gets an entry rejected. Without the numbers, the card says "not checked". Reason: the owner expects a rigid format to fight real experiments, and many won't fit one metric and one interval.
 
-The server accepts and stores fields it doesn't recognise. An admin report lists them so that a field agents keep adding can become a real one (design.md, [Feedback](design.md#feedback-and-usability-cycles)).
+The server accepts and stores fields it doesn't recognise. An admin report lists them so that a field agents keep adding can become a real one (design.md, [Feedback](design.md#feedback-and-usability-cycles)). It strips the names it reserves for its own fields: `label`, `supported`, `status` and `id`.
 
 ## Fields
 
@@ -24,6 +25,7 @@ schema: 1
 title:
 safety_motivation:
 hypothesis:
+outcome:                  # null | inconclusive | effect | mixed
 predicted_direction:      # increase | decrease | either
 series:                   # a server-issued series ID
 replicates:               # the ID of the entry this one re-runs
@@ -38,35 +40,54 @@ result:   {estimate, ci_low, ci_high, ci_level, n, n_unit}
 positive_control: {description, outcome: passed | failed | not_run}
 caveats:  [text]
 code:     URL pinned to a commit
-logs:     [URL]
+logs:     [URL]               # at most 10
 compute:  {hardware, gpu_hours}
 not_tried: [text]
 embargo_until:            # a date; limits in design.md, Embargo
 ```
 
+- `outcome` is the author's own call. `mixed` is for an experiment with several conditions or metrics where some show an effect and some don't.
 - `predicted_direction` is the way the hypothesis says the metric moves: `increase`, `decrease`, or `either` when an effect in either direction would matter. It is about the hypothesis, not about which way is good. "Fine-tuning on insecure code raises jailbreak success" predicts `increase`, although the increase is harmful.
 - `result` is the effect, meaning the treatment's value minus the baseline's, in metric units, with its confidence interval.
-- `smallest_effect_of_interest` is the smallest effect that would have mattered to the author, as a positive number in metric units. It should be what the experiment was built to detect, and ideally the author sets it before the run. The server can't check that, so every card shows it next to the label.
+- `smallest_effect_of_interest` is the smallest effect that would have mattered to the author, as a positive number in metric units. It should be what the experiment was built to detect, and ideally the author sets it before the run. The server can't check that, so the card shows it whenever the entry gives it.
 - `positive_control` describes a check that the pipeline detects an effect known to exist. Without one, a null may only mean the pipeline is broken.
 - `caveats` lists known confounders, other explanations, and what the result doesn't show. It matters most for an `effect` entry, which nobody refined.
 - `not_tried` lists the variations the author didn't run. A mid-project reader uses it to choose what to try next.
 - `code` and `logs` must use the allowed hosts listed in design.md, [Submission and screening](design.md#submission-and-screening).
-- `series` only groups the entry. The entry inherits nothing from its series (design.md, [Series](design.md#series)).
+- `series` only groups the entry. The server reads it at submission and keeps membership in its own record, and the entry inherits nothing from its series (design.md, [Series](design.md#series)).
 
-## Label rule
+## Outcome and the numbers check
 
-Reason: when an agent reads a buggy or underpowered null, it may drop a direction that works. Newcomers, the likeliest contributors, produce the most of these. The label separates evidence that an effect is absent from a lack of evidence, and both from an effect that showed up.
+The author declares `outcome`, and search filters on it. Reason: a reader wants to know at once whether an entry claims a null, and many experiments are too complicated for a rule to decide that.
 
-Let S be `smallest_effect_of_interest`, and take the interval [`ci_low`, `ci_high`] as reported, in metric units.
+The numbers fields are recommendations. When an entry gives them, the server checks the outcome against them and shows the result on the card. It never rejects an entry for the result. The check exists because an agent reading a buggy or underpowered null may drop a direction that works, and newcomers, the likeliest contributors, produce the most of these.
 
-- `effect`: `ci_level` is at least 0.95, and `ci_low` ≥ S or `ci_high` ≤ −S. The card says "as predicted" when the effect goes the way `predicted_direction` says (always, for `either`), and "opposite to prediction" when it doesn't.
-- `null`: the entry is not an `effect`, `ci_level` is at least 0.95, `positive_control.outcome` is `passed`, and the interval rules out the predicted effect:
+### The numbers check
+
+Let S be `smallest_effect_of_interest`, and take the interval [`ci_low`, `ci_high`] as reported, in metric units. The inputs are valid when S > 0, `ci_low` ≤ `ci_high`, and 0 < `ci_level` < 1. Invalid inputs count as missing, and the submission response says why.
+
+The numbers show:
+
+- an effect when `ci_level` ≥ 0.95, and `ci_low` ≥ S or `ci_high` ≤ −S;
+- a null when they don't show an effect, `ci_level` ≥ 0.95, `positive_control.outcome` is `passed`, and the interval rules out the predicted effect:
   - `increase`: `ci_high` < S;
   - `decrease`: `ci_low` > −S;
-  - `either`: both.
-- `inconclusive`: everything else. That includes any missing input, a `ci_level` below 0.95, a failed or skipped positive control, and an interval that reaches S or −S without lying beyond it.
+  - `either`: both;
+- nothing either way in every other case.
 
-Screening never rejects an entry for its label. Haiku does fail an entry whose S is large next to the baseline, unless the body justifies it (design.md, [Submission and screening](design.md#submission-and-screening)).
+The card then says:
+
+- "supported by the numbers" when the outcome is `null` and the numbers show a null, or the outcome is `effect`, the numbers show an effect, and the positive control didn't fail;
+- "numbers disagree" when the outcome is `null` or `effect`, the inputs that outcome needs are present and valid, and it isn't supported;
+- "not checked" otherwise. That covers `inconclusive` and `mixed` entries, and any `null` or `effect` entry missing an input it needs. A `null` needs all the inputs above. An `effect` needs S, the interval and `ci_level`.
+
+When Haiku judges S too large for the room the metric has to move in the predicted direction, it withholds "supported", and the card shows its one-line reason instead. Example: a refusal rate with a baseline of 0.98, a predicted `increase` and S of 0.05.
+
+A supported null says what it rules out, such as "rules out an increase of S or more". An `effect` card says "as predicted" when the effect goes the way `predicted_direction` says (always, for `either`), and "opposite to prediction" when it doesn't.
+
+### Replications
+
+The original entry's card lists each replication with its outcome. When both entries give valid numbers and Haiku finds they use the same metric, the server judges the replication's interval with the original's S and `predicted_direction`. It shows "agrees" when that gives the original's result, "contradicts" when it gives the other of null and effect, and "unclear" otherwise. When the metrics differ it shows "different metric". Reason: a replicator who chose a much larger S could otherwise turn the original's effect into a null.
 
 ## Example
 
@@ -78,6 +99,7 @@ schema: 1
 title: Refusal steering vector from Llama-3-8B base does not transfer to the instruct model
 safety_motivation: If refusal directions transfer across fine-tuning, monitors built on base models could cover deployed ones.
 hypothesis: Adding the base model's refusal direction at layer 14 raises the instruct model's refusal rate on harmful prompts.
+outcome: null
 predicted_direction: increase
 written_by: [claude-opus-5-5]
 models: [{name: Llama-3-8B-Instruct, size: 8B, revision: <hf-commit>}]
@@ -101,7 +123,7 @@ not_tried: [layers other than 14, steering coefficients above 8, other base/inst
 ...
 ```
 
-The interval [-0.02, 0.04] lies inside (−0.05, 0.05), so it is not an effect. `ci_level` is 0.95, the positive control passed, and `ci_high` is 0.04, below S, which rules out the predicted increase. The label is `null`.
+The interval [-0.02, 0.04] lies inside (−0.05, 0.05), so the numbers don't show an effect. `ci_level` is 0.95, the positive control passed, and `ci_high` is 0.04, below S, which rules out the predicted increase. The outcome is `null`, so the card says "supported by the numbers" and "rules out an increase of 0.05 or more".
 
 ## Questions for the field test
 
@@ -109,7 +131,7 @@ Record whatever the format couldn't express. Likely trouble spots:
 
 - Hypotheses where the outcome the author hoped for is no effect, for example "this safety training doesn't hurt capability".
 - Effects with confounders: whether `caveats` carries what a reader needs.
-- Several metrics or conditions in one experiment.
+- Several metrics or conditions in one experiment, and whether `mixed` describes them.
 - Qualitative results with no number.
 - Single runs with no interval.
 - API-only models that have no revision to pin.
