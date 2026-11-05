@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# Installs a deployed binary and restarts its service (design.md, Hosting and
+# operations). Runs as root, through the one sudo rule the `deploy` user has:
+#   filedrawer-install staging <sha256>   < binary
+# It reads the binary from stdin into a root-owned file, refuses it over 64 MiB or
+# when the hash differs, and checks it runs, as the service user and with a timeout,
+# since its code is whatever the deploy key's holder sent. It keeps the old binary as
+# filedrawer.previous, restarts the service, and rolls back if the server doesn't
+# answer on 127.0.0.1 within 30 s.
+set -euo pipefail
+
+# The overrides are for tests, which set FILEDRAWER_ROOT. sudo's env_reset drops all
+# of them; when the root isn't overridden, the defaults are forced anyway.
+root="${FILEDRAWER_ROOT:-}"
+if [[ -z "$root" ]]; then
+  PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  max_bytes=67108864
+  health_seconds=30
+else
+  max_bytes="${FILEDRAWER_MAX_BYTES:-67108864}"
+  health_seconds="${FILEDRAWER_HEALTH_SECONDS:-30}"
+fi
+
+refuse() {
+  echo "refused: $1" >&2
+  exit 2
+}
+
+[[ $# -eq 2 ]] || refuse "usage: filedrawer-install staging <sha256> < binary"
+environment="$1"
+expected="$2"
+case "$environment" in
+  staging) port=8081 ;;
+  *) refuse "unknown environment '$environment'" ;;
+esac
+[[ "$expected" =~ ^[0-9a-f]{64}$ ]] || refuse "'$expected' is not a SHA-256"
+
+bin="$root/srv/filedrawer/$environment/bin"
+service="filedrawer-$environment"
+new="$bin/filedrawer.new"
+trap 'rm -f "$new"' EXIT
+head -c "$((max_bytes + 1))" > "$new"
+if (( $(stat -c %s "$new") > max_bytes )); then
+  refuse "the upload is over $max_bytes bytes"
+fi
+actual=$(sha256sum "$new" | cut -d' ' -f1)
+[[ "$actual" == "$expected" ]] || refuse "the upload's SHA-256 is $actual, not $expected"
+chmod 0755 "$new"
+
+if ! runuser -u filedrawer -- timeout 10 "$new" -h > /dev/null 2>&1; then
+  echo "the new binary doesn't run ('filedrawer -h' failed); nothing changed" >&2
+  exit 1
+fi
+
+if [[ -e "$bin/filedrawer" ]]; then
+  cp -p "$bin/filedrawer" "$bin/filedrawer.previous"
+fi
+mv -f "$new" "$bin/filedrawer"
+systemctl restart "$service"
+
+healthy() {
+  local tries
+  for (( tries = 0; tries < health_seconds; tries++ )); do
+    if curl -fsS -o /dev/null --max-time 2 "http://127.0.0.1:$port/tags"; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+if healthy; then
+  echo "deployed to $environment"
+  exit 0
+fi
+if [[ -e "$bin/filedrawer.previous" ]]; then
+  mv -f "$bin/filedrawer.previous" "$bin/filedrawer"
+  systemctl restart "$service"
+  echo "the new server didn't answer within ${health_seconds}s; rolled back to the previous binary" >&2
+else
+  echo "the new server didn't answer within ${health_seconds}s, and there is no previous binary to roll back to" >&2
+fi
+exit 1

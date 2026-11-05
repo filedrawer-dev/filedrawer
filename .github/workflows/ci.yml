@@ -27,3 +27,72 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - run: uvx pre-commit@4.7.0 run --all-files
       - run: bin/agent-pre-commit
+
+  # A push to main that passes the checks deploys to staging (design.md, Hosting and
+  # operations). The binary is static (musl), built for the CX23's x86_64. Building and
+  # deploying are separate jobs, so no third-party action runs while the deploy key is
+  # on disk. The key may only run filedrawer-receive on the VPS, which hands the upload
+  # to filedrawer-install: it checks the hash, installs with a health check, and rolls
+  # back on failure. ops/provision-vps sets up the key and writes DEPLOY_SSH_KEY (a
+  # secret of the `staging` environment, which only main may deploy to), VPS_HOST and
+  # VPS_KNOWN_HOSTS.
+  build-staging:
+    needs: check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BINARY: target/x86_64-unknown-linux-musl/release/filedrawer
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: musl
+      # SQLite's C code compiles into the binary, so the musl C compiler is needed.
+      - run: sudo apt-get update -q && sudo apt-get install -y -q musl-tools
+      - name: Build
+        env:
+          SQLX_OFFLINE: "true"
+        run: cargo build --release --locked --target x86_64-unknown-linux-musl --bin filedrawer
+      - name: Check the binary is static
+        run: |
+          file "$BINARY"
+          file "$BINARY" | grep -Eq "static(ally|-pie) linked"
+          "$BINARY" -h > /dev/null
+      - uses: actions/upload-artifact@v4
+        with:
+          name: filedrawer
+          path: ${{ env.BINARY }}
+          retention-days: 7
+
+  deploy-staging:
+    needs: build-staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: staging
+    concurrency:
+      group: deploy-staging
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: filedrawer
+      - name: Deploy
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          VPS_HOST: ${{ vars.VPS_HOST }}
+          VPS_KNOWN_HOSTS: ${{ vars.VPS_KNOWN_HOSTS }}
+        run: |
+          key=$(mktemp)
+          trap 'rm -f "$key"' EXIT
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$key"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > known_hosts
+          hash=$(sha256sum filedrawer | cut -d' ' -f1)
+          ssh -i "$key" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile=known_hosts \
+            "deploy@$VPS_HOST" "deploy staging $hash" < filedrawer

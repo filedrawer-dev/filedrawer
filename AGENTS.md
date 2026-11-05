@@ -6,10 +6,14 @@ Status: building. The owner and an agent settled the design on 2026-11-03 and 20
 
 ## Next steps
 
-1. **Build** in the order given in `docs/design.md`, under Build order, continuing step 2 in slices the owner chose: next, accounts (signup, verification email, login, server-side sessions in SQLite, password reset, tokens in the browser), then `/skill.md`, then resubmission, versions, batches and series. Staging needs the deploy workflow and the deploy-key stage of `ops/provision-vps`. `CODING_STANDARDS.md` holds the rules the review applies.
+1. **Build** in the order given in `docs/design.md`, under Build order, continuing step 2 in slices the owner chose: next, accounts (signup, verification email, login, server-side sessions in SQLite, password reset, tokens in the browser), then `/skill.md`, then resubmission, versions, batches and series. `CODING_STANDARDS.md` holds the rules the review applies.
 2. **Settle `uncertainties.md`** with the owner: choices the docs left open while building.
 
 The owner has root on the VPS but keeps SSH keys out of the sandbox. Anything done on the server is a tool the owner runs from their own machine, such as `ops/provision-vps`.
+
+## Deploys
+
+A push to `main` that passes CI deploys to staging (`build-staging` and `deploy-staging` in `.github/workflows/ci.yml`). The build job makes a static x86_64 musl binary; the deploy job, which runs no third-party action, pipes it over SSH as the `deploy` user. That user's key may only run `ops/remote/filedrawer-receive`, which allows one deploy at a time and passes the upload on stdin to `ops/remote/filedrawer-install` through one sudo rule. The install script keeps its own root-owned copy, checks the size and hash, runs the binary's `-h` as the service user with a timeout, keeps the previous binary, and rolls back if `/tags` doesn't answer within 30 s. `ops/provision-vps` sets up the user and key, stores `DEPLOY_SSH_KEY` as a secret of the `staging` environment (main only), and writes the variables `VPS_HOST` and `VPS_KNOWN_HOSTS`; rerunning it replaces the key. A binary that answers `/tags` passes, and it runs as `filedrawer` with staging's data and settings. Production deploys come at launch.
 
 The field test's entries and logs are in `field-test/`, git-excluded and local only; never commit or publish them without the owner's say.
 

@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# The deploy key's forced command (design.md, Hosting and operations). Runs as the
+# `deploy` user. GitHub Actions sends `deploy staging <sha256>` with the binary on
+# stdin; anything else is refused. One deploy runs at a time. The upload goes
+# straight to filedrawer-install, the one command sudo lets `deploy` run, which keeps
+# its own copy and checks the size and hash, so nothing here touches a path root
+# reads later.
+set -euo pipefail
+
+root="${FILEDRAWER_ROOT:-}"            # tests only
+
+refuse() {
+  echo "refused: $1" >&2
+  exit 2
+}
+
+command="${SSH_ORIGINAL_COMMAND:-}"
+if [[ ! "$command" =~ ^deploy\ (staging)\ ([0-9a-f]{64})$ ]]; then
+  refuse "this key only runs 'deploy staging <sha256>'"
+fi
+environment="${BASH_REMATCH[1]}"
+hash="${BASH_REMATCH[2]}"
+
+exec 9> "$root/var/lib/filedrawer-deploy/lock"
+flock -n 9 || refuse "another deploy is running"
+
+sudo -n /usr/local/sbin/filedrawer-install "$environment" "$hash"
