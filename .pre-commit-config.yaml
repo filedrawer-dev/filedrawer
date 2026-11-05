@@ -16,15 +16,14 @@ repos:
         language: system
         types: [rust]
         pass_filenames: false
-  - repo: https://github.com/lycheeverse/lychee
-    rev: lychee-v0.24.2
-    hooks:
       # Every markdown file on every commit (milliseconds), so renaming a heading or
       # deleting a file that another doc links to is refused too. The field test's
-      # drafts in field-test/ are skipped. CI runs lychee-action instead, which pins the
-      # release; this hook installs lychee through a script piped to bash.
+      # drafts in field-test/ are skipped. bin/lychee downloads lychee once per machine,
+      # pinned by SHA-256, and CI runs this same hook.
       - id: lychee
         name: lychee (links and anchors, offline)
+        entry: bin/lychee
+        language: script
         args:
           - --no-progress
           - --offline

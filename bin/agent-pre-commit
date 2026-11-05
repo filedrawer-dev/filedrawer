@@ -1,14 +1,15 @@
 #!/bin/sh
-# Slow checks for agents' commits: the tests and clippy, the Rust steps that follow the
+# Slow checks for agents' commits: the tests and clippy, the steps that follow the
 # pre-commit hooks (cargo fmt is one of those). bin/git-pre-commit runs this when
-# $AI_AGENT is set, and CI runs it directly. Nothing to do until Cargo.toml exists.
+# $AI_AGENT is set, and CI runs it directly.
 # The checks run on what's staged: a copy of the index in a temporary folder, so
-# unstaged changes can neither fail a commit nor rescue it. The repo's target/ is
-# shared, so dependencies build once. Each check's output shows only when it fails.
-# They run one after the other, since cargo locks target/ anyway.
+# unstaged changes can neither fail a commit nor rescue it. Each check's output shows
+# only when it fails. They run one after the other, since cargo locks target/ anyway.
+# bin/tests, the tests of the hook scripts, run through uvx with a pinned pytest, so the
+# host needs no venv. The Rust checks wait for Cargo.toml, and share the repo's target/
+# so dependencies build once.
 set -e
 repo=$(git rev-parse --show-toplevel)
-git cat-file -e :Cargo.toml 2>/dev/null || exit 0
 tree=$(mktemp -d)
 logs=$(mktemp -d)
 trap 'rm -rf "$tree" "$logs"' EXIT
@@ -17,8 +18,11 @@ git -C "$repo" checkout-index -a --prefix="$tree/"
 cd "$tree"
 # The hook's git variables name the repo being committed; no check should reach it.
 unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_OBJECT_DIRECTORY GIT_PREFIX
-export CARGO_TARGET_DIR="$repo/target"
 failed=0
-cargo test --quiet >"$logs/test" 2>&1 || { cat "$logs/test"; failed=1; }
-cargo clippy --quiet --all-targets -- -D warnings >"$logs/clippy" 2>&1 || { cat "$logs/clippy"; failed=1; }
+uvx --quiet pytest@9.2.0 -q -p no:cacheprovider bin/tests >"$logs/pytest" 2>&1 || { cat "$logs/pytest"; failed=1; }
+if [ -f Cargo.toml ]; then
+  export CARGO_TARGET_DIR="$repo/target"
+  cargo test --quiet >"$logs/test" 2>&1 || { cat "$logs/test"; failed=1; }
+  cargo clippy --quiet --all-targets -- -D warnings >"$logs/clippy" 2>&1 || { cat "$logs/clippy"; failed=1; }
+fi
 exit $failed

@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+"""Run lychee 0.24.2, pinned by SHA-256, for the commit hook and CI.
+
+    bin/lychee ARGS...    run lychee with ARGS
+
+The first run on a machine downloads lychee's release archive for this platform from
+GitHub, checks it against the SHA-256 in PINS, and caches the binary under
+$XDG_CACHE_HOME/filedrawer/lychee/ (~/.cache by default). Later runs use the cache and
+need no network. When the download fails or its hash doesn't match, nothing is cached,
+and the commit is refused with a note that `SKIP=lychee git commit` skips only this
+check.
+
+To move to another lychee release, change VERSION and every hash in PINS. Each release
+asset has a .sha256 file beside it, and GitHub's API lists a digest for it. Check that
+both agree before copying a hash here.
+
+Tests serve a fake archive by setting FILEDRAWER_LYCHEE_URL and FILEDRAWER_LYCHEE_SHA256.
+An overridden URL alone is still checked against the pinned hash.
+
+It downloads with curl rather than urllib, because some macOS Pythons have no CA
+certificates.
+"""
+
+import hashlib
+import os
+import platform
+import subprocess
+import sys
+import tarfile
+import tempfile
+from pathlib import Path
+
+VERSION = "0.24.2"
+BASE_URL = f"https://github.com/lycheeverse/lychee/releases/download/lychee-v{VERSION}"
+# Each archive's SHA-256, from its .sha256 file, which matched GitHub's API digest on
+# 2026-11-04. Linux uses the static musl builds, which run on any distro.
+PINS = {
+    "x86_64-unknown-linux-musl": "73657a111819a30c47c08352896796f23d64e4eb2b3ed39b6d32149241566fc5",
+    "aarch64-unknown-linux-musl": "5d0b0e3aeab240f41920c633a6eaf97599be6eedda034b36e858ede7dba5e535",
+    "aarch64-apple-darwin": "c9d3740ea2d891854d37116c9fba840f37b6e7c89d330e7db84ac333631c4977",
+    "x86_64-apple-darwin": "887503a9cff667d322b8d0892b40bf49976eb9507af8483220a3706cdad55978",
+}
+# (platform.system(), platform.machine() in lower case) to release target.
+TARGETS = {
+    ("Linux", "x86_64"): "x86_64-unknown-linux-musl",
+    ("Linux", "amd64"): "x86_64-unknown-linux-musl",
+    ("Linux", "aarch64"): "aarch64-unknown-linux-musl",
+    ("Linux", "arm64"): "aarch64-unknown-linux-musl",
+    ("Darwin", "arm64"): "aarch64-apple-darwin",
+    ("Darwin", "aarch64"): "aarch64-apple-darwin",
+    ("Darwin", "x86_64"): "x86_64-apple-darwin",
+}
+SKIP_HINT = "To commit without this check: SKIP=lychee git commit"
+
+
+class InstallError(Exception):
+    pass
+
+
+def target(system: str, machine: str) -> str | None:
+    """The release target for this platform, or None when lychee has no build for it."""
+    return TARGETS.get((system, machine.lower()))
+
+
+def cache_dir() -> Path:
+    root = os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache"
+    return Path(root) / "filedrawer" / "lychee"
+
+
+def download(url: str, dest: Path) -> None:
+    command = [
+        "curl", "--fail", "--silent", "--show-error", "--location",
+        "--connect-timeout", "15",
+        # file:// is for the tests' fake archives; the hash check guards every source.
+        "--proto", "=https,file", "--proto-redir", "=https",
+        "--output", str(dest), url,
+    ]  # fmt: skip
+    try:
+        subprocess.run(command, check=True, capture_output=True, text=True)
+    except FileNotFoundError:
+        raise InstallError("downloading lychee needs curl, which isn't on PATH")
+    except subprocess.CalledProcessError as error:
+        raise InstallError(f"couldn't download {url}: {error.stderr.strip()}")
+
+
+def install(url: str, sha256: str, member: str, binary: Path) -> None:
+    """Download the archive at url, check its hash, and put its member at binary."""
+    cache_dir().mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=cache_dir()) as tmp:
+        archive = Path(tmp) / "lychee.tar.gz"
+        download(url, archive)
+        actual = hashlib.sha256(archive.read_bytes()).hexdigest()
+        if actual != sha256:
+            raise InstallError(
+                f"SHA-256 mismatch for {url}: expected {sha256}, got {actual}"
+            )
+        with tarfile.open(archive) as tar:
+            try:
+                source = tar.extractfile(member)
+            except KeyError:
+                source = None
+            if source is None:
+                raise InstallError(f"{url} has no file {member}")
+            staged = Path(tmp) / "lychee"
+            staged.write_bytes(source.read())
+        staged.chmod(0o755)
+        binary.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(staged, binary)
+
+
+def fail(why: str) -> int:
+    print(f"bin/lychee: {why}\n{SKIP_HINT}", file=sys.stderr)
+    return 1
+
+
+def main(argv: list[str]) -> int:
+    name = target(platform.system(), platform.machine())
+    if name is None:
+        return fail(
+            f"lychee {VERSION} has no release for {platform.system()} "
+            f"{platform.machine()}"
+        )
+    url = os.environ.get("FILEDRAWER_LYCHEE_URL", f"{BASE_URL}/lychee-{name}.tar.gz")
+    sha256 = os.environ.get("FILEDRAWER_LYCHEE_SHA256", PINS[name])
+    # Keyed by hash, so a new pin never runs a binary cached under an old one.
+    binary = cache_dir() / sha256 / "lychee"
+    if not binary.is_file():
+        try:
+            install(url, sha256, f"lychee-{name}/lychee", binary)
+        except InstallError as error:
+            return fail(str(error))
+    os.execv(binary, [str(binary), *argv])
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
