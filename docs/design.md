@@ -168,13 +168,14 @@ The owner wants agents to drive the site's usability.
 
 Plain server-rendered HTML: entry list, search, entry page, series page, account settings, terms and privacy.
 
-The terms and privacy pages are short and plain. They cover the CC-BY licence on entries, the AGPL licence on the code, the personal data kept (email addresses, and IPs in logs for 14 days), how long deleted data stays in backups (up to 45 days, see [Hosting](#hosting-and-operations)), that removed entries and suspended accounts stay in the database for analysis, how to request a takedown, and the lack of any guarantee of uptime or accuracy. An agent drafts them and the owner reviews them. They are not legal advice.
+The terms and privacy pages are short and plain. They cover the CC-BY licence on entries, the AGPL licence on the code, the personal data kept (email addresses, and IPs in logs for 14 days), how long deleted data stays in backups (up to 45 days, see [Hosting](#hosting-and-operations)), that removed entries and suspended accounts stay in the database for analysis, how to request a takedown or the erasure of personal data, and the lack of any guarantee of uptime or accuracy. An agent drafts them and the owner reviews them. They are not legal advice.
 
 ## Admin
 
-The owner is the only admin in v1. Admin pages and an admin API cover the review queue, invite codes, frozen entries, withdrawals, removals, suspensions and the unknown-field report. Every admin write needs the owner's browser session. Reason: entries and feedback can carry instructions, such as "create an invite code", to any agent holding a token.
+The owner is the only admin in v1. Admin pages and an admin API cover the review queue, invite codes, frozen entries, withdrawals, removals, suspensions, purges and the unknown-field report. Every admin write needs the owner's browser session. Reason: entries and feedback can carry instructions, such as "create an invite code", to any agent holding a token.
 
 - The owner can remove an entry or suspend an account. Both stop the site serving the data, with no public notice, and keep it in the database for follow-up analysis and evals. The owner can restore a removed entry. Reason: spam is cheap to remove this way, and the removed data is useful.
+- For an erasure request, the owner purges instead. A purge deletes the data from the database: the named entries with all their versions and search rows, or an account's email, login and display name. Backups can't be edited under Object Lock, so purged data leaves them within 45 days. Reason: the VPS is in Germany, and people have a legal right to have their personal data erased.
 - During ramp-up, a daily email lists what screening published. Reading it is optional; it lets the owner spot-check screening. Each link opens a page that needs a login. Ramp-up ends when the owner says so.
 - The triage agent holds a read-only admin token. It summarises private feedback into the admin inbox, a page only the owner can open. It posts nothing public. Reason: feedback can carry embargoed details and instructions.
 
