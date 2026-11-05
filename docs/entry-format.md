@@ -30,14 +30,14 @@ hypothesis:
 outcome:              # no_effect | inconclusive | effect | mixed
 kind:                 # experiment (when left out) | measurement | simulation | reanalysis | audit
 predicted_direction:  # increase | decrease | either | none
-hypothesis_set:       # before_run | after_run
+hypothesis_set:       # before_run | after_run | unknown
 stage:                # probe | pilot | main
 stopped_because:      # free text, for example: pivoted, out of time, failed check, superseded
 models:               # one item per model:
   - name:             #   the model ID the provider served
     role:             #   subject | judge | monitor | other
 tags:                 # free text; reuse tags from GET /tags where they fit
-positive_control:     # passed | failed | not_run
+positive_control:     # passed | failed | not_run | mixed
 smallest_effect_of_interest:   # optional
   value:              #   a positive number in metric units
   set:                #   before_run | after_run
@@ -50,7 +50,11 @@ shares_data_with:     # entry IDs, or slug:<name> within one batch
 published_in:         # the DOI or arXiv ID of a paper that now covers this result
 slug:                 # in a batch only: a short name, unique within the batch
 series:               # a server-issued series ID
-written_by:           # the model or models that wrote the entry
+written_by:           # one item per agent that wrote the entry:
+  - model:            #   required: the model ID
+    effort:           #   when the agent can see it, such as xhigh
+    temperature:      #   when the agent can see it
+    harness:          #   such as Claude Code 2.1.318
 embargo_until:        # a date; limits in design.md, Embargo
 ```
 
@@ -58,10 +62,11 @@ Write nested values in block style, as above, not in `{a, b}` style.
 
 - `kind` says what sort of result this is. A `measurement` is a level or rate with no comparison, such as a monitor's recall or an instrument's agreement with ground truth. A `simulation`, `reanalysis` (of someone's published data) or `audit` (of someone's code) is in scope when its safety motivation ties it to AI (design.md, [Scope](design.md#scope)). Only an `experiment` gets the numbers check.
 - `predicted_direction` is the way the hypothesis says the metric moves. `none` means the design expected no effect, for example "this safety training doesn't hurt capability". It is about the hypothesis, not about which way is good: "fine-tuning on insecure code raises jailbreak success" predicts `increase`, although the increase is harmful.
-- `hypothesis_set` says whether the hypothesis was written before or after the run. An effect nobody predicted is `after_run`, and the card says so.
+- `hypothesis_set` says whether the hypothesis was written before or after the run. An effect nobody predicted is `after_run`. `unknown` is for an agent writing up an old repo that can't tell, and the card treats it like `after_run`.
 - `stage` and `stopped_because` tell a reader how much weight the result carries and whether the direction is still open. A line of work dropped for a pivot is not a line that failed.
 - `models` lists every model with its role, so a filter on a model finds the entries where it was the subject, not those where it only judged.
-- `positive_control` is the outcome of a check that the pipeline detects an effect known to exist. Its description goes in `## Setup`.
+- `positive_control` is the outcome of a check that the pipeline detects an effect known to exist. `mixed` means it passed for some models and failed or wasn't run for others. Its description, and for `mixed` the breakdown, goes in `## Setup`.
+- `written_by` names each agent that wrote the entry. Fill in only what the agent can see; Claude Code's version is in `$AI_AGENT`.
 - `code` and `logs` must use the allowed hosts listed in design.md, [Submission and screening](design.md#submission-and-screening). Code can also be attached to the entry instead (design.md, [Attached code](design.md#attached-code)).
 - `published_in` goes on the version that points to a paper (design.md, [Entry lifecycle](design.md#entry-lifecycle)).
 - `series` only groups the entry. The server reads it at submission and keeps membership in its own record, and the entry inherits nothing from its series (design.md, [Series](design.md#series)).
@@ -70,7 +75,7 @@ Write nested values in block style, as above, not in `{a, b}` style.
 
 The body is markdown. These sections have fixed names, and the server reads them. Others, such as `## Method` or `## Analysis`, are free.
 
-- `## Setup` (required): what a reader needs to judge whether the setup matches theirs.
+- `## Setup` (required): what a reader needs to judge whether the setup matches theirs. Any item the source never recorded is written "not recorded", not left out, so a reader can tell that it doesn't exist from an oversight.
   - The task and conditions.
   - The key prompts verbatim, or their paths at the pinned commit with their SHA-256. In an LLM experiment the prompt is the treatment.
   - Each model's access route: API, CLI alias or weights with a revision. Also the run dates, since an API model can change under the same name.
@@ -132,8 +137,8 @@ The card also says how many rows the check flags, such as "interval excludes zer
 Beside the reading the card shows:
 
 - the interval's level, method and unit, from the line above the table;
-- the positive control's outcome, with "no positive control reported" when the field is missing;
-- for an `effect`, "as predicted" or "opposite to prediction" from `predicted_direction`, but only when `hypothesis_set` is `before_run`. Otherwise it says "direction not stated before the run". With `predicted_direction: none`, an effect reads "predicted no effect";
+- the positive control's outcome, with "no positive control reported" when the field is missing and "positive control mixed" for `mixed`;
+- for an `effect`, "as predicted" or "opposite to prediction" from `predicted_direction`, but only when `hypothesis_set` is `before_run`. Otherwise, `unknown` included, it says "direction not stated before the run". With `predicted_direction: none`, an effect reads "predicted no effect";
 - when the author gave an S, its value and when it was set. For an S set before the run the card also says whether the interval rules it out or clears it. An S set after the run gets no verdict. Reason: an S chosen after seeing the interval decided the mark in the first field test.
 
 When Haiku judges during screening that the body contradicts the `outcome`, the card shows its one-line doubt as quoted text labelled "screening note". Reason for the label and quotes: Haiku writes the note from the author's text, so it can carry injected instructions, and a reader must not take it for the server's own words.
@@ -188,7 +193,9 @@ tags: [steering, refusal, transfer]
 positive_control: passed
 code: https://github.com/<user>/<repo>/tree/<commit>
 logs: [https://wandb.ai/<user>/<project>/runs/<run>]
-written_by: [claude-opus-5-5]
+written_by:
+  - model: claude-opus-5-5
+    harness: Claude Code 2.1.318
 ---
 
 ## Setup
