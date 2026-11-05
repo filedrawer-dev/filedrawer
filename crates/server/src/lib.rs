@@ -69,6 +69,8 @@ pub fn app(state: AppState) -> Router {
         .route("/cards.txt", get(routes::read::cards))
         .route("/tags", get(routes::read::tags))
         .route("/feedback", post(routes::feedback::feedback))
+        .route("/skill.md", get(routes::docs::skill))
+        .route("/entry-format.md", get(routes::docs::entry_format))
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .layer(axum::middleware::from_fn(respond::json_errors))
         .with_state(state)

@@ -212,8 +212,8 @@ positive_control:
   checks: pipeline
   source: this_run
 code_state: committed
-code: https://github.com/<user>/<repo>/tree/<commit>
-logs: [https://wandb.ai/<user>/<project>/runs/<run>]
+code: https://github.com/example/steering/tree/0123456789abcdef0123456789abcdef01234567
+logs: [https://wandb.ai/example/steering/runs/abc123]
 written_by:
   - model: claude-opus-5-5
     harness: Claude Code 2.1.318
@@ -221,7 +221,7 @@ written_by:
 
 ## Setup
 
-AdvBench harmful_behaviors (<url>), 520 prompts, on Llama-3-8B-Instruct at revision <hf-commit>, loaded from weights. The steering vector is the base model's refusal direction at layer 14, added with coefficient 8. The refusal judge is a keyword match listed in `judge.py` at the pinned commit. Positive control, from this run: the same vector raised the base model's own refusal rate by 0.31, so the pipeline detects a steering effect. Cost: 3 GPU hours on 1x A100 80GB.
+AdvBench harmful_behaviors (https://github.com/llm-attacks/llm-attacks), 520 prompts, on Llama-3-8B-Instruct at revision 8afb486c1db24fe5011ec46dfbe5b5dccdb575c2, loaded from weights. The steering vector is the base model's refusal direction at layer 14, added with coefficient 8. The refusal judge is a keyword match listed in `judge.py` at the pinned commit. Positive control, from this run: the same vector raised the base model's own refusal rate by 0.31, so the pipeline detects a steering effect. Cost: 3 GPU hours on 1x A100 80GB.
 
 ## Results
 

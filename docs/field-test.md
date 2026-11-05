@@ -18,6 +18,7 @@ Each agent gets a brief that stands on its own. It names:
 - the scope rules in force, which change between rounds, so list them each time;
 - the entries to write and where, under `field-test/round<n>/<repo>/`, which is git-excluded and local only;
 - every number from a source file, cited by path, and nothing invented;
+- for a run on staging, the staging key from `ops/.vps.env`, and that every request sends it as `X-Staging-Key` beside the API token, since staging's basic auth would otherwise take the `Authorization` header;
 - `apply-edits` for text replacements, since the `edit-script-gate` hook refuses Python scripts that read, replace and write a file (it did so 25 times in the first test);
 - the report rules below.
 
