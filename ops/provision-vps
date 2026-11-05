@@ -198,6 +198,37 @@ finish() {
 # the whole file before the first prompt, so an edit mid-run can't break it.
 # ──────────────────────────────────────────────────────────────────────────
 
+# remote SCRIPT [ENV=VALUE...]: runs ops/remote/SCRIPT as root on $VPS_HOST, with the
+# settings given in its environment.
+remote() {
+  local script="$1"; shift
+  ssh -o BatchMode=yes "root@$VPS_HOST" "$(remote_command "$@")" < "$REMOTE/$script"
+}
+
+# remote_with_secret SCRIPT NAME SECRET [ENV=VALUE...]: like remote, but SECRET goes
+# as the first line of stdin, ahead of the script, and the remote shell reads it into
+# $NAME. It never sits in a command line on either machine.
+remote_with_secret() {
+  local script="$1" name="$2" secret="$3"; shift 3
+  { printf '%s\n' "$secret"; cat "$REMOTE/$script"; } \
+    | ssh -o BatchMode=yes "root@$VPS_HOST" "IFS= read -r $name; export $name; $(remote_command "$@")"
+}
+
+# remote_command [ENV=VALUE...]: the remote command line that runs a script read
+# from stdin with these settings. ssh joins its arguments into one line for the
+# remote shell, so each setting is quoted; with none, it is plain `bash -s`.
+remote_command() {
+  local setting quoted=""
+  for setting in "$@"; do
+    quoted+="$(printf '%q' "$setting") "
+  done
+  if [[ -n "$quoted" ]]; then
+    printf 'env %sbash -s' "$quoted"
+  else
+    printf 'bash -s'
+  fi
+}
+
 run_wizard() {
 
 # Provisions the File Drawer VPS from your own machine, over your own SSH key
@@ -210,22 +241,6 @@ TOTAL_STAGES=9
 ENV_FILE="ops/.vps.env"
 REMOTE="$(dirname "$0")/remote"
 [[ -d "$REMOTE" ]] || { echo "run this from the repo: $REMOTE is missing" >&2; exit 1; }
-
-# remote SCRIPT [ENV=VALUE...]: runs ops/remote/SCRIPT as root on the VPS.
-remote() {
-  local script="$1"; shift
-  # ssh joins its arguments into one remote command line, so quote each one.
-  ssh -o BatchMode=yes "root@$VPS_HOST" "env $(printf '%q ' "$@")bash -s" < "$REMOTE/$script"
-}
-
-# remote_with_secret SCRIPT NAME SECRET [ENV=VALUE...]: like remote, but SECRET goes
-# as the first line of stdin, ahead of the script, and the remote shell reads it into
-# $NAME. It never sits in a command line on either machine.
-remote_with_secret() {
-  local script="$1" name="$2" secret="$3"; shift 3
-  { printf '%s\n' "$secret"; cat "$REMOTE/$script"; } | ssh -o BatchMode=yes "root@$VPS_HOST" \
-    "IFS= read -r $name; export $name; env $(printf '%q ' "$@")bash -s"
-}
 
 # ask_new_secret KEY "Prompt": asks twice, and stops the wizard if the two differ or
 # are empty.
@@ -402,4 +417,6 @@ pause
 finish
 }
 
+# Tests source the helpers above without running the wizard.
+[[ "${PROVISION_VPS_SOURCE_ONLY:-}" == 1 ]] && return 0
 run_wizard "$@"; exit
