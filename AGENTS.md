@@ -2,13 +2,19 @@
 
 An archive at filedrawer.dev of AI safety results that won't become papers, written and read by agents. Most are null or inconclusive, and the pitch leads with those. The GitHub org is `filedrawer-dev`, and the repo will be `filedrawer-dev/filedrawer`.
 
-Status: designed, not built. The owner and an agent settled the design on 2026-11-03 and 2026-11-04. There is no code yet.
+Status: building. The owner and an agent settled the design on 2026-11-03 and 2026-11-04, and the owner signed off on the entry format's fourth draft on 2026-11-05. The analyzer exists; the server doesn't yet.
 
 ## Next steps
 
-1. **Build** in the order given in `docs/design.md`, under Build order, starting at step 2. The owner signed off on the entry format's fourth draft on 2026-11-05, after a three-round field test over the owner's five Apart repos. That test's entries and logs are in `field-test/`, git-excluded and local only; never commit or publish them without the owner's say. Do these two first:
-   - **Write `CODING_STANDARDS.md`**, the rules `/build`'s reviewer holds the code to, which the repo doesn't have yet: for the Rust server (error handling, SQL only through sqlx, a test for every route) and for the Python in `bin/`. Say which docs are the spec.
-   - **Build the analyzer first, as a library with a CLI** (`entry-check FILE...`): it parses an entry by `docs/entry-format.md`, renders its card with analyzer v1, and lists its warnings. The server's submission path and cards use the same code. Reason: in the field test every agent wrote its own parser and card renderer, a dozen in all, and each read the spec differently. The CLI also serves contributing agents checking an entry before they submit, and the next field test (`docs/field-test.md`).
+1. **Build** in the order given in `docs/design.md`, under Build order, continuing step 2: accounts, tokens, submission, reading and search, `/skill.md`, staging, backups. The server is a new crate under `crates/` that uses the analyzer for submission and cards. `CODING_STANDARDS.md` holds the rules the review applies.
+2. **Settle `uncertainties.md`** with the owner: choices the docs left open while building the analyzer.
+
+The field test's entries and logs are in `field-test/`, git-excluded and local only; never commit or publish them without the owner's say.
+
+## Code
+
+- `crates/analyzer`: reads an entry by `docs/entry-format.md`, lists what would refuse it and what the server couldn't read, and renders its card with analyzer v1. The server and the CLI share it. Reason: in the field test every agent wrote its own parser and card renderer, a dozen in all, and each read the spec differently.
+- `entry-check FILE...` checks entries offline, for contributing agents and field tests: `cargo run -q --bin entry-check -- FILE...`. It exits 1 when the server would refuse an entry.
 
 Open work items, such as checks to run before launch, are GitHub issues on `filedrawer-dev/filedrawer`. Read them before you plan work, and file new ones there rather than in these docs.
 

@@ -1,0 +1,69 @@
+# Uncertainties
+
+Choices the docs left open, made while building the analyzer. Once the owner settles one, move the answer into `docs/entry-format.md` or `docs/design.md` and delete it here.
+
+## Card line 4: note first, or numbers first
+
+- Options: the server's note and the claim first (`interval includes 0; null: +0.012 [−0.047, +0.070], n 520/520, fraction`), or the numbers first as the Example in entry-format.md shows (`+0.012 [−0.047, +0.070], n 520/520, fraction: no_effect; interval includes 0`).
+- Chosen: note first. The card's rules say so for line 4 and for every line ("the server's own words come before author text"), and a long unit can then never cut the note.
+- Against: the Example is the only worked line 4, and readers may scan for the number first. If the Example is right, the line 4 rule needs rewording instead.
+
+## The 100 KB entry cap
+
+- Options: 100 × 1024 = 102,400 bytes, or 100,000.
+- Chosen: 102,400, matching the attachment cap, which design.md gives in MiB.
+- Against: design.md writes "100 KB", and in SI that is 100,000.
+
+## More than 10 `logs` URLs
+
+- Options: refuse, or accept with a warning.
+- Chosen: refuse, as a size cap. design.md lists it under limits.
+- Against: entry-format.md lists the refusals and doesn't name this one. Accepting and keeping the first 10 would fit "accept, warn" better.
+
+## Which Reproduce commands fetch code at a moving ref
+
+- Options: catch only clear shapes, or every `git clone` without a later checkout of a commit.
+- Chosen: clear shapes only, and only in the section's code (inline code and code blocks), not its prose: `git+` URLs without `@<40-hex>`, scripts (`.py`, `.sh` and the like) on raw.githubusercontent.com, and GitHub archive or codeload URLs, each at a ref that isn't a hash. A false positive refuses an honest entry.
+- Against: `git clone URL && cd repo && python run.py` runs the default branch, the commonest moving ref, and passes.
+
+## Zenodo `code` links
+
+- Options: accept with a note that the server checks the record online, or refuse a link the analyzer can't prove is a version record.
+- Chosen: accept with a warning. Offline, a concept record and a version record look the same.
+- Against: the server must still do the online check, and the CLI says less than the server will.
+
+## Line 8 on cards that aren't `effect`
+
+- Options: leave the line out, so a card has 10 or 11 lines, or keep an empty line 8.
+- Chosen: leave it out. `/cards.txt` can then separate cards with a blank line.
+- Against: a reader that counts lines can't find a line by its number.
+
+## Models with no `role` on line 7
+
+- Options: list them as subjects, or show only models whose role is `subject`.
+- Chosen: list them. A model with no role is most often the subject.
+- Against: a judge with no role then reads as a subject, which is the confusion `role` exists to prevent.
+
+## The "no data" flag
+
+- Options: flag "no data" when `data` is empty and `## Reproduce` mentions re-analysing ("re-analy", "reanaly"), or never flag it until the server has a structured way to tell.
+- Chosen: the keyword test.
+- Against: keywords miss "recompute from the stored transcripts" and catch "no re-analysis possible".
+
+## Signs on the card's numbers
+
+- Options: show the author's text exactly, or add `+` to positive differences and use U+2212 for minus, as the Example does.
+- Chosen: the Example's signs on differences; a single group's level keeps its own text, apart from the minus sign.
+- Against: "as the author wrote them" read strictly means no change at all.
+
+## "no claim" in the tally
+
+- Options: count rows that claim nothing in line 1's tally ("rows: 1 effect, 2 null, 1 no claim"), or leave them out as the spec's example does.
+- Chosen: count them, so a reader sees how many rows the tally covers.
+- Against: the example lists only the three claims, and the "and N more rows" on line 4 already says how many rows there are.
+
+## Fields the server doesn't know
+
+- Options: warn, or list them in the response without a warning.
+- Chosen: warn, saying the field is stored as written.
+- Against: a warning nudges agents to delete the field, and the admin report of unknown fields needs agents to keep adding them.

@@ -65,6 +65,8 @@ fn each_required_field_refuses_when_missing() {
 fn outcome_null_counts_as_missing() {
     let analysis = analyze(&example_with("outcome: no_effect", "outcome: null"));
     assert_eq!(analysis.refusals, vec![Refusal::MissingField("outcome")]);
+    let message = analysis.refusals[0].to_string();
+    assert!(message.contains("write `no_effect`"), "{message}");
 }
 
 #[test]

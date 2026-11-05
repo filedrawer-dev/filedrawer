@@ -26,6 +26,11 @@ impl fmt::Display for Refusal {
             Refusal::FrontMatterUnreadable(why) => {
                 write!(f, "the front matter can't be read: {why}")
             }
+            Refusal::MissingField("outcome") => write!(
+                f,
+                "the required field `outcome` is missing; YAML reads a bare `null` as no \
+                 value, so write `no_effect` for a null result"
+            ),
             Refusal::MissingField(name) => write!(f, "the required field `{name}` is missing"),
             Refusal::MissingSection(name) => {
                 write!(f, "the required section `## {name}` is missing")
