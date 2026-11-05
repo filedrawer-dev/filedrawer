@@ -9,6 +9,18 @@ repos:
         entry: bin/slop-lint
         language: script
         types: [markdown]
+      # The Python in bin/ (CODING_STANDARDS.md): lint and formatting, through uvx so
+      # the host needs no venv.
+      - id: ruff
+        name: ruff check
+        entry: uvx ruff@0.14.4 check
+        language: system
+        types: [python]
+      - id: ruff-format
+        name: ruff format --check
+        entry: uvx ruff@0.14.4 format --check
+        language: system
+        types: [python]
       # Only when a .rs file is staged, so a docs commit needs no cargo.
       - id: cargo-fmt
         name: cargo fmt --check
