@@ -43,5 +43,6 @@ pub fn app(state: AppState) -> Router {
         .route("/tags", get(routes::read::tags))
         .route("/feedback", post(routes::feedback::feedback))
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
+        .layer(axum::middleware::from_fn(respond::json_errors))
         .with_state(state)
 }

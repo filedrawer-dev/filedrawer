@@ -22,7 +22,9 @@ impl FromRequestParts<AppState> for TokenAccount {
             .headers
             .get(header::AUTHORIZATION)
             .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.strip_prefix("Bearer "))
+            .and_then(|value| value.split_once(' '))
+            .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("bearer"))
+            .map(|(_, token)| token)
             .ok_or(AppError::Unauthorized)?;
         let hash = ids::token_hash(token.trim());
         sqlx::query_as!(

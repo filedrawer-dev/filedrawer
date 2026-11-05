@@ -1,7 +1,7 @@
 //! Times and dates as the database stores them.
 
+use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
-use time::{Date, OffsetDateTime};
 
 /// Now, in UTC, as RFC 3339.
 pub fn now() -> String {
@@ -10,7 +10,7 @@ pub fn now() -> String {
         .expect("RFC 3339 formats every UTC time")
 }
 
-/// Today's date in UTC.
-pub fn today() -> Date {
-    OffsetDateTime::now_utc().date()
+/// The current time in UTC.
+pub fn now_utc() -> OffsetDateTime {
+    OffsetDateTime::now_utc()
 }

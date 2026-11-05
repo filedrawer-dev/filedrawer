@@ -53,10 +53,12 @@ async fn search_finds_entries_by_words_and_returns_cards() {
     let probes = app.submit(&entry("Linear probes find nothing", "")).await;
     let body = app.get("/search?q=steering%20vectors").await.body;
     assert!(
-        body.contains(&format!("{steering}; experiment; null")),
+        body.starts_with(&format!("{steering}; experiment; null")),
         "{body}"
     );
-    assert!(!body.contains(&probes), "{body}");
+    // Every fixture's hypothesis mentions steering, so the probes entry matches too,
+    // but ranks below the one whose title has both words.
+    assert!(body.contains(&probes), "{body}");
     assert!(
         app.get("/search?q=nonexistentword")
             .await
@@ -177,4 +179,81 @@ async fn tags_lists_public_tags_with_counts() {
     let json = app.get_json("/tags").await;
     assert_eq!(json["tags"][0]["tag"], "steering");
     assert_eq!(json["tags"][0]["count"], 2);
+}
+
+#[tokio::test]
+async fn the_entry_page_shows_the_card_above_the_delimiter() {
+    let app = test_app().await;
+    let id = app.submit(&entry("T", "")).await;
+    let page = app.get(&format!("/e/{id}")).await.body;
+    let (server, _) = page.split_once(DELIMITER).unwrap();
+    assert!(
+        server.contains(&format!("card:\n  {id}; experiment; null")),
+        "{server}"
+    );
+}
+
+#[tokio::test]
+async fn a_question_in_a_sentence_finds_entries_that_share_any_of_its_words() {
+    let app = test_app().await;
+    let steering = app
+        .submit(&entry("Steering vectors do not transfer", ""))
+        .await;
+    let body = app
+        .get("/search?q=has%20anyone%20tried%20steering%20vectors%3F")
+        .await
+        .body;
+    assert!(body.contains(&steering), "{body}");
+}
+
+#[tokio::test]
+async fn search_puts_the_best_match_first() {
+    let app = test_app().await;
+    let weak = app.submit(&entry("Probes on refusal", "")).await;
+    let strong = app
+        .submit(&entry(
+            "Refusal probes and refusal steering for refusal transfer",
+            "",
+        ))
+        .await;
+    let newest = app.submit(&entry("Unrelated linear probes", "")).await;
+    let json = app.get_json("/search?q=refusal%20transfer").await;
+    let ids: Vec<&str> = json["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["id"].as_str().unwrap())
+        .collect();
+    // Every fixture's hypothesis says "refusals", so all three match; the title that
+    // says it three times, with "transfer", ranks first and the newest doesn't win.
+    assert_eq!(ids.first(), Some(&strong.as_str()), "{ids:?}");
+    assert!(ids.contains(&weak.as_str()));
+    assert_ne!(ids.first(), Some(&newest.as_str()));
+}
+
+#[tokio::test]
+async fn errors_answer_in_json_when_asked_and_q0_is_not_asking() {
+    let app = test_app().await;
+    let reply = app
+        .send(
+            axum::http::Request::get("/e/0000000000")
+                .header("accept", "application/json")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(reply.status, StatusCode::NOT_FOUND);
+    let json: serde_json::Value = serde_json::from_str(&reply.body).expect(&reply.body);
+    assert_eq!(json["error"], "not found");
+
+    let id = app.submit(&entry("T", "")).await;
+    let reply = app
+        .send(
+            axum::http::Request::get(format!("/e/{id}"))
+                .header("accept", "application/json;q=0, text/plain")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await;
+    assert!(reply.body.starts_with("id: "), "{}", reply.body);
 }

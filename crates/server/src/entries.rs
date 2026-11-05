@@ -212,7 +212,8 @@ pub struct Filters {
     pub row_claim: Option<Claim>,
 }
 
-/// Public entries matching `filters`, newest first.
+/// Public entries matching `filters`: best match first when there are search words
+/// (bm25, with the title weighted most), otherwise newest first.
 pub async fn search(
     pool: &SqlitePool,
     filters: &Filters,
@@ -238,7 +239,12 @@ pub async fn search(
              AND ((?7 IS NULL AND ?8 IS NULL) OR e.seq IN (
                     SELECT entry_seq FROM entry_rows
                     WHERE (?7 IS NULL OR model = ?7) AND (?8 IS NULL OR claim = ?8)))
-           ORDER BY e.published_at DESC, e.seq DESC
+           ORDER BY
+             -- CASE runs the MATCH only when there are words; MATCH NULL is an error.
+             CASE WHEN ?1 IS NULL THEN NULL ELSE (
+               SELECT bm25(entries_fts, 10.0, 5.0, 2.0, 1.0) FROM entries_fts
+               WHERE entries_fts MATCH ?1 AND rowid = e.seq) END,
+             e.published_at DESC, e.seq DESC
            LIMIT ?9 OFFSET ?10"#,
         filters.words,
         outcome,
@@ -280,13 +286,15 @@ pub async fn tags(pool: &SqlitePool) -> Result<Vec<(String, i64)>, sqlx::Error> 
     Ok(rows.into_iter().map(|row| (row.tag, row.count)).collect())
 }
 
-/// Turns free text into an FTS5 query that matches every word, so a reader's text can
-/// never be read as query syntax. `None` when it has no words.
+/// Turns free text into an FTS5 query that matches any of its words, each quoted so a
+/// reader's text is never read as query syntax. Agents ask in sentences, and bm25
+/// ranks entries with more of the words, and rarer ones, first. `None` when it has no
+/// words.
 pub fn fts_query(text: &str) -> Option<String> {
     let words: Vec<String> = text
         .split(|c: char| !c.is_alphanumeric())
         .filter(|word| !word.is_empty())
         .map(|word| format!("\"{word}\""))
         .collect();
-    (!words.is_empty()).then(|| words.join(" "))
+    (!words.is_empty()).then(|| words.join(" OR "))
 }

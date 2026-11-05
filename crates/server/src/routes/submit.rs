@@ -1,6 +1,6 @@
 //! `POST /entries` (design.md, Submission and screening; Entry status; Embargo).
 
-use analyzer::{MAX_ENTRY_BYTES, Refusal, analyze, render_card, stored_text};
+use analyzer::{MAX_ENTRY_BYTES, Refusal, WarningKind, analyze, render_card, stored_text};
 use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -11,7 +11,7 @@ use crate::auth::TokenAccount;
 use crate::embargo::{Release, release};
 use crate::entries;
 use crate::error::AppError;
-use crate::respond::Format;
+use crate::respond::{DELIMITER, Format};
 use crate::screening::Verdict;
 use crate::{AppState, time};
 
@@ -34,8 +34,22 @@ pub async fn submit(
     let source = stored_text(text);
     let analysis = analyze(&source);
     let mut reasons: Vec<String> = analysis.refusals.iter().map(ToString::to_string).collect();
-    let release = release(analysis.fields.embargo_until.as_deref(), time::today())
-        .map_err(|why| reasons.push(why))
+    // stored_text removes reserved fields; one that survives, as in a front matter
+    // written as one `{...}` line, is refused rather than stored.
+    reasons.extend(
+        analysis
+            .warnings
+            .iter()
+            .filter(|warning| warning.kind == WarningKind::StrippedField)
+            .map(|warning| {
+                format!(
+                    "{}, but the server couldn't remove it from this front matter; delete it",
+                    warning.message
+                )
+            }),
+    );
+    let release = release(analysis.fields.embargo_until.as_deref(), time::now_utc())
+        .map_err(|why| reasons.push(why.to_string()))
         .ok();
     let Some(release) = release.filter(|_| reasons.is_empty()) else {
         return Err(AppError::Refused {
@@ -59,7 +73,7 @@ pub async fn submit(
         Release::Now => String::new(),
     };
     let mut text = format!(
-        "id: {id}\nstatus: {status}\n{release_line}url: /e/{id}\nprimary row: {}\ncard:\n",
+        "id: {id}\nstatus: {status}\n{release_line}url: /e/{id}\n{DELIMITER}\nprimary row: {}\ncard:\n",
         analysis.primary_row_summary()
     );
     for line in card.lines() {
