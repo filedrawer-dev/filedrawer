@@ -1,29 +1,35 @@
 # Entry format
 
-This is the third draft, revised after two rounds of the field test (see [Field test findings](#field-test-findings)). A shorter third round runs on it. Read it before you change submission, the outcome, the numbers check or `/skill.md`.
+This is the fourth draft, revised after three rounds of the field test (see [Field test findings](#field-test-findings)). Read it before you change submission, the outcome, the card or `/skill.md`.
 
 An entry is one markdown file: YAML front matter with the fields search filters on, then a body with fixed sections. Each entry has one main hypothesis. Reason for the split: the first field test wanted many more fields than the front matter could hold, and YAML itself was one of its frictions.
+
+## Accept, warn, and re-render
+
+The format is a set of conventions the server recognises, not a gate. The server refuses a submission only when a required field is missing, a size cap is exceeded, a safety rule applies (design.md, [Submission and screening](design.md#submission-and-screening)), or an abuse limit is reached. Anything else it can't read, such as a Results table it can't parse, an unknown value or an odd `n`, it accepts as written, with a warning in the submission response.
+
+Every warning ends by pointing the agent to the GitHub issue template and to `POST /feedback`, for when it thinks the server should handle that kind of submission differently. Reason: three rounds of the field test found real results the format couldn't express each time, and the archive learns its format from the agents that use it.
+
+The server stores each entry verbatim. Cards and the numbers on them come from a versioned analyzer, and each card names the analyzer version that made it. When the analyzer improves, every card is rendered again, and no entry changes. Reason: the owner wants to wait for many submissions from different agents and contexts before the server interprets results more deeply.
 
 ## Front matter
 
 ### Required
 
-The server rejects an entry that lacks any of these.
+The server refuses an entry that lacks any of these.
 
 - `title`
 - `safety_motivation`: one sentence on why the result matters for AI safety.
 - `hypothesis`: what the experiment tested.
-- `outcome`: `no_effect`, `inconclusive`, `effect` or `mixed`, chosen by the author (see [Outcome](#outcome-and-the-numbers-check)). Cards and the pitch call a `no_effect` entry a null. Reason for the value's name: YAML reads a bare `null` as no value at all.
+- `outcome`: `no_effect`, `inconclusive`, `effect` or `mixed`, the author's headline call (see [Outcome](#outcome-and-the-cards-numbers)). Cards and the pitch call a `no_effect` entry a null. Reason for the value's name: YAML reads a bare `null` as no value at all.
 - A body with `## Setup` and `## Reproduce` sections (see [Body](#body)).
 
-Every other field is optional, and a missing field never gets an entry rejected. Reason: the owner expects a rigid format to fight real experiments, and the first field test bore that out.
-
-The server accepts and stores fields it doesn't recognise. An admin report lists them so that a field agents keep adding can become a real one (design.md, [Feedback](design.md#feedback-and-usability-cycles)). It strips `label`, and any field whose name starts with `fd_`, the prefix it reserves for its own fields. It rejects a known field holding a key with no value, with a reason. Reason: a comma inside YAML's `{a, b}` style silently splits a value into extra keys.
+Every other field is optional, and a missing field never gets an entry refused. The server accepts and stores fields it doesn't recognise, and an admin report lists them so that a field agents keep adding can become a real one (design.md, [Feedback](design.md#feedback-and-usability-cycles)). It strips `label`, and any field whose name starts with `fd_`, the prefix it reserves for its own fields.
 
 ### Fields
 
 ```yaml
-schema: 3
+schema: 4
 title:
 safety_motivation:
 hypothesis:
@@ -31,13 +37,15 @@ outcome:              # no_effect | inconclusive | effect | mixed
 kind:                 # experiment (when left out) | measurement | simulation | reanalysis | audit
 predicted_direction:  # increase | decrease | either | none; leave out when nothing was predicted
 hypothesis_set:       # before_run | after_run | unknown
-hypothesis_source:    # where the hypothesis was written, as <path>@<commit>
+hypothesis_source:    # where the hypothesis was written: <path>@<commit>, <repo-url>@<commit>:<path>, commit:<sha>, or an issue URL
 stage:                # probe | pilot | main
 stopped_because:      # free text, for example: pivoted, out of time, failed check
 superseded_by:        # an entry ID or slug:<name>, for a pilot a later run replaced
+run_dates:            # the first and last day the runs were made, as [2026-10-23, 2026-10-25]
 models:               # one item per model and role:
   - name:             #   the model ID the provider served, or alias:<name> when no log recorded it
     role:             #   subject | judge | monitor | other
+    route:            #   how it was reached, such as api, claude-cli, codex, openrouter or weights
 tags:                 # free text; reuse tags from GET /tags where they fit
 positive_control:
   outcome:            #   passed | failed | not_run | mixed
@@ -55,10 +63,10 @@ data:                 # one item per dataset the results come from:
 logs:                 # at most 10 URLs
 replicates:           # an entry ID or slug:<name>, or a paper as arXiv:<id> or a DOI
 reanalyzes:           # the same forms as replicates
-uses_runs:            # IDs of runs declared in the batch (design.md, Agent interface)
+uses_runs:            # IDs of runs declared in a batch (design.md, Agent interface)
 published_in:         # the DOI or arXiv:<id> of a paper that now covers this result
 slug:                 # a short name, unique among the account's entries, for slug: links
-series:               # a server-issued series ID and version, as <id>@<version>
+series:               # a series ID, version and optional section, as <id>@<version> or <id>@<version>#<section>
 written_by:           # one item per agent that wrote the entry:
   - model:            #   required: the model ID
     effort:           #   when the agent can see it, such as xhigh
@@ -67,21 +75,21 @@ written_by:           # one item per agent that wrote the entry:
 embargo_until:        # a date; limits in design.md, Embargo
 ```
 
-Write nested values in block style, as above, not in `{a, b}` style. Write a paper as `arXiv:2507.01410`, never as the bare number, which YAML reads as 2507.0141.
+Write nested values in block style, as above, not in `{a, b}` style: a comma inside `{a, b}` silently splits a value into extra keys. Write a paper as `arXiv:2507.01410`, not as the bare number, which YAML reads as 2507.0141. The server warns about both.
 
 - `kind` says what sort of result this is. A `measurement` is a level or rate with no comparison, such as a monitor's recall or an instrument's agreement with ground truth. A `reanalysis` re-examines stored data, published or the author's own. A `simulation` or `audit` (of someone's code) is in scope when its safety motivation ties it to AI (design.md, [Scope](design.md#scope)).
 - `predicted_direction` is the way the hypothesis says the metric moves. `none` means the design expected no effect, for example "this safety training doesn't hurt capability". `either` means an effect in either direction would matter. Leave it out when nobody predicted anything. It is about the hypothesis, not about which way is good: "fine-tuning on insecure code raises jailbreak success" predicts `increase`, although the increase is harmful.
 - `hypothesis_set` says whether the hypothesis was written before or after the run, and `hypothesis_source` points at where, so a reader can check. An effect nobody predicted is `after_run`. `unknown` is for an agent writing up an old repo that can't tell, and the card treats it like `after_run`.
 - `stage` and `stopped_because` tell a reader how much weight the result carries and whether the direction is still open. A line of work dropped for a pivot is not a line that failed. A pilot that a later run replaced sets `superseded_by`.
-- `models` lists every model with its role, so a filter on a model finds the entries where it was the subject, not those where it only judged. A model that plays two roles gets two items. A model whose validation is the result, such as a judge checked against a gold set, is the `subject`. Write the ID the provider served whenever a log records it. When none does, write the alias, such as `alias:haiku`, and the server maps aliases to IDs by date (design.md, [Agent interface](design.md#agent-interface)).
+- `models` lists every model with its role and route, so a filter on a model finds the entries where it was the subject, not those where it only judged. A model that plays two roles, or was reached by two routes, gets two items. A model whose validation is the result, such as a judge checked against a gold set, is the `subject`. Write the ID the provider served whenever a log records it. When none does, write the alias, such as `alias:haiku`, and the server maps aliases to IDs by date (design.md, [Agent interface](design.md#agent-interface)).
 - `positive_control` describes a check that the pipeline, or the manipulation itself, can produce an effect known to exist: its outcome, whether it checks the pipeline (the judge finds instructed collusion) or the manipulation (the treatment moves the metric somewhere), and where it ran. `mixed` means it passed for some models and failed or wasn't run for others. Its description, and for `mixed` the breakdown, goes in `## Setup`.
 - `written_by` names each agent that wrote the entry. Fill in only what the agent can see; Claude Code's version is in `$AI_AGENT`.
-- `code` and `logs` must use the allowed hosts listed in design.md, [Submission and screening](design.md#submission-and-screening). Code can also be attached to the entry instead (design.md, [Attached code](design.md#attached-code)). `code_state` says whether the code that ran is in any commit, because attached or pinned code is often a later version.
+- `code` and `logs` must use the allowed hosts listed in design.md, [Submission and screening](design.md#submission-and-screening). Code can also be attached to the entry instead (design.md, [Attached code](design.md#attached-code)). `code_state` says whether the code that ran is in any commit, because attached or pinned code is often a later version. When the entry's runs differ, it is the worst of them.
 - `data` links the stored data the results come from, such as a Zenodo record, with its SHA-256. Without it, a reader can rerun only from scratch.
-- `uses_runs` names the runs, declared once per batch, that the entry's numbers come from. A reader sees which entries share data, and how much, from the runs they have in common.
-- `slug` names the entry for `slug:` links. Slugs stay unique among an account's entries, so a later batch can link to an earlier one.
+- `uses_runs` names the runs that the entry's numbers come from. A batch declares its runs once, and a later batch cites them by ID (design.md, [Agent interface](design.md#agent-interface)). A reader sees which entries share data from the runs they have in common.
+- `slug` names the entry for `slug:` links. Slugs stay unique among an account's entries, so a later batch can link to an earlier one. A link to an entry not yet submitted shows as plain text until it arrives.
 - `published_in` goes on the version that points to a paper (design.md, [Entry lifecycle](design.md#entry-lifecycle)).
-- `series` names a series and the version of it the entry cites. The entry inherits no fields from it; the series can carry shared Setup prose (design.md, [Series](design.md#series)).
+- `series` names a series, the version of it the entry cites, and optionally a section of its description. The entry inherits no fields from it; the series can carry shared Setup prose (design.md, [Series](design.md#series)).
 
 ## Body
 
@@ -90,10 +98,10 @@ The body is markdown. These sections have fixed names, and the server reads them
 - `## Setup` (required): what a reader needs to judge whether the setup matches theirs. Any item the source never recorded is written "not recorded", not left out, so a reader can tell that it doesn't exist from an oversight. Setup shared by a family of entries can live in their series' description; the entry's Setup then says "see series" and adds what is its own.
   - The task and conditions.
   - The key prompts verbatim, or their paths at the pinned commit with their SHA-256. In an LLM experiment the prompt is the treatment.
-  - Each model's access route: API, CLI alias or weights with a revision. Also the run dates, since an API model can change under the same name.
+  - Each model's access route and the run dates, since an API model can change under the same name.
   - The harness: its name, version, working directory and flags. In the first field test, the working directory `claude -p` ran in moved one collusion rate by 78 points.
   - Datasets, with a revision or URL.
-  - The positive control: what it showed, where it came from (this run, another run, another entry), and whether it checks the pipeline or the manipulation.
+  - The positive control: what it showed, where it came from, and whether it checks the pipeline or the manipulation.
   - Cost: calls, USD, and GPU hours where there are any.
 - `## Results`: the [Results table](#the-results-table), and any other tables or prose.
 - `## Caveats`: the confounders, other explanations and what the result doesn't show, most important first. An `effect` card shows the first one.
@@ -102,98 +110,78 @@ The body is markdown. These sections have fixed names, and the server reads them
 
 ## The Results table
 
-The server parses the first table under `## Results` whose header has the required columns. A line just above it states the interval level as a percentage, and the default method and sampling unit, for example "Intervals: 95%, Wilson, per session." The parser reads the first percentage on that line as the level, and the rest as the defaults, which a row's `method` and `per` cells override. Any other table in the body, such as a grid with one column per model, is free-form. The submission response echoes the parsed primary row, so the agent can see what the server read.
+The analyzer reads the first table under `## Results` whose header has the columns it recognises. A table it can't read stays in the entry as written, and the card says "Results table not read", with a warning in the submission response. Any other table in the body, such as a grid with one column per model, is free-form.
 
-Columns match in any order and any case. The required ones are `model`, `condition`, `estimate`, `ci_low`, `ci_high` and `n`.
+A line just above the table states the interval level as a percentage, and the default method and sampling unit, for example "Intervals: 95%, Wilson, per session." The analyzer reads the first percentage as the level, splits method from sampling unit at the word "per", and lets a row's `method` and `per` cells override them. With no level, rows show "level not stated". The submission response echoes the parsed primary row, so the agent can see what the analyzer read.
+
+The columns it looks for match in any order and any case. The core ones are `model`, `condition`, `estimate`, `ci_low`, `ci_high` and `n`.
 
 | column | meaning |
 |---|---|
 | `model` | the subject model, or `all` when the row pools models |
 | `condition` | the treatment, or the contrast the row measures, written treatment first ("steered vs unsteered") |
-| `estimate` | treatment minus baseline, or the level itself for a `measurement` |
+| `estimate` | treatment minus baseline; the ratio itself for a ratio metric; or the level for a single group |
 | `ci_low`, `ci_high` | the interval, closed at both ends |
-| `n` | the units in each arm, treatment first, as `16/16`; `96 paired` when both arms are the same units; one number, as `16`, for a single group; and a cluster count in brackets when units cluster, as `160 (2 days)` |
-| `baseline` | optional: the control's value, in metric units; empty for a `measurement` |
-| `unit` | optional: the metric's unit |
-| `metric` | optional: the metric, when it differs between rows |
-| `outcome` | optional: what the row claims, `effect`, `no_effect` or `inconclusive`; empty means it claims nothing |
-| `no_effect_at` | optional: the value meaning no effect, 0 when empty; 1 for a ratio, 0.5 for an AUROC, 0.25 for chance among four |
-| `scale` | optional: the range a full effect spans in metric units, such as `20` for a $20 margin above cost |
-| `bar` | optional: a level a `measurement` row had to clear, set before the run |
-| `method`, `per` | optional: the row's interval method and sampling unit, when they differ from the line above the table |
-| `registered` | optional: `pre-registered` or `exploratory` |
-| `q` | optional: the p-value corrected for multiple comparisons, with the correction in `method` |
-| `counts` | optional: the raw counts, such as `13/16 vs 3/16` |
-| `test` | optional: a test result, such as `permutation p = 0.0002`, for a row with no interval |
+| `n` | the units in each arm, written as below |
+| `outcome` | what the row claims, `effect`, `no_effect` or `inconclusive`; empty means it claims nothing |
+| `baseline` | the control's value, in metric units; empty for a single group |
+| `unit` | the metric's unit |
+| `metric` | the metric, when it differs between rows |
+| `no_effect_at` | the value meaning no effect: 0 when empty, 1 for a ratio such as an odds ratio, 0.5 for an AUROC against chance, 0.25 for chance among four |
+| `method`, `per` | the row's interval method and sampling unit, when they differ from the line above the table |
+| `registered` | `pre-registered`, `planned` (the contrast was committed before the data, the test after) or `exploratory` |
+| `q` | the p-value corrected for multiple comparisons, with the correction in `method` |
+| `counts` | the raw counts, such as `13/16 vs 3/16` |
+| `test` | a test result, such as `permutation p = 0.0002`, for a row with no interval |
+| `scale` | the range a full effect spans in metric units, such as `20` for a $20 margin above cost |
+| `bar` | a level the row had to clear, with its direction, as `≥0.80` or `≤0.05` |
 
-Numbers are plain decimals. An ASCII hyphen and the minus sign U+2212 both mean minus, and a leading `+` is allowed. A row with an empty `baseline` and a single `n` is a single group: a measurement, or a test against a fixed value such as chance, given as `no_effect_at`.
+`n` takes these forms:
 
-The first row is the primary result, which the card shows. An empty `outcome` cell in the primary row takes the entry's outcome. Every other empty cell means the row claims nothing. `/e/<id>` shows every row.
+- `16/16`: units in each arm, treatment first; `10/10/10` for three or more groups;
+- `16`: one group;
+- `96 paired`: both arms are the same 96 units;
+- a cluster count in brackets when units cluster: `80/80 (2/2 days)`, `160 (2 days)`, `206 paired (29 prompts)`.
 
-## Outcome and the numbers check
+Numbers are plain decimals. An ASCII hyphen and the minus sign U+2212 both mean minus, and a leading `+` is allowed. A row with an empty `baseline` and a single `n` is a single group: a level, or a test against a fixed value such as chance, given as `no_effect_at`.
 
-The author declares `outcome`, and search filters on it. Reason: a reader wants to know at once whether an entry claims a null, and many experiments are too complicated for a rule to decide that.
+The first row is the primary result, the one the author considers the headline, and the card shows it. An empty `outcome` cell in the primary row takes the entry's outcome, unless that is `mixed`, which counts as no claim. Every other empty cell means the row claims nothing. A cell holding any other value also counts as no claim, with a warning.
 
-The numbers check never rejects an entry. It runs on every row of the Results table, whatever the entry's `kind`. Every card shows the primary row's numbers, and the check adds a reading to rows that claim something. Reason for the check: an agent reading a buggy or underpowered null may drop a direction that works, and newcomers, the likeliest contributors, produce the most of these. Reason it needs no smallest effect of interest (S): none of the 119 entries in the first field test had an S set before the run, and an S chosen afterwards decided the mark more than the data did. Reason every card shows numbers: in the second round, most cards showed none, because their rows claimed neither an effect nor a null.
+## Outcome and the card's numbers
 
-### The numbers check
+The author declares `outcome` as the entry's headline, and each row may make its own claim. Search filters on both: an entry's outcome, and whether any row for a given model claims `no_effect`, say. Reason: a reader wants to know at once whether an entry claims a null, and many experiments are too complicated for a rule to decide that.
 
-A row's numbers are valid when they are finite, `ci_low` < `ci_high`, `ci_low` ≤ `estimate` ≤ `ci_high`, the stated level is between 0% and 100%, and each arm has at least 2 units, or at least 2 clusters when `n` gives a cluster count. Invalid numbers get "not checked", naming what's wrong, and the submission response says why. Reason: a single seed written as an interval of zero width, or 160 seller-hours from 2 days, would otherwise read as a precise result. A row with a `test` and no interval shows the test, and counts as not checked.
+The analyzer never decides whether an entry is accepted. Version 1 does only this, for every row it reads:
 
-Every valid row shows its estimate, interval and `n`. In what follows, "zero" means the row's `no_effect_at` value, an interval that touches it includes it, and readings are stated relative to it, such as "0.003 to 0.230 below 0.5". A row that claims `effect` or `no_effect` also gets a reading:
+- It shows the row's estimate, interval, `n`, unit, method and sampling unit as the author wrote them.
+- It notes whether the interval includes the row's no-effect value (`no_effect_at`, 0 by default). On `/e/<id>` that note sits beside every row and its claim, with "as predicted" or "opposite to prediction" for rows claiming an effect when `hypothesis_set` is `before_run`.
+- It counts the rows' claims for the card's tally.
+- It notes a row it couldn't read: "not read", naming the reason, such as an interval of zero width or a missing number.
 
-- `no_effect`, interval including zero: "rules out effects outside [−0.50, +0.50]".
-- `no_effect`, interval excluding zero: "interval excludes zero: an effect of +0.001 to +0.003". Reason: a large study can find a real but negligible effect and still be a fair null.
-- `effect`, interval excluding zero: "an effect of at least +0.24", or "a decrease of at least 0.10" when it lies below zero.
-- `effect`, interval including zero: "numbers disagree".
+Reason it does so little: the field test showed each deeper reading misleading somewhere real. The share of the baseline read 1,786% on a baseline of 0.042; a share of a 0-1 scale made a rare-event null look tight; flags at a floor or ceiling fired on the side the hypothesis didn't need in 33 of 47 cases; counts against the outcome fell on positive-control rows. Those readings wait in design.md's [Later](design.md#later) until there are many more submissions to design them against.
 
-A row that claims `inconclusive`, or nothing, shows its interval with no reading. A `measurement` row with a `bar` reads "clears the bar 0.80", "misses the bar" or "straddles the bar", from where its interval lies.
-
-Readings give the interval's ends as a share of the scale: 0 to 1 for a unit of fraction, proportion or probability, and otherwise the row's `scale`, when given. With neither, a reading gives no share. Reason: the second round's share of the baseline read 1,786% on a baseline of 0.042, and 3% on prices whose meaningful range was the margin above cost. A wide null stays visible: "up to 50% of the 0-1 scale".
-
-The card flags a baseline that sits at the end of its scale, such as "baseline at 1.0: no room for an increase". Reason: a null at a ceiling can't show the effect it rules out.
-
-The card counts the rows that cut against the entry's outcome, over every row, so ordering or leaving rows blank can't hide one:
-
-- in a `no_effect` entry, rows whose interval excludes zero, claimed or not: "interval excludes zero in 5 of 6 rows";
-- in an `effect` entry, rows claiming `effect` whose interval includes zero: "numbers disagree in 2 of 6 rows".
-
-Beside the reading the card shows:
-
-- the interval's level, method and sampling unit;
-- the positive control, as "pipeline check passed (other run)", "manipulation check failed (this run)" and so on, or "no positive control reported";
-- for an `effect`, "as predicted" or "opposite to prediction" from `predicted_direction`, but only when `hypothesis_set` is `before_run`. Otherwise, `unknown` included, it says "direction not stated before the run". With `either`, it says "two-sided, no direction predicted", and with `none`, "predicted no effect". With no `predicted_direction`, it says "no prediction";
-- when the author gave an S, its value and when it was set. For an S set before the run the card also says whether the interval rules it out or clears it. An S set after the run gets no verdict. Reason: an S chosen after seeing the interval decided the mark in the first field test.
+`/skill.md` gives a default for the claims, worded as a default that each submission may override with its own stated choice: claim `no_effect` on a row only when its interval stays within ±0.10 of the no-effect value on a 0-1 scale, or within the author's smallest effect of interest when that was set before the run. Otherwise claim `inconclusive`, and do the same when the predicted direction has no room to move. Claim nothing on a level unless it is tested against chance or a bar. Reason for a default at all: in the third round, two writers on the same kind of data drew the null line at ±0.35 and at six thresholds chosen after the run.
 
 When Haiku judges during screening that the body contradicts the `outcome`, the card shows its one-line doubt as quoted text labelled "screening note". Reason for the label and quotes: Haiku writes the note from the author's text, so it can carry injected instructions, and a reader must not take it for the server's own words.
 
 ### Replications
 
-The original entry's card lists each replication with its outcome, and marks one posted by the original's own account "self-replication". A replication of an old version shows on the card of the latest version in its chain (design.md, [Entry lifecycle](design.md#entry-lifecycle)).
-
-The server compares each pair of rows, one from each entry, that have valid intervals, the same `unit`, and what Haiku judges during screening to be the same model, metric and contrast in the same direction. Reason: in the second round, comparing only primary rows matched the wrong cells. The card summarises the comparisons:
-
-- "agrees": both intervals include zero, or both exclude it on the same side and overlap;
-- "same direction, different size": both exclude zero on the same side and don't overlap;
-- "contradicts": they exclude zero on opposite sides, or one includes zero and the other lies wholly to one side without overlapping it;
-- "unclear": anything else;
-- "different metric": when the units, metrics or contrasts differ.
-
-Haiku judges again when the original gets a new version. The original's card shows the counts, such as "3 replications: 2 agree, 1 contradicts", linking to the list.
+The original entry's card lists each replication with its outcome, and marks one posted by the original's own account "self-replication". A replication of an old version shows on the card of the latest version in its chain (design.md, [Entry lifecycle](design.md#entry-lifecycle)). Judging whether a replication agrees waits in Later.
 
 ## The card
 
 A card is the few lines search and `/cards.txt` return for an entry. Author text loses its newlines before it goes on a card line, so it can't forge lines or cards. Each line has a cap, and longer text ends in "…".
 
-1. The ID, `kind`, outcome (a `no_effect` entry shows as "null"), and `stage`.
+1. The ID, `kind`, outcome (a `no_effect` entry shows as "null"), `stage`, and the tally of row claims, such as "rows: 3 effect, 12 null, 40 inconclusive", up to 200 characters.
 2. The title, up to 200 characters.
 3. The hypothesis, up to 300 characters.
-4. The primary row's estimate, interval and `n`, its reading, the count of rows that cut against the outcome, and "and N more rows". An entry with no parsed Results table shows "no Results table".
-5. The baseline, with any floor or ceiling flag, the interval's level, method and sampling unit, the positive control, the prediction, and S when given, up to 200 characters.
-6. The subject models and the tags, up to 200 characters.
-7. On an `effect` card, the first caveat, up to 300 characters.
-8. The first three items of `## Not tried`, up to 300 characters.
-9. Flags, as they apply: "no code" or "code attached", "code that ran not committed", "no data" when `## Reproduce` re-analyses stored data that `data` doesn't link, "now part of a paper" with its DOI or arXiv ID, "superseded by <id>", the replication counts, and any screening note.
+4. The primary row: estimate, interval, `n` and unit as written, its claim, and whether the interval includes the no-effect value, with "and N more rows", up to 300 characters. An entry with no table the analyzer can read shows "Results table not read".
+5. The server's labels: the positive control, as "pipeline check passed (other run)" or "no positive control reported"; the prediction, as "as predicted", "opposite to prediction", "direction not stated before the run", "two-sided, no direction predicted", "predicted no effect" or "no prediction"; and S with when it was set, if given; up to 150 characters.
+6. The baseline, the interval's level, and the author's method and sampling unit, up to 300 characters.
+7. The subject models and the tags, up to 200 characters.
+8. On an `effect` card, the first caveat, up to 300 characters.
+9. The first three items of `## Not tried`, up to 300 characters.
+10. Flags, as they apply, up to 300 characters: "no code" or "code attached", "code that ran not committed", "no data" when `## Reproduce` re-analyses stored data that `data` doesn't link, "now part of a paper" with its DOI or arXiv ID, "superseded by <id>", the replications, any screening note, and the analyzer version.
 
 ## Example
 
@@ -201,7 +189,7 @@ This entry is made up, to show the shape. It is not a real result.
 
 ````markdown
 ---
-schema: 3
+schema: 4
 title: Refusal steering vector from Llama-3-8B base does not transfer to the instruct model
 safety_motivation: If refusal directions transfer across fine-tuning, monitors built on base models could cover deployed ones.
 hypothesis: Adding the base model's refusal direction at layer 14 raises the instruct model's refusal rate on harmful prompts.
@@ -210,9 +198,11 @@ predicted_direction: increase
 hypothesis_set: before_run
 stage: main
 stopped_because: failed check
+run_dates: [2026-10-20, 2026-10-20]
 models:
   - name: Llama-3-8B-Instruct
     role: subject
+    route: weights
 tags: [steering, refusal, transfer]
 positive_control:
   outcome: passed
@@ -253,22 +243,11 @@ Intervals: 95%, Newcombe hybrid score, per prompt.
 `python steer.py --layer 14 --coef 8` (calls the model again: about 3 GPU hours).
 ````
 
-The primary row's empty `outcome` cell takes the entry's `no_effect`, and its interval [−0.047, +0.070] includes zero, so nothing is counted against it. The unit is a fraction, so the scale is 0 to 1. The card's line 4 says "+0.012 [−0.047, +0.070], n 520/520: rules out effects outside [−0.047, +0.070], up to 7% of the 0-1 scale". Line 5 adds "baseline 0.62; 95%, Newcombe hybrid score, per prompt; pipeline check passed (this run)". "As predicted" is left out, since the outcome isn't an effect.
-
-## Questions for the third field test
-
-Record whatever the format couldn't express. Likely trouble spots:
-
-- Whether every card now carries numbers a reader can use, and whether the readings and the scale mislead anywhere.
-- Whether rows that claim nothing, and the counts against the outcome, behave as intended.
-- Whether the new columns (`scale`, `bar`, `method`, `per`, `registered`, `q`) and the new `n` forms cover each repo's tables.
-- Whether `uses_runs` and persistent slugs link a large family across batches.
-- Whether a series' shared Setup removes the repetition.
-- Whether `data`, `code_state` and attachment origins say what a rerun needs.
+The primary row's empty `outcome` cell takes the entry's `no_effect`. The card's line 4 says "+0.012 [−0.047, +0.070], n 520/520, fraction: no_effect; interval includes 0". Line 5 says "pipeline check passed (this run)", and line 6 "baseline 0.62; 95%, Newcombe hybrid score, per prompt". The interval stays within ±0.10, so the claim meets `/skill.md`'s default; the card doesn't judge that.
 
 ## Field test findings
 
-The first round ran on 2026-11-04 and 05 over the owner's five Apart repos. One agent per repo played the contributing agent, wrote entries from the repo, and logged every place the first draft of this format fought it. They wrote 119 entries from about 180 experiments and analyses. The entries and each repo's full log (`field-test/<repo>/FINDINGS.md`) stay local and aren't committed.
+The first round ran on 2026-11-04 and 05 over the owner's five Apart repos. One agent per repo played the contributing agent, wrote entries from the repo, and logged every place the first draft of this format fought it. They wrote 119 entries from about 180 experiments and analyses. The entries and each round's full logs (`field-test/round<n>/<repo>/FINDINGS.md`) stay local and aren't committed.
 
 What fought the agents, most widespread first, with the number of repos (of 5) where it happened:
 
@@ -287,23 +266,40 @@ What fought the agents, most widespread first, with the number of repos (of 5) w
 
 How the first draft's numbers check fared: it marked nothing in one repo and almost nothing in another. In the other three it hid decisive results (through `mixed` and borrowed controls) and passed weak ones (through pooled intervals and S chosen afterwards).
 
-The owner settled the changes on 2026-11-05, and this second draft carries them: the front matter and body split, the Results table, the check without S, `no_effect`, `kind`, the new fields, attached code, and batch submission. Citations may name published authors; private individuals stay out of entries.
+The owner settled the changes on 2026-11-05: the front matter and body split, the Results table, the check without S, `no_effect`, `kind`, the new fields, attached code, and batch submission. Citations may name published authors; private individuals stay out of entries.
 
 ### Round 2
 
-The second round ran on 2026-11-05 over the same five repos, on this draft. The agents started from round 1's inventories but took every number from the repos again. They wrote 198 entries, including about 20 for the unsubmitted report's results and analyses round 1 had missed. Their logs are in `field-test/round2/<repo>/FINDINGS.md`, local only.
+The second round ran on 2026-11-05 over the same five repos, on the second draft. The agents started from round 1's inventories but took every number from the repos again. They wrote 198 entries, including about 20 for the unsubmitted report's results and analyses round 1 had missed.
 
 Fixed since round 1: the Results table holds every model and condition; no entry needed an S; `no_effect` parses; Setup and Reproduce accept "not recorded"; `stage`, `stopped_because` and model roles were filled in naturally; batches and slugs linked families within a batch; and the three repos with no remote attached their code, 2.7 KB to 930 KB per family.
 
 What still fought the agents, most widespread first, with the number of repos (of 5):
 
-1. **Most cards show no numbers (5).** Rows claiming neither `effect` nor `no_effect`, and every entry whose `kind` isn't `experiment`, get no reading, even with valid intervals: 49 of 74 experiment cards in one repo, 31 of 46 cards in another.
-2. **A row can't be `inconclusive`, and a blank row inherits the entry's outcome (5).** Agents declared `mixed` to escape, left rows blank, or moved them into tables the server ignores. Blank rows also escaped the flag count: one repo's 1,966 rows produced no flags.
-3. **The share of the baseline misleads (5).** It reads 310% to 1,786% on near-zero baselines and chance rates, about 3% on prices where the meaningful scale is the margin above cost, and nothing flags a baseline at a ceiling.
-4. **One interval method and sampling unit per table (5).** Real tables mix bootstrap, exact and paired rows. Paired designs and pilots of 1 or 2 days have no way to say so in `n`, and the check passes an `n` of 160 that is really 2 days.
-5. **Attachments (4).** Lock files, full of hashes, would trip the high-entropy screen. Data doesn't fit the 1 MB cap and has no field. The code attached at HEAD often isn't the code that ran. Scripts outside the repo, including the writing agent's own analysis, have no place. Attaching a repo with no licence makes it MIT.
-6. **What a row claims and how it was set (4).** No per-row field says pre-registered or exploratory, gives a corrected p, or names a bar a measurement had to clear. `hypothesis_set` was `unknown` for 66 of 91 entries in one repo, because the predictions sat in files never committed. `either` and `before_run` print "as predicted" whichever way the effect went.
-7. **`positive_control` (5).** One value can't say whether the control checked the pipeline or the manipulation, whether it was borrowed, or which models it covered.
-8. **Model identity (3).** The same model appears as `haiku`, `claude-cli:haiku` and `claude-haiku-5-5`, so model filters and replication pairs miss each other. A model under validation as a judge has no subject role.
-9. **Links (4).** `shares_data_with` grew to about 170 links in one 16-entry family without saying what is shared. `slug:` doesn't cross batches, which a repo of 91 entries needed. `replicates` compares only primary rows. Setup repeated across a family, up to 38 KB an entry.
-10. **Smaller ones.** YAML reads a bare arXiv ID as a number (`2507.01410` becomes 2507.0141). The `no_effect_at` reading reads backwards for an AUROC below 0.5. Card line 5 has no length cap. `stage: pilot` means both "before the sprint" and "superseded".
+1. **Most cards show no numbers (5).** Rows claiming neither `effect` nor `no_effect`, and every entry whose `kind` isn't `experiment`, got no reading, even with valid intervals: 49 of 74 experiment cards in one repo, 31 of 46 cards in another.
+2. **A row couldn't be `inconclusive`, and a blank row inherited the entry's outcome (5).** Agents declared `mixed` to escape, left rows blank, or moved them into tables the server ignores. Blank rows also escaped the flag count: one repo's 1,966 rows produced no flags.
+3. **The share of the baseline misled (5).** It read 310% to 1,786% on near-zero baselines and chance rates, about 3% on prices where the meaningful scale is the margin above cost, and nothing flagged a baseline at a ceiling.
+4. **One interval method and sampling unit per table (5).** Real tables mix bootstrap, exact and paired rows. Paired designs and pilots of 1 or 2 days had no way to say so in `n`, and the check passed an `n` of 160 that is really 2 days.
+5. **Attachments (4).** Lock files, full of hashes, would trip the high-entropy screen. Data didn't fit the 1 MB cap and had no field. The code attached at HEAD often wasn't the code that ran. Scripts outside the repo, including the writing agent's own analysis, had no place. Attaching a repo with no licence makes it MIT.
+6. **What a row claims and how it was set (4).** No per-row field said pre-registered or exploratory, gave a corrected p, or named a bar a measurement had to clear. `hypothesis_set` was `unknown` for 66 of 91 entries in one repo, because the predictions sat in files never committed. `either` and `before_run` printed "as predicted" whichever way the effect went.
+7. **`positive_control` (5).** One value couldn't say whether the control checked the pipeline or the manipulation, whether it was borrowed, or which models it covered.
+8. **Model identity (3).** The same model appeared as `haiku`, `claude-cli:haiku` and `claude-haiku-5-5`, so model filters and replication pairs missed each other. A model under validation as a judge had no subject role.
+9. **Links (4).** `shares_data_with` grew to about 170 links in one 16-entry family without saying what is shared. `slug:` didn't cross batches, which a repo of 91 entries needed. `replicates` compared only primary rows. Setup repeated across a family, up to 38 KB an entry.
+10. **Smaller ones.** YAML reads a bare arXiv ID as a number (`2507.01410` becomes 2507.0141). The `no_effect_at` reading read backwards for an AUROC below 0.5. Card line 5 had no length cap. `stage: pilot` meant both "before the sprint" and "superseded".
+
+### Round 3
+
+The third round ran on 2026-11-05 over the two most demanding repos, on the third draft. The agents revised round 2's 107 entries, rechecking about 1,940 rows against the repos with no mismatches.
+
+Fixed since round 2: 90 of 91 cards in one repo carried numbers (25 in round 2) and 16 of 16 in the other; rows made real claims (387 effect, 624 null, 864 inconclusive in one repo, where round 2 left 1,660 rows claiming nothing); declared runs replaced 164 pairwise links with 73 references in one family; and a series' shared Setup cut Setup sections by about half.
+
+What still fought the agents, with the number of repos (of 2):
+
+1. **Where to draw the null line (2).** Choosing between `no_effect` and `inconclusive` needs a threshold the format didn't give. One repo used ±0.35 on a 0-1 scale; the other chose six thresholds after the run, and one primary row sat 0.004 from flipping.
+2. **The deeper readings misled (2).** Floor and ceiling flags ignored the predicted direction (33 of 47 were noise). Counts against the outcome fell on positive-control rows, and vanished in `mixed` entries. A share of the 0-1 scale made rare-event nulls look tight.
+3. **The entry outcome once rows claim (1).** Mechanical rules for the headline made "effect" cover refuted halves and effects in both directions, and a single null row could turn a card into "null". A primary row picked by rule put an inconclusive row on 19 effect and null cards.
+4. **Levels read as effects (2).** A level of 0.995 read "an effect of at least +0.676", measured from 0.
+5. **Card line 5 truncated the server's labels (2)** after a long method text.
+6. **Grammar gaps (2).** `n` for k groups and for paired designs with clusters; `registered` for "contrast committed, test chosen later"; `hypothesis_source` in a commit message, another repo or an issue; whether 1 MB means 10^6 bytes or 2^20; attachment origins that name no repo; code state and model route that differ by run; forward links to entries not yet submitted; one 71 KB series description that needed sections.
+
+The owner's response, on 2026-11-05, was this fourth draft: accept and warn instead of refusing anything the format doesn't recognise, a minimal analyzer that shows the author's numbers, and the deeper readings moved to Later.

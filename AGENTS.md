@@ -6,11 +6,10 @@ Status: designed, not built. The owner and an agent settled the design on 2026-1
 
 ## Next steps
 
-1. **Field test the entry format.** Before writing any server code, use `docs/entry-format.md` to write entries as markdown files under `field-test/`. Take them from the owner's Apart sprint work: `../apart-collusion-sprint`, `../apart-oneshot-collusion`, `../apart-research-collusion-sprint-2026`, `../watched-coalitions` and `../action-channels`. Read those repos without changing them. Keep the entries local until the owner says otherwise.
-   - Done when every experiment there that didn't become a paper has an entry, or a line under "Field test findings" in `docs/entry-format.md` saying why it doesn't fit. That covers nulls, inconclusive results and unrefined effects.
-   - Record every place the format fought you in that section. Then propose format changes to the owner, revise, and run the test again.
-2. **Resolve the field test's format questions** with the owner (open question 1 in `docs/design.md`).
-3. **Build** in the order given in `docs/design.md`, under Build order.
+1. **Get the owner's sign-off on the fourth draft** of `docs/entry-format.md`, after a cold review of it. The field test that shaped it ran three rounds over the owner's five Apart repos; its entries and logs are in `field-test/` (git-excluded, local only, never to be committed or published without the owner's say).
+2. **Build** in the order given in `docs/design.md`, under Build order.
+
+Open work items, such as checks to run before launch, are GitHub issues on `filedrawer-dev/filedrawer`. Read them before you plan work, and file new ones there rather than in these docs.
 
 ## Docs
 
