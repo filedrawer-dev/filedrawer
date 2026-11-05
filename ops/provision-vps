@@ -258,16 +258,28 @@ note "IPv6: ${VPS_IPV6:-none found}"
 pause
 
 stage "DNS: point the names at the server"
-say "At the registrar where you bought filedrawer.dev, add these records:"
-for name in "filedrawer.dev" "staging.filedrawer.dev" "files.filedrawer.dev"; do
+say "In Cloudflare's DNS for filedrawer.dev, add these records, each set to"
+say "'DNS only' (the grey cloud), not 'Proxied' (design.md, Hosting and operations):"
+open_url "https://dash.cloudflare.com/"
+for name in "filedrawer.dev" "www.filedrawer.dev" "staging.filedrawer.dev" "files.filedrawer.dev"; do
   step "$name  A     $VPS_HOST"
   [[ -n "$VPS_IPV6" ]] && step "$name  AAAA  $VPS_IPV6"
 done
 note "Only staging is served for now. Caddy asks for certificates only for the"
-note "sites it serves, so the other two names can sit idle until launch."
+note "sites it serves, so the other names can sit idle until launch, when www"
+note "redirects to filedrawer.dev."
 pause "Press Enter once the records are saved"
 step "Waiting for staging.filedrawer.dev to resolve to $VPS_HOST (Ctrl-C to stop)..."
+hinted=""
 until getent ahostsv4 staging.filedrawer.dev | awk '{print $1}' | grep -qx "$VPS_HOST"; do
+  elsewhere=$(getent ahostsv4 staging.filedrawer.dev | awk 'NR == 1 {print $1}')
+  if [[ -n "$elsewhere" && -z "$hinted" ]]; then
+    printf '\n'
+    warn "staging.filedrawer.dev resolves to $elsewhere, not $VPS_HOST. If that is a"
+    warn "Cloudflare address, the record is proxied: click its orange cloud to make it"
+    warn "grey ('DNS only'). Still waiting..."
+    hinted=yes
+  fi
   sleep 15
   printf '.'
 done
