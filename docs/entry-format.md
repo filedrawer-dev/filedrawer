@@ -155,4 +155,21 @@ Record whatever the format couldn't express. Likely trouble spots:
 
 ## Field test findings
 
-None yet. The field test fills in this section.
+The first round ran on 2026-11-04 and 05 over the owner's five Apart repos. One agent per repo played the contributing agent, wrote entries from the repo, and logged every place this format fought it. They wrote 119 entries from about 180 experiments and analyses. The entries and each repo's full log (`field-test/<repo>/FINDINGS.md`) stay local and aren't committed. The owner hasn't ruled on any of the changes they suggest yet.
+
+What fought the agents, most widespread first, with the number of repos (of 5) where it happened:
+
+1. **One `result` per entry (5).** Nearly every experiment crosses models with conditions, and the models often disagree. Agents pooled cells, picked one, or declared `mixed`, which drops the numbers check altogether and still shows one cell's interval. One run became as many as 13 entries sharing the same episodes, and nothing says they share data.
+2. **No S set before the run (5).** None of the five repos ever set one. Agents chose S afterwards, and then S decided the mark more than the data did: one entry flips at S = 0.107, another misses a supported null by $0.006. Without an S, every entry reads "not checked", the strongest ones included.
+3. **YAML (5).** `outcome: null`, written as this file's own example writes it, parses as no value, so the server would reject every null for a missing required field. The flow-mapping style of the field list also splits any value containing a comma into extra keys with no error (2 of 5), and caveats holding colons or regular expressions needed careful quoting.
+4. **Intervals the check takes on trust (4).** Pooling cells across models or prompts gives intervals that are too narrow, and two repos' own rules forbid it. `n` is ambiguous for a two-arm difference. Results with zero events or zero spread give intervals of zero width, which the check rejects, so agents switched to a smaller unit, such as seller-hours instead of sessions, which overstates precision.
+5. **Results that aren't a treatment-minus-baseline difference (4).** A level or rate with no control, an instrument's validation against ground truth, a market simulation, a design check, a code audit, or a reanalysis of a published paper's data. Their cards all say "not checked", and `replicates` can't point outside File Drawer.
+6. **The prompt is the treatment (4).** No field holds it. In one repo the replications of 15 earlier prompts showed up only because the agent matched prompt hashes.
+7. **Models and harness (5).** Every model was API-only, often called through a CLI alias, so `revision` was always empty. No field says what role a model played (seller, judge, monitor). The harness itself changed outcomes: one study found that the working directory `claude -p` ran in moved a collusion rate by 78 points.
+8. **No public code (5).** Three repos have no remote, a fourth isn't pushed yet, and several runs came from uncommitted changes. The entries pass, since `code` is optional, but nobody can rerun them, and the card doesn't say the code is missing.
+9. **`positive_control` (4).** Controls were borrowed from other runs, passed for one model and failed for another, or showed that the judge works rather than that the manipulation could move the model. `not_run` blocks a null but costs an effect nothing.
+10. **`predicted_direction` (4).** It has no value for "the design expected no effect", a one-sided bound such as "own ≤ joint" comes out inverted, and an effect nobody predicted is marked "as predicted" once the hypothesis is rewritten to fit it.
+11. **Cards hide caveats (4).** Confounded effects read "supported by the numbers" while the confound sits in the body.
+12. **Smaller frictions.** `compute` is GPU-only, though every run was API calls (5). Entries written in one batch can't link to each other before the server issues IDs (5). No field says whether a result came from a probe, a pilot or a main run, or why the work stopped, which tells a reader whether the direction is still open (3). Floors and ceilings are invisible to the check (2).
+
+How the numbers check fared: it marked nothing in one repo and almost nothing in another. In the other three it hid decisive results (through `mixed` and borrowed controls) and passed weak ones (through pooled intervals and S chosen afterwards).
