@@ -63,7 +63,18 @@ impl Analysis {
 
     /// How many rows make each claim.
     pub fn tally(&self) -> Tally {
-        Tally::default()
+        let mut tally = Tally::default();
+        if let Results::Read(table) = &self.results {
+            for row in &table.rows {
+                match row.claim {
+                    Some(Claim::Effect) => tally.effect += 1,
+                    Some(Claim::NoEffect) => tally.no_effect += 1,
+                    Some(Claim::Inconclusive) => tally.inconclusive += 1,
+                    None => tally.no_claim += 1,
+                }
+            }
+        }
+        tally
     }
 }
 
@@ -116,10 +127,15 @@ pub fn analyze(text: &str) -> Analysis {
         &mut refusals,
         &mut warnings,
     );
+    let results = results::read(
+        sections.results.as_deref(),
+        &front.fields.outcome,
+        &mut warnings,
+    );
     Analysis {
         fields: front.fields,
         unrecognised_fields: front.unrecognised,
-        results: Results::NotRead(String::new()),
+        results,
         sections,
         refusals,
         warnings,
