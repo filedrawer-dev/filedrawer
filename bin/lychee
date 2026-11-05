@@ -40,14 +40,12 @@ PINS = {
     "aarch64-apple-darwin": "c9d3740ea2d891854d37116c9fba840f37b6e7c89d330e7db84ac333631c4977",
     "x86_64-apple-darwin": "887503a9cff667d322b8d0892b40bf49976eb9507af8483220a3706cdad55978",
 }
-# (platform.system(), platform.machine() in lower case) to release target.
+# (platform.system(), platform.machine()) to release target. The machine names are the
+# ones each kernel reports: aarch64 on Linux, arm64 on macOS.
 TARGETS = {
     ("Linux", "x86_64"): "x86_64-unknown-linux-musl",
-    ("Linux", "amd64"): "x86_64-unknown-linux-musl",
     ("Linux", "aarch64"): "aarch64-unknown-linux-musl",
-    ("Linux", "arm64"): "aarch64-unknown-linux-musl",
     ("Darwin", "arm64"): "aarch64-apple-darwin",
-    ("Darwin", "aarch64"): "aarch64-apple-darwin",
     ("Darwin", "x86_64"): "x86_64-apple-darwin",
 }
 SKIP_HINT = "To commit without this check: SKIP=lychee git commit"
@@ -59,7 +57,7 @@ class InstallError(Exception):
 
 def target(system: str, machine: str) -> str | None:
     """The release target for this platform, or None when lychee has no build for it."""
-    return TARGETS.get((system, machine.lower()))
+    return TARGETS.get((system, machine))
 
 
 def cache_dir() -> Path:
@@ -70,7 +68,9 @@ def cache_dir() -> Path:
 def download(url: str, dest: Path) -> None:
     command = [
         "curl", "--fail", "--silent", "--show-error", "--location",
-        "--connect-timeout", "15",
+        # Give up when connecting takes 15 s, or the transfer stalls below 1 KB/s for
+        # 30 s, so a bad network refuses the commit instead of hanging it.
+        "--connect-timeout", "15", "--speed-limit", "1024", "--speed-time", "30",
         # file:// is for the tests' fake archives; the hash check guards every source.
         "--proto", "=https,file", "--proto-redir", "=https",
         "--output", str(dest), url,
@@ -118,19 +118,21 @@ def fail(why: str) -> int:
 
 
 def main(argv: list[str]) -> int:
-    name = target(platform.system(), platform.machine())
-    if name is None:
+    release_target = target(platform.system(), platform.machine())
+    if release_target is None:
         return fail(
             f"lychee {VERSION} has no release for {platform.system()} "
             f"{platform.machine()}"
         )
-    url = os.environ.get("FILEDRAWER_LYCHEE_URL", f"{BASE_URL}/lychee-{name}.tar.gz")
-    sha256 = os.environ.get("FILEDRAWER_LYCHEE_SHA256", PINS[name])
+    url = os.environ.get(
+        "FILEDRAWER_LYCHEE_URL", f"{BASE_URL}/lychee-{release_target}.tar.gz"
+    )
+    sha256 = os.environ.get("FILEDRAWER_LYCHEE_SHA256", PINS[release_target])
     # Keyed by hash, so a new pin never runs a binary cached under an old one.
     binary = cache_dir() / sha256 / "lychee"
     if not binary.is_file():
         try:
-            install(url, sha256, f"lychee-{name}/lychee", binary)
+            install(url, sha256, f"lychee-{release_target}/lychee", binary)
         except InstallError as error:
             return fail(str(error))
     os.execv(binary, [str(binary), *argv])

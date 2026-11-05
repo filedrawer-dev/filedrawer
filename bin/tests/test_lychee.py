@@ -2,7 +2,8 @@
 
 The CLI tests serve a fake release archive over file://, whose `lychee` is a shell
 script that prints its arguments, and point the script at it with the two override
-variables. Run them with `uvx pytest bin/tests`.
+variables. bin/agent-pre-commit runs them with
+`uvx --quiet pytest@9.2.0 -q -p no:cacheprovider bin/tests`.
 """
 
 import hashlib
@@ -51,8 +52,12 @@ def fake_archive(path: Path, greeting: str = "fake lychee") -> str:
 
 
 @pytest.fixture
-def env(tmp_path: Path) -> dict[str, str]:
-    archive = tmp_path / "release.tar.gz"
+def archive(tmp_path: Path) -> Path:
+    return tmp_path / "release.tar.gz"
+
+
+@pytest.fixture
+def env(tmp_path: Path, archive: Path) -> dict[str, str]:
     sha = fake_archive(archive)
     return {
         **os.environ,
@@ -68,8 +73,12 @@ def run(env: dict[str, str], *args: str) -> subprocess.CompletedProcess:
     )
 
 
-def nothing_cached(env: dict[str, str]) -> bool:
-    return not Path(env["XDG_CACHE_HOME"]).exists()
+def assert_refused(result: subprocess.CompletedProcess, env: dict[str, str]) -> None:
+    """lychee didn't run, the hint to skip the check was given, and nothing was cached."""
+    assert result.returncode != 0
+    assert "fake lychee" not in result.stdout
+    assert "SKIP=lychee" in result.stderr
+    assert not Path(env["XDG_CACHE_HOME"]).exists()
 
 
 def test_first_run_downloads_checks_and_runs_lychee_with_its_arguments(env):
@@ -84,9 +93,9 @@ def test_lychee_exit_status_passes_through(env):
     assert result.stdout == "fake lychee: x.md\n"
 
 
-def test_cached_lychee_runs_without_downloading_again(env):
+def test_cached_lychee_runs_without_downloading_again(env, archive):
     assert run(env, "first").returncode == 0
-    Path(env["FILEDRAWER_LYCHEE_URL"].removeprefix("file://")).unlink()
+    archive.unlink()
     result = run(env, "second")
     assert result.returncode == 0, result.stderr
     assert result.stdout == "fake lychee: second\n"
@@ -94,29 +103,21 @@ def test_cached_lychee_runs_without_downloading_again(env):
 
 def test_hash_mismatch_refuses_and_caches_nothing(env):
     result = run({**env, "FILEDRAWER_LYCHEE_SHA256": "0" * 64}, "x.md")
-    assert result.returncode != 0
-    assert "fake lychee" not in result.stdout
+    assert_refused(result, env)
     assert "SHA-256" in result.stderr
-    assert "SKIP=lychee" in result.stderr
-    assert nothing_cached(env)
 
 
 def test_failed_download_refuses_with_the_skip_hint(env, tmp_path):
     missing = (tmp_path / "missing.tar.gz").as_uri()
     result = run({**env, "FILEDRAWER_LYCHEE_URL": missing}, "x.md")
-    assert result.returncode != 0
-    assert "fake lychee" not in result.stdout
-    assert "SKIP=lychee" in result.stderr
-    assert nothing_cached(env)
+    assert_refused(result, env)
 
 
 def test_overridden_url_alone_is_still_checked_against_the_pinned_hash(env):
     del env["FILEDRAWER_LYCHEE_SHA256"]
     result = run(env, "x.md")
-    assert result.returncode != 0
-    assert "fake lychee" not in result.stdout
+    assert_refused(result, env)
     assert "SHA-256" in result.stderr
-    assert nothing_cached(env)
 
 
 def test_a_new_pin_never_runs_the_binary_cached_under_the_old_one(env, tmp_path):
@@ -137,9 +138,7 @@ def test_a_new_pin_never_runs_the_binary_cached_under_the_old_one(env, tmp_path)
     "system, machine, expected",
     [
         ("Linux", "x86_64", "x86_64-unknown-linux-musl"),
-        ("Linux", "amd64", "x86_64-unknown-linux-musl"),
         ("Linux", "aarch64", "aarch64-unknown-linux-musl"),
-        ("Linux", "arm64", "aarch64-unknown-linux-musl"),
         ("Darwin", "arm64", "aarch64-apple-darwin"),
         ("Darwin", "x86_64", "x86_64-apple-darwin"),
         ("Windows", "AMD64", None),
