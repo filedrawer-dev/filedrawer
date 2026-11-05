@@ -1,7 +1,8 @@
 //! Splits an entry into front matter and body, and reads the front matter's fields
 //! (docs/entry-format.md, Front matter).
 
-use yaml_rust2::scanner::{Scanner, TokenType};
+use yaml_rust2::parser::{Event, MarkedEventReceiver, Parser};
+use yaml_rust2::scanner::{Marker, Scanner, TokenType};
 use yaml_rust2::{Yaml, YamlLoader};
 
 use crate::choice::{Choice, Vocabulary};
@@ -47,6 +48,110 @@ pub(crate) fn read(yaml: &str) -> FrontMatter {
         Err(why) => reader.refusals.push(Refusal::FrontMatterUnreadable(why)),
     }
     reader.finish()
+}
+
+/// Whether a top-level field is the server's to set: `label`, and names starting `fd_`.
+fn is_reserved(name: &str) -> bool {
+    name == "label" || name.starts_with("fd_")
+}
+
+/// `text` without its reserved front-matter fields (see `stored_text`).
+pub(crate) fn without_reserved_fields(text: &str) -> String {
+    let (bom, rest) = match text.strip_prefix('\u{feff}') {
+        Some(rest) => ("\u{feff}", rest),
+        None => ("", text),
+    };
+    let lines: Vec<&str> = rest.split_inclusive('\n').collect();
+    let close = match lines.first() {
+        Some(first) if first.trim_end() == "---" => lines
+            .iter()
+            .skip(1)
+            .position(|line| line.trim_end() == "---")
+            .map(|at| at + 1),
+        _ => None,
+    };
+    let Some(close) = close else {
+        return text.to_string();
+    };
+    let yaml = lines[1..close].concat();
+    if uses_aliases(&yaml) {
+        return text.to_string();
+    }
+    let mut keys = TopLevelKeys::default();
+    if Parser::new_from_str(&yaml).load(&mut keys, false).is_err() {
+        return text.to_string();
+    }
+    // A reserved key sharing its line with another key, as in a `{...}` front matter,
+    // can't be cut by lines. Leave the text whole; the analyzer then warns that the
+    // field was stripped, and the server refuses the entry.
+    let shares_a_line = keys.keys.iter().any(|(name, line)| {
+        is_reserved(name) && keys.keys.iter().filter(|(_, other)| other == line).count() > 1
+    });
+    if shares_a_line {
+        return text.to_string();
+    }
+    // Lines of the YAML (0-based) to drop; line i of the YAML is lines[i + 1].
+    let mut dropped = vec![false; close - 1];
+    for (index, (name, start)) in keys.keys.iter().enumerate() {
+        if is_reserved(name) {
+            let end = keys
+                .keys
+                .get(index + 1)
+                .map_or(close - 1, |(_, next)| *next);
+            for line in dropped.iter_mut().take(end).skip(*start) {
+                *line = true;
+            }
+        }
+    }
+    let mut stored = String::with_capacity(text.len());
+    stored.push_str(bom);
+    for (index, line) in lines.iter().enumerate() {
+        let in_yaml = (1..close).contains(&index);
+        if !(in_yaml && dropped[index - 1]) {
+            stored.push_str(line);
+        }
+    }
+    stored
+}
+
+/// Collects the top-level mapping's scalar keys with the 0-based line each starts on.
+#[derive(Default)]
+struct TopLevelKeys {
+    depth: usize,
+    expect_key: bool,
+    keys: Vec<(String, usize)>,
+}
+
+impl MarkedEventReceiver for TopLevelKeys {
+    fn on_event(&mut self, event: Event, mark: Marker) {
+        let at_top = self.depth == 1;
+        let starts_node = matches!(
+            event,
+            Event::Scalar(..)
+                | Event::Alias(_)
+                | Event::MappingStart(..)
+                | Event::SequenceStart(..)
+        );
+        if at_top && starts_node {
+            if self.expect_key
+                && let Event::Scalar(name, ..) = &event
+            {
+                self.keys
+                    .push((name.clone(), mark.line().saturating_sub(1)));
+            }
+            self.expect_key = !self.expect_key;
+        }
+        match event {
+            Event::MappingStart(..) | Event::SequenceStart(..) => {
+                self.depth += 1;
+                if self.depth == 1 {
+                    self.expect_key = true;
+                }
+            }
+            Event::MappingEnd | Event::SequenceEnd => self.depth = self.depth.saturating_sub(1),
+            _ => {}
+        }
+    }
 }
 
 /// Whether the YAML refers to an anchor. The loader expands aliases, so a few hundred
@@ -168,7 +273,7 @@ impl Reader {
             "slug" => self.fields.slug = self.text(name, value),
             "series" => self.fields.series = self.text(name, value),
             "written_by" => self.fields.written_by = self.mapping_list(name, value, Self::writer),
-            "embargo_until" => self.fields.embargo_until = self.text(name, value),
+            "embargo_until" => self.fields.embargo_until = self.embargo(value),
             "label" => self.warn(
                 WarningKind::StrippedField,
                 "the server removed `label`; cards come from the analyzer, not the entry".into(),
@@ -215,6 +320,22 @@ impl Reader {
             );
         }
         self.text(name, value)
+    }
+
+    /// `embargo_until`, which must be a YYYY-MM-DD date. Anything else is refused
+    /// rather than read as "no embargo", since an early release can't be undone.
+    fn embargo(&mut self, value: &Yaml) -> Option<String> {
+        let written = match value {
+            Yaml::Null => return None,
+            Yaml::Array(_) => "a list".to_string(),
+            Yaml::Hash(_) => "a mapping".to_string(),
+            scalar => scalar_text(scalar).unwrap_or_default(),
+        };
+        if is_date(written.trim()) {
+            return Some(written.trim().to_string());
+        }
+        self.refusals.push(Refusal::EmbargoUnreadable(written));
+        None
     }
 
     fn published_in(&mut self, value: &Yaml) -> Option<String> {
@@ -380,6 +501,36 @@ fn scalar_text(value: &Yaml) -> Option<String> {
         _ => return None,
     };
     (!text.trim().is_empty()).then_some(text)
+}
+
+/// Whether `text` is a real calendar date written YYYY-MM-DD.
+fn is_date(text: &str) -> bool {
+    let parts: Vec<&str> = text.split('-').collect();
+    let [year, month, day] = parts.as_slice() else {
+        return false;
+    };
+    let digits = |part: &str, length: usize| {
+        part.len() == length && part.bytes().all(|b| b.is_ascii_digit())
+    };
+    if !(digits(year, 4) && digits(month, 2) && digits(day, 2)) {
+        return false;
+    }
+    let (Ok(year), Ok(month), Ok(day)) = (
+        year.parse::<u32>(),
+        month.parse::<u32>(),
+        day.parse::<u32>(),
+    ) else {
+        return false;
+    };
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let days = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => return false,
+    };
+    (1..=days).contains(&day)
 }
 
 /// Whether `text` is `arXiv:<id>` or a DOI (`10.<registrant>/<suffix>`, bare or as a

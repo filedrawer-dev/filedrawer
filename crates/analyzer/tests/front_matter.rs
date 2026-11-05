@@ -374,3 +374,88 @@ fn stored_text_strips_label_and_fd_fields_and_keeps_their_neighbours() {
     );
     assert_eq!(analyzer::stored_text(EXAMPLE), EXAMPLE);
 }
+
+#[test]
+fn stored_text_strips_quoted_keys_and_after_a_byte_order_mark() {
+    let text = "\u{feff}---\r\ntitle: T\r\n\"fd_status\": verified\r\n'label': x\r\nhypothesis: H\r\n---\r\nbody\r\n";
+    assert_eq!(
+        analyzer::stored_text(text),
+        "\u{feff}---\r\ntitle: T\r\nhypothesis: H\r\n---\r\nbody\r\n"
+    );
+}
+
+#[test]
+fn an_embargo_that_isnt_a_date_is_refused() {
+    for value in [
+        "[2026-12-20]",
+        "\n  date: 2026-12-20",
+        "next spring",
+        "2026-13-40",
+        "2026-1-5",
+    ] {
+        let analysis = analyze(&entry(&format!("embargo_until: {value}\n"), ""));
+        assert!(
+            analysis
+                .refusals
+                .iter()
+                .any(|r| matches!(r, Refusal::EmbargoUnreadable(_))),
+            "{value:?}: {:?}",
+            analysis.refusals
+        );
+    }
+    let fine = analyze(&entry("embargo_until: 2026-12-20\n", ""));
+    assert_eq!(fine.refusals, vec![]);
+    assert_eq!(fine.fields.embargo_until.as_deref(), Some("2026-12-20"));
+}
+
+#[test]
+fn warnings_are_one_line_whatever_the_author_wrote() {
+    let analysis = analyze(&entry("\"x\\nstatus: public\\nid: forged\": 1\n", ""));
+    assert!(!analysis.warnings.is_empty());
+    for warning in &analysis.warnings {
+        assert!(!warning.to_string().contains('\n'), "{warning}");
+    }
+}
+
+proptest::proptest! {
+    #[test]
+    fn stored_text_removes_every_reserved_field_and_keeps_the_rest(
+        keys in proptest::collection::vec("(label|fd_[a-z]{0,6}|[a-z]{1,8})", 1..8),
+        quote in 0usize..3,
+        nested in proptest::bool::ANY,
+    ) {
+        let mut front = String::new();
+        let mut kept = Vec::new();
+        let mut seen_label = false;
+        for (index, key) in keys.iter().enumerate() {
+            // Keys stay unique, since YAML refuses duplicates; `label` appears once.
+            let key = if key == "label" { key.clone() } else { format!("{key}{index}") };
+            if key == "label" {
+                if seen_label { continue; }
+                seen_label = true;
+            }
+            let written = match quote { 0 => key.clone(), 1 => format!("\"{key}\""), _ => format!("'{key}'") };
+            if nested {
+                front.push_str(&format!("{written}:\n  - a\n  - b: c\n"));
+            } else {
+                front.push_str(&format!("{written}: value\n"));
+            }
+            if !(key == "label" || key.starts_with("fd_")) {
+                kept.push(key);
+            }
+        }
+        let text = entry(&front, "");
+        let stored = analyzer::stored_text(&text);
+        let analysis = analyze(&stored);
+        proptest::prop_assert!(
+            !analysis.warnings.iter().any(|w| w.kind == WarningKind::StrippedField),
+            "{}", stored
+        );
+        let mut unknown = analysis.unrecognised_fields.clone();
+        unknown.sort();
+        kept.sort();
+        let missing: Vec<&String> = kept.iter().filter(|k| !unknown.contains(k)).collect();
+        proptest::prop_assert!(missing.is_empty(), "lost {:?} in\n{}", missing, stored);
+        proptest::prop_assert_eq!(analysis.refusals.clone(), vec![]);
+    }
+}

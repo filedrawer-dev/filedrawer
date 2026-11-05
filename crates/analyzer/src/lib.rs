@@ -163,37 +163,10 @@ pub fn analyze(text: &str) -> Analysis {
 
 /// The entry as the server stores it: the submitted text without `label` and the
 /// `fd_` fields, which the server reserves (design.md, Submission and screening).
-/// Only top-level keys in the front matter are removed, each with the indented or
-/// list lines that continue its value. Everything else stays byte for byte.
+/// Each reserved top-level key goes with every line up to the next top-level key; the
+/// YAML parser finds the keys, so quoting a key doesn't hide it. Everything else stays
+/// byte for byte. Text whose front matter doesn't parse comes back unchanged, and the
+/// analyzer refuses it.
 pub fn stored_text(text: &str) -> String {
-    let mut lines = text.split_inclusive('\n');
-    let mut stored = String::with_capacity(text.len());
-    match lines.next() {
-        Some(first) if first.trim_end() == "---" => stored.push_str(first),
-        Some(first) => {
-            stored.push_str(first);
-            stored.extend(lines);
-            return stored;
-        }
-        None => return stored,
-    }
-    let mut skipping = false;
-    for line in lines.by_ref() {
-        if line.trim_end() == "---" {
-            stored.push_str(line);
-            break;
-        }
-        let continues_value = line.starts_with([' ', '\t', '-']) || line.trim().is_empty();
-        if skipping && continues_value {
-            continue;
-        }
-        let key = line.split_once(':').map(|(key, _)| key.trim());
-        skipping = !line.starts_with([' ', '\t', '#'])
-            && key.is_some_and(|key| key == "label" || key.starts_with("fd_"));
-        if !skipping {
-            stored.push_str(line);
-        }
-    }
-    stored.extend(lines);
-    stored
+    front_matter::without_reserved_fields(text)
 }

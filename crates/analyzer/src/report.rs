@@ -18,6 +18,7 @@ pub enum Refusal {
     TooManyLogs { count: usize },
     UnpinnedCode { url: String },
     MovingRef { command: String },
+    EmbargoUnreadable(String),
 }
 
 impl fmt::Display for Refusal {
@@ -46,6 +47,11 @@ impl fmt::Display for Refusal {
                 f,
                 "the `code` link isn't pinned to a commit or version: {url}. Link a \
                  40-character commit hash, or a Zenodo version record"
+            ),
+            Refusal::EmbargoUnreadable(value) => write!(
+                f,
+                "`embargo_until: {value}` is not a date written YYYY-MM-DD; the server won't \
+                 guess at an embargo, since publishing too early can't be undone"
             ),
             Refusal::MovingRef { command } => write!(
                 f,
@@ -83,11 +89,21 @@ pub struct Warning {
 }
 
 impl Warning {
+    /// A warning on one line: author text inside `message` loses its line breaks and
+    /// other control characters, so it can't forge lines in a response.
     pub(crate) fn new(kind: WarningKind, message: impl Into<String>) -> Self {
-        Warning {
-            kind,
-            message: message.into(),
-        }
+        let message = message
+            .into()
+            .chars()
+            .map(|c| {
+                if c.is_control() || matches!(c, '\u{2028}' | '\u{2029}') {
+                    ' '
+                } else {
+                    c
+                }
+            })
+            .collect();
+        Warning { kind, message }
     }
 }
 
