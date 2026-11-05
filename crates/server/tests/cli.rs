@@ -65,9 +65,11 @@ async fn admin_commands_make_an_account_and_a_token_the_server_accepts() {
 
     let pool = db::open(database.to_str().unwrap()).await.unwrap();
     let outbox = common::Outbox::default();
-    let router = app(common::state(pool.clone(), &outbox));
+    let state = common::state(pool.clone(), &outbox);
+    let router = app(state.clone());
     let test = common::TestApp {
         router,
+        state,
         pool,
         account,
         token,

@@ -10,6 +10,7 @@ mod embargo;
 mod entries;
 mod error;
 mod ids;
+pub mod jobs;
 pub mod mail;
 mod pages;
 mod passwords;
@@ -64,7 +65,11 @@ pub fn app(state: AppState) -> Router {
     Router::new()
         .merge(accounts)
         .route("/entries", post(routes::submit::submit))
-        .route("/e/{id}", get(routes::read::entry))
+        .route(
+            "/e/{id}",
+            get(routes::read::entry).put(routes::submit::resubmit),
+        )
+        .route("/e/{id}/publish", post(routes::submit::publish))
         .route("/search", get(routes::read::search))
         .route("/cards.txt", get(routes::read::cards))
         .route("/tags", get(routes::read::tags))

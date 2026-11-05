@@ -1,13 +1,21 @@
-//! Times and dates as the database stores them.
+//! Times and dates as the database stores them: UTC, to the second, always the same
+//! width, so stored times compare correctly as text.
 
 use time::OffsetDateTime;
-use time::format_description::well_known::Rfc3339;
+use time::macros::format_description;
 
-/// Now, in UTC, as RFC 3339.
+/// `at` as the database stores it, such as `2026-11-05T22:58:52Z`.
+pub fn stamp(at: OffsetDateTime) -> String {
+    at.to_offset(time::UtcOffset::UTC)
+        .format(format_description!(
+            "[year]-[month]-[day]T[hour]:[minute]:[second]Z"
+        ))
+        .expect("every UTC time formats")
+}
+
+/// Now, as the database stores it.
 pub fn now() -> String {
-    OffsetDateTime::now_utc()
-        .format(&Rfc3339)
-        .expect("RFC 3339 formats every UTC time")
+    stamp(now_utc())
 }
 
 /// The current time in UTC.

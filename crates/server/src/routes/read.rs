@@ -9,19 +9,25 @@ use axum::response::Response;
 use serde::Deserialize;
 use serde_json::json;
 
+use analyzer::render_card;
+use axum::http::HeaderMap;
+
 use crate::AppState;
+use crate::auth::optional_token_account;
+use crate::embargo::parse_date;
 use crate::entries::{self, Filters};
 use crate::error::AppError;
-use crate::respond::{DELIMITER, Format};
+use crate::respond::{DELIMITER, Format, card_and_warnings};
 
 pub async fn entry(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    headers: HeaderMap,
     format: Format,
 ) -> Result<Response, AppError> {
-    let entry = entries::public_entry(&state.pool, &id)
-        .await?
-        .ok_or(AppError::NotFound)?;
+    let Some(entry) = entries::public_entry(&state.pool, &id).await? else {
+        return own_entry(&state, &id, &headers, format).await;
+    };
     let analysis = analyze(&entry.source);
     let notes: Vec<String> = match &analysis.results {
         Results::Read(table) => table.rows.iter().map(row_note).collect(),
@@ -44,11 +50,11 @@ pub async fn entry(
     }
     // The card holds author text (the title, hypothesis, tags and more), so it goes
     // below the delimiter with the entry itself.
-    text.push_str(&format!("{DELIMITER}\ncard:\n"));
-    for line in card.lines() {
-        text.push_str(&format!("  {line}\n"));
-    }
-    text.push_str(&format!("\n{}", entry.source));
+    text.push_str(&format!(
+        "{DELIMITER}\n{}\n{}",
+        card_and_warnings(&card, &[]),
+        entry.source
+    ));
     let json = json!({
         "id": entry.id,
         "status": "public",
@@ -58,6 +64,67 @@ pub async fn entry(
         "author": {"display_name": entry.display_name, "account_id": entry.account_id},
         "row_notes": notes,
         "card": card,
+        "text": entry.source,
+    });
+    Ok(format.reply(StatusCode::OK, text, json))
+}
+
+/// An entry that isn't public, for its author's token only: a pending entry with the
+/// time it publishes and its warnings, or an embargoed one with its release date.
+/// Anyone else gets the same 404 as for an entry that doesn't exist.
+async fn own_entry(
+    state: &AppState,
+    id: &str,
+    headers: &HeaderMap,
+    format: Format,
+) -> Result<Response, AppError> {
+    let Some(account) = optional_token_account(headers, state).await? else {
+        return Err(AppError::NotFound);
+    };
+    let entry = entries::own_entry(&state.pool, id, &account.id)
+        .await?
+        .filter(|entry| matches!(entry.status.as_str(), "pending" | "embargoed"))
+        .ok_or(AppError::NotFound)?;
+    let analysis = analyze(&entry.source);
+    let notes: Vec<String> = match &analysis.results {
+        Results::Read(table) => table.rows.iter().map(row_note).collect(),
+        Results::NotRead(_) => Vec::new(),
+    };
+    let release = parse_date(entry.embargo_until.as_deref()).map(|date| date.to_string());
+    let when = match entry.status.as_str() {
+        "pending" => format!(
+            "publish_at: {}\n",
+            entry.hold_until.as_deref().unwrap_or("")
+        ),
+        _ => format!(
+            "release: {}\n",
+            release.as_deref().unwrap_or("not recorded")
+        ),
+    };
+    let mut text = format!(
+        "id: {}\nstatus: {}\n{when}analyzer: v{ANALYZER_VERSION}\nurl: {}/e/{}\n",
+        entry.id, entry.status, state.public_url, entry.id
+    );
+    for (number, note) in (1..).zip(&notes) {
+        text.push_str(&format!("row {number}: {note}\n"));
+    }
+    let context = entries::card_context(&entry.id, &account.id, &account.display_name);
+    let card = render_card(&analysis, &context);
+    let warnings: Vec<String> = analysis.warnings.iter().map(ToString::to_string).collect();
+    text.push_str(&format!(
+        "{DELIMITER}\n{}\n{}",
+        card_and_warnings(&card, &warnings),
+        entry.source
+    ));
+    let json = json!({
+        "id": entry.id,
+        "status": entry.status,
+        "publish_at": entry.hold_until,
+        "release": release.filter(|_| entry.status == "embargoed"),
+        "analyzer_version": ANALYZER_VERSION,
+        "row_notes": notes,
+        "card": card,
+        "warnings": warnings,
         "text": entry.source,
     });
     Ok(format.reply(StatusCode::OK, text, json))

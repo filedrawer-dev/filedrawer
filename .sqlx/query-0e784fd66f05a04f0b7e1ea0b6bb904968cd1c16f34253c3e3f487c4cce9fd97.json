@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE entries SET status = 'embargoed' WHERE seq = ? AND status = 'screening'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "0e784fd66f05a04f0b7e1ea0b6bb904968cd1c16f34253c3e3f487c4cce9fd97"
+}

@@ -7,7 +7,7 @@ use axum::http::StatusCode;
 use common::{date_in, entry, test_app};
 
 #[tokio::test]
-async fn a_valid_entry_is_published_and_the_response_shows_its_card() {
+async fn a_valid_entry_is_held_and_the_response_shows_its_card() {
     let app = test_app().await;
     let reply = app
         .post("/entries", entry("Steering does not transfer", ""))
@@ -24,7 +24,7 @@ async fn a_valid_entry_is_published_and_the_response_shows_its_card() {
             .all(|b| b"0123456789abcdefghjkmnpqrstvwxyz".contains(&b)),
         "{id}"
     );
-    assert!(reply.body.contains("status: public\n"), "{}", reply.body);
+    assert!(reply.body.contains("status: pending\n"), "{}", reply.body);
     assert!(
         reply.body.contains(&format!(
             "  {id}; experiment; null; main; rows: 1 effect, 1 null"
@@ -38,7 +38,15 @@ async fn a_valid_entry_is_published_and_the_response_shows_its_card() {
         "{}",
         reply.body
     );
-    assert_eq!(app.get(&format!("/e/{id}")).await.status, StatusCode::OK);
+    // Held: nobody sees it yet; its author does.
+    assert_eq!(
+        app.get(&format!("/e/{id}")).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        app.get_as_author(&format!("/e/{id}")).await.status,
+        StatusCode::OK
+    );
 }
 
 #[tokio::test]
@@ -105,19 +113,15 @@ async fn an_embargoed_entry_is_held_and_invisible() {
         &format!("embargo_until: {}\ntags: [hidden-tag]\n", date_in(30)),
     )
     .replace("tags: [steering, refusal]\n", "");
-    let reply = app.post("/entries", text).await;
-    assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
+    let id = app.submit_held(&text).await;
+    let reply = app.post(&format!("/e/{id}/publish"), "").await;
     assert!(reply.body.contains("status: embargoed\n"), "{}", reply.body);
     assert!(
         reply.body.contains(&format!("release: {}", date_in(30))),
         "{}",
         reply.body
     );
-    let id = reply
-        .body
-        .lines()
-        .find_map(|l| l.strip_prefix("id: "))
-        .unwrap();
+    let id = id.as_str();
     assert_eq!(
         app.get(&format!("/e/{id}")).await.status,
         StatusCode::NOT_FOUND
@@ -134,12 +138,14 @@ async fn an_embargo_holds_through_its_date_and_one_already_past_is_refused() {
     // refused: it is most likely a typo, and publishing early can't be undone.
     let app = test_app().await;
     let today = app
-        .post(
-            "/entries",
-            entry("T", &format!("embargo_until: {}\n", date_in(0))),
-        )
+        .submit_held(&entry("T", &format!("embargo_until: {}\n", date_in(0))))
         .await;
-    assert!(today.body.contains("status: embargoed\n"), "{}", today.body);
+    let published = app.post(&format!("/e/{today}/publish"), "").await;
+    assert!(
+        published.body.contains("status: embargoed\n"),
+        "{}",
+        published.body
+    );
     let past = app
         .post(
             "/entries",
@@ -220,7 +226,7 @@ async fn json_is_returned_when_asked_for() {
         .await;
     assert_eq!(reply.status, StatusCode::CREATED);
     let json: serde_json::Value = serde_json::from_str(&reply.body).unwrap();
-    assert_eq!(json["status"], "public");
+    assert_eq!(json["status"], "pending");
     assert_eq!(json["id"].as_str().unwrap().len(), 10);
     assert!(json["card"].as_str().unwrap().contains("experiment; null"));
     assert_eq!(json["warnings"].as_array().unwrap().len(), 1);
@@ -255,7 +261,7 @@ async fn the_reply_keeps_author_text_below_a_delimiter() {
         .lines()
         .filter_map(|line| line.split_once(": ").map(|(k, _)| k))
         .collect();
-    assert_eq!(keys, vec!["id", "status", "url"], "{server}");
+    assert_eq!(keys, vec!["id", "status", "publish_at", "url"], "{server}");
     assert!(author.contains("primary row: "), "{author}");
     assert!(author.contains("warning: "), "{author}");
     assert!(

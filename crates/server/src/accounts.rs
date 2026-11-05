@@ -3,9 +3,8 @@
 
 use sqlx::{SqliteConnection, SqlitePool};
 use time::Duration;
-use time::format_description::well_known::Rfc3339;
 
-use crate::{ids, time::now, time::now_utc};
+use crate::{ids, time::now, time::now_utc, time::stamp};
 
 /// How long a login lasts.
 pub const SESSION_DAYS: i64 = 30;
@@ -49,9 +48,7 @@ pub fn looks_like_email(email: &str) -> bool {
 }
 
 fn later(duration: Duration) -> String {
-    (now_utc() + duration)
-        .format(&Rfc3339)
-        .expect("RFC 3339 formats every UTC time")
+    stamp(now_utc() + duration)
 }
 
 /// The result of a signup.

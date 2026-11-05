@@ -129,12 +129,14 @@ async fn serve() -> ExitCode {
             Arc::new(LogMailer)
         }
     };
-    let router = app(AppState {
+    let state = AppState {
         pool,
         screener: config.screener,
         mailer,
         public_url: config.public_url.clone(),
-    });
+    };
+    tokio::spawn(filedrawer_server::jobs::run_publisher(state.clone()));
+    let router = app(state);
     let shutdown = async {
         // systemd stops a service with SIGTERM; Ctrl-C is for a terminal. A failure
         // to install a handler leaves the other, or SIGKILL.

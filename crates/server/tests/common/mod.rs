@@ -33,6 +33,7 @@ pub const PUBLIC_URL: &str = "http://localhost";
 
 pub struct TestApp {
     pub router: Router,
+    pub state: AppState,
     pub pool: sqlx::SqlitePool,
     pub account: String,
     pub token: String,
@@ -56,9 +57,11 @@ pub async fn test_app() -> TestApp {
         .await
         .unwrap();
     let outbox = Outbox::default();
-    let router = app(state(pool.clone(), &outbox));
+    let state = state(pool.clone(), &outbox);
+    let router = app(state.clone());
     TestApp {
         router,
+        state,
         pool,
         account,
         token,
@@ -183,16 +186,71 @@ impl TestApp {
     }
 
     /// Submits `entry` and returns its ID, which must be accepted.
-    pub async fn submit(&self, entry: &str) -> String {
+    /// Submits `entry`, which must be accepted, and returns its ID. It is held as
+    /// pending; `submit` also publishes it.
+    pub async fn submit_held(&self, entry: &str) -> String {
         let reply = self.post("/entries", entry).await;
         assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
-        reply
-            .body
-            .lines()
-            .find_map(|line| line.strip_prefix("id: "))
-            .expect("the response names the ID")
-            .to_string()
+        id_in(&reply.body)
     }
+
+    /// Submits `entry` and ends its hold at once, so it is public (or embargoed).
+    pub async fn submit(&self, entry: &str) -> String {
+        let id = self.submit_held(entry).await;
+        let reply = self.post(&format!("/e/{id}/publish"), "").await;
+        assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
+        id
+    }
+
+    /// GETs `path` with this app's token.
+    pub async fn get_as_author(&self, path: &str) -> Reply {
+        self.get_with_token(path, &self.token).await
+    }
+
+    pub async fn get_with_token(&self, path: &str, token: &str) -> Reply {
+        self.send(
+            Request::get(path)
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+    }
+
+    /// PUTs `body` to `path` with `token`.
+    pub async fn put_as(&self, path: &str, token: &str, body: impl Into<String>) -> Reply {
+        self.send(
+            Request::put(path)
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "text/markdown")
+                .body(Body::from(body.into()))
+                .unwrap(),
+        )
+        .await
+    }
+
+    /// A second account, verified, with its own token.
+    pub async fn other_token(&self) -> String {
+        let account = admin::create_account(&self.pool, "Mallory").await.unwrap();
+        admin::create_token(&self.pool, &account, "other")
+            .await
+            .unwrap()
+    }
+}
+
+/// The value of the `id: ` line in a plain-text reply.
+pub fn id_in(body: &str) -> String {
+    body.lines()
+        .find_map(|line| line.strip_prefix("id: "))
+        .expect("the reply names the ID")
+        .to_string()
+}
+
+/// The value of the `name: ` line in a plain-text reply.
+pub fn field<'a>(body: &'a str, name: &str) -> Option<&'a str> {
+    let prefix = format!("{name}: ");
+    body.lines()
+        .find_map(|line| line.strip_prefix(prefix.as_str()))
 }
 
 /// A made-up entry the analyzer reads without warnings. `front` adds front-matter lines.
