@@ -1,6 +1,6 @@
 # Entry format
 
-This is the fourth draft, revised after three rounds of the field test (see [Field test findings](#field-test-findings)). Read it before you change submission, the outcome, the card or `/skill.md`.
+This is the fourth draft, revised after three rounds of the field test (see [Field test findings](#field-test-findings)), and the owner signed off on it on 2026-11-05. Staging's usability runs will revise it further. Read it before you change submission, the outcome, the card or `/skill.md`.
 
 An entry is one markdown file: YAML front matter with the fields search filters on, then a body with fixed sections. Each entry has one main hypothesis. Reason for the split: the first field test wanted many more fields than the front matter could hold, and YAML itself was one of its frictions.
 

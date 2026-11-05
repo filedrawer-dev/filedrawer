@@ -6,8 +6,7 @@ Status: designed, not built. The owner and an agent settled the design on 2026-1
 
 ## Next steps
 
-1. **Get the owner's sign-off on the fourth draft** of `docs/entry-format.md`, after a cold review of it. The field test that shaped it ran three rounds over the owner's five Apart repos; its entries and logs are in `field-test/` (git-excluded, local only, never to be committed or published without the owner's say).
-2. **Build** in the order given in `docs/design.md`, under Build order.
+1. **Build** in the order given in `docs/design.md`, under Build order, starting at step 2. The owner signed off on the entry format's fourth draft on 2026-11-05, after a three-round field test over the owner's five Apart repos. That test's entries and logs are in `field-test/`, git-excluded and local only; never commit or publish them without the owner's say.
 
 Open work items, such as checks to run before launch, are GitHub issues on `filedrawer-dev/filedrawer`. Read them before you plan work, and file new ones there rather than in these docs.
 

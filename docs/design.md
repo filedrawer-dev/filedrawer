@@ -278,7 +278,7 @@ Launch needs everything in this document except GitHub and ORCID sign-in.
 
 ## Open questions
 
-None. The owner signs off on the fourth draft of the entry format after its cold review.
+None. The owner signed off on the fourth draft of the entry format on 2026-11-05.
 
 ## Later
 
