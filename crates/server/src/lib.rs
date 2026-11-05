@@ -9,6 +9,7 @@ mod embargo;
 mod entries;
 mod error;
 mod ids;
+pub mod mail;
 mod respond;
 mod routes;
 pub mod screening;
@@ -31,6 +32,9 @@ const MAX_BODY_BYTES: usize = 1024 * 1024;
 pub struct AppState {
     pub pool: SqlitePool,
     pub screener: Screener,
+    pub mailer: mail::Mailer,
+    /// The site's address, with no trailing slash (`Config::public_url`).
+    pub public_url: String,
 }
 
 /// The router with every route.

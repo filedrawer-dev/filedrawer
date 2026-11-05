@@ -4,6 +4,7 @@
 use std::process::ExitCode;
 
 use filedrawer_server::config::Config;
+use filedrawer_server::mail::Mailer;
 use filedrawer_server::{AppState, admin, app, db};
 
 const USAGE: &str = "\
@@ -14,7 +15,13 @@ usage:
 
 serve runs the server. It reads FILEDRAWER_DATABASE (the SQLite file),
 FILEDRAWER_LISTEN (such as 127.0.0.1:8080), FILEDRAWER_ENVIRONMENT (production,
-staging or dev) and FILEDRAWER_SCREENER (pass-all; production refuses it).
+staging or dev), FILEDRAWER_SCREENER (pass-all; production refuses it) and
+FILEDRAWER_PUBLIC_URL (such as https://staging.filedrawer.dev), which emails link to
+and forms must come from.
+
+Email goes through SMTP over TLS when FILEDRAWER_SMTP_HOST, FILEDRAWER_SMTP_USER,
+FILEDRAWER_SMTP_PASSWORD and FILEDRAWER_MAIL_FROM are all set (FILEDRAWER_SMTP_PORT
+defaults to 465), and to the log otherwise. Production refuses to start without them.
 
 The admin commands need only FILEDRAWER_DATABASE. create-account prints the new
 account's ID. create-token prints a new API token for the account; only its hash
@@ -110,9 +117,21 @@ async fn serve() -> ExitCode {
         Err(error) => return fail(&format!("can't listen on {}: {error}", config.listen)),
     };
     tracing::info!(listen = %config.listen, environment = ?config.environment, "serving");
+    let mailer = match &config.smtp {
+        Some(settings) => match Mailer::smtp(settings) {
+            Ok(mailer) => mailer,
+            Err(error) => return fail(&format!("can't set up SMTP: {error}")),
+        },
+        None => {
+            tracing::warn!("no SMTP settings: emails go to the log");
+            Mailer::Log
+        }
+    };
     let router = app(AppState {
         pool,
         screener: config.screener,
+        mailer,
+        public_url: config.public_url.clone(),
     });
     let shutdown = async {
         // systemd stops a service with SIGTERM; Ctrl-C is for a terminal. A failure

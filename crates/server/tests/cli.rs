@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::process::{Command, Output};
 
 use axum::http::StatusCode;
-use filedrawer_server::{AppState, Screener, app, db};
+use filedrawer_server::{app, db};
 
 fn scratch_database(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("filedrawer-cli-{}-{name}", std::process::id()));
@@ -64,14 +64,13 @@ async fn admin_commands_make_an_account_and_a_token_the_server_accepts() {
     assert!(token.starts_with("fdt_") && token.len() == 56, "{token}");
 
     let pool = db::open(database.to_str().unwrap()).await.unwrap();
-    let router = app(AppState {
-        pool,
-        screener: Screener::PassAll,
-    });
+    let outbox = filedrawer_server::mail::Outbox::default();
+    let router = app(common::state(pool, &outbox));
     let test = common::TestApp {
         router,
         account,
         token,
+        outbox,
     };
     let reply = test.post("/entries", common::entry("T", "")).await;
     assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
@@ -104,6 +103,14 @@ fn production_refuses_the_pass_all_screener() {
         .env_clear()
         .env("FILEDRAWER_DATABASE", &database)
         .env("FILEDRAWER_LISTEN", "127.0.0.1:0")
+        .env("FILEDRAWER_PUBLIC_URL", "https://filedrawer.dev")
+        .env("FILEDRAWER_SMTP_HOST", "smtp.example.com")
+        .env("FILEDRAWER_SMTP_USER", "user")
+        .env("FILEDRAWER_SMTP_PASSWORD", "not-a-real-password")
+        .env(
+            "FILEDRAWER_MAIL_FROM",
+            "File Drawer <noreply@filedrawer.dev>",
+        )
         .env("FILEDRAWER_ENVIRONMENT", "production")
         .env("FILEDRAWER_SCREENER", "pass-all")
         .stderr(std::process::Stdio::piped())

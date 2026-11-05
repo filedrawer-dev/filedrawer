@@ -3,15 +3,30 @@
 
 use axum::Router;
 use axum::body::Body;
-use axum::http::{Request, StatusCode};
+use axum::http::{HeaderMap, Request, StatusCode};
+use filedrawer_server::mail::{Email, Mailer, Outbox};
 use filedrawer_server::{AppState, Screener, admin, app, db};
 use http_body_util::BodyExt;
 use tower::ServiceExt;
+
+/// The site's address in tests; emails link to it and forms must come from it.
+pub const PUBLIC_URL: &str = "http://localhost";
 
 pub struct TestApp {
     pub router: Router,
     pub account: String,
     pub token: String,
+    pub outbox: Outbox,
+}
+
+/// The state every test app shares: an in-memory database and mailer.
+pub fn state(pool: sqlx::SqlitePool, outbox: &Outbox) -> AppState {
+    AppState {
+        pool,
+        screener: Screener::PassAll,
+        mailer: Mailer::Memory(outbox.clone()),
+        public_url: PUBLIC_URL.to_string(),
+    }
 }
 
 pub async fn test_app() -> TestApp {
@@ -20,31 +35,92 @@ pub async fn test_app() -> TestApp {
     let token = admin::create_token(&pool, &account, "laptop")
         .await
         .unwrap();
-    let router = app(AppState {
-        pool,
-        screener: Screener::PassAll,
-    });
+    let outbox = Outbox::default();
+    let router = app(state(pool, &outbox));
     TestApp {
         router,
         account,
         token,
+        outbox,
     }
 }
 
 pub struct Reply {
     pub status: StatusCode,
+    pub headers: HeaderMap,
     pub body: String,
+}
+
+impl Reply {
+    /// The `name=value` pair the reply's Set-Cookie sets, without its attributes.
+    pub fn cookie(&self) -> Option<String> {
+        let header = self.headers.get("set-cookie")?.to_str().ok()?;
+        Some(header.split(';').next()?.to_string())
+    }
+
+    pub fn location(&self) -> Option<&str> {
+        self.headers.get("location")?.to_str().ok()
+    }
 }
 
 impl TestApp {
     pub async fn send(&self, request: Request<Body>) -> Reply {
         let response = self.router.clone().oneshot(request).await.unwrap();
         let status = response.status();
+        let headers = response.headers().clone();
         let bytes = response.into_body().collect().await.unwrap().to_bytes();
         Reply {
             status,
+            headers,
             body: String::from_utf8(bytes.to_vec()).unwrap(),
         }
+    }
+
+    /// GETs `path`, with a session cookie if given.
+    pub async fn page(&self, path: &str, cookie: Option<&str>) -> Reply {
+        let mut request = Request::get(path);
+        if let Some(cookie) = cookie {
+            request = request.header("cookie", cookie);
+        }
+        self.send(request.body(Body::empty()).unwrap()).await
+    }
+
+    /// POSTs a form as a browser on the site would: with its Origin, and the session
+    /// cookie if given.
+    pub async fn form(&self, path: &str, fields: &[(&str, &str)], cookie: Option<&str>) -> Reply {
+        let body: String = fields
+            .iter()
+            .map(|(key, value)| format!("{}={}", encode(key), encode(value)))
+            .collect::<Vec<_>>()
+            .join("&");
+        let mut request = Request::post(path)
+            .header("content-type", "application/x-www-form-urlencoded")
+            .header("origin", PUBLIC_URL);
+        if let Some(cookie) = cookie {
+            request = request.header("cookie", cookie);
+        }
+        self.send(request.body(Body::from(body)).unwrap()).await
+    }
+
+    /// Every email sent so far.
+    pub fn sent(&self) -> Vec<Email> {
+        self.outbox.sent()
+    }
+
+    /// The one link to this site in the last email to `to`.
+    pub fn link_in_last_email_to(&self, to: &str) -> String {
+        let email = self
+            .sent()
+            .into_iter()
+            .rev()
+            .find(|email| email.to == to)
+            .unwrap_or_else(|| panic!("no email to {to}"));
+        let start = email.body.find(PUBLIC_URL).expect("the email has a link");
+        let link: String = email.body[start..]
+            .chars()
+            .take_while(|c| !c.is_whitespace())
+            .collect();
+        link.strip_prefix(PUBLIC_URL).unwrap().to_string()
     }
 
     pub async fn get(&self, path: &str) -> Reply {
@@ -135,4 +211,16 @@ Command not recorded.
 pub fn date_in(days: i64) -> String {
     let date = time::OffsetDateTime::now_utc().date() + time::Duration::days(days);
     date.to_string()
+}
+
+/// Percent-encodes a form value.
+fn encode(text: &str) -> String {
+    text.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                char::from(b).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
 }
