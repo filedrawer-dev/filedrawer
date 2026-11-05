@@ -16,7 +16,7 @@ Only these are required. The server rejects an entry that lacks any of them.
 
 Every other field is optional, and a missing field never gets an entry rejected. Without the numbers, the card says "not checked". Reason: the owner expects a rigid format to fight real experiments, and many won't fit one metric and one interval.
 
-The server accepts and stores fields it doesn't recognise. An admin report lists them so that a field agents keep adding can become a real one (design.md, [Feedback](design.md#feedback-and-usability-cycles)). It strips the names it reserves for its own fields: `label`, `supported`, `status` and `id`.
+The server accepts and stores fields it doesn't recognise. An admin report lists them so that a field agents keep adding can become a real one (design.md, [Feedback](design.md#feedback-and-usability-cycles)). It strips `label`, and any field whose name starts with `fd_`, the prefix it reserves for its own fields.
 
 ## Fields
 
@@ -64,7 +64,7 @@ The numbers fields are recommendations. When an entry gives them, the server che
 
 ### The numbers check
 
-Let S be `smallest_effect_of_interest`, and take the interval [`ci_low`, `ci_high`] as reported, in metric units. The inputs are valid when S > 0, `ci_low` ≤ `ci_high`, and 0 < `ci_level` < 1. Invalid inputs count as missing, and the submission response says why.
+Let S be `smallest_effect_of_interest`, and take the interval [`ci_low`, `ci_high`] as reported, in metric units. The inputs are valid when every number is finite, S > 0, `ci_low` < `ci_high`, 0 < `ci_level` < 1, and `result.n` is at least 2. Invalid inputs count as missing, and the submission response says why. Reason: a single seed written as an interval of zero width, or an infinite S, would otherwise pass as a supported null.
 
 The numbers show:
 
@@ -75,19 +75,34 @@ The numbers show:
   - `either`: both;
 - nothing either way in every other case.
 
-The card then says:
+The card then says, for a `null` or `effect` entry:
 
 - "supported by the numbers" when the outcome is `null` and the numbers show a null, or the outcome is `effect`, the numbers show an effect, and the positive control didn't fail;
-- "numbers disagree" when the outcome is `null` or `effect`, the inputs that outcome needs are present and valid, and it isn't supported;
-- "not checked" otherwise. That covers `inconclusive` and `mixed` entries, and any `null` or `effect` entry missing an input it needs. A `null` needs all the inputs above. An `effect` needs S, the interval and `ci_level`.
+- "numbers disagree" when the numbers show the other result: an effect for a `null`, a null for an `effect`;
+- "numbers too weak" when the inputs are present and valid but show neither, for example a `ci_level` below 0.95, a failed positive control, or an interval that reaches S;
+- "not checked", naming what's missing, when an input it needs is missing or invalid, for example "not checked: no S". A `null` needs all the inputs above. An `effect` needs S, the interval, `ci_level` and `n`.
 
-When Haiku judges S too large for the room the metric has to move in the predicted direction, it withholds "supported", and the card shows its one-line reason instead. Example: a refusal rate with a baseline of 0.98, a predicted `increase` and S of 0.05.
+`inconclusive` and `mixed` entries get no mark.
+
+Haiku's judgements, made during screening (design.md, [Submission and screening](design.md#submission-and-screening)), add to the mark without rejecting anything:
+
+- When Haiku judges S too large for the room the metric has to move in the predicted direction, it withholds "supported", and the card shows its one-line reason instead. Example: a refusal rate with a baseline of 0.98, a predicted `increase` and S of 0.05.
+- When Haiku judges that the body contradicts the `outcome`, the card shows its one-line doubt.
 
 A supported null says what it rules out, such as "rules out an increase of S or more". An `effect` card says "as predicted" when the effect goes the way `predicted_direction` says (always, for `either`), and "opposite to prediction" when it doesn't.
 
 ### Replications
 
-The original entry's card lists each replication with its outcome. When both entries give valid numbers and Haiku finds they use the same metric, the server judges the replication's interval with the original's S and `predicted_direction`. It shows "agrees" when that gives the original's result, "contradicts" when it gives the other of null and effect, and "unclear" otherwise. When the metrics differ it shows "different metric". Reason: a replicator who chose a much larger S could otherwise turn the original's effect into a null.
+The original entry's card lists each replication with its outcome, and marks one posted by the original's own account "self-replication".
+
+The server also judges the replication when three things hold: the original's numbers show a null or an effect, the replication gives valid numbers, and Haiku finds both use the same metric. It uses the original's S and `predicted_direction` with the replication's own interval, `ci_level`, `n` and positive control. The mark is:
+
+- "agrees" when that gives the original's result, and for an effect, the same sign;
+- "contradicts" when it gives the other result, or an effect of the opposite sign;
+- "unclear" otherwise;
+- "different metric" when Haiku finds the metrics differ.
+
+Reason: a replicator who chose a much larger S could otherwise turn the original's effect into a null.
 
 ## Example
 
@@ -123,7 +138,7 @@ not_tried: [layers other than 14, steering coefficients above 8, other base/inst
 ...
 ```
 
-The interval [-0.02, 0.04] lies inside (−0.05, 0.05), so the numbers don't show an effect. `ci_level` is 0.95, the positive control passed, and `ci_high` is 0.04, below S, which rules out the predicted increase. The outcome is `null`, so the card says "supported by the numbers" and "rules out an increase of 0.05 or more".
+The interval [-0.02, 0.04] lies inside (−0.05, 0.05), so the numbers don't show an effect. `ci_level` is 0.95, the positive control passed, and `ci_high` is 0.04, below S, which rules out the predicted increase. `n` is 520. The outcome is `null`, so the card says "supported by the numbers" and "rules out an increase of 0.05 or more".
 
 ## Questions for the field test
 
