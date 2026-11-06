@@ -20,7 +20,7 @@ The field test's entries and logs are in `field-test/`, git-excluded and local o
 ## Code
 
 - `crates/analyzer`: reads an entry by `docs/entry-format.md`, lists what would refuse it and what the server couldn't read, and renders its card with analyzer v1. The server and the CLI share it. Reason: in the field test every agent wrote its own parser and card renderer, a dozen in all, and each read the spec differently.
-- `entry-check FILE...` checks entries offline, for contributing agents and field tests: `cargo run -q --bin entry-check -- FILE...`. It exits 1 when the server would refuse an entry.
+- `entry-check FILE...` checks entries offline, for contributing agents and field tests: `cargo run -q --bin entry-check -- FILE...`. It exits 1 when the server would refuse an entry. Run `bin/field-test-diff save` before an analyzer change and `bin/field-test-diff` after it (`-h`): it lists the field-test entries whose outcome changed, without their contents.
 - `crates/server`: the `filedrawer` binary. `filedrawer -h` lists its commands and settings. Slices 1 and 2 of build step 2 are in:
   - the admin CLI that makes accounts and tokens;
   - `POST /entries`, `/e/<id>`, `/search`, `/cards.txt`, `/tags` and `POST /feedback`;

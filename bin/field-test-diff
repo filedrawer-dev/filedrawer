@@ -1,0 +1,126 @@
+#!/usr/bin/env python3
+"""Compare entry-check's outcomes on the field-test entries with a saved baseline.
+
+    bin/field-test-diff save    run entry-check over every field-test/**/*.md and save
+                                each file's outcome as the baseline
+    bin/field-test-diff         run it again and print only the files whose outcome
+                                changed since the baseline; exit 1 when any did
+
+Run `save` before an analyzer change and the plain form after it: the field-test
+entries are honest work, so a newly refused one is a false refusal to look at. An
+outcome is accepted or refused, the warning count, and each refusal's reason cut
+before its first `(` or colon, so the baseline and the output hold no entry text
+(every refusal puts an author's value after one of them) but keep the field a
+refusal names: field-test/ is local and never published (AGENTS.md). It builds
+entry-check with cargo first, unless --entry-check names a command.
+
+Exit status: 0 unchanged (or saved), 1 an outcome changed, 2 no baseline, a usage
+error, or entry-check couldn't be built or run.
+"""
+
+import argparse
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[1]
+DEFAULT_BASELINE = REPO / "target/field-test-baseline.json"
+
+
+def outcome(output: str) -> str:
+    """One file's outcome from entry-check's output, holding no entry text."""
+    lines = output.splitlines()
+    status = re.sub(r"^.*?: ", "", lines[0]) if lines else "no output"
+    reasons = [
+        re.split(r"[(:]", line.removeprefix("refused: "), maxsplit=1)[0].strip()[:80]
+        for line in lines[1:]
+        if line.startswith("refused: ")
+    ]
+    return "; ".join([status, *reasons])
+
+
+def outcomes(directory: Path, entry_check: list[str]) -> dict[str, str]:
+    found = {}
+    for path in sorted(directory.rglob("*.md")):
+        done = subprocess.run(
+            [*entry_check, str(path)], capture_output=True, text=True, check=False
+        )
+        found[str(path.relative_to(directory))] = outcome(done.stdout + done.stderr)
+    return found
+
+
+def fail(why: str) -> int:
+    print(f"field-test-diff: {why}", file=sys.stderr)
+    return 2
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description=__doc__.split("\n\n")[0],
+        epilog=__doc__.split("\n\n", 1)[1],
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("action", nargs="?", choices=["save"], help="save the baseline")
+    parser.add_argument(
+        "--dir",
+        type=Path,
+        default=REPO / "field-test",
+        help="the entries to check (default: field-test/)",
+    )
+    parser.add_argument(
+        "--baseline",
+        type=Path,
+        default=DEFAULT_BASELINE,
+        help="where the baseline is kept (default: target/field-test-baseline.json)",
+    )
+    parser.add_argument(
+        "--entry-check", help="the entry-check command (default: cargo's build of it)"
+    )
+    args = parser.parse_args(argv)
+    if not args.dir.is_dir():
+        return fail(f"no folder {args.dir}")
+    if not args.action and not args.baseline.exists():
+        return fail(
+            f"no baseline at {args.baseline}; run `bin/field-test-diff save` first"
+        )
+    if args.entry_check:
+        entry_check = [args.entry_check]
+    else:
+        built = subprocess.run(
+            ["cargo", "build", "-q", "--bin", "entry-check"],
+            cwd=REPO,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if built.returncode != 0:
+            return fail(
+                "building entry-check failed; run `cargo build --bin entry-check` to see why"
+            )
+        entry_check = [str(REPO / "target/debug/entry-check")]
+    try:
+        now = outcomes(args.dir, entry_check)
+    except OSError as error:
+        return fail(f"can't run {entry_check[0]}: {error.strerror}")
+    if args.action == "save":
+        args.baseline.parent.mkdir(parents=True, exist_ok=True)
+        args.baseline.write_text(json.dumps(now, indent=1, sort_keys=True) + "\n")
+        print(f"saved {len(now)} outcomes to {args.baseline}")
+        return 0
+    before = json.loads(args.baseline.read_text())
+    changed = sorted(
+        path for path in before.keys() | now.keys() if before.get(path) != now.get(path)
+    )
+    for path in changed:
+        print(
+            f"{path}\n  before: {before.get(path, 'absent')}\n  after:  {now.get(path, 'absent')}"
+        )
+    if not changed:
+        print(f"unchanged: {len(now)} files")
+    return 1 if changed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

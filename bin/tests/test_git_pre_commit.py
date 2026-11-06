@@ -91,3 +91,77 @@ def test_nothing_is_formatted_when_an_unstaged_file_needs_it(repo):
     assert hook(repo, agent=True).returncode == 0
     assert (repo / "src/other.rs").read_text() == UGLY
     assert git(repo, "show", ":src/lib.rs") == UGLY + "mod other;\n"
+
+
+# An agent's staged Python, which ruff formats as cargo fmt formats Rust.
+
+UGLY_PY = "x = {'a':1}\n"
+TIDY_PY = 'x = {"a": 1}\n'
+
+
+def ruff_is_cached() -> bool:
+    """Whether uvx can run the pinned ruff without the network."""
+    if shutil.which("uvx") is None:
+        return False
+    done = subprocess.run(
+        ["uvx", "--offline", "-q", "ruff@0.14.4", "--version"],
+        capture_output=True,
+        check=False,
+    )
+    return done.returncode == 0
+
+
+@pytest.fixture
+def pyrepo(tmp_path):
+    if not ruff_is_cached():
+        pytest.skip("needs ruff 0.14.4 in uv's cache")
+    root = tmp_path / "pyrepo"
+    (root / "bin").mkdir(parents=True)
+    (root / "tool.py").write_text(TIDY_PY)
+    shutil.copy(HOOK, root / "bin/git-pre-commit")
+    stub = root / "bin/pre-commit-run"
+    stub.write_text("#!/bin/sh\nexit 0\n")
+    stub.chmod(0o755)
+    git(root, "init", "-q")
+    git(root, "-c", "user.name=t", "-c", "user.email=t@t", "add", ".")
+    git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+    return root
+
+
+def test_an_agents_staged_python_is_formatted_and_staged(pyrepo):
+    (pyrepo / "tool.py").write_text(UGLY_PY)
+    git(pyrepo, "add", "tool.py")
+    done = hook(pyrepo, agent=True)
+    assert done.returncode == 0, done.stderr
+    assert (pyrepo / "tool.py").read_text() == TIDY_PY
+    assert git(pyrepo, "show", ":tool.py") == TIDY_PY, "the formatted file is staged"
+    assert "ruff format" in done.stderr
+
+
+def test_staged_python_with_unstaged_changes_is_left_alone(pyrepo):
+    (pyrepo / "tool.py").write_text(UGLY_PY)
+    git(pyrepo, "add", "tool.py")
+    (pyrepo / "tool.py").write_text(UGLY_PY + "# not for this commit\n")
+    assert hook(pyrepo, agent=True).returncode == 0
+    assert git(pyrepo, "show", ":tool.py") == UGLY_PY
+
+
+def test_a_python_script_known_by_its_shebang_is_formatted_too(pyrepo):
+    (pyrepo / "bin/tool").write_text("#!/usr/bin/env python3\n" + UGLY_PY)
+    git(pyrepo, "add", "bin/tool")
+    assert hook(pyrepo, agent=True).returncode == 0
+    assert git(pyrepo, "show", ":bin/tool") == "#!/usr/bin/env python3\n" + TIDY_PY
+
+
+def test_the_copies_from_llm_toolbox_are_left_alone(pyrepo):
+    (pyrepo / "bin/slop-lint").write_text("#!/usr/bin/env python3\n" + UGLY_PY)
+    git(pyrepo, "add", "bin/slop-lint")
+    assert hook(pyrepo, agent=True).returncode == 0
+    assert git(pyrepo, "show", ":bin/slop-lint") == "#!/usr/bin/env python3\n" + UGLY_PY
+
+
+def test_a_persons_staged_python_is_left_unformatted(pyrepo):
+    (pyrepo / "tool.py").write_text(UGLY_PY)
+    git(pyrepo, "add", "tool.py")
+    assert hook(pyrepo, agent=False).returncode == 0
+    assert git(pyrepo, "show", ":tool.py") == UGLY_PY

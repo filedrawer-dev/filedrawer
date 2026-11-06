@@ -3,3 +3,5 @@
 [profile.default]
 status-level = "fail"
 final-status-level = "fail"
+# Every test runs even after one fails, so one run shows every failure.
+fail-fast = false

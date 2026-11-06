@@ -7,7 +7,7 @@ The rules a reviewer holds this repo's code to. The owner's global standards (`~
 - `docs/design.md` says what the site does and why. Behaviour it doesn't describe needs the owner's agreement first.
 - `docs/entry-format.md` says what an entry is, what the analyzer reads, and what a card shows. The analyzer, submission, cards and `/skill.md` follow it word for word.
 
-When the code and a doc disagree, the doc wins. Fix the code, or ask the owner to change the doc. A choice the docs leave open goes in `uncertainties.md` at the repo root until the owner settles it, and then into the doc.
+When the code and a doc disagree, the doc wins. Fix the code, or ask the owner to change the doc. A choice the docs leave open that has meaningful impact goes in `uncertainties.md` at the repo root until the owner settles it, and then into the doc. Meaningful impact means it changes what an agent or person sees or must do (a reply's status code a client acts on, a page's content), what data is kept, shown or deleted, security, cost, or something hard to reverse. Most choices made while building, such as a name, a helper's shape, an internal limit, or a message's exact phrasing, don't belong there; a reviewer flags a missing entry only for a choice with that kind of impact.
 
 ## Layout
 
