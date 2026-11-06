@@ -247,3 +247,9 @@ Choices the docs left open, made while building the analyzer. Once the owner set
 - Options: a 404, as for a page that doesn't exist, or a 403 that says the page is for the admin.
 - Chosen: a 404, so the pages don't advertise themselves. A visitor with no session is sent to `/login`, as on the account pages.
 - Against: the routes are in the AGPL source anyway, and a 403 is clearer for the owner when logged in as the wrong account.
+
+## The smoke-test account's screening note
+
+- Options: put "the screen would have rejected it" and the screen's reasons in the entry's screening note, or show them as a separate line the server owns.
+- Chosen: the screening note, as `staging smoke account: the screen would have rejected it: <reasons>`. It is staging only (production refuses `FILEDRAWER_SMOKE_ACCOUNT`), and it needs no new card line.
+- Against: entry-format.md defines the screening note as the screen's doubt about `outcome`, quoted as model text, so the server's own prefix reads as the model's words, and the real doubt, if any, is lost.

@@ -79,10 +79,10 @@ async fn an_off_topic_entry_is_rejected_and_its_author_reads_why() {
     assert_eq!(again.status, StatusCode::CREATED, "{}", again.body);
 }
 
-/// A test app whose own account is staging's smoke-test account.
-async fn smoke_app(models: &FakeModels) -> TestApp {
+/// A test app with staging's smoke-test account set: its own account, or `other`.
+async fn smoke_app(models: &FakeModels, other: Option<&str>) -> TestApp {
     let mut app = app_with(models).await;
-    app.state.smoke_account = Some(app.account.clone());
+    app.state.smoke_account = Some(other.map_or_else(|| app.account.clone(), str::to_string));
     app.router = filedrawer_server::app(app.state.clone());
     app
 }
@@ -90,7 +90,7 @@ async fn smoke_app(models: &FakeModels) -> TestApp {
 #[tokio::test]
 async fn the_smoke_accounts_rejected_entry_is_published_with_the_screens_reasons() {
     let models = FakeModels::default();
-    let app = smoke_app(&models).await;
+    let app = smoke_app(&models, None).await;
     let (id, status) = publish(&app, &marked("FAKE-OFFTOPIC", "")).await;
     assert_eq!(status, "public");
     assert_eq!(models.asked(), vec![Model::Haiku]);
@@ -112,7 +112,7 @@ async fn the_smoke_accounts_rejected_entry_is_published_with_the_screens_reasons
 #[tokio::test]
 async fn the_smoke_accounts_possible_hazard_still_goes_to_review() {
     let models = FakeModels::default();
-    let app = smoke_app(&models).await;
+    let app = smoke_app(&models, None).await;
     let (_, status) = publish(&app, &marked("FAKE-HAZARD FAKE-SONNET-HAZARD", "")).await;
     assert_eq!(status, "review");
 }
@@ -120,9 +120,7 @@ async fn the_smoke_accounts_possible_hazard_still_goes_to_review() {
 #[tokio::test]
 async fn another_accounts_rejected_entry_stays_rejected_beside_a_smoke_account() {
     let models = FakeModels::default();
-    let mut app = app_with(&models).await;
-    app.state.smoke_account = Some("a-someone".to_string());
-    app.router = filedrawer_server::app(app.state.clone());
+    let app = smoke_app(&models, Some("a-someone")).await;
     let (_, status) = publish(&app, &marked("FAKE-OFFTOPIC", "")).await;
     assert_eq!(status, "rejected");
 }
