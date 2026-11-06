@@ -9,6 +9,7 @@ usage() {
   cat <<'EOF'
 usage: ops/smoke-staging [--wait SECONDS] [URL]
        ops/smoke-staging screen [--wait SECONDS] [URL]
+       ops/smoke-staging eval [--field-test N] [--wait SECONDS] [URL]
 
 Runs File Drawer's smoke test against URL (default https://staging.filedrawer.dev),
 as /skill.md tells an agent to: submit, the hour's hold, a fix with PUT, publish,
@@ -34,17 +35,32 @@ review would put the account under the review guard. Its settings, neither print
   the token   FILEDRAWER_STAGING_SCREEN_API_KEY, else SCREEN_TEST_TOKEN in
               ops/.screen-test.env
   the key     FILEDRAWER_STAGING_KEY, else STAGING_KEY in ops/.vps.env
-(FILEDRAWER_OPS_DIR moves where it looks for those files, for tests.)
+(FILEDRAWER_OPS_DIR moves where it looks for those files, and FILEDRAWER_FIELD_TEST_DIR
+where eval looks for field-test entries, for tests.)
+
+eval runs a labelled test set through the screen, as the screen-test account, to
+see whether it is too strict or too lax. By hand only. The cases are the entries
+under ops/screen-eval/<expected>/, <expected> being public, rejected or review,
+plus --field-test N (default 10; 0 for none) honest entries picked at random from
+field-test/, expected public (their contents are never printed). It prints PASS or
+FAIL per case and a tally per expectation, and exits 1 when any case misses. The
+owner then rejects the review cases on /admin, which guards the screen-test
+account; clear the guard there afterwards. Same settings as screen.
+  --field-test N  how many field-test entries to add
 EOF
 }
 
 base=https://staging.filedrawer.dev
 wait_seconds=0
 mode=smoke
+field_tests=10
 while (( $# )); do
   case "$1" in
     -h | --help) usage; exit 0 ;;
-    screen) mode=screen; shift ;;
+    screen | eval) mode=$1; shift ;;
+    --field-test)
+      [[ "${2:-}" =~ ^[0-9]+$ ]] || { echo "smoke-staging: --field-test takes a number" >&2; exit 2; }
+      field_tests=$2; shift 2 ;;
     --wait)
       [[ "${2:-}" =~ ^[0-9]+$ ]] || { echo "smoke-staging: --wait takes a number of seconds" >&2; exit 2; }
       wait_seconds=$2; shift 2 ;;
@@ -57,7 +73,7 @@ setting_from() {
   [[ -r "$1" ]] && sed -n "s/^$2='\(.*\)'\$/\1/p" "$1" | head -1
 }
 
-if [[ $mode == screen ]]; then
+if [[ $mode == screen || $mode == eval ]]; then
   ops_dir="${FILEDRAWER_OPS_DIR:-$(dirname "$0")}"
   FILEDRAWER_STAGING_KEY="${FILEDRAWER_STAGING_KEY:-$(setting_from "$ops_dir/.vps.env" STAGING_KEY)}"
   if [[ -z "$FILEDRAWER_STAGING_KEY" ]]; then
@@ -131,13 +147,16 @@ if (( wait_seconds > 0 )); then
   done
 fi
 
-# screened FILE: submits FILE, publishes it, and waits up to 2 minutes while it is
-# still being screened (an outage or the day's cap); sets ID, and CODE and BODY
-# from GET /e/<id>.
+# screened FILE [quiet]: submits FILE, publishes it, and waits up to 2 minutes while
+# it is still being screened (an outage or the day's cap); sets ID, and CODE and BODY
+# from GET /e/<id>. A refused submission is a FAIL, or with `quiet` just returns 1.
 screened() {
   req POST /entries "$1"
   ID=$(field id)
-  [[ $CODE == 201 && -n "$ID" ]] || { echo "FAIL submit $1: $CODE"; fail=$((fail + 1)); return 1; }
+  if [[ $CODE != 201 || -z "$ID" ]]; then
+    [[ "${2:-}" == quiet ]] && return 1
+    echo "FAIL submit $1: $CODE"; fail=$((fail + 1)); return 1
+  fi
   req POST "/e/$ID/publish"
   [[ $CODE == 200 ]] || { echo "FAIL publish $ID: $CODE"; fail=$((fail + 1)); return 1; }
   local deadline=$((SECONDS + 120))
@@ -164,6 +183,59 @@ explain() {
   esac
 }
 
+if [[ $mode == eval ]]; then
+  declare -A wanted=() met=()
+  # judge NAME EXPECTED: the entry just screened against EXPECTED.
+  judge() {
+    local status
+    status=$(field status)
+    wanted[$2]=$(( ${wanted[$2]:-0} + 1 ))
+    if [[ $status == "$2" ]]; then
+      echo "PASS $2 $1"
+      pass=$((pass + 1)); met[$2]=$(( ${met[$2]:-0} + 1 ))
+    elif [[ $status == screening ]]; then
+      echo "WAIT $2 $1 ($ID): not decided yet; the account's share of the day's cap may be spent, so rerun later"
+      fail=$((fail + 1))
+    else
+      echo "FAIL $2 $1 ($ID): got $status"
+      fail=$((fail + 1))
+      [[ $status == review && $2 != review ]] && echo "  if every case went to review, the screen-test account is still guarded: clear it on $base/admin"
+    fi
+  }
+  for expected in public rejected review; do
+    for file in "$(dirname "$0")/screen-eval/$expected"/*.md; do
+      [[ -e $file ]] || continue
+      name=$(basename "$file" .md)
+      screen_entry "$file" > "$dir/case.md"
+      screened "$dir/case.md" && judge "$name" "$expected"
+    done
+  done
+  # Field-test entries: one per name, since the rounds hold near-copies. One the
+  # server refuses, or that isn't an entry, is skipped; it costs no screening. Only
+  # its number and ID are printed, never its contents.
+  taken=0
+  declare -A picked=()
+  field_test_dir="${FILEDRAWER_FIELD_TEST_DIR:-$(dirname "$0")/../field-test}"
+  while IFS= read -r file && (( taken < field_tests )); do
+    name=$(basename "$file")
+    [[ -n "${picked[$name]:-}" ]] && continue
+    picked[$name]=1
+    screen_entry "$file" > "$dir/case.md"
+    screened "$dir/case.md" quiet || continue
+    taken=$((taken + 1))
+    judge "field-test-$taken" public
+  done < <(find "$field_test_dir" -name '*.md' 2>/dev/null | shuf)
+  (( field_tests > 0 && taken < field_tests )) && echo "  only $taken field-test entries found"
+  for expected in public rejected review; do
+    echo "$expected: ${met[$expected]:-0} of ${wanted[$expected]:-0}"
+  done
+  echo "  (a miss on review may mean the screen saw that its made-up data is made up)"
+  (( ${wanted[review]:-0} > 0 )) && echo "Reject the review cases on $base/admin, then clear the screen-test account's guard there."
+  echo "eval $tag: $pass passed, $fail failed"
+  (( fail == 0 ))
+  exit
+fi
+
 if [[ $mode == screen ]]; then
   screen_entry "$fixture" > "$dir/on.md"
   if screened "$dir/on.md"; then
@@ -172,7 +244,7 @@ if [[ $mode == screen ]]; then
     check "on-topic entry: screened, not passed unscreened" '[[ $BODY != *"not screened"* ]]'
     explain "$status" public
   fi
-  screen_entry "$(dirname "$0")/screen-offtopic.md" > "$dir/off.md"
+  screen_entry "$(dirname "$0")/screen-eval/rejected/sourdough.md" > "$dir/off.md"
   if screened "$dir/off.md"; then
     status=$(field status)
     check "off-topic entry: rejected" '[[ $status == rejected ]]'

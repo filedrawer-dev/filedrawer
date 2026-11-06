@@ -186,9 +186,15 @@ fn h_says_what_it_does() {
 /// Runs `ops/smoke-staging screen`, with its settings files looked for in an empty
 /// folder so a real token on this machine can't be read.
 fn screen(args: &[&str], key: Option<&str>, token: Option<&str>) -> Output {
-    let empty = scratch_database("screen-settings");
+    screen_mode("screen", args, key, token)
+}
+
+/// Runs a mode of the script that submits as the screen-test account (`screen` or
+/// `eval`), with its settings files looked for in an empty folder.
+fn screen_mode(mode: &str, args: &[&str], key: Option<&str>, token: Option<&str>) -> Output {
+    let empty = scratch_database(&format!("{mode}-settings"));
     let empty = empty.parent().unwrap();
-    let mut command = script(&[&["screen"], args].concat(), key);
+    let mut command = script(&[&[mode], args].concat(), key);
     command.env("FILEDRAWER_OPS_DIR", empty);
     if let Some(token) = token {
         command.env("FILEDRAWER_STAGING_SCREEN_API_KEY", token);
@@ -226,4 +232,93 @@ fn screen_without_its_settings_names_where_it_looked() {
     let output = screen(&[], None, Some("fdt_x"));
     assert_eq!(output.status.code(), Some(2), "{}", text(&output));
     assert!(text(&output).contains(".vps.env"), "{}", text(&output));
+}
+
+#[test]
+fn eval_against_a_server_that_doesnt_screen_passes_only_the_public_cases() {
+    let (server, token) = server_and_token("eval");
+    let output = screen_mode(
+        "eval",
+        &["--field-test", "0", "--wait", "30", &server.url],
+        Some("unused"),
+        Some(&token),
+    );
+    let printed = text(&output);
+    assert_eq!(output.status.code(), Some(1), "{printed}");
+    assert!(
+        printed.contains("PASS public jailbreak-study-abstract"),
+        "{printed}"
+    );
+    let failed = |name: &str| {
+        printed.lines().any(|line| {
+            line.starts_with(&format!("FAIL {name} (")) && line.ends_with("): got public")
+        })
+    };
+    assert!(failed("rejected sourdough"), "{printed}");
+    assert!(failed("review participant-data"), "{printed}");
+    assert!(printed.contains("public: 4 of 4"), "{printed}");
+    assert!(printed.contains("rejected: 0 of 4"), "{printed}");
+    assert!(printed.contains("review: 0 of 1"), "{printed}");
+    assert!(
+        printed.contains("then clear the screen-test account's guard"),
+        "{printed}"
+    );
+    assert!(!printed.contains(&token), "{printed}");
+}
+
+#[test]
+fn eval_samples_field_test_entries_without_printing_them() {
+    let (server, token) = server_and_token("eval-field");
+    let fake = scratch_database("eval-field-entries");
+    let fake = fake.parent().unwrap().to_path_buf();
+    let fixture = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/smoke-fixture.md"),
+    )
+    .unwrap();
+    let marked = fixture.replace("## Caveats", "SECRET-FIELD-TEST-MARKER\n\n## Caveats");
+    std::fs::create_dir_all(fake.join("round1")).unwrap();
+    std::fs::create_dir_all(fake.join("round2")).unwrap();
+    std::fs::write(fake.join("round1/one.md"), &marked).unwrap();
+    // A near-copy under the same name in a later round, and a note that isn't an entry.
+    std::fs::write(fake.join("round2/one.md"), &marked).unwrap();
+    std::fs::write(
+        fake.join("round1/notes.md"),
+        "SECRET-FIELD-TEST-MARKER notes",
+    )
+    .unwrap();
+    let mut command = script(
+        &["eval", "--field-test", "3", "--wait", "30", &server.url],
+        Some("unused"),
+    );
+    let empty = scratch_database("eval-field-settings");
+    command
+        .env("FILEDRAWER_OPS_DIR", empty.parent().unwrap())
+        .env("FILEDRAWER_FIELD_TEST_DIR", &fake)
+        .env("FILEDRAWER_STAGING_SCREEN_API_KEY", &token);
+    let output = command.output().unwrap();
+    let printed = text(&output);
+    let _ = std::fs::remove_dir_all(&fake);
+    assert!(printed.contains("PASS public field-test-1"), "{printed}");
+    assert!(!printed.contains("field-test-2"), "{printed}");
+    assert!(
+        printed.contains("only 1 field-test entries found"),
+        "{printed}"
+    );
+    assert!(!printed.contains("SECRET-FIELD-TEST-MARKER"), "{printed}");
+    assert!(!printed.contains("one.md"), "{printed}");
+}
+
+#[test]
+fn every_eval_case_is_an_entry_the_analyzer_accepts() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/screen-eval");
+    let mut seen = 0;
+    for expected in ["public", "rejected", "review"] {
+        for file in std::fs::read_dir(dir.join(expected)).unwrap() {
+            let path = file.unwrap().path();
+            let analysis = analyzer::analyze(&std::fs::read_to_string(&path).unwrap());
+            assert_eq!(analysis.refusals, vec![], "{}", path.display());
+            seen += 1;
+        }
+    }
+    assert!(seen >= 9, "{seen}");
 }
