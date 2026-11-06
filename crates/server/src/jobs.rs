@@ -52,7 +52,8 @@ pub async fn place_waiting(state: &AppState) -> Result<usize, sqlx::Error> {
 
 /// One run of the worker: ends the hold on every pending entry whose hour has run
 /// out at `now`, screens every entry in `screening` without a verdict within the
-/// caps, oldest first, and publishes waiting entries whose series are now public.
+/// caps, in the fair queue's order, and publishes waiting entries whose series are
+/// now public.
 /// Returns how many entries it screened or placed.
 pub async fn publish_due(state: &AppState, now: OffsetDateTime) -> Result<usize, sqlx::Error> {
     let mut done = place_waiting(state).await?;

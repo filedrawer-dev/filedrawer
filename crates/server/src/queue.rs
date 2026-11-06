@@ -1,7 +1,7 @@
 //! The screening queue (design.md, Submission and screening): entries in `screening`
-//! are screened oldest first within the day's cost caps, their verdicts stored, and
-//! each entry, or its whole batch, placed once decided. The fair queue is build
-//! step 3's slice 3.
+//! are screened in the fair queue's order within the day's cost caps, their verdicts
+//! stored, and each entry, or its whole batch, placed once decided. An account under
+//! the review guard has its entries sent to review unscreened.
 
 use analyzer::analyze;
 use sqlx::SqlitePool;
@@ -95,8 +95,9 @@ pub enum Screened {
     Failed(ModelError),
 }
 
-/// Screens `text` for `account_id` within the caps, and logs every call it made.
-/// The caller holds `screening_lock`, or is the series route, which takes it here.
+/// Screens `text` for `account_id` within the caps, and logs every call it made;
+/// for an account under the review guard, screens nothing and says so. The caller
+/// holds `screening_lock`, or is the series route, which takes it here.
 pub async fn screen_text(
     state: &AppState,
     account_id: &str,

@@ -419,13 +419,13 @@ pub async fn start_screening(
     due_by: Option<&str>,
 ) -> Result<Option<String>, sqlx::Error> {
     // It joins the screening queue one place behind its account's last waiting entry
-    // (design.md: the fair queue).
+    // (design.md: the fair queue); `to_review` places it in the review queue alike.
     sqlx::query_scalar!(
         "UPDATE entries SET status = 'screening', hold_until = NULL,
              queue_position = 1 + COALESCE((
                  SELECT MAX(w.queue_position) FROM entries w
                  WHERE w.account_id = entries.account_id AND w.status = 'screening'
-                   AND w.screen_verdict IS NULL AND w.seq != entries.seq), 0)
+                   AND w.screen_verdict IS NULL), 0)
          WHERE seq = ?1 AND status = 'pending' AND (?2 IS NULL OR hold_until <= ?2)
          RETURNING source",
         seq,
@@ -989,7 +989,8 @@ pub async fn reject(pool: &SqlitePool, seq: i64, reasons: Option<&str>) -> Resul
 /// screening), if it isn't already.
 pub async fn to_review(pool: &SqlitePool, seq: i64) -> Result<(), sqlx::Error> {
     let mut transaction = pool.begin().await?;
-    // It joins the review queue one place behind its account's last entry there.
+    // It joins the review queue one place behind its account's last entry there, as
+    // `start_screening` places it in the screening queue.
     let moved = sqlx::query_scalar!(
         "UPDATE entries SET status = 'review',
              queue_position = 1 + COALESCE((
