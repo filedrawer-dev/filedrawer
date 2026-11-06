@@ -52,6 +52,12 @@ const SINGLE_KEYS: &[&str] = &[
     "url",
     "embargo_until",
     "publish",
+    "series",
+    "version",
+    "versions",
+    "key",
+    "join",
+    "description",
 ];
 
 /// Keys a reply may repeat, one line per item: slug links, runs and batch members.
@@ -65,6 +71,10 @@ const INSTRUCTION_LINES: &[&str] = &[
     "Fix a member before then by sending it again with PUT to its url, or publish the whole batch now with a POST to the publish url.",
 ];
 
+/// A line above the delimiter that starts as the server's own instruction does, with
+/// the series ID in it.
+const INSTRUCTION_PREFIXES: &[&str] = &["Keep the key private. A teammate's agent joins by"];
+
 /// Checks the part of a plain-text reply above its first delimiter
 /// (CODING_STANDARDS.md, Untrusted text): only the server's own `key: value` lines,
 /// with keys from the lists above, no single key twice, and no blank line, so author
@@ -75,7 +85,11 @@ fn check_server_fields(body: &str) {
     };
     let mut seen: Vec<&str> = Vec::new();
     for line in above.lines() {
-        if INSTRUCTION_LINES.contains(&line) {
+        if INSTRUCTION_LINES.contains(&line)
+            || INSTRUCTION_PREFIXES
+                .iter()
+                .any(|prefix| line.starts_with(prefix))
+        {
             continue;
         }
         let key = line.split_once(": ").map(|(key, _)| key);
@@ -309,6 +323,57 @@ impl TestApp {
             .await
             .unwrap()
     }
+}
+
+/// The password the browser helpers sign up with.
+pub const PASSWORD: &str = "correct horse battery";
+
+/// Signs up `email` as Grace, follows the emailed link, and verifies.
+pub async fn signed_up_and_verified(app: &TestApp, email: &str) {
+    let reply = app
+        .form(
+            "/signup",
+            &[
+                ("email", email),
+                ("password", PASSWORD),
+                ("display_name", "Grace"),
+            ],
+            None,
+        )
+        .await;
+    assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
+    let link = app.link_in_last_email_to(email).await;
+    let token = link.strip_prefix("/verify?token=").expect(&link);
+    let verified = app.form("/verify", &[("token", token)], None).await;
+    assert_eq!(verified.status, StatusCode::OK, "{}", verified.body);
+}
+
+/// Logs in and returns the session cookie.
+pub async fn logged_in(app: &TestApp, email: &str, password: &str) -> String {
+    let reply = app
+        .form("/login", &[("email", email), ("password", password)], None)
+        .await;
+    assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.body);
+    assert_eq!(reply.location(), Some("/account"));
+    reply.cookie().expect("login sets a cookie")
+}
+
+/// Creates a token on the account page and returns it.
+pub async fn new_token(app: &TestApp, cookie: &str) -> String {
+    let reply = app
+        .form("/account/tokens", &[("name", "agent")], Some(cookie))
+        .await;
+    assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
+    let start = reply.body.find("fdt_").expect("the page shows the token");
+    reply.body[start..start + 56].to_string()
+}
+
+/// A browser account for `email`: its session cookie and a token made with it.
+pub async fn browser_account(app: &TestApp, email: &str) -> (String, String) {
+    signed_up_and_verified(app, email).await;
+    let cookie = logged_in(app, email, PASSWORD).await;
+    let token = new_token(app, &cookie).await;
+    (cookie, token)
 }
 
 /// The value of the `id: ` line in a plain-text reply.

@@ -18,6 +18,7 @@ mod passwords;
 mod respond;
 mod routes;
 pub mod screening;
+mod series;
 mod time;
 
 use axum::Router;
@@ -100,7 +101,11 @@ fn build(state: AppState) -> Routes<Router> {
         .route("/account", get(account::account))
         .route("/account/tokens", post(account::create_token))
         .route("/account/tokens/{id}/revoke", post(account::revoke_token))
-        .route("/account/verify-email", post(account::resend_verification));
+        .route("/account/verify-email", post(account::resend_verification))
+        .route(
+            "/account/series/{id}/publish",
+            post(account::publish_series),
+        );
     let same_origin = axum::middleware::from_fn_with_state(state.clone(), account::same_origin);
     accounts
         .map_router(|router| Router::new().merge(router.layer(same_origin)))
@@ -116,6 +121,10 @@ fn build(state: AppState) -> Routes<Router> {
         .route("/search", get(routes::read::search))
         .route("/cards.txt", get(routes::read::cards))
         .route("/tags", get(routes::read::tags))
+        .route("/series", post(routes::series::create))
+        .route("/series/{id}", get(routes::series::read))
+        .route("/series/{id}/join", post(routes::series::join))
+        .route("/series/{id}/versions", post(routes::series::new_version))
         .route("/feedback", post(routes::feedback::feedback))
         .route("/skill.md", get(routes::docs::skill))
         .route("/entry-format.md", get(routes::docs::entry_format))

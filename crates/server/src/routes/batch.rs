@@ -19,7 +19,8 @@ use crate::error::AppError;
 use crate::jobs::{end_hold, hold_until};
 use crate::links::{self, Linked, SlugRule};
 use crate::respond::{DELIMITER, Format, card_and_warnings};
-use crate::routes::submit::{Accepted, accept};
+use crate::routes::submit::{Accepted, accept, cited_series};
+use crate::series::Cited;
 use crate::{AppState, time};
 
 /// The most members one batch may carry.
@@ -137,12 +138,20 @@ pub async fn submit_batch(
             .collect();
         problems.extend(links::problems(&state, &account, &linked, &run_ids).await?);
     }
+    let mut cites = Vec::new();
+    for (member, label) in accepted.iter().zip(&labels) {
+        match cited_series(&state, &account, member).await? {
+            Ok(cited) => cites.push(cited),
+            Err(reason) => problems.push(format!("{label}: {reason}")),
+        }
+    }
     if !problems.is_empty() {
         return Err(refused(problems));
     }
 
     let publish_at = hold_until(time::now_utc());
-    let (batch_id, members) = match store(&state, &account, &runs, &accepted, &publish_at).await {
+    let stored = store(&state, &account, &runs, &accepted, &cites, &publish_at).await;
+    let (batch_id, members) = match stored {
         Ok(stored) => stored,
         // Another request took one of these slugs or runs since the checks above.
         Err(sqlx::Error::Database(error)) if error.is_unique_violation() => {
@@ -168,6 +177,7 @@ async fn store<'a>(
     account: &TokenAccount,
     runs: &[(String, String)],
     accepted: &'a [Accepted],
+    cites: &[Option<Cited>],
     publish_at: &str,
 ) -> Result<(String, Vec<(String, &'a Accepted)>), sqlx::Error> {
     let mut transaction = state.pool.begin().await?;
@@ -176,7 +186,7 @@ async fn store<'a>(
         entries::insert_run(&mut transaction, &account.id, run_id, declaration).await?;
     }
     let mut members = Vec::new();
-    for member in accepted {
+    for (member, cited) in accepted.iter().zip(cites) {
         let new = NewEntry {
             account_id: &account.id,
             source: &member.source,
@@ -185,6 +195,7 @@ async fn store<'a>(
             previous: None,
             batch_seq: Some(batch_seq),
             register_slug: true,
+            series: cited.as_ref(),
         };
         let (_, id) = entries::insert_on(&mut transaction, &new).await?;
         members.push((id, member));

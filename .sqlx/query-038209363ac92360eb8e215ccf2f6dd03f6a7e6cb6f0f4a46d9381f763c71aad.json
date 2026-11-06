@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO entries (id, account_id, status, source, submitted_at, first_submitted_at,\n               embargo_until, analyzer_version, outcome, kind, stage, hold_until, previous_seq,\n               batch_seq, series_seq, series_version, series_section)\n           VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n           RETURNING seq AS \"seq!: i64\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "seq!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "seq"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 16
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "038209363ac92360eb8e215ccf2f6dd03f6a7e6cb6f0f4a46d9381f763c71aad"
+}

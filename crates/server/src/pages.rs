@@ -6,6 +6,7 @@ use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Response};
 
 use crate::accounts::TokenView;
+use crate::series::Owned;
 
 /// A rendered page with its status code.
 pub fn page(status: StatusCode, template: &impl Template) -> Response {
@@ -67,6 +68,8 @@ pub struct AccountPage<'a> {
     pub email: Option<&'a str>,
     pub verified: bool,
     pub tokens: &'a [TokenView],
+    /// The series this account made.
+    pub series: &'a [Owned],
     /// A token just made, shown this once.
     pub new_token: Option<&'a str>,
 }

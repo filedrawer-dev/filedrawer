@@ -17,7 +17,7 @@ use crate::mail::Email;
 use crate::pages::{
     AccountPage, LoginPage, Message, ResetConfirmPage, ResetPage, SignupPage, VerifyPage, page,
 };
-use crate::{AppState, admin, passwords};
+use crate::{AppState, admin, jobs, passwords, series};
 
 const COOKIE: &str = "fd_session";
 
@@ -349,7 +349,9 @@ async fn account_page(
     new_token: Option<&str>,
 ) -> Result<Response, AppError> {
     let view = accounts::view(&state.pool, account_id).await?;
+    let series = series::created_by(&state.pool, account_id).await?;
     let template = AccountPage {
+        series: &series,
         display_name: &view.display_name,
         account_id: &view.id,
         email: view.email.as_deref(),
@@ -406,6 +408,20 @@ pub async fn revoke_token(
     if !accounts::revoke_token(&state.pool, &session.id, &token_id).await? {
         return Err(AppError::NotFound);
     }
+    Ok(Redirect::to("/account").into_response())
+}
+
+/// Makes one of the account's series public, then places the entries that waited on
+/// it (design.md, Series: "its creator makes it public from a browser session").
+pub async fn publish_series(
+    State(state): State<AppState>,
+    session: SessionAccount,
+    Path(id): Path<String>,
+) -> Result<Response, AppError> {
+    if !series::make_public(&state.pool, &id, &session.id).await? {
+        return Err(AppError::NotFound);
+    }
+    jobs::place_waiting(&state).await?;
     Ok(Redirect::to("/account").into_response())
 }
 

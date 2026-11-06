@@ -11,6 +11,7 @@ mod front_matter;
 mod links;
 mod report;
 mod results;
+mod series;
 
 pub use card::{ANALYZER_VERSION, Author, CardContext, LINE_CAPS, Replication, render_card};
 pub use choice::{
@@ -23,6 +24,10 @@ pub use report::{MAX_ENTRY_BYTES, MAX_LOGS, Refusal, Warning, WarningKind};
 pub use results::{
     CORE_COLUMNS, Interval, Intervals, NoEffect, Reading, Results, ResultsTable, Row, Tally,
     row_note,
+};
+pub use series::{
+    MAX_DESCRIPTION_BYTES, MAX_TITLE_CHARS, SeriesCite, SeriesText, description_section,
+    heading_anchor, parse_series_cite, read_series, without_series,
 };
 
 /// Everything the analyzer read from one entry.

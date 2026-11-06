@@ -7,6 +7,7 @@ use time::{Duration, OffsetDateTime};
 use crate::embargo::embargoed_until;
 use crate::entries::{self, Placed};
 use crate::screening::Verdict;
+use crate::series;
 use crate::{AppState, time::stamp};
 
 /// How long an accepted submission is held so its author can fix it. Each
@@ -42,17 +43,41 @@ async fn screen_and_place(
 ) -> Result<Option<Placed>, sqlx::Error> {
     let analysis = analyze(source);
     match state.screener.screen(source).await {
-        Verdict::Pass => match embargoed_until(analysis.fields.embargo_until.as_deref(), now) {
-            Some(_) => entries::embargo(&state.pool, seq).await,
-            None => entries::publish(&state.pool, seq, &analysis).await,
-        },
+        Verdict::Pass => {
+            if embargoed_until(analysis.fields.embargo_until.as_deref(), now).is_some() {
+                entries::embargo(&state.pool, seq).await
+            } else if series::waits(&state.pool, seq).await? {
+                entries::wait_on_series(&state.pool, seq).await
+            } else {
+                entries::publish(&state.pool, seq, &analysis).await
+            }
+        }
     }
 }
 
-/// Ends the hold on every pending entry whose hour has run out at `now`, and places
-/// any entry left in `screening` by a failure, then returns how many it placed.
-pub async fn publish_due(state: &AppState, now: OffsetDateTime) -> Result<usize, sqlx::Error> {
+/// Publishes every entry in `waiting_on_series` that no longer waits, as when its
+/// series' creator makes the series public, and returns how many.
+pub async fn place_waiting(state: &AppState) -> Result<usize, sqlx::Error> {
     let mut placed = 0;
+    for (seq, source) in entries::waiting(&state.pool).await? {
+        if series::waits(&state.pool, seq).await? {
+            continue;
+        }
+        if entries::publish(&state.pool, seq, &analyze(&source))
+            .await?
+            .is_some()
+        {
+            placed += 1;
+        }
+    }
+    Ok(placed)
+}
+
+/// Ends the hold on every pending entry whose hour has run out at `now`, places any
+/// entry left in `screening` by a failure, and publishes waiting entries whose series
+/// are now public, then returns how many it placed.
+pub async fn publish_due(state: &AppState, now: OffsetDateTime) -> Result<usize, sqlx::Error> {
+    let mut placed = place_waiting(state).await?;
     let now_text = stamp(now);
     for (seq, source) in entries::in_screening(&state.pool).await? {
         if screen_and_place(state, seq, &source, now).await?.is_some() {

@@ -6,10 +6,12 @@ use analyzer::{
 };
 use sqlx::SqlitePool;
 
+use crate::series::Cited;
 use crate::{ids, time::now};
 
 /// A public entry with its author, as reads need it.
 pub struct PublicEntry {
+    pub seq: i64,
     pub id: String,
     pub source: String,
     pub account_id: String,
@@ -40,6 +42,8 @@ pub fn card_context(id: &str, account_id: &str, display_name: &str) -> CardConte
 pub enum Placed {
     Public,
     Embargoed,
+    /// Passed, but its series, or one another member of its batch cites, is hidden.
+    WaitingOnSeries,
 }
 
 impl Placed {
@@ -48,6 +52,7 @@ impl Placed {
         match self {
             Placed::Public => "public",
             Placed::Embargoed => "embargoed",
+            Placed::WaitingOnSeries => "waiting_on_series",
         }
     }
 }
@@ -110,6 +115,8 @@ pub struct NewEntry<'a> {
     /// Whether its `slug` is new for the account: a first submission's, or one a new
     /// version gives a chain that had none. Checked as free beforehand.
     pub register_slug: bool,
+    /// The series version it cites, checked beforehand.
+    pub series: Option<&'a Cited>,
 }
 
 /// Stores an accepted submission as `pending` until its hold ends, with the columns
@@ -136,6 +143,7 @@ pub async fn insert_on(
         ref previous,
         batch_seq,
         register_slug,
+        series,
     } = *entry;
     let id = ids::new_id();
     let submitted_at = now();
@@ -144,11 +152,12 @@ pub async fn insert_on(
         .map_or(submitted_at.as_str(), |p| p.first_submitted_at);
     let previous_seq = previous.as_ref().map(|p| p.seq);
     let columns = columns(analysis);
+    let (series_seq, series_version, series_section) = series_columns(series);
     let seq = sqlx::query_scalar!(
         r#"INSERT INTO entries (id, account_id, status, source, submitted_at, first_submitted_at,
                embargo_until, analyzer_version, outcome, kind, stage, hold_until, previous_seq,
-               batch_seq)
-           VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               batch_seq, series_seq, series_version, series_section)
+           VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            RETURNING seq AS "seq!: i64""#,
         id,
         account_id,
@@ -162,7 +171,10 @@ pub async fn insert_on(
         columns.stage,
         hold_until,
         previous_seq,
-        batch_seq
+        batch_seq,
+        series_seq,
+        series_version,
+        series_section
     )
     .fetch_one(&mut *transaction)
     .await?;
@@ -179,6 +191,18 @@ pub async fn insert_on(
     }
     write_runs(&mut *transaction, seq, account_id, analysis).await?;
     Ok((seq, id))
+}
+
+/// The entry columns that record a cited series version.
+fn series_columns(series: Option<&Cited>) -> (Option<i64>, Option<i64>, Option<&str>) {
+    match series {
+        Some(cited) => (
+            Some(cited.series_seq),
+            Some(cited.version),
+            cited.section.as_deref(),
+        ),
+        None => (None, None, None),
+    }
 }
 
 /// Records which declared runs an entry uses.
@@ -210,13 +234,16 @@ pub async fn replace(
     source: &str,
     analysis: &Analysis,
     hold_until: &str,
+    series: Option<&Cited>,
 ) -> Result<bool, sqlx::Error> {
     let submitted_at = now();
     let columns = columns(analysis);
+    let (series_seq, series_version, series_section) = series_columns(series);
     let mut transaction = pool.begin().await?;
     let done = sqlx::query!(
         "UPDATE entries SET source = ?, submitted_at = ?, embargo_until = ?,
-             analyzer_version = ?, outcome = ?, kind = ?, stage = ?, hold_until = ?
+             analyzer_version = ?, outcome = ?, kind = ?, stage = ?, hold_until = ?,
+             series_seq = ?, series_version = ?, series_section = ?
          WHERE seq = ? AND status = 'pending'",
         source,
         submitted_at,
@@ -226,6 +253,9 @@ pub async fn replace(
         columns.kind,
         columns.stage,
         hold_until,
+        series_seq,
+        series_version,
+        series_section,
         seq
     )
     .execute(&mut *transaction)
@@ -413,6 +443,28 @@ pub async fn in_screening(pool: &SqlitePool) -> Result<Vec<(i64, String)>, sqlx:
     Ok(rows.into_iter().map(|row| (row.seq, row.source)).collect())
 }
 
+/// Entries in `waiting_on_series` and their text.
+pub async fn waiting(pool: &SqlitePool) -> Result<Vec<(i64, String)>, sqlx::Error> {
+    let rows = sqlx::query!(
+        r#"SELECT seq AS "seq!: i64", source FROM entries WHERE status = 'waiting_on_series'"#
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(|row| (row.seq, row.source)).collect())
+}
+
+/// Moves a screened entry to `waiting_on_series`.
+/// `None` if the entry was no longer in `screening`: something else placed it.
+pub async fn wait_on_series(pool: &SqlitePool, seq: i64) -> Result<Option<Placed>, sqlx::Error> {
+    let done = sqlx::query!(
+        "UPDATE entries SET status = 'waiting_on_series' WHERE seq = ? AND status = 'screening'",
+        seq
+    )
+    .execute(pool)
+    .await?;
+    Ok((done.rows_affected() == 1).then_some(Placed::WaitingOnSeries))
+}
+
 /// The pending entries whose hold ends at or before `now`.
 pub async fn due(pool: &SqlitePool, now: &str) -> Result<Vec<i64>, sqlx::Error> {
     sqlx::query_scalar!(
@@ -435,7 +487,8 @@ pub async fn embargo(pool: &SqlitePool, seq: i64) -> Result<Option<Placed>, sqlx
     Ok((done.rows_affected() == 1).then_some(Placed::Embargoed))
 }
 
-/// Makes a screened entry public and adds it to the search index.
+/// Makes a screened entry, or one that waited on its series, public and adds it to
+/// the search index.
 pub async fn publish(
     pool: &SqlitePool,
     seq: i64,
@@ -444,10 +497,11 @@ pub async fn publish(
     let published_at = now();
     let fields = &analysis.fields;
     let mut transaction = pool.begin().await?;
-    // Only from `screening`, so an entry placed twice is indexed once.
+    // Only from `screening` or `waiting_on_series`, so an entry placed twice is
+    // indexed once.
     let Some(source) = sqlx::query_scalar!(
         "UPDATE entries SET status = 'public', published_at = ?
-         WHERE seq = ? AND status = 'screening' RETURNING source",
+         WHERE seq = ? AND status IN ('screening', 'waiting_on_series') RETURNING source",
         published_at,
         seq
     )
@@ -467,6 +521,7 @@ pub async fn publish(
     )
     .execute(&mut *transaction)
     .await?;
+    crate::series::mark_readable(&mut transaction).await?;
     transaction.commit().await?;
     Ok(Some(Placed::Public))
 }
@@ -475,7 +530,7 @@ pub async fn publish(
 pub async fn public_entry(pool: &SqlitePool, id: &str) -> Result<Option<PublicEntry>, sqlx::Error> {
     sqlx::query_as!(
         PublicEntry,
-        r#"SELECT e.id, e.source, e.account_id, a.display_name, e.submitted_at, e.published_at,
+        r#"SELECT e.seq AS "seq!: i64", e.id, e.source, e.account_id, a.display_name, e.submitted_at, e.published_at,
                   (SELECT p.id FROM entries p WHERE p.seq = e.previous_seq AND p.status = 'public') AS "previous_id?",
                   (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS "superseded_by?"
          FROM entries e JOIN accounts a ON a.id = e.account_id
@@ -515,7 +570,7 @@ pub async fn search(
     let row_claim = filters.row_claim.map(Claim::name);
     sqlx::query_as!(
         PublicEntry,
-        r#"SELECT e.id, e.source, e.account_id, a.display_name, e.submitted_at, e.published_at,
+        r#"SELECT e.seq AS "seq!: i64", e.id, e.source, e.account_id, a.display_name, e.submitted_at, e.published_at,
                   (SELECT p.id FROM entries p WHERE p.seq = e.previous_seq AND p.status = 'public') AS "previous_id?",
                   (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS "superseded_by?"
            FROM entries e JOIN accounts a ON a.id = e.account_id
@@ -558,7 +613,7 @@ pub async fn search(
 pub async fn all_public(pool: &SqlitePool) -> Result<Vec<PublicEntry>, sqlx::Error> {
     sqlx::query_as!(
         PublicEntry,
-        r#"SELECT e.id, e.source, e.account_id, a.display_name, e.submitted_at, e.published_at,
+        r#"SELECT e.seq AS "seq!: i64", e.id, e.source, e.account_id, a.display_name, e.submitted_at, e.published_at,
                   (SELECT p.id FROM entries p WHERE p.seq = e.previous_seq AND p.status = 'public') AS "previous_id?",
                   (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS "superseded_by?"
          FROM entries e JOIN accounts a ON a.id = e.account_id

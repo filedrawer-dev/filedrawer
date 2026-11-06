@@ -57,6 +57,13 @@ fn is_reserved(name: &str) -> bool {
 
 /// `text` without its reserved front-matter fields (see `stored_text`).
 pub(crate) fn without_reserved_fields(text: &str) -> String {
+    without_fields(text, is_reserved)
+}
+
+/// `text` without the top-level front-matter fields `cut` names. Each goes with every
+/// line up to the next top-level key. Text whose front matter doesn't parse, or where a
+/// field to cut shares its line with another key, comes back unchanged.
+pub(crate) fn without_fields(text: &str, cut: impl Fn(&str) -> bool) -> String {
     let (bom, rest) = match text.strip_prefix('\u{feff}') {
         Some(rest) => ("\u{feff}", rest),
         None => ("", text),
@@ -85,7 +92,7 @@ pub(crate) fn without_reserved_fields(text: &str) -> String {
     // can't be cut by lines. Leave the text whole; the analyzer then warns that the
     // field was stripped, and the server refuses the entry.
     let shares_a_line = keys.keys.iter().any(|(name, line)| {
-        is_reserved(name) && keys.keys.iter().filter(|(_, other)| other == line).count() > 1
+        cut(name) && keys.keys.iter().filter(|(_, other)| other == line).count() > 1
     });
     if shares_a_line {
         return text.to_string();
@@ -93,7 +100,7 @@ pub(crate) fn without_reserved_fields(text: &str) -> String {
     // Lines of the YAML (0-based) to drop; line i of the YAML is lines[i + 1].
     let mut dropped = vec![false; close - 1];
     for (index, (name, start)) in keys.keys.iter().enumerate() {
-        if is_reserved(name) {
+        if cut(name) {
             let end = keys
                 .keys
                 .get(index + 1)
@@ -156,7 +163,7 @@ impl MarkedEventReceiver for TopLevelKeys {
 
 /// Whether the YAML refers to an anchor. The loader expands aliases, so a few hundred
 /// bytes of nested aliases would expand to gigabytes; the scanner alone doesn't.
-fn uses_aliases(yaml: &str) -> bool {
+pub(crate) fn uses_aliases(yaml: &str) -> bool {
     Scanner::new(yaml.chars()).any(|token| matches!(token.1, TokenType::Alias(_)))
 }
 

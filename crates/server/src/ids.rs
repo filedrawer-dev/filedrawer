@@ -30,6 +30,11 @@ pub fn new_token() -> String {
     format!("fdt_{}", random_text(52))
 }
 
+/// A new series join key: `fdj_` and 52 characters, 260 bits.
+pub fn new_join_key() -> String {
+    format!("fdj_{}", random_text(52))
+}
+
 /// A new secret for a session cookie or an email link: 52 characters, 260 bits.
 pub fn new_secret() -> String {
     random_text(52)

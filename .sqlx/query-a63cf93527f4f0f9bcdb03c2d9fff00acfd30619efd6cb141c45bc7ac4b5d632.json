@@ -1,0 +1,64 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT s.seq AS \"seq!: i64\", s.id, s.account_id AS creator,\n                  s.public_at IS NOT NULL AS \"public!: bool\",\n                  (SELECT MAX(version) FROM series_versions v WHERE v.series_seq = s.seq) AS \"latest!: i64\"\n           FROM series s WHERE s.id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "seq!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "series",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "id",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "series",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "creator",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "series",
+            "name": "account_id"
+          }
+        }
+      },
+      {
+        "name": "public!: bool",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "latest!: i64",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "a63cf93527f4f0f9bcdb03c2d9fff00acfd30619efd6cb141c45bc7ac4b5d632"
+}

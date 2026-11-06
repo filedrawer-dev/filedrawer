@@ -18,6 +18,7 @@ use crate::embargo::parse_date;
 use crate::entries::{self, Filters};
 use crate::error::AppError;
 use crate::respond::{DELIMITER, Format, card_and_warnings};
+use crate::series;
 use analyzer::slug_references;
 
 pub async fn entry(
@@ -52,6 +53,7 @@ pub async fn entry(
         .map(|(_, id)| id.clone());
     let card = entry.card_with(entry.superseded_by.clone().or(resolved_successor));
     let runs = entries::entry_runs(&state.pool, &entry.id).await?;
+    let cited = cited_series(&state, entry.seq).await?;
     let mut text = format!(
         "id: {}\nstatus: public\nanalyzer: v{ANALYZER_VERSION}\nsubmitted: {}\npublished: {}\nauthor: {}, account {}\n",
         entry.id,
@@ -65,6 +67,14 @@ pub async fn entry(
     }
     if let Some(newer) = &entry.superseded_by {
         text.push_str(&format!("superseded_by: {newer}\n"));
+    }
+    // Series IDs are the server's and anchors are checked to `[a-z0-9_-]`, so the
+    // cite can't forge a line.
+    if let Some(cited) = &cited {
+        text.push_str(&format!("series: {}\n", cited.cite.text()));
+        if cited.shown.is_none() {
+            text.push_str("series_description: not public\n");
+        }
     }
     // Slug names are author text, but only ones made of [A-Za-z0-9._-] are read, so
     // they can't forge a line.
@@ -98,6 +108,17 @@ pub async fn entry(
         card_and_warnings(&card, &[]),
         entry.source
     ));
+    if let Some(CitedSeries {
+        cite,
+        shown: Some((title, description)),
+    }) = &cited
+    {
+        text.push_str(&format!(
+            "\n=== Series {}: {} ===\n\n{description}\n",
+            cite.text(),
+            one_line(title)
+        ));
+    }
     let json = json!({
         "id": entry.id,
         "status": "public",
@@ -110,8 +131,39 @@ pub async fn entry(
         "row_notes": notes,
         "card": card,
         "text": entry.source,
+        "series": cited.as_ref().map(|cited| json!({
+            "id": cited.cite.series_id,
+            "version": cited.cite.version,
+            "section": cited.cite.section,
+            "title": cited.shown.as_ref().map(|(title, _)| title),
+            "description": cited.shown.as_ref().map(|(_, description)| description),
+        })),
     });
     Ok(format.reply(StatusCode::OK, text, json))
+}
+
+/// The series version an entry cites, with its title and description (or the cited
+/// section of it) when anyone may read that version.
+struct CitedSeries {
+    cite: series::EntryCite,
+    shown: Option<(String, String)>,
+}
+
+async fn cited_series(state: &AppState, seq: i64) -> Result<Option<CitedSeries>, AppError> {
+    let Some(cite) = series::entry_cite(&state.pool, seq).await? else {
+        return Ok(None);
+    };
+    let version = series::version(&state.pool, cite.series_seq, cite.version).await?;
+    let shown = version.filter(|version| version.readable).map(|version| {
+        let description = match &cite.section {
+            Some(section) => analyzer::description_section(&version.description, section)
+                .unwrap_or("")
+                .to_string(),
+            None => version.description,
+        };
+        (version.title, description)
+    });
+    Ok(Some(CitedSeries { cite, shown }))
 }
 
 /// An entry that isn't public, for its author's token only: a pending entry with the
@@ -128,7 +180,12 @@ async fn own_entry(
     };
     let entry = entries::own_entry(&state.pool, id, &account.id)
         .await?
-        .filter(|entry| matches!(entry.status.as_str(), "pending" | "embargoed"))
+        .filter(|entry| {
+            matches!(
+                entry.status.as_str(),
+                "pending" | "embargoed" | "waiting_on_series"
+            )
+        })
         .ok_or(AppError::NotFound)?;
     let analysis = analyze(&entry.source);
     let notes: Vec<String> = match &analysis.results {
@@ -141,10 +198,11 @@ async fn own_entry(
             "publish_at: {}\n",
             entry.hold_until.as_deref().unwrap_or("")
         ),
-        _ => format!(
+        "embargoed" => format!(
             "release: {}\n",
             release.as_deref().unwrap_or("not recorded")
         ),
+        _ => String::new(),
     };
     let mut text = format!(
         "id: {}\nstatus: {}\n{when}analyzer: v{ANALYZER_VERSION}\nurl: {}/e/{}\n",
@@ -152,6 +210,10 @@ async fn own_entry(
     );
     if let Some(previous) = &entry.previous_id {
         text.push_str(&format!("previous: {previous}\n"));
+    }
+    let cite = series::entry_cite(&state.pool, entry.seq).await?;
+    if let Some(cite) = &cite {
+        text.push_str(&format!("series: {}\n", cite.text()));
     }
     for (number, note) in (1..).zip(&notes) {
         text.push_str(&format!("row {number}: {note}\n"));
@@ -174,12 +236,13 @@ async fn own_entry(
         "card": card,
         "warnings": warnings,
         "text": entry.source,
+        "series": cite.as_ref().map(series::EntryCite::text),
     });
     Ok(format.reply(StatusCode::OK, text, json))
 }
 
 /// A display name on one line, so it can't forge a server field above the delimiter.
-fn one_line(text: &str) -> String {
+pub(crate) fn one_line(text: &str) -> String {
     text.split(|c: char| c.is_control() || matches!(c, '\u{2028}' | '\u{2029}'))
         .collect::<Vec<_>>()
         .join(" ")

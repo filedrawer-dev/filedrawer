@@ -18,15 +18,19 @@ use crate::error::AppError;
 use crate::jobs::{end_hold, hold_until};
 use crate::links::{self, Linked, SlugRule};
 use crate::respond::{DELIMITER, Format, card_and_warnings};
+use crate::series::{self, Cited};
 use crate::{AppState, time};
 use ::time::OffsetDateTime;
 use ::time::format_description::well_known::Rfc3339;
+use analyzer::{SeriesCite, parse_series_cite, without_series};
 
-/// A submission that passed every check: the text to store and what the analyzer
-/// read from it.
+/// A submission that passed every check: the text to store, what the analyzer read
+/// from it, and the series version it cites, which the stored text no longer names
+/// (design.md, Series).
 pub(crate) struct Accepted {
     pub source: String,
     pub analysis: Analysis,
+    pub cite: Option<SeriesCite>,
 }
 
 /// What an earlier submission fixes for a resubmission or a new version: the first
@@ -77,6 +81,24 @@ pub(crate) fn accept(body: &Bytes, prior: Option<Prior<'_>>) -> Result<Accepted,
     let source = stored_text(text);
     let analysis = analyze(&source);
     let mut reasons: Vec<String> = analysis.refusals.iter().map(ToString::to_string).collect();
+    let (source, cite) = match analysis.fields.series.as_deref() {
+        None => (source, None),
+        Some(value) => {
+            let cite = parse_series_cite(value);
+            if cite.is_none() {
+                reasons.push(format!(
+                    "`series: {value}` should be `<id>@<version>` or `<id>@<version>#<section>`, with a version from 1"
+                ));
+            }
+            let stored = without_series(&source);
+            if analyze(&stored).fields.series.is_some() {
+                reasons.push(
+                    "the server couldn't take `series` out of this front matter; put it on a line of its own".into(),
+                );
+            }
+            (stored, cite)
+        }
+    };
     // stored_text removes reserved fields; one that survives, as in a front matter
     // written as one `{...}` line, is refused rather than stored.
     reasons.extend(
@@ -112,7 +134,40 @@ pub(crate) fn accept(body: &Bytes, prior: Option<Prior<'_>>) -> Result<Accepted,
             reasons,
         });
     }
-    Ok(Accepted { source, analysis })
+    Ok(Accepted {
+        source,
+        analysis,
+        cite,
+    })
+}
+
+/// Checks the series version an accepted entry cites against the database. `Err`
+/// holds the reason to refuse it.
+pub(crate) async fn cited_series(
+    state: &AppState,
+    account: &TokenAccount,
+    accepted: &Accepted,
+) -> Result<Result<Option<Cited>, String>, AppError> {
+    let Some(cite) = &accepted.cite else {
+        return Ok(Ok(None));
+    };
+    Ok(series::check_cite(&state.pool, &account.id, cite)
+        .await?
+        .map(Some))
+}
+
+/// `cited_series` for one entry, refusing it with the reason.
+async fn one_cite(
+    state: &AppState,
+    account: &TokenAccount,
+    accepted: &Accepted,
+) -> Result<Option<Cited>, AppError> {
+    cited_series(state, account, accepted)
+        .await?
+        .map_err(|reason| AppError::Refused {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            reasons: vec![reason],
+        })
 }
 
 /// A held entry, as a reply describes it.
@@ -173,6 +228,7 @@ pub async fn submit(
 ) -> Result<Response, AppError> {
     let accepted = accept(&body, None)?;
     check_links(&state, &account, &accepted, SlugRule::New, None).await?;
+    let cited = one_cite(&state, &account, &accepted).await?;
     let publish_at = hold_until(time::now_utc());
     let new = NewEntry {
         account_id: &account.id,
@@ -182,6 +238,7 @@ pub async fn submit(
         previous: None,
         batch_seq: None,
         register_slug: true,
+        series: cited.as_ref(),
     };
     let (_, id) = entries::insert(&state.pool, &new).await?;
     let held = Held {
@@ -234,6 +291,7 @@ pub async fn new_version(
         None,
     )
     .await?;
+    let cited = one_cite(&state, &account, &accepted).await?;
     let publish_at = hold_until(time::now_utc());
     let new = NewEntry {
         account_id: &account.id,
@@ -246,6 +304,7 @@ pub async fn new_version(
         }),
         batch_seq: None,
         register_slug,
+        series: cited.as_ref(),
     };
     let inserted = entries::insert(&state.pool, &new).await;
     let (_, new_id) = match inserted {
@@ -356,6 +415,7 @@ pub async fn resubmit(
         Some(entry.seq),
     )
     .await?;
+    let cited = one_cite(&state, &account, &accepted).await?;
     let publish_at = hold_until(time::now_utc());
     let replaced = entries::replace(
         &state.pool,
@@ -363,6 +423,7 @@ pub async fn resubmit(
         &accepted.source,
         &accepted.analysis,
         &publish_at,
+        cited.as_ref(),
     )
     .await?;
     if !replaced {
@@ -400,7 +461,7 @@ pub async fn publish(
     let status = placed.status();
     let release = match placed {
         entries::Placed::Embargoed => entry.embargo_until.clone(),
-        entries::Placed::Public => None,
+        entries::Placed::Public | entries::Placed::WaitingOnSeries => None,
     };
     let release_line = release
         .as_deref()

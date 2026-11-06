@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO series_members (series_seq, account_id, joined_at) VALUES (?, ?, ?)\n         ON CONFLICT DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "691c522ca6095fc902e0aaf06e42f4b7bb1cb1cd646a825cc694c109e8365e35"
+}

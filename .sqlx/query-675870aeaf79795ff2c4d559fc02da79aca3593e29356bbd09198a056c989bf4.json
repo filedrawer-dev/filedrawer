@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE series_versions SET readable_at = ?\n         WHERE readable_at IS NULL\n           AND (SELECT public_at FROM series s WHERE s.seq = series_versions.series_seq) IS NOT NULL\n           AND EXISTS (\n               SELECT 1 FROM entries x\n               WHERE x.series_seq = series_versions.series_seq\n                 AND x.series_version = series_versions.version AND x.status = 'public')\n           AND NOT EXISTS (\n               SELECT 1 FROM entries x\n               WHERE x.series_seq = series_versions.series_seq\n                 AND x.series_version = series_versions.version\n                 AND x.status NOT IN ('public', 'rejected', 'withdrawn', 'removed'))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "675870aeaf79795ff2c4d559fc02da79aca3593e29356bbd09198a056c989bf4"
+}

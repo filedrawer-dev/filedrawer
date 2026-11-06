@@ -5,49 +5,7 @@ mod common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use common::{PUBLIC_URL, TestApp, entry, test_app};
-
-const PASSWORD: &str = "correct horse battery";
-
-/// Signs up `email`, follows the emailed link, and verifies; returns nothing.
-async fn signed_up_and_verified(app: &TestApp, email: &str) {
-    let reply = app
-        .form(
-            "/signup",
-            &[
-                ("email", email),
-                ("password", PASSWORD),
-                ("display_name", "Grace"),
-            ],
-            None,
-        )
-        .await;
-    assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
-    let link = app.link_in_last_email_to(email).await;
-    let token = link.strip_prefix("/verify?token=").expect(&link);
-    let verified = app.form("/verify", &[("token", token)], None).await;
-    assert_eq!(verified.status, StatusCode::OK, "{}", verified.body);
-}
-
-/// Logs in and returns the session cookie.
-async fn logged_in(app: &TestApp, email: &str, password: &str) -> String {
-    let reply = app
-        .form("/login", &[("email", email), ("password", password)], None)
-        .await;
-    assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.body);
-    assert_eq!(reply.location(), Some("/account"));
-    reply.cookie().expect("login sets a cookie")
-}
-
-/// Creates a token on the account page and returns it.
-async fn new_token(app: &TestApp, cookie: &str) -> String {
-    let reply = app
-        .form("/account/tokens", &[("name", "agent")], Some(cookie))
-        .await;
-    assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
-    let start = reply.body.find("fdt_").expect("the page shows the token");
-    reply.body[start..start + 56].to_string()
-}
+use common::{PASSWORD, PUBLIC_URL, entry, logged_in, new_token, signed_up_and_verified, test_app};
 
 #[tokio::test]
 async fn signup_verify_login_and_submit_with_a_new_token() {

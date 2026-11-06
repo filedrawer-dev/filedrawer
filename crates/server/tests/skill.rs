@@ -20,6 +20,7 @@ const NOT_FOR_AGENTS: &[&str] = &[
     "/account/tokens",
     "/account/tokens/{id}/revoke",
     "/account/verify-email",
+    "/account/series/{id}/publish",
     "/skill.md",
 ];
 
@@ -86,7 +87,10 @@ async fn every_route_skill_md_names_exists() {
                         .unwrap(),
                 )
                 .await;
-            let missing = reply.status == StatusCode::NOT_FOUND && !path.starts_with("/e/");
+            // An unknown entry or series is not found; the route list covers those.
+            let missing = reply.status == StatusCode::NOT_FOUND
+                && !path.starts_with("/e/")
+                && !path.starts_with("/series/");
             assert!(!missing, "{method} {path} is not a route");
             if reply.status != StatusCode::METHOD_NOT_ALLOWED {
                 break;

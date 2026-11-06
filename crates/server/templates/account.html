@@ -29,5 +29,16 @@
 <button type="submit">Make a token</button>
 </form>
 
+{% if !series.is_empty() %}
+<h2>Your series</h2>
+<p>A series stays hidden until you make it public, and entries in it wait until then. Making it public can't be undone.</p>
+<table>
+<tr><th>Series</th><th>Title</th><th></th></tr>
+{% for one in series %}
+<tr><td><code>{{ one.id }}</code></td><td>{{ one.title }}</td><td>{% if one.public %}public{% else %}<form method="post" action="/account/series/{{ one.id }}/publish"><button type="submit">Make public</button></form>{% endif %}</td></tr>
+{% endfor %}
+</table>
+{% endif %}
+
 <form method="post" action="/logout"><button type="submit">Log out</button></form>
 {% endblock %}

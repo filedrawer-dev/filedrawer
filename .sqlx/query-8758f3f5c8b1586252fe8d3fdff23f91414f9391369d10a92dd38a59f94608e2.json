@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE entries SET status = 'waiting_on_series' WHERE seq = ? AND status = 'screening'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "8758f3f5c8b1586252fe8d3fdff23f91414f9391369d10a92dd38a59f94608e2"
+}

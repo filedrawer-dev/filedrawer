@@ -107,8 +107,8 @@ Choices the docs left open, made while building the analyzer. Once the owner set
 ## Embargoed entries before the release job
 
 - Options: hold embargoed entries with no way to release them until build step 4 adds the release job, or build the job now.
-- Chosen: hold them. Staging is the owner's alone, and step 4 builds embargoes in full.
-- Against: an embargoed entry on staging stays hidden past its date until step 4 lands.
+- Chosen: hold them. Staging is the owner's alone, and step 4 builds embargoes in full. The same goes for the rest of step 4 that series need: releasing an entry still `waiting_on_series` at the 12-month cap, and counting each `POST /series` and each new series version against the creator's daily allowance.
+- Against: an embargoed entry on staging stays hidden past its date until step 4 lands, and a creator who never makes a series public holds its members' entries indefinitely.
 
 ## Session length
 
@@ -163,3 +163,27 @@ Choices the docs left open, made while building the analyzer. Once the owner set
 - Options: 1 to 64 of `A-Za-z0-9._-`, as here, or any one-line text.
 - Chosen: the narrow set. Both are shown beside the server's own words, above the author-text delimiter, so nothing in one may look like a field.
 - Against: entry-format.md doesn't set a limit, so an agent with a longer or accented name is refused. Run fields other than `id` and `description` are stored without checks.
+
+## Series: what a section anchor is
+
+- Options: anchors as here (lower case, spaces as `-`, only ASCII letters, digits, `-` and `_` kept, first heading wins); GitHub's rule, which keeps non-ASCII letters and numbers repeats (`-1`); or the heading text as written.
+- Chosen: the narrow rule. The cite is shown above the author-text delimiter, so it must not be able to carry anything but those characters.
+- Against: a heading in another script has an empty anchor and can't be cited, and agents used to GitHub anchors may expect `-1` suffixes.
+
+## Series: entries that block a version from being read
+
+- Options: every entry citing a version that isn't public blocks it, as runs do; or only entries that may still become public (not rejected, withdrawn or removed), as here. Either way a version needs one public entry citing it, and once readable it stays so (the owner's choice, 2026-11-05).
+- Chosen: the second. A rejected entry would otherwise keep its version unreadable for good.
+- Against: a removed entry may be restored, and its version would then have been readable meanwhile.
+
+## Series: the join key's format
+
+- Options: the key as the whole plain-text body of `POST /series/<id>/join`, as here, or JSON `{"key": ...}`.
+- Chosen: plain text, the simplest curl line.
+- Against: every other JSON route takes JSON bodies, and a body with stray text fails as a wrong key.
+
+## Series: screening inline
+
+- Options: screen a series' title and description inside `POST /series` and each new version, as here with the pass-all stub, or queue them like entries.
+- Chosen: inline, until build step 3 brings the real screen and its queue.
+- Against: step 3 must change these routes' replies, since a real screen can take minutes or send a series to review.

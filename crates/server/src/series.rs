@@ -1,0 +1,380 @@
+//! Storing series and reading them back (design.md, Series): versions, members, the
+//! version each entry cites, and when a version may be read.
+
+use analyzer::{SeriesCite, SeriesText};
+use sqlx::SqlitePool;
+
+use crate::{ids, time::now};
+
+/// A series as a reader may see it.
+pub struct Series {
+    pub seq: i64,
+    pub id: String,
+    /// The account that made it, which alone makes versions and makes it public.
+    pub creator: String,
+    pub public: bool,
+    /// The newest version's number.
+    pub latest: i64,
+}
+
+/// One version of a series.
+pub struct Version {
+    pub version: i64,
+    pub title: String,
+    pub description: String,
+    /// Whether anyone may read it (see `mark_readable`).
+    /// version is.
+    pub readable: bool,
+}
+
+/// The series version an accepted entry cites, checked against the database.
+#[derive(Debug, Clone)]
+pub struct Cited {
+    pub series_seq: i64,
+    pub version: i64,
+    pub section: Option<String>,
+}
+
+/// A new series: its ID and the join key, which is shown once.
+pub async fn create(
+    pool: &SqlitePool,
+    account_id: &str,
+    text: &SeriesText,
+) -> Result<(String, String), sqlx::Error> {
+    let id = format!("s-{}", ids::new_id());
+    let key = ids::new_join_key();
+    let hash = ids::token_hash(&key);
+    let created_at = now();
+    let mut transaction = pool.begin().await?;
+    let seq = sqlx::query_scalar!(
+        r#"INSERT INTO series (id, account_id, key_hash, created_at) VALUES (?, ?, ?, ?)
+           RETURNING seq AS "seq!: i64""#,
+        id,
+        account_id,
+        hash,
+        created_at
+    )
+    .fetch_one(&mut *transaction)
+    .await?;
+    sqlx::query!(
+        "INSERT INTO series_members (series_seq, account_id, joined_at) VALUES (?, ?, ?)",
+        seq,
+        account_id,
+        created_at
+    )
+    .execute(&mut *transaction)
+    .await?;
+    insert_version(&mut transaction, seq, 1, text).await?;
+    transaction.commit().await?;
+    Ok((id, key))
+}
+
+async fn insert_version(
+    transaction: &mut sqlx::SqliteConnection,
+    seq: i64,
+    version: i64,
+    text: &SeriesText,
+) -> Result<(), sqlx::Error> {
+    let created_at = now();
+    sqlx::query!(
+        "INSERT INTO series_versions (series_seq, version, title, description, created_at)
+         VALUES (?, ?, ?, ?, ?)",
+        seq,
+        version,
+        text.title,
+        text.description,
+        created_at
+    )
+    .execute(&mut *transaction)
+    .await?;
+    Ok(())
+}
+
+/// Adds the next version and returns its number.
+pub async fn add_version(
+    pool: &SqlitePool,
+    seq: i64,
+    text: &SeriesText,
+) -> Result<i64, sqlx::Error> {
+    let mut transaction = pool.begin().await?;
+    let version = sqlx::query_scalar!(
+        r#"SELECT COALESCE(MAX(version), 0) + 1 AS "next!: i64" FROM series_versions
+           WHERE series_seq = ?"#,
+        seq
+    )
+    .fetch_one(&mut *transaction)
+    .await?;
+    insert_version(&mut transaction, seq, version, text).await?;
+    transaction.commit().await?;
+    Ok(version)
+}
+
+/// The series `id`.
+pub async fn find(pool: &SqlitePool, id: &str) -> Result<Option<Series>, sqlx::Error> {
+    sqlx::query_as!(
+        Series,
+        r#"SELECT s.seq AS "seq!: i64", s.id, s.account_id AS creator,
+                  s.public_at IS NOT NULL AS "public!: bool",
+                  (SELECT MAX(version) FROM series_versions v WHERE v.series_seq = s.seq) AS "latest!: i64"
+           FROM series s WHERE s.id = ?"#,
+        id
+    )
+    .fetch_optional(pool)
+    .await
+}
+
+/// Whether `account_id` is a member of series `seq`.
+pub async fn is_member(pool: &SqlitePool, seq: i64, account_id: &str) -> Result<bool, sqlx::Error> {
+    let found = sqlx::query_scalar!(
+        "SELECT 1 AS found FROM series_members WHERE series_seq = ? AND account_id = ?",
+        seq,
+        account_id
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(found.is_some())
+}
+
+/// Makes `account_id` a member of series `id` if `key` is its join key. False when
+/// the series doesn't exist or the key is wrong. Joining twice is harmless.
+pub async fn join(
+    pool: &SqlitePool,
+    id: &str,
+    key: &str,
+    account_id: &str,
+) -> Result<bool, sqlx::Error> {
+    let hash = ids::token_hash(key);
+    let Some(seq) = sqlx::query_scalar!(
+        r#"SELECT seq AS "seq!: i64" FROM series WHERE id = ? AND key_hash = ?"#,
+        id,
+        hash
+    )
+    .fetch_optional(pool)
+    .await?
+    else {
+        return Ok(false);
+    };
+    let joined_at = now();
+    sqlx::query!(
+        "INSERT INTO series_members (series_seq, account_id, joined_at) VALUES (?, ?, ?)
+         ON CONFLICT DO NOTHING",
+        seq,
+        account_id,
+        joined_at
+    )
+    .execute(pool)
+    .await?;
+    Ok(true)
+}
+
+/// Version `version` of series `seq`.
+pub async fn version(
+    pool: &SqlitePool,
+    seq: i64,
+    version: i64,
+) -> Result<Option<Version>, sqlx::Error> {
+    sqlx::query_as!(
+        Version,
+        r#"SELECT version AS "version!: i64", title, description,
+                  readable_at IS NOT NULL AS "readable!: bool"
+           FROM series_versions WHERE series_seq = ? AND version = ?"#,
+        seq,
+        version
+    )
+    .fetch_optional(pool)
+    .await
+}
+
+/// The newest version anyone may read, if one is.
+pub async fn latest_readable(pool: &SqlitePool, seq: i64) -> Result<Option<Version>, sqlx::Error> {
+    sqlx::query_as!(
+        Version,
+        r#"SELECT version AS "version!: i64", title, description, TRUE AS "readable!: bool"
+           FROM series_versions WHERE series_seq = ? AND readable_at IS NOT NULL
+           ORDER BY version DESC LIMIT 1"#,
+        seq
+    )
+    .fetch_optional(pool)
+    .await
+}
+
+/// Makes readable, for good, every version whose series is public, that a public
+/// entry cites, and that no entry still on its way to public cites (design.md,
+/// Series: a new version "stays unreadable ... until every entry citing it is
+/// public"). Run whenever an entry becomes public or a series does.
+pub async fn mark_readable(connection: &mut sqlx::SqliteConnection) -> Result<(), sqlx::Error> {
+    let readable_at = now();
+    sqlx::query!(
+        "UPDATE series_versions SET readable_at = ?
+         WHERE readable_at IS NULL
+           AND (SELECT public_at FROM series s WHERE s.seq = series_versions.series_seq) IS NOT NULL
+           AND EXISTS (
+               SELECT 1 FROM entries x
+               WHERE x.series_seq = series_versions.series_seq
+                 AND x.series_version = series_versions.version AND x.status = 'public')
+           AND NOT EXISTS (
+               SELECT 1 FROM entries x
+               WHERE x.series_seq = series_versions.series_seq
+                 AND x.series_version = series_versions.version
+                 AND x.status NOT IN ('public', 'rejected', 'withdrawn', 'removed'))",
+        readable_at
+    )
+    .execute(&mut *connection)
+    .await?;
+    Ok(())
+}
+
+/// A public entry listed on its series' page.
+pub struct Listed {
+    pub id: String,
+    pub account_id: String,
+    pub display_name: String,
+}
+
+/// The public entries in a series, oldest first: the latest public version in each
+/// chain, when it cites the series.
+pub async fn public_entries(pool: &SqlitePool, seq: i64) -> Result<Vec<Listed>, sqlx::Error> {
+    sqlx::query_as!(
+        Listed,
+        r#"SELECT e.id, e.account_id, a.display_name
+           FROM entries e JOIN accounts a ON a.id = e.account_id
+           WHERE e.series_seq = ? AND e.status = 'public'
+             AND NOT EXISTS (SELECT 1 FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public')
+           ORDER BY e.published_at, e.seq"#,
+        seq
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// Checks what an entry by `account_id` cites: the series exists and the account is a
+/// member, the version exists, and the section is one of its headings. `Err` holds
+/// the reason to refuse the entry.
+pub async fn check_cite(
+    pool: &SqlitePool,
+    account_id: &str,
+    cite: &SeriesCite,
+) -> Result<Result<Cited, String>, sqlx::Error> {
+    let series = match find(pool, &cite.id).await? {
+        Some(series) if is_member(pool, series.seq, account_id).await? => series,
+        // A series this account doesn't belong to looks the same as none.
+        _ => {
+            return Ok(Err(format!(
+                "`series` names {}, which this account isn't a member of; join it first with a POST of its key to /series/{}/join",
+                cite.id, cite.id
+            )));
+        }
+    };
+    let Some(found) = version(pool, series.seq, cite.version).await? else {
+        return Ok(Err(format!(
+            "series {} has no version {}; its latest is {}",
+            cite.id, cite.version, series.latest
+        )));
+    };
+    if let Some(section) = &cite.section
+        && analyzer::description_section(&found.description, section).is_none()
+    {
+        return Ok(Err(format!(
+            "version {} of series {} has no heading whose anchor is `{section}`",
+            cite.version, cite.id
+        )));
+    }
+    Ok(Ok(Cited {
+        series_seq: series.seq,
+        version: cite.version,
+        section: cite.section.clone(),
+    }))
+}
+
+/// The series version a stored entry cites.
+pub struct EntryCite {
+    pub series_id: String,
+    pub series_seq: i64,
+    pub version: i64,
+    pub section: Option<String>,
+}
+
+impl EntryCite {
+    /// The cite as the entry's `series` field writes it.
+    pub fn text(&self) -> String {
+        match &self.section {
+            Some(section) => format!("{}@{}#{section}", self.series_id, self.version),
+            None => format!("{}@{}", self.series_id, self.version),
+        }
+    }
+}
+
+/// What entry `seq` cites, if anything.
+pub async fn entry_cite(pool: &SqlitePool, seq: i64) -> Result<Option<EntryCite>, sqlx::Error> {
+    sqlx::query_as!(
+        EntryCite,
+        r#"SELECT s.id AS series_id, s.seq AS "series_seq!: i64",
+                  e.series_version AS "version!: i64", e.series_section AS section
+           FROM entries e JOIN series s ON s.seq = e.series_seq
+           WHERE e.seq = ? AND e.series_version IS NOT NULL"#,
+        seq
+    )
+    .fetch_optional(pool)
+    .await
+}
+
+/// Whether entry `seq` must wait for a series: its own, or one that another live
+/// member of its batch cites, is still hidden.
+pub async fn waits(pool: &SqlitePool, seq: i64) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar!(
+        r#"SELECT EXISTS (
+               SELECT 1 FROM entries m JOIN series s ON s.seq = m.series_seq
+               WHERE s.public_at IS NULL
+                 AND m.status NOT IN ('rejected', 'withdrawn', 'removed')
+                 AND (m.seq = ?1 OR m.batch_seq = (SELECT batch_seq FROM entries WHERE seq = ?1))
+           ) AS "waits!: bool""#,
+        seq
+    )
+    .fetch_one(pool)
+    .await
+}
+
+/// A series on its creator's account page.
+pub struct Owned {
+    pub id: String,
+    pub title: String,
+    pub public: bool,
+}
+
+/// The series `account_id` made, newest first, each with its latest title.
+pub async fn created_by(pool: &SqlitePool, account_id: &str) -> Result<Vec<Owned>, sqlx::Error> {
+    sqlx::query_as!(
+        Owned,
+        r#"SELECT s.id, v.title, s.public_at IS NOT NULL AS "public!: bool"
+           FROM series s JOIN series_versions v ON v.series_seq = s.seq
+           WHERE s.account_id = ?
+             AND v.version = (SELECT MAX(version) FROM series_versions WHERE series_seq = s.seq)
+           ORDER BY s.seq DESC"#,
+        account_id
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// Makes series `id` public if `account_id` made it. False when it didn't. Making a
+/// public series public again changes nothing.
+pub async fn make_public(
+    pool: &SqlitePool,
+    id: &str,
+    account_id: &str,
+) -> Result<bool, sqlx::Error> {
+    let public_at = now();
+    let mut transaction = pool.begin().await?;
+    let found = sqlx::query_scalar!(
+        r#"UPDATE series SET public_at = COALESCE(public_at, ?)
+           WHERE id = ? AND account_id = ? RETURNING seq AS "seq!: i64""#,
+        public_at,
+        id,
+        account_id
+    )
+    .fetch_optional(&mut *transaction)
+    .await?;
+    mark_readable(&mut transaction).await?;
+    transaction.commit().await?;
+    Ok(found.is_some())
+}
