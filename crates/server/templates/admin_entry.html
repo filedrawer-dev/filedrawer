@@ -14,4 +14,12 @@
 <pre>{{ card }}</pre>
 <h2>Text</h2>
 <pre>{{ entry.source }}</pre>
+{% if !runs.is_empty() %}
+<h2>Runs it uses</h2>
+<p>Each run's description is shown with the entries that use it, once they are all public.</p>
+{% for (id, declaration) in runs %}
+<h3><code>{{ id }}</code></h3>
+<pre>{{ declaration }}</pre>
+{% endfor %}
+{% endif %}
 {% endblock %}

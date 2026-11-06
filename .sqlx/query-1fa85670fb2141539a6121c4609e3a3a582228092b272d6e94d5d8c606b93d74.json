@@ -1,11 +1,22 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT e.id, e.status, e.source, e.account_id,\n                  a.display_name, e.submitted_at, b.id AS \"batch_id?\"\n           FROM entries e JOIN authors a ON a.id = e.account_id\n           LEFT JOIN batches b ON b.seq = e.batch_seq\n           WHERE e.status IN ('review', 'held') AND (?1 IS NULL OR e.id = ?1)\n           ORDER BY e.queue_position, e.submitted_at, e.seq",
+  "query": "SELECT e.seq AS \"seq!: i64\", e.id, e.status, e.source, e.account_id,\n                  a.display_name, e.submitted_at, b.id AS \"batch_id?\"\n           FROM entries e JOIN authors a ON a.id = e.account_id\n           LEFT JOIN batches b ON b.seq = e.batch_seq\n           WHERE e.status IN ('review', 'held') AND (?1 IS NULL OR e.id = ?1)\n           ORDER BY e.queue_position, e.submitted_at, e.seq",
   "describe": {
     "columns": [
       {
-        "name": "id",
+        "name": "seq!: i64",
         "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "id",
+        "ordinal": 1,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -16,7 +27,7 @@
       },
       {
         "name": "status",
-        "ordinal": 1,
+        "ordinal": 2,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -27,7 +38,7 @@
       },
       {
         "name": "source",
-        "ordinal": 2,
+        "ordinal": 3,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -38,7 +49,7 @@
       },
       {
         "name": "account_id",
-        "ordinal": 3,
+        "ordinal": 4,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -49,13 +60,13 @@
       },
       {
         "name": "display_name",
-        "ordinal": 4,
+        "ordinal": 5,
         "type_info": "Text",
         "origin": "Expression"
       },
       {
         "name": "submitted_at",
-        "ordinal": 5,
+        "ordinal": 6,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -66,7 +77,7 @@
       },
       {
         "name": "batch_id?",
-        "ordinal": 6,
+        "ordinal": 7,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -84,10 +95,11 @@
       false,
       false,
       false,
+      false,
       true,
       false,
       true
     ]
   },
-  "hash": "bbb8de8323f684a24825567ab42d7a288eb769f123ca8ec3ddd465cb242b5f33"
+  "hash": "1fa85670fb2141539a6121c4609e3a3a582228092b272d6e94d5d8c606b93d74"
 }

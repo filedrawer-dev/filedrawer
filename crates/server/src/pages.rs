@@ -105,4 +105,6 @@ pub struct AdminEntryPage<'a> {
     pub title: &'a str,
     pub entry: &'a Undecided,
     pub card: &'a str,
+    /// The ID and declaration of each run it uses.
+    pub runs: &'a [(String, String)],
 }

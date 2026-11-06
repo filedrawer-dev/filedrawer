@@ -629,3 +629,96 @@ async fn a_refused_series_puts_the_models_reasons_below_the_delimiter() {
         reply.body
     );
 }
+
+fn run(description: &str) -> serde_json::Value {
+    json!({"id": "sweep-1", "description": description, "n": 520,
+           "commit": "0123456789abcdef0123456789abcdef01234567", "code_state": "committed",
+           "route": "weights", "dates": ["2026-10-20", "2026-10-21"]})
+}
+
+async fn batch_with_runs(app: &TestApp, runs: serde_json::Value, entries: &[String]) -> String {
+    let reply = app
+        .send(
+            Request::post("/entries/batch")
+                .header("authorization", format!("Bearer {}", app.token))
+                .header("content-type", "application/json")
+                .header("accept", "application/json")
+                .body(Body::from(
+                    json!({"runs": runs, "entries": entries}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
+    let reply: serde_json::Value = serde_json::from_str(&reply.body).unwrap();
+    reply["id"].as_str().unwrap().to_string()
+}
+
+#[tokio::test]
+async fn a_run_declaration_is_screened_with_the_entries_that_use_it() {
+    let models = FakeModels::default();
+    let app = app_with(&models).await;
+    let id = batch_with_runs(
+        &app,
+        json!([run("Sweep over layers 10 to 18. FAKE-OFFTOPIC")]),
+        &[
+            entry("Fine", "slug: fine\nuses_runs: [sweep-1]\n"),
+            entry("Also fine", "slug: also\n"),
+        ],
+    )
+    .await;
+    let published = app.post(&format!("/batches/{id}/publish"), "").await;
+    assert_eq!(published.status, StatusCode::OK, "{}", published.body);
+    assert_eq!(
+        published.body.matches(" rejected").count(),
+        2,
+        "{}",
+        published.body
+    );
+    let screened = models.screened();
+    assert!(
+        screened[0].contains("sweep-1") && screened[0].contains("Sweep over layers 10 to 18"),
+        "{}",
+        screened[0]
+    );
+}
+
+#[tokio::test]
+async fn a_clean_run_declaration_passes_with_its_entries() {
+    let models = FakeModels::default();
+    let app = app_with(&models).await;
+    let id = batch_with_runs(
+        &app,
+        json!([run("Sweep over layers 10 to 18, 520 prompts each.")]),
+        &[entry("Fine", "slug: fine\nuses_runs: [sweep-1]\n")],
+    )
+    .await;
+    let published = app.post(&format!("/batches/{id}/publish"), "").await;
+    assert!(published.body.contains(" public"), "{}", published.body);
+}
+
+#[tokio::test]
+async fn a_run_cited_from_a_later_entry_is_screened_again_with_it() {
+    let models = FakeModels::default();
+    let app = app_with(&models).await;
+    let id = batch_with_runs(
+        &app,
+        json!([run("Sweep over layers 10 to 18, 520 prompts each.")]),
+        &[entry("Fine", "slug: fine\nuses_runs: [sweep-1]\n")],
+    )
+    .await;
+    app.post(&format!("/batches/{id}/publish"), "").await;
+    let later = app
+        .post("/entries", entry("Later", "uses_runs: [sweep-1]\n"))
+        .await;
+    assert_eq!(later.status, StatusCode::CREATED, "{}", later.body);
+    app.post(&format!("/e/{}/publish", id_in(&later.body)), "")
+        .await;
+    let screened = models.screened();
+    assert!(
+        screened
+            .last()
+            .unwrap()
+            .contains("Sweep over layers 10 to 18")
+    );
+}

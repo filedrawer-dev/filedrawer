@@ -76,12 +76,15 @@ pub async fn entry(
     let context =
         entries::card_context(&entry.id, &entry.account_id, entry.display_name.as_deref());
     let card = render_card(&analysis, &context);
+    // Shown with the entry once public, so the owner reads them too.
+    let runs = entries::run_declarations(&state.pool, entry.seq).await?;
     Ok(page(
         StatusCode::OK,
         &AdminEntryPage {
             title: &title_of(&entry.source),
             entry: &entry,
             card: &card,
+            runs: &runs,
         },
     ))
 }

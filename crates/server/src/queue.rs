@@ -53,14 +53,9 @@ async fn screen_waiting(
     waiting: &Waiting,
     now: OffsetDateTime,
 ) -> Result<(), sqlx::Error> {
-    let verdict = match screen_text(
-        state,
-        &waiting.account_id,
-        Some(waiting.seq),
-        &waiting.source,
-        now,
-    )
-    .await?
+    let text = screened_text(state, waiting).await?;
+    let verdict = match screen_text(state, &waiting.account_id, Some(waiting.seq), &text, now)
+        .await?
     {
         Screened::Verdict(verdict) => verdict,
         Screened::Guarded => Verdict::Review {
@@ -82,6 +77,19 @@ async fn screen_waiting(
     };
     entries::store_verdict(&state.pool, waiting.seq, &verdict).await?;
     settle(state, waiting.seq, now).await
+}
+
+/// What the screen reads for an entry: its text, then the declaration of every run it
+/// uses (design.md: "Screening checks run declarations with their batch"), since the
+/// run's description is shown with it once public.
+async fn screened_text(state: &AppState, waiting: &Waiting) -> Result<String, sqlx::Error> {
+    let mut text = waiting.source.clone();
+    for (id, declaration) in entries::run_declarations(&state.pool, waiting.seq).await? {
+        text.push_str(&format!(
+            "\n\nThe declaration of run `{id}`, which this entry uses:\n\n{declaration}\n"
+        ));
+    }
+    Ok(text)
 }
 
 /// What screening one text came to.

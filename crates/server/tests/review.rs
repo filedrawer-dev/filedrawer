@@ -91,6 +91,31 @@ async fn only_the_admins_session_reaches_the_queue() {
 }
 
 #[tokio::test]
+async fn the_owners_page_shows_the_declarations_of_the_runs_an_entry_uses() {
+    let app = app().await;
+    let cookie = owner(&app).await;
+    let body = serde_json::json!({
+        "runs": [{"id": "sweep-1", "description": "Layers 10 to 18 <b>bold</b>", "n": 520,
+                  "commit": "0123456789abcdef0123456789abcdef01234567",
+                  "code_state": "committed", "route": "weights",
+                  "dates": ["2026-10-20", "2026-10-21"]}],
+        "entries": [entry(&format!("One {HAZARD}"), "slug: one\nuses_runs: [sweep-1]\n")],
+    });
+    let ids = batch_body(&app, body).await;
+    let page = app
+        .page(&format!("/admin/e/{}", ids[0]), Some(&cookie))
+        .await;
+    assert_eq!(page.status, StatusCode::OK, "{}", page.body);
+    assert!(page.body.contains("sweep-1"), "{}", page.body);
+    assert!(
+        page.body.contains("Layers 10 to 18 &#60;b&#62;"),
+        "{}",
+        page.body
+    );
+    assert!(!page.body.contains("<b>bold"), "{}", page.body);
+}
+
+#[tokio::test]
 async fn publishing_from_review_places_the_entry_as_a_pass_would() {
     let app = app().await;
     let cookie = owner(&app).await;
@@ -197,7 +222,12 @@ async fn a_decision_on_an_entry_not_in_review_or_held_is_refused() {
 }
 
 async fn batch(app: &TestApp, entries: &[String]) -> Vec<String> {
-    let body = serde_json::json!({ "runs": [], "entries": entries }).to_string();
+    batch_body(app, serde_json::json!({ "runs": [], "entries": entries })).await
+}
+
+/// Sends a batch, publishes it, and returns its members' IDs.
+async fn batch_body(app: &TestApp, body: serde_json::Value) -> Vec<String> {
+    let body = body.to_string();
     let reply = app
         .send(
             axum::http::Request::post("/entries/batch")

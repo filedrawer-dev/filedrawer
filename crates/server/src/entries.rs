@@ -919,6 +919,26 @@ pub async fn referrers(
         .collect())
 }
 
+/// The ID and declaration (a JSON object, as its batch sent it) of each run entry
+/// `seq` uses, in ID order.
+pub async fn run_declarations(
+    pool: &SqlitePool,
+    seq: i64,
+) -> Result<Vec<(String, String)>, sqlx::Error> {
+    let rows = sqlx::query!(
+        "SELECT r.id, r.declaration FROM entry_runs er
+         JOIN runs r ON r.account_id = er.account_id AND r.id = er.run_id
+         WHERE er.entry_seq = ? ORDER BY r.id",
+        seq
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| (row.id, row.declaration))
+        .collect())
+}
+
 /// The IDs of the entries that use a run, in order.
 pub async fn run_entries(
     pool: &SqlitePool,
@@ -1059,6 +1079,7 @@ pub async fn owner_reject(pool: &SqlitePool, seq: i64, reasons: &str) -> Result<
 
 /// An entry waiting on the owner, in `review` or `held`.
 pub struct Undecided {
+    pub seq: i64,
     pub id: String,
     pub status: String,
     pub source: String,
@@ -1072,7 +1093,7 @@ pub struct Undecided {
 pub async fn undecided(pool: &SqlitePool, id: Option<&str>) -> Result<Vec<Undecided>, sqlx::Error> {
     sqlx::query_as!(
         Undecided,
-        r#"SELECT e.id, e.status, e.source, e.account_id,
+        r#"SELECT e.seq AS "seq!: i64", e.id, e.status, e.source, e.account_id,
                   a.display_name, e.submitted_at, b.id AS "batch_id?"
            FROM entries e JOIN authors a ON a.id = e.account_id
            LEFT JOIN batches b ON b.seq = e.batch_seq
