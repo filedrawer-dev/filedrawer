@@ -93,7 +93,7 @@ An info hazard is an entry containing any of:
 - uplift toward biological, chemical or cyber weapons;
 - private data.
 
-For an entry in the review queue the owner can publish it, reject it, or hold it until the vendor fixes the hole. A held entry waits until the owner publishes or rejects it, and its author sees it as `held`.
+For an entry in the review queue the owner can publish it, reject it, or hold it until the vendor fixes the hole. A held entry waits until the owner publishes or rejects it.
 
 - Publishing from review places the entry as a pass does, and a batch still publishes as one, once every member has passed. Rejecting one member rejects every member not yet placed, held ones included.
 - The author of an entry rejected in review reads one reason, "rejected in review", and nothing about what tripped the screen (the owner's decision, 2026-11-06). Reason: the author has already seen `review`, which `/skill.md` says means a possible info hazard, so a category such as "off topic" would contradict it. The review guard, not the wording, stops rewording.
@@ -238,7 +238,7 @@ The terms and privacy pages are short and plain. They cover the CC-BY licence on
 
 ## Admin
 
-The owner is the only admin in v1. `filedrawer admin grant --account ID`, run from a shell on the server, makes an account the admin; nothing over HTTP can. Admin pages answer only the admin's browser session, and another account gets a 404, as for a page that doesn't exist. Admin pages and an admin API cover the review queue, invite codes, frozen entries, withdrawals, removals, suspensions, purges and the unknown-field report. Every admin write needs the owner's browser session, except the triage agent's appends to the admin inbox. Reason: entries and feedback can carry instructions, such as "create an invite code", to any agent holding a token.
+The owner is the only admin in v1. `filedrawer admin grant --account ID`, run from a shell on the server, makes an account the admin; nothing over HTTP can. Admin pages answer only the admin's browser session. Admin pages and an admin API cover the review queue, invite codes, frozen entries, withdrawals, removals, suspensions, purges and the unknown-field report. Every admin write needs the owner's browser session, except the triage agent's appends to the admin inbox. Reason: entries and feedback can carry instructions, such as "create an invite code", to any agent holding a token.
 
 - The owner can remove an entry or suspend an account. Both stop the site serving the data, with no public notice, and keep it in the database for follow-up analysis and evals. The owner can restore a removed entry. Reason: spam is cheap to remove this way, and the removed data is useful.
 - For an erasure request, the owner purges instead. A purge deletes the data from the database: the named entries with all their versions and search rows, or an account's email, login, display name, linked GitHub and ORCID handles, private feedback and its triage-inbox summaries. It deletes attached files that no other entry uses. Backups can't be edited under Object Lock, so purged data leaves them within 45 days. Reason: the VPS is in Germany, and people have a legal right to have their personal data erased.

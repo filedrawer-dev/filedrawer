@@ -48,6 +48,9 @@ pub async fn decide(
     if !changed {
         return Ok(Decided::NotWaiting);
     }
+    // The decision is stored before it is placed. Should placing fail, the entry sits
+    // in `screening` with a verdict, which the worker's `settle_screened` places on its
+    // next run.
     if !matches!(decision, Decision::Hold) {
         queue::settle_decided(state, seq, now).await?;
     }

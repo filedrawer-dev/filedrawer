@@ -40,7 +40,7 @@ fn title_of(source: &str) -> String {
 
 /// The entries in review and held, and the accounts under the review guard.
 pub async fn queue(_: AdminSession, State(state): State<AppState>) -> Result<Response, AppError> {
-    let undecided = entries::undecided(&state.pool).await?;
+    let undecided = entries::undecided(&state.pool, None).await?;
     let rows: Vec<QueueRow> = undecided
         .iter()
         .map(|entry| QueueRow {
@@ -68,8 +68,9 @@ pub async fn entry(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Response, AppError> {
-    let entry = entries::undecided_entry(&state.pool, &id)
+    let entry = entries::undecided(&state.pool, Some(&id))
         .await?
+        .pop()
         .ok_or(AppError::NotFound)?;
     let analysis = analyze(&entry.source);
     let context =

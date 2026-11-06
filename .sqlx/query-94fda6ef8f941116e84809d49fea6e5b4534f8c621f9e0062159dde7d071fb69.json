@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE entries SET status = 'screening', screen_verdict = 'reject',\n             rejection_reasons = ?\n         WHERE seq = ? AND status IN ('review', 'held')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "94fda6ef8f941116e84809d49fea6e5b4534f8c621f9e0062159dde7d071fb69"
+}

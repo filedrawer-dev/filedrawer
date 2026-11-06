@@ -235,3 +235,15 @@ Choices the docs left open, made while building the analyzer. Once the owner set
 - Options: reject, as here, since design.md calls Sonnet's topic and spam verdict final; or send the entry to review.
 - Chosen: reject, with a generic reason.
 - Against: "unsure" isn't a verdict, and the review queue would cost the owner little for an off-topic case.
+
+## What the author of a held entry sees
+
+- Options: `status: held` through `GET /e/<id>` with its token, as `review` shows, or a 404, as for a withdrawn entry.
+- Chosen: `held`, with `/skill.md` saying the owner will publish or reject it once the vendor fixes the hole.
+- Against: `held` confirms to the author that the owner judged the hole real, which an attacker probing the screen could use.
+
+## What an account that isn't the admin gets from the admin pages
+
+- Options: a 404, as for a page that doesn't exist, or a 403 that says the page is for the admin.
+- Chosen: a 404, so the pages don't advertise themselves. A visitor with no session is sent to `/login`, as on the account pages.
+- Against: the routes are in the AGPL source anyway, and a 403 is clearer for the owner when logged in as the wrong account.

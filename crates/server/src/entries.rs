@@ -1029,33 +1029,19 @@ pub async fn owner_pass(pool: &SqlitePool, seq: i64) -> Result<bool, sqlx::Error
 }
 
 /// The owner fails an entry in review or held with `reasons` (a JSON array): it goes
-/// back to `screening` with a rejection, and so does every member of its batch in
-/// review or held, for the queue to send the whole batch back. False if it was in
-/// neither.
+/// back to `screening` with a rejection, for the queue to send its whole batch back.
+/// False if it was in neither.
 pub async fn owner_reject(pool: &SqlitePool, seq: i64, reasons: &str) -> Result<bool, sqlx::Error> {
-    let mut transaction = pool.begin().await?;
-    let batch_seq = sqlx::query_scalar!(
+    let done = sqlx::query!(
         "UPDATE entries SET status = 'screening', screen_verdict = 'reject',
              rejection_reasons = ?
-         WHERE seq = ? AND status IN ('review', 'held')
-         RETURNING batch_seq",
+         WHERE seq = ? AND status IN ('review', 'held')",
         reasons,
         seq
     )
-    .fetch_optional(&mut *transaction)
+    .execute(pool)
     .await?;
-    let Some(batch_seq) = batch_seq else {
-        return Ok(false);
-    };
-    sqlx::query!(
-        "UPDATE entries SET status = 'screening'
-         WHERE batch_seq = ? AND status IN ('review', 'held')",
-        batch_seq
-    )
-    .execute(&mut *transaction)
-    .await?;
-    transaction.commit().await?;
-    Ok(true)
+    Ok(done.rows_affected() == 1)
 }
 
 /// An entry waiting on the owner, in `review` or `held`.
@@ -1069,36 +1055,19 @@ pub struct Undecided {
     pub batch_id: Option<String>,
 }
 
-/// Every entry in `review` or `held`, oldest submission first.
-pub async fn undecided(pool: &SqlitePool) -> Result<Vec<Undecided>, sqlx::Error> {
+/// Every entry in `review` or `held`, oldest submission first, or only entry `id`.
+pub async fn undecided(pool: &SqlitePool, id: Option<&str>) -> Result<Vec<Undecided>, sqlx::Error> {
     sqlx::query_as!(
         Undecided,
         r#"SELECT e.id, e.status, e.source, e.account_id,
                   a.display_name, e.submitted_at, b.id AS "batch_id?"
            FROM entries e JOIN authors a ON a.id = e.account_id
            LEFT JOIN batches b ON b.seq = e.batch_seq
-           WHERE e.status IN ('review', 'held')
-           ORDER BY e.submitted_at, e.seq"#
-    )
-    .fetch_all(pool)
-    .await
-}
-
-/// The entry `id` if it is in `review` or `held`.
-pub async fn undecided_entry(
-    pool: &SqlitePool,
-    id: &str,
-) -> Result<Option<Undecided>, sqlx::Error> {
-    sqlx::query_as!(
-        Undecided,
-        r#"SELECT e.id, e.status, e.source, e.account_id,
-                  a.display_name, e.submitted_at, b.id AS "batch_id?"
-           FROM entries e JOIN authors a ON a.id = e.account_id
-           LEFT JOIN batches b ON b.seq = e.batch_seq
-           WHERE e.id = ? AND e.status IN ('review', 'held')"#,
+           WHERE e.status IN ('review', 'held') AND (?1 IS NULL OR e.id = ?1)
+           ORDER BY e.submitted_at, e.seq"#,
         id
     )
-    .fetch_optional(pool)
+    .fetch_all(pool)
     .await
 }
 
