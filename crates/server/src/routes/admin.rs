@@ -50,6 +50,11 @@ pub async fn queue(_: AdminSession, State(state): State<AppState>) -> Result<Res
         .collect();
     let (review, held) = rows.iter().partition(|row| row.entry.status == "review");
     let guarded = accounts::guarded(&state.pool).await?;
+    let doubted = entries::doubted(&state.pool).await?;
+    let doubted: Vec<_> = doubted
+        .iter()
+        .map(|entry| (entry, title_of(&entry.source)))
+        .collect();
     Ok(page(
         StatusCode::OK,
         &AdminQueuePage {
@@ -57,6 +62,7 @@ pub async fn queue(_: AdminSession, State(state): State<AppState>) -> Result<Res
                 ("In review", review),
                 ("Held until a vendor fixes the hole", held),
             ],
+            doubted: &doubted,
             guarded: &guarded,
         },
     ))
@@ -78,6 +84,7 @@ pub async fn entry(
     let card = render_card(&analysis, &context);
     // Shown with the entry once public, so the owner reads them too.
     let runs = entries::run_declarations(&state.pool, entry.seq).await?;
+    let batch_failed = entries::batch_failed(&state.pool, entry.seq).await?;
     Ok(page(
         StatusCode::OK,
         &AdminEntryPage {
@@ -85,6 +92,7 @@ pub async fn entry(
             entry: &entry,
             card: &card,
             runs: &runs,
+            batch_failed,
         },
     ))
 }
@@ -121,6 +129,18 @@ pub async fn reject(
     Path(id): Path<String>,
 ) -> Result<Response, AppError> {
     decide(&state, &id, Decision::Reject).await
+}
+
+/// Takes an entry off the list of those that passed with a hazard doubt.
+pub async fn doubt_seen(
+    _: AdminSession,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Response, AppError> {
+    if !entries::mark_doubt_seen(&state.pool, &id).await? {
+        return Err(AppError::NotFound);
+    }
+    Ok(Redirect::to("/admin").into_response())
 }
 
 pub async fn clear_guard(

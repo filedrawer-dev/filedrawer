@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT EXISTS (\n               SELECT 1 FROM entries e JOIN entries m ON m.batch_seq = e.batch_seq\n               WHERE e.seq = ? AND m.seq != e.seq AND m.screen_verdict = 'reject'\n           ) AS \"failed!: bool\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "failed!: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "da3aca0c21c5d48ff20ec3f237a538e955b109b1b85cf9c93ef87632e05fc3b0"
+}

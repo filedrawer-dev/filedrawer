@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE entries SET hazard_doubt_seen_at = ?\n         WHERE id = ? AND hazard_doubt IS NOT NULL AND hazard_doubt_seen_at IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "fd25bdf118ba0dfdb6b7923bd0e2e2d2e2e4f2852354c42c1e229861237526f2"
+}

@@ -6,7 +6,7 @@ use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Response};
 
 use crate::accounts::{Guarded, TokenView};
-use crate::entries::Undecided;
+use crate::entries::{Doubted, Undecided};
 use crate::series::Owned;
 
 /// A rendered page with its status code.
@@ -96,6 +96,9 @@ pub struct QueueRow<'a> {
 pub struct AdminQueuePage<'a> {
     /// Each heading, with its entries: those in review, then those held.
     pub sections: [(&'a str, Vec<&'a QueueRow<'a>>); 2],
+    /// Entries that passed although the screen doubted they hold a hazard: the
+    /// entry, its title, and the doubt.
+    pub doubted: &'a [(&'a Doubted, String)],
     pub guarded: &'a [Guarded],
 }
 
@@ -107,4 +110,6 @@ pub struct AdminEntryPage<'a> {
     pub card: &'a str,
     /// The ID and declaration of each run it uses.
     pub runs: &'a [(String, String)],
+    /// Another member of its batch was rejected, so publishing it rejects it too.
+    pub batch_failed: bool,
 }

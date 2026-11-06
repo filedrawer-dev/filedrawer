@@ -46,7 +46,12 @@ async fn accept_series(
     let now = time::now_utc();
     let _turn = state.screening_lock.lock().await;
     match queue::screen_text(state, &account.id, None, &screened, now).await? {
-        Screened::Verdict(Verdict::Pass { .. }) => Ok(series),
+        Screened::Verdict(Verdict::Pass { hazard_doubt, .. }) => {
+            if let Some(doubt) = hazard_doubt {
+                tracing::warn!(account = %account.id, doubt, "a series passed with a hazard doubt");
+            }
+            Ok(series)
+        }
         // A model wrote these from the series, so they go below the delimiter.
         Screened::Verdict(Verdict::Reject { reasons }) => Err(AppError::ScreenRejected(reasons)),
         Screened::Guarded => Err(refused(vec![

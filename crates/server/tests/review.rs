@@ -285,7 +285,7 @@ async fn a_batch_publishes_once_its_last_member_in_review_is_published() {
 }
 
 #[tokio::test]
-async fn rejecting_a_batch_member_sends_the_whole_batch_back() {
+async fn rejecting_a_batch_member_sends_back_the_rest_but_leaves_flagged_ones_to_the_owner() {
     let app = app().await;
     let cookie = owner(&app).await;
     let ids = batch(
@@ -302,36 +302,113 @@ async fn rejecting_a_batch_member_sends_the_whole_batch_back() {
     decide(&app, &cookie, &format!("/admin/e/{}/hold", ids[2]), &[]).await;
     assert_eq!(author_status(&app, &ids[3]).await, "review");
     decide(&app, &cookie, &format!("/admin/e/{}/reject", ids[1]), &[]).await;
-    for id in &ids {
-        assert_eq!(author_status(&app, id).await, "rejected", "{id}");
-    }
-    for sibling in [&ids[2], &ids[3]] {
-        let own = app.get_as_author(&format!("/e/{sibling}")).await;
-        let reason = field(&own.body, "reason").unwrap();
-        assert!(reason.contains(&ids[1]), "{reason}");
-    }
+    assert_eq!(author_status(&app, &ids[0]).await, "rejected");
+    assert_eq!(author_status(&app, &ids[1]).await, "rejected");
+    // Flagged siblings stay for the owner to see.
+    assert_eq!(author_status(&app, &ids[2]).await, "held");
+    assert_eq!(author_status(&app, &ids[3]).await, "review");
+    let page = app
+        .page(&format!("/admin/e/{}", ids[3]), Some(&cookie))
+        .await;
+    assert!(
+        page.body.contains("batch has already failed"),
+        "{}",
+        page.body
+    );
+
+    // Publishing one now sends it back with its batch.
+    decide(&app, &cookie, &format!("/admin/e/{}/publish", ids[3]), &[]).await;
+    let own = app.get_as_author(&format!("/e/{}", ids[3])).await;
+    assert_eq!(field(&own.body, "status"), Some("rejected"), "{}", own.body);
+    let reason = field(&own.body, "reason").unwrap();
+    assert!(reason.starts_with("another entry in its batch"), "{reason}");
     let again = app.post("/entries", entry("Fine", "slug: fine\n")).await;
     assert_eq!(again.status, StatusCode::CREATED, "{}", again.body);
 }
 
 #[tokio::test]
-async fn reaching_review_guards_the_account_until_the_owner_clears_it() {
+async fn every_admin_write_refuses_a_token_and_another_accounts_session() {
+    let app = app().await;
+    let id = in_review(&app, "").await;
+    let (someone, _) = browser_account(&app, "grace@example.com").await;
+    for path in [
+        format!("/admin/e/{id}/publish"),
+        format!("/admin/e/{id}/hold"),
+        format!("/admin/e/{id}/reject"),
+        format!("/admin/e/{id}/doubt-seen"),
+        format!("/admin/accounts/{}/clear-guard", app.account),
+    ] {
+        let forged = app.form(&path, &[], Some(&someone)).await;
+        assert_eq!(forged.status, StatusCode::NOT_FOUND, "{path}");
+        // A token, even with this site's Origin, isn't a session.
+        let with_token = app
+            .send(
+                axum::http::Request::post(&path)
+                    .header("authorization", format!("Bearer {}", app.token))
+                    .header("origin", common::PUBLIC_URL)
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(with_token.location(), Some("/login"), "{path}");
+    }
+    assert_eq!(author_status(&app, &id).await, "review");
+}
+
+#[tokio::test]
+async fn the_owners_reject_or_hold_guards_the_account_until_cleared() {
     let app = app().await;
     let cookie = owner(&app).await;
     let clear = format!("/admin/accounts/{}/clear-guard", app.account);
-    let queue = app.page("/admin", Some(&cookie)).await;
-    assert!(!queue.body.contains(&clear), "{}", queue.body);
+    let guarded = async || {
+        app.page("/admin", Some(&cookie))
+            .await
+            .body
+            .contains(&clear)
+    };
 
-    let id = in_review(&app, "").await;
-    let queue = app.page("/admin", Some(&cookie)).await;
-    assert!(queue.body.contains(&clear), "{}", queue.body);
+    // Reaching review alone doesn't, and neither does publishing from it.
+    let published = in_review(&app, "").await;
+    assert!(!guarded().await);
+    decide(&app, &cookie, &format!("/admin/e/{published}/publish"), &[]).await;
+    assert!(!guarded().await);
 
-    // Rejecting the entry doesn't lift the guard.
-    decide(&app, &cookie, &format!("/admin/e/{id}/reject"), &[]).await;
-    let queue = app.page("/admin", Some(&cookie)).await;
-    assert!(queue.body.contains(&clear), "{}", queue.body);
-
+    let rejected = in_review(&app, "").await;
+    decide(&app, &cookie, &format!("/admin/e/{rejected}/reject"), &[]).await;
+    assert!(guarded().await);
     decide(&app, &cookie, &clear, &[]).await;
+    assert!(!guarded().await);
+
+    let held = in_review(&app, "").await;
+    decide(&app, &cookie, &format!("/admin/e/{held}/hold"), &[]).await;
+    assert!(guarded().await);
+}
+
+#[tokio::test]
+async fn the_owner_sees_entries_that_passed_with_a_hazard_doubt_until_marked_seen() {
+    let app = app().await;
+    let cookie = owner(&app).await;
+    let held = app
+        .post(
+            "/entries",
+            entry("Steering FAKE-HAZARD FAKE-SONNET-UNSURE", ""),
+        )
+        .await;
+    let id = id_in(&held.body);
+    let placed = app.post(&format!("/e/{id}/publish"), "").await;
+    assert_eq!(
+        field(&placed.body, "status"),
+        Some("public"),
+        "{}",
+        placed.body
+    );
+    let seen = format!("/admin/e/{id}/doubt-seen");
     let queue = app.page("/admin", Some(&cookie)).await;
-    assert!(!queue.body.contains(&clear), "{}", queue.body);
+    assert!(queue.body.contains(&seen), "{}", queue.body);
+    assert!(queue.body.contains("working_attack"), "{}", queue.body);
+    assert!(queue.body.contains("the quoted passage"), "{}", queue.body);
+
+    decide(&app, &cookie, &seen, &[]).await;
+    let queue = app.page("/admin", Some(&cookie)).await;
+    assert!(!queue.body.contains(&seen), "{}", queue.body);
 }

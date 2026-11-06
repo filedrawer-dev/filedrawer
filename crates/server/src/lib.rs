@@ -124,6 +124,7 @@ fn build(state: AppState) -> Routes<Router> {
         .route("/admin/e/{id}/publish", post(admin::publish))
         .route("/admin/e/{id}/hold", post(admin::hold))
         .route("/admin/e/{id}/reject", post(admin::reject))
+        .route("/admin/e/{id}/doubt-seen", post(admin::doubt_seen))
         .route("/admin/accounts/{id}/clear-guard", post(admin::clear_guard));
     let same_origin = axum::middleware::from_fn_with_state(state.clone(), account::same_origin);
     accounts

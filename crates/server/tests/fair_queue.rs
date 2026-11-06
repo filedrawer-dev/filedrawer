@@ -97,11 +97,38 @@ async fn into_review(app: &TestApp) -> String {
     id
 }
 
+/// Guards the app's account the way it happens: an entry reaches review and the
+/// owner holds it. Returns the owner's session.
+async fn guard(app: &TestApp) -> String {
+    let id = into_review(app).await;
+    let cookie = owner(app).await;
+    let hold = app
+        .form(&format!("/admin/e/{id}/hold"), &[], Some(&cookie))
+        .await;
+    assert_eq!(hold.status, StatusCode::SEE_OTHER, "{}", hold.body);
+    cookie
+}
+
+#[tokio::test]
+async fn reaching_review_alone_doesnt_guard_the_account() {
+    let models = FakeModels::default();
+    let app = app(&models).await;
+    into_review(&app).await;
+    let id = held(&app, &app.token, "Steering fine x").await;
+    let placed = app.post(&format!("/e/{id}/publish"), "").await;
+    assert_eq!(
+        field(&placed.body, "status"),
+        Some("public"),
+        "{}",
+        placed.body
+    );
+}
+
 #[tokio::test]
 async fn a_guarded_accounts_entries_go_to_review_without_a_model_call() {
     let models = FakeModels::default();
     let mut app = app(&models).await;
-    into_review(&app).await;
+    guard(&app).await;
     let asked = models.asked().len();
 
     let waiting = held(&app, &app.token, "Steering harmless x").await;
@@ -129,7 +156,7 @@ async fn a_guarded_accounts_entries_go_to_review_without_a_model_call() {
 async fn another_account_is_screened_as_usual() {
     let models = FakeModels::default();
     let app = app(&models).await;
-    into_review(&app).await;
+    guard(&app).await;
     let other = app.other_token().await;
     let id = held(&app, &other, "Steering fine x").await;
     let placed = app
@@ -147,7 +174,7 @@ async fn another_account_is_screened_as_usual() {
 async fn a_guarded_account_cant_store_a_series() {
     let models = FakeModels::default();
     let app = app(&models).await;
-    into_review(&app).await;
+    guard(&app).await;
     let asked = models.asked().len();
     let reply = app
         .post(
@@ -174,8 +201,7 @@ async fn a_guarded_account_cant_store_a_series() {
 async fn once_the_owner_clears_the_guard_the_account_is_screened_again() {
     let models = FakeModels::default();
     let app = app(&models).await;
-    into_review(&app).await;
-    let cookie = owner(&app).await;
+    let cookie = guard(&app).await;
     let cleared = app
         .form(
             &format!("/admin/accounts/{}/clear-guard", app.account),
@@ -201,8 +227,7 @@ async fn the_review_queue_lists_every_accounts_first_entry_before_anyones_second
     let app = app(&models).await;
     let other = app.other_token().await;
     let a1 = into_review(&app).await;
-    // The guard sends A2 to review too.
-    let a2 = held(&app, &app.token, "Steering A2 x").await;
+    let a2 = held(&app, &app.token, &format!("Steering {HAZARD} A2")).await;
     app.post(&format!("/e/{a2}/publish"), "").await;
     let b1 = held(&app, &other, &format!("Steering {HAZARD} B1")).await;
     app.post_as(&format!("/e/{b1}/publish"), Some(&other), "")

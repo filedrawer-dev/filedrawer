@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE accounts SET review_guard_at = ?\n         WHERE id = (SELECT account_id FROM entries WHERE seq = ?)\n           AND review_guard_at IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "491838a9cc4cdda0b3fa90344508378b32bbfd2302ad939088f6140335908a89"
+}

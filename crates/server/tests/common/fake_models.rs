@@ -16,10 +16,14 @@ pub const USAGE: Usage = Usage {
 
 /// Answers by markers in the text:
 /// - `FAKE-OFFTOPIC`, `FAKE-SPAM`, `FAKE-PIPE`: Haiku fails it for that.
-/// - `FAKE-UNSURE`: Haiku is unsure of the topic; Sonnet says off-topic only with
-///   `FAKE-SONNET-OFFTOPIC`.
-/// - `FAKE-HAZARD`: Haiku sees a possible hazard; Sonnet agrees only with
-///   `FAKE-SONNET-HAZARD`.
+/// - `FAKE-UNSURE`: Haiku is unsure of the topic. When Sonnet is asked, it says
+///   off-topic only with `FAKE-SONNET-OFFTOPIC`.
+/// - `FAKE-HAZARD`: Haiku thinks a hazard likely; `FAKE-HAZARD-UNSURE`: Haiku is
+///   unsure. Sonnet says likely, with a category and a quote, only with
+///   `FAKE-SONNET-HAZARD`; unsure with `FAKE-SONNET-UNSURE`; likely but with no
+///   quote with `FAKE-SONNET-NOQUOTE`, with an empty quote with
+///   `FAKE-SONNET-EMPTYQUOTE`, or with a quote but no category with
+///   `FAKE-SONNET-NOCATEGORY`.
 /// - `FAKE-REFUSE`: Haiku declines; Sonnet declines too with `FAKE-SONNET-REFUSE`.
 /// - `FAKE-DOUBT`: a doubt about `outcome`.
 /// - `FAKE-ERROR`: every call fails, as in an outage.
@@ -101,12 +105,33 @@ impl ModelClient for FakeModels {
             } else {
                 "yes"
             };
-            let hazard = if (!sonnet && has("FAKE-HAZARD")) || (sonnet && has("FAKE-SONNET-HAZARD"))
-            {
-                "possible"
+            let hazard = if sonnet {
+                if has("FAKE-SONNET-HAZARD")
+                    || has("FAKE-SONNET-NOQUOTE")
+                    || has("FAKE-SONNET-EMPTYQUOTE")
+                    || has("FAKE-SONNET-NOCATEGORY")
+                {
+                    "likely"
+                } else if has("FAKE-SONNET-UNSURE") {
+                    "unsure"
+                } else {
+                    "none"
+                }
+            } else if has("FAKE-HAZARD-UNSURE") {
+                "unsure"
+            } else if has("FAKE-HAZARD") {
+                "likely"
             } else {
                 "none"
             };
+            let quote = if sonnet && has("FAKE-SONNET-EMPTYQUOTE") {
+                Some("")
+            } else {
+                (hazard != "none" && !(sonnet && has("FAKE-SONNET-NOQUOTE")))
+                    .then_some("the quoted passage")
+            };
+            let category = (hazard != "none" && !(sonnet && has("FAKE-SONNET-NOCATEGORY")))
+                .then_some("working_attack");
             let mut reasons = Vec::new();
             if on_topic == "no" {
                 reasons.push("It is about cooking, not AI safety.");
@@ -117,8 +142,16 @@ impl ModelClient for FakeModels {
             Ok(ModelReply {
                 answer: Answer::Json(json!({
                     "on_topic": on_topic,
-                    "spam": if has("FAKE-SPAM") { "yes" } else { "no" },
+                    "spam": if has("FAKE-SPAM-UNSURE") {
+                        "unsure"
+                    } else if has("FAKE-SPAM") {
+                        "yes"
+                    } else {
+                        "no"
+                    },
                     "hazard": hazard,
+                    "hazard_category": category,
+                    "hazard_quote": quote,
                     "pipes_download_to_shell": has("FAKE-PIPE"),
                     "reasons": reasons,
                     "outcome_doubt": has("FAKE-DOUBT").then_some("The body reports an effect."),

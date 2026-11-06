@@ -182,6 +182,26 @@ async fn a_possible_hazard_goes_to_sonnet_and_passes_only_if_sonnet_clears_it() 
     );
     let own = app.get_as_author(&format!("/e/{id}")).await;
     assert_eq!(field(&own.body, "status"), Some("review"), "{}", own.body);
+
+    // Haiku being unsure of a hazard asks Sonnet too.
+    let (_, unsure) = publish(&app, &marked("FAKE-HAZARD-UNSURE FAKE-SONNET-HAZARD", "")).await;
+    assert_eq!(unsure, "review");
+}
+
+#[tokio::test]
+async fn sonnet_unsure_of_a_hazard_or_quoting_nothing_passes_with_no_public_note() {
+    let models = FakeModels::default();
+    let app = app_with(&models).await;
+    for markers in [
+        "FAKE-HAZARD FAKE-SONNET-UNSURE",
+        "FAKE-HAZARD FAKE-SONNET-NOQUOTE",
+    ] {
+        let (id, status) = publish(&app, &marked(markers, "")).await;
+        assert_eq!(status, "public", "{markers}");
+        let page = app.get(&format!("/e/{id}")).await;
+        assert!(!page.body.contains("quoted passage"), "{}", page.body);
+        assert!(!page.body.contains("screening note"), "{}", page.body);
+    }
 }
 
 #[tokio::test]
@@ -192,18 +212,24 @@ async fn a_refusal_counts_as_a_possible_hazard() {
     assert_eq!(cleared, "public", "Sonnet read it and cleared it");
     let (_, held) = publish(&app, &marked("FAKE-REFUSE FAKE-SONNET-REFUSE", "")).await;
     assert_eq!(held, "review");
-    // Sonnet declining after Haiku was only unsure of the topic still means review.
-    let (_, unsure) = publish(&app, &marked("FAKE-UNSURE FAKE-SONNET-REFUSE", "")).await;
-    assert_eq!(unsure, "review");
 }
 
 #[tokio::test]
-async fn sonnets_topic_call_is_final_when_haiku_is_unsure() {
+async fn haiku_unsure_of_topic_or_spam_passes_without_asking_sonnet() {
     let models = FakeModels::default();
     let app = app_with(&models).await;
-    let (_, kept) = publish(&app, &marked("FAKE-UNSURE", "")).await;
-    assert_eq!(kept, "public");
-    let (_, failed) = publish(&app, &marked("FAKE-UNSURE FAKE-SONNET-OFFTOPIC", "")).await;
+    for markers in ["FAKE-UNSURE FAKE-SONNET-OFFTOPIC", "FAKE-SPAM-UNSURE"] {
+        let (_, status) = publish(&app, &marked(markers, "")).await;
+        assert_eq!(status, "public", "{markers}");
+    }
+    assert_eq!(models.asked(), vec![Model::Haiku, Model::Haiku]);
+}
+
+#[tokio::test]
+async fn sonnets_topic_call_is_final_when_it_looks_for_a_hazard() {
+    let models = FakeModels::default();
+    let app = app_with(&models).await;
+    let (_, failed) = publish(&app, &marked("FAKE-HAZARD FAKE-SONNET-OFFTOPIC", "")).await;
     assert_eq!(failed, "rejected");
 }
 
@@ -370,10 +396,10 @@ async fn one_failing_member_sends_the_whole_batch_back() {
 }
 
 #[tokio::test]
-async fn a_member_after_one_went_to_review_follows_it_there_unscreened() {
-    // The first member's review puts the account under the review guard, so the
-    // second skips the screen that would have failed it (design.md: everything the
-    // account has waiting goes to review).
+async fn a_member_failing_after_one_went_to_review_leaves_that_one_to_the_owner() {
+    // Reaching review doesn't guard the account (only the owner's reject or hold
+    // does), so the second member is screened and fails. The first stays in review
+    // for the owner to see (the owner's decision, 2026-11-06).
     let models = FakeModels::default();
     let app = app_with(&models).await;
     let reply = batch(
@@ -388,14 +414,33 @@ async fn a_member_after_one_went_to_review_follows_it_there_unscreened() {
     let batch_id = reply["id"].as_str().unwrap();
     let published = app.post(&format!("/batches/{batch_id}/publish"), "").await;
     assert_eq!(published.status, StatusCode::OK, "{}", published.body);
-    for id in &ids {
-        assert!(
-            published.body.contains(&format!("entry: {id} review")),
-            "{}",
-            published.body
-        );
+    assert!(
+        published
+            .body
+            .contains(&format!("entry: {} review", ids[0])),
+        "{}",
+        published.body
+    );
+    assert!(
+        published
+            .body
+            .contains(&format!("entry: {} rejected", ids[1])),
+        "{}",
+        published.body
+    );
+}
+
+#[tokio::test]
+async fn a_likely_hazard_needs_both_a_category_and_a_quote() {
+    let models = FakeModels::default();
+    let app = app_with(&models).await;
+    for markers in [
+        "FAKE-HAZARD FAKE-SONNET-NOCATEGORY",
+        "FAKE-HAZARD FAKE-SONNET-EMPTYQUOTE",
+    ] {
+        let (_, status) = publish(&app, &marked(markers, "")).await;
+        assert_eq!(status, "public", "{markers}");
     }
-    assert_eq!(models.asked(), vec![Model::Haiku, Model::Sonnet]);
 }
 
 #[tokio::test]

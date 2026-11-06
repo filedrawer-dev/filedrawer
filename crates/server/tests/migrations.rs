@@ -170,3 +170,44 @@ async fn migration_9_guards_every_account_with_an_entry_already_in_review() {
         ]
     );
 }
+
+#[tokio::test]
+async fn migration_11_keeps_only_guards_the_owner_confirmed() {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            SqliteConnectOptions::from_str("sqlite::memory:")
+                .unwrap()
+                .foreign_keys(true),
+        )
+        .await
+        .unwrap();
+    let mut first_ten = sqlx::migrate!("./migrations");
+    first_ten.migrations = Cow::Owned(first_ten.migrations[..10].to_vec());
+    first_ten.run(&pool).await.unwrap();
+    for statement in [
+        "INSERT INTO accounts (id, display_name, created_at, review_guard_at) VALUES
+             ('a-review', 'R', 't', 't'), ('a-held', 'H', 't', 't'),
+             ('a-rejected', 'J', 't', 't'), ('a-screen', 'S', 't', 't')",
+        "INSERT INTO entries (id, account_id, status, source, submitted_at, first_submitted_at,
+             analyzer_version, rejection_reasons) VALUES
+             ('e1', 'a-review', 'review', 'x', 't', 't', 1, NULL),
+             ('e2', 'a-held', 'held', 'x', 't', 't', 1, NULL),
+             ('e3', 'a-rejected', 'rejected', 'x', 't', 't', 1, '[\"rejected in review\"]'),
+             ('e4', 'a-screen', 'rejected', 'x', 't', 't', 1, '[\"It is about cooking.\"]')",
+    ] {
+        sqlx::query(statement).execute(&pool).await.unwrap();
+    }
+
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+
+    let guarded: Vec<(String,)> =
+        sqlx::query_as("SELECT id FROM accounts WHERE review_guard_at IS NOT NULL ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        guarded,
+        vec![("a-held".to_string(),), ("a-rejected".to_string(),)]
+    );
+}

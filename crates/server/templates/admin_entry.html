@@ -4,6 +4,9 @@
 <p><a href="/admin">Review queue</a></p>
 <h1>{{ title }}</h1>
 <p><code>{{ entry.id }}</code>, {{ entry.status }}, from {{ entry.display_name.as_deref().unwrap_or("account deleted") }} <code>{{ entry.account_id }}</code>, submitted {{ entry.submitted_at }}{% if let Some(batch) = entry.batch_id %}, in batch <code>{{ batch }}</code>, which publishes as one{% endif %}.</p>
+{% if batch_failed %}
+<p class="error">Its batch has already failed: another member was rejected, so publishing it sends it back with its batch. Rejecting or holding it puts its account under the review guard.</p>
+{% endif %}
 <form method="post" action="/admin/e/{{ entry.id }}/publish"><button type="submit">Publish</button></form>
 {% if entry.status == "review" %}
 <form method="post" action="/admin/e/{{ entry.id }}/hold"><button type="submit">Hold until the vendor fixes it</button></form>

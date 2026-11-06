@@ -961,22 +961,28 @@ pub async fn store_verdict(
     seq: i64,
     verdict: &Verdict,
 ) -> Result<(), sqlx::Error> {
-    let (name, note, reasons) = match verdict {
-        Verdict::Pass { note } => ("pass", note.clone(), None),
-        Verdict::Reject { reasons } => {
-            ("reject", None, Some(serde_json::json!(reasons).to_string()))
-        }
+    let (name, note, reasons, doubt) = match verdict {
+        Verdict::Pass { note, hazard_doubt } => ("pass", note.clone(), None, hazard_doubt.clone()),
+        Verdict::Reject { reasons } => (
+            "reject",
+            None,
+            Some(serde_json::json!(reasons).to_string()),
+            None,
+        ),
         Verdict::Review { why } => {
+            // `why` names the hazard's kind only; its passage stays out of the log.
             tracing::info!(seq, why, "an entry goes to review");
-            ("review", None, None)
+            ("review", None, None, None)
         }
     };
     sqlx::query!(
-        "UPDATE entries SET screen_verdict = ?, screening_note = ?, rejection_reasons = ?
+        "UPDATE entries SET screen_verdict = ?, screening_note = ?, rejection_reasons = ?,
+             hazard_doubt = ?
          WHERE seq = ? AND status = 'screening' AND screen_verdict IS NULL",
         name,
         note,
         reasons,
+        doubt,
         seq
     )
     .execute(pool)
@@ -1004,48 +1010,60 @@ pub async fn reject(pool: &SqlitePool, seq: i64, reasons: Option<&str>) -> Resul
     transaction.commit().await
 }
 
-/// Moves an entry whose verdict is review out of screening, to the owner's queue,
-/// and puts its account under the review guard (design.md, Submission and
-/// screening), if it isn't already.
+/// Moves an entry whose verdict is review out of screening, to the owner's queue.
 pub async fn to_review(pool: &SqlitePool, seq: i64) -> Result<(), sqlx::Error> {
-    let mut transaction = pool.begin().await?;
     // It joins the review queue one place behind its account's last entry there, as
     // `start_screening` places it in the screening queue.
-    let moved = sqlx::query_scalar!(
+    sqlx::query!(
         "UPDATE entries SET status = 'review',
              queue_position = 1 + COALESCE((
                  SELECT MAX(w.queue_position) FROM entries w
                  WHERE w.account_id = entries.account_id
                    AND w.status IN ('review', 'held')), 0)
-         WHERE seq = ? AND status = 'screening' AND screen_verdict = 'review'
-         RETURNING account_id",
-        seq
-    )
-    .fetch_optional(&mut *transaction)
-    .await?;
-    if let Some(account_id) = moved {
-        let at = now();
-        sqlx::query!(
-            "UPDATE accounts SET review_guard_at = ? WHERE id = ? AND review_guard_at IS NULL",
-            at,
-            account_id
-        )
-        .execute(&mut *transaction)
-        .await?;
-    }
-    transaction.commit().await
-}
-
-/// Holds an entry in review until a vendor fixes the hole. False if it wasn't in
-/// review.
-pub async fn hold(pool: &SqlitePool, seq: i64) -> Result<bool, sqlx::Error> {
-    let done = sqlx::query!(
-        "UPDATE entries SET status = 'held' WHERE seq = ? AND status = 'review'",
+         WHERE seq = ? AND status = 'screening' AND screen_verdict = 'review'",
         seq
     )
     .execute(pool)
     .await?;
-    Ok(done.rows_affected() == 1)
+    Ok(())
+}
+
+/// Puts the account that wrote entry `seq` under the review guard, if it isn't
+/// already: the owner held or rejected one of its entries (the owner's decision,
+/// 2026-11-06: the guard trips on that, not on reaching review).
+async fn guard_author(
+    transaction: &mut sqlx::SqliteConnection,
+    seq: i64,
+) -> Result<(), sqlx::Error> {
+    let at = now();
+    sqlx::query!(
+        "UPDATE accounts SET review_guard_at = ?
+         WHERE id = (SELECT account_id FROM entries WHERE seq = ?)
+           AND review_guard_at IS NULL",
+        at,
+        seq
+    )
+    .execute(&mut *transaction)
+    .await?;
+    Ok(())
+}
+
+/// Holds an entry in review until a vendor fixes the hole, and guards its account.
+/// False if it wasn't in review.
+pub async fn hold(pool: &SqlitePool, seq: i64) -> Result<bool, sqlx::Error> {
+    let mut transaction = pool.begin().await?;
+    let done = sqlx::query!(
+        "UPDATE entries SET status = 'held' WHERE seq = ? AND status = 'review'",
+        seq
+    )
+    .execute(&mut *transaction)
+    .await?;
+    if done.rows_affected() != 1 {
+        return Ok(false);
+    }
+    guard_author(&mut transaction, seq).await?;
+    transaction.commit().await?;
+    Ok(true)
 }
 
 /// The owner passes an entry in review or held: it goes back to `screening` with a
@@ -1062,15 +1080,58 @@ pub async fn owner_pass(pool: &SqlitePool, seq: i64) -> Result<bool, sqlx::Error
 }
 
 /// The owner fails an entry in review or held with `reasons` (a JSON array): it goes
-/// back to `screening` with a rejection, for the queue to send its whole batch back.
-/// False if it was in neither.
+/// back to `screening` with a rejection, for the queue to send its whole batch back,
+/// and its account is guarded. False if it was in neither.
 pub async fn owner_reject(pool: &SqlitePool, seq: i64, reasons: &str) -> Result<bool, sqlx::Error> {
+    let mut transaction = pool.begin().await?;
     let done = sqlx::query!(
         "UPDATE entries SET status = 'screening', screen_verdict = 'reject',
              rejection_reasons = ?
          WHERE seq = ? AND status IN ('review', 'held')",
         reasons,
         seq
+    )
+    .execute(&mut *transaction)
+    .await?;
+    if done.rows_affected() != 1 {
+        return Ok(false);
+    }
+    guard_author(&mut transaction, seq).await?;
+    transaction.commit().await?;
+    Ok(true)
+}
+
+/// An entry that passed although the screen doubted it holds a hazard.
+pub struct Doubted {
+    pub id: String,
+    pub status: String,
+    pub source: String,
+    pub doubt: String,
+}
+
+/// Every entry that passed with a hazard doubt the owner hasn't marked seen, oldest
+/// first.
+pub async fn doubted(pool: &SqlitePool) -> Result<Vec<Doubted>, sqlx::Error> {
+    sqlx::query_as!(
+        Doubted,
+        r#"SELECT id, status, source, hazard_doubt AS "doubt!"
+           FROM entries
+           WHERE hazard_doubt IS NOT NULL AND hazard_doubt_seen_at IS NULL
+             AND status NOT IN ('withdrawn', 'removed')
+           ORDER BY seq"#
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// Takes entry `id` off the owner's list of doubted entries. False if it wasn't on it.
+pub async fn mark_doubt_seen(pool: &SqlitePool, id: &str) -> Result<bool, sqlx::Error> {
+    let at = now();
+    let done = sqlx::query!(
+        "UPDATE entries SET hazard_doubt_seen_at = ?
+         WHERE id = ? AND hazard_doubt IS NOT NULL AND hazard_doubt_seen_at IS NULL",
+        at,
+        id
     )
     .execute(pool)
     .await?;
@@ -1103,6 +1164,21 @@ pub async fn undecided(pool: &SqlitePool, id: Option<&str>) -> Result<Vec<Undeci
     )
     .fetch_all(pool)
     .await
+}
+
+/// Whether another member of entry `seq`'s batch has been rejected, so publishing
+/// `seq` would send it back with its batch.
+pub async fn batch_failed(pool: &SqlitePool, seq: i64) -> Result<bool, sqlx::Error> {
+    let failed = sqlx::query_scalar!(
+        r#"SELECT EXISTS (
+               SELECT 1 FROM entries e JOIN entries m ON m.batch_seq = e.batch_seq
+               WHERE e.seq = ? AND m.seq != e.seq AND m.screen_verdict = 'reject'
+           ) AS "failed!: bool""#,
+        seq
+    )
+    .fetch_one(pool)
+    .await?;
+    Ok(failed)
 }
 
 /// The seq of entry `id`, whatever its status.

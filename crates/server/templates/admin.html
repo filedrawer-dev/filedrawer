@@ -14,8 +14,18 @@
 </table>
 {% endif %}
 {% endfor %}
+<h2>Passed with a hazard doubt</h2>
+<p>The screen suspected a hazard but couldn't show one, so these passed. Only you see the doubt; it isn't on the card.</p>
+{% if doubted.is_empty() %}<p>None.</p>{% else %}
+<table>
+<tr><th>Entry</th><th>Status</th><th>The screen's doubt</th><th></th></tr>
+{% for (entry, title) in doubted %}
+<tr><td>{{ title }} <code>{{ entry.id }}</code></td><td>{{ entry.status }}</td><td>{{ entry.doubt }}</td><td><form method="post" action="/admin/e/{{ entry.id }}/doubt-seen"><button type="submit">Seen</button></form></td></tr>
+{% endfor %}
+</table>
+{% endif %}
 <h2>Accounts under the review guard</h2>
-<p>An account is guarded from when one of its entries first reached review. Rejecting the entry doesn't lift it; only clearing does.</p>
+<p>An account is guarded from when you first rejected or held one of its entries. Everything it sends then comes here unscreened, until you clear it.</p>
 {% if guarded.is_empty() %}<p>None.</p>{% else %}
 <table>
 <tr><th>Account</th><th>Since</th><th></th></tr>

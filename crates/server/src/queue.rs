@@ -119,9 +119,10 @@ pub async fn screen_text(
     if state.smoke_account.as_deref() == Some(account_id) {
         return Ok(Screened::Verdict(Verdict::Pass {
             note: Some("staging smoke account: not screened".into()),
+            hazard_doubt: None,
         }));
     }
-    // design.md: once any of an account's entries reaches review, everything it
+    // design.md: once the owner rejects or holds one of an account's entries, everything it
     // submits goes straight to review, whatever the day's cap.
     if accounts::is_guarded(&state.pool, account_id).await? {
         return Ok(Screened::Guarded);
@@ -231,10 +232,9 @@ async fn settle(state: &AppState, seq: i64, now: OffsetDateTime) -> Result<(), s
         .iter()
         .find(|member| member.screen_verdict.as_deref() == Some("reject"))
     {
-        // A member already in review or held goes back too: its batch has failed.
-        let undecided =
-            |member: &&Member| matches!(member.status.as_str(), "screening" | "review" | "held");
-        for member in members.iter().filter(undecided) {
+        // A member in review or held stays for the owner to see (the owner's decision,
+        // 2026-11-06); publishing it later sends it back here, with its batch.
+        for member in members.iter().filter(in_screening) {
             let reasons = (member.screen_verdict.as_deref() != Some("reject")).then(|| {
                 serde_json::json!([format!(
                     "another entry in its batch, {}, was rejected, and a batch is screened as one",
