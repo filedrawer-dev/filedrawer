@@ -24,19 +24,19 @@ command -v python3 >/dev/null || refuse "the hooks need python3 (and uv)"
 
 format_staged_rust() {
   [ -f "$root/Cargo.toml" ] && command -v cargo >/dev/null || return 0
-  local needs staged file
-  needs=$(cd "$root" && cargo fmt --check -- -l 2>/dev/null) && return 0
-  [ -n "$needs" ] || return 0
+  local listed staged file
+  local -a needs=()
+  listed=$(cd "$root" && cargo fmt --check -- -l 2>/dev/null) && return 0
+  [ -n "$listed" ] || return 0
   staged=$(git -C "$root" diff --cached --name-only --diff-filter=ACMR -- '*.rs')
   while IFS= read -r file; do
     file=${file#"$root/"}
     printf '%s\n' "$staged" | grep -qxF -- "$file" || return 0
     git -C "$root" diff --quiet -- "$file" || return 0
-  done <<< "$needs"
+    needs+=("$file")
+  done <<< "$listed"
   (cd "$root" && cargo fmt) || return 0
-  while IFS= read -r file; do
-    git -C "$root" add -- "${file#"$root/"}"
-  done <<< "$needs"
+  git -C "$root" add -- "${needs[@]}"
   echo "git-pre-commit: ran cargo fmt on the staged Rust and staged the result" >&2
 }
 

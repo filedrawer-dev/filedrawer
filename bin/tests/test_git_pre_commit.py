@@ -72,7 +72,7 @@ def test_a_file_with_unstaged_changes_is_left_alone(repo):
     (repo / "src/lib.rs").write_text(UGLY)
     git(repo, "add", "src/lib.rs")
     (repo / "src/lib.rs").write_text(UGLY + "// not for this commit\n")
-    hook(repo, agent=True)
+    assert hook(repo, agent=True).returncode == 0
     assert (repo / "src/lib.rs").read_text() == UGLY + "// not for this commit\n"
     assert git(repo, "show", ":src/lib.rs") == UGLY
 
@@ -80,7 +80,7 @@ def test_a_file_with_unstaged_changes_is_left_alone(repo):
 def test_a_persons_commit_is_only_checked(repo):
     (repo / "src/lib.rs").write_text(UGLY)
     git(repo, "add", "src/lib.rs")
-    hook(repo, agent=False)
+    assert hook(repo, agent=False).returncode == 0
     assert git(repo, "show", ":src/lib.rs") == UGLY
 
 
@@ -88,6 +88,6 @@ def test_nothing_is_formatted_when_an_unstaged_file_needs_it(repo):
     (repo / "src/lib.rs").write_text(UGLY + "mod other;\n")
     (repo / "src/other.rs").write_text(UGLY)
     git(repo, "add", "src/lib.rs")
-    hook(repo, agent=True)
+    assert hook(repo, agent=True).returncode == 0
     assert (repo / "src/other.rs").read_text() == UGLY
     assert git(repo, "show", ":src/lib.rs") == UGLY + "mod other;\n"
