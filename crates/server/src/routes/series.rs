@@ -12,8 +12,7 @@ use serde_json::json;
 use crate::AppState;
 use crate::auth::{TokenAccount, optional_token_account};
 use crate::error::AppError;
-use crate::respond::{DELIMITER, Format};
-use crate::routes::read::one_line;
+use crate::respond::{DELIMITER, Format, one_line};
 use crate::screening::Verdict;
 use crate::series::{self, Series, Version};
 
@@ -174,10 +173,11 @@ pub async fn read(
     }
     for listed in &entries {
         text.push_str(&format!(
-            "entry: {} by {}, account {}\n",
+            // The author's name goes last, so nothing in it can pass for the account.
+            "entry: {}, account {}, by {}\n",
             listed.id,
-            one_line(&listed.display_name),
-            listed.account_id
+            listed.account_id,
+            one_line(&listed.display_name)
         ));
     }
     text.push_str(&format!("{DELIMITER}\n"));

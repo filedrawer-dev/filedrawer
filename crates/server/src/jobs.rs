@@ -59,7 +59,7 @@ async fn screen_and_place(
 /// series' creator makes the series public, and returns how many.
 pub async fn place_waiting(state: &AppState) -> Result<usize, sqlx::Error> {
     let mut placed = 0;
-    for (seq, source) in entries::waiting(&state.pool).await? {
+    for (seq, source) in entries::in_status(&state.pool, "waiting_on_series").await? {
         if series::waits(&state.pool, seq).await? {
             continue;
         }
@@ -79,7 +79,7 @@ pub async fn place_waiting(state: &AppState) -> Result<usize, sqlx::Error> {
 pub async fn publish_due(state: &AppState, now: OffsetDateTime) -> Result<usize, sqlx::Error> {
     let mut placed = place_waiting(state).await?;
     let now_text = stamp(now);
-    for (seq, source) in entries::in_screening(&state.pool).await? {
+    for (seq, source) in entries::in_status(&state.pool, "screening").await? {
         if screen_and_place(state, seq, &source, now).await?.is_some() {
             placed += 1;
         }

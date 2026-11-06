@@ -17,7 +17,7 @@ use crate::auth::optional_token_account;
 use crate::embargo::parse_date;
 use crate::entries::{self, Filters};
 use crate::error::AppError;
-use crate::respond::{DELIMITER, Format, card_and_warnings};
+use crate::respond::{DELIMITER, Format, card_and_warnings, one_line};
 use crate::series;
 use analyzer::slug_references;
 
@@ -53,7 +53,7 @@ pub async fn entry(
         .map(|(_, id)| id.clone());
     let card = entry.card_with(entry.superseded_by.clone().or(resolved_successor));
     let runs = entries::entry_runs(&state.pool, &entry.id).await?;
-    let cited = cited_series(&state, entry.seq).await?;
+    let cited = shown_series(&state, entry.seq).await?;
     let mut text = format!(
         "id: {}\nstatus: public\nanalyzer: v{ANALYZER_VERSION}\nsubmitted: {}\npublished: {}\nauthor: {}, account {}\n",
         entry.id,
@@ -149,18 +149,19 @@ struct CitedSeries {
     shown: Option<(String, String)>,
 }
 
-async fn cited_series(state: &AppState, seq: i64) -> Result<Option<CitedSeries>, AppError> {
+async fn shown_series(state: &AppState, seq: i64) -> Result<Option<CitedSeries>, AppError> {
     let Some(cite) = series::entry_cite(&state.pool, seq).await? else {
         return Ok(None);
     };
     let version = series::version(&state.pool, cite.series_seq, cite.version).await?;
     let shown = version.filter(|version| version.readable).map(|version| {
-        let description = match &cite.section {
-            Some(section) => analyzer::description_section(&version.description, section)
-                .unwrap_or("")
-                .to_string(),
-            None => version.description,
-        };
+        // Submission checked the section, and versions never change; should it be
+        // missing anyway, the whole description is shown rather than nothing.
+        let section = cite
+            .section
+            .as_deref()
+            .and_then(|section| analyzer::description_section(&version.description, section));
+        let description = section.map_or_else(|| version.description.clone(), str::to_string);
         (version.title, description)
     });
     Ok(Some(CitedSeries { cite, shown }))
@@ -239,13 +240,6 @@ async fn own_entry(
         "series": cite.as_ref().map(series::EntryCite::text),
     });
     Ok(format.reply(StatusCode::OK, text, json))
-}
-
-/// A display name on one line, so it can't forge a server field above the delimiter.
-pub(crate) fn one_line(text: &str) -> String {
-    text.split(|c: char| c.is_control() || matches!(c, '\u{2028}' | '\u{2029}'))
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 #[derive(Debug, Deserialize)]

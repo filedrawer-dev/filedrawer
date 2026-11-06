@@ -432,21 +432,13 @@ pub async fn start_screening(
     .await
 }
 
-/// Entries in `screening` and their text. With the pass-all screen, one is still
-/// there only when placing it after screening failed, so it is placed again.
-pub async fn in_screening(pool: &SqlitePool) -> Result<Vec<(i64, String)>, sqlx::Error> {
+/// Entries with `status` and their text: those in `screening`, which with the
+/// pass-all screen are there only when placing them failed, and those in
+/// `waiting_on_series`.
+pub async fn in_status(pool: &SqlitePool, status: &str) -> Result<Vec<(i64, String)>, sqlx::Error> {
     let rows = sqlx::query!(
-        r#"SELECT seq AS "seq!: i64", source FROM entries WHERE status = 'screening'"#
-    )
-    .fetch_all(pool)
-    .await?;
-    Ok(rows.into_iter().map(|row| (row.seq, row.source)).collect())
-}
-
-/// Entries in `waiting_on_series` and their text.
-pub async fn waiting(pool: &SqlitePool) -> Result<Vec<(i64, String)>, sqlx::Error> {
-    let rows = sqlx::query!(
-        r#"SELECT seq AS "seq!: i64", source FROM entries WHERE status = 'waiting_on_series'"#
+        r#"SELECT seq AS "seq!: i64", source FROM entries WHERE status = ?"#,
+        status
     )
     .fetch_all(pool)
     .await?;

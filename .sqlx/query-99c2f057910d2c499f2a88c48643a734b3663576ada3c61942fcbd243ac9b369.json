@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT seq AS \"seq!: i64\", source FROM entries WHERE status = 'waiting_on_series'",
+  "query": "SELECT seq AS \"seq!: i64\", source FROM entries WHERE status = ?",
   "describe": {
     "columns": [
       {
@@ -27,12 +27,12 @@
       }
     ],
     "parameters": {
-      "Right": 0
+      "Right": 1
     },
     "nullable": [
       false,
       false
     ]
   },
-  "hash": "e43d5da1e9b8becd94ec5cf98e7dcb6a816aa6e2248429210886c7de4000e877"
+  "hash": "99c2f057910d2c499f2a88c48643a734b3663576ada3c61942fcbd243ac9b369"
 }

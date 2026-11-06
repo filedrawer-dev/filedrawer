@@ -21,7 +21,8 @@ pub struct SeriesText {
     pub description: String,
 }
 
-/// Reads a series document, or lists every reason it can't be stored.
+/// Reads a series document (design.md, Series: "`POST /series` takes a title and a
+/// description"), or lists every reason it can't be stored.
 pub fn read_series(text: &str) -> Result<SeriesText, Vec<String>> {
     let text = text
         .strip_prefix('\u{feff}')
@@ -94,7 +95,8 @@ fn title_of(yaml: &str) -> Result<String, String> {
     Ok(title)
 }
 
-/// What an entry's `series` field cites: `<id>@<version>`, optionally `#<section>`.
+/// What an entry's `series` field cites (entry-format.md, Fields: `series`):
+/// `<id>@<version>`, optionally `#<section>`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SeriesCite {
     pub id: String,
@@ -102,8 +104,9 @@ pub struct SeriesCite {
     pub section: Option<String>,
 }
 
-/// Reads a `series` value, or `None` when it isn't `<id>@<version>[#<section>]` with a
-/// version from 1 and a section that could be an anchor ([`heading_anchor`]).
+/// Reads a `series` value (entry-format.md, Fields: `series`), or `None` when it
+/// isn't `<id>@<version>[#<section>]` with a version from 1 and a section that could
+/// be an anchor ([`heading_anchor`]).
 pub fn parse_series_cite(value: &str) -> Option<SeriesCite> {
     let value = value.trim();
     let (cite, section) = match value.split_once('#') {
@@ -133,7 +136,8 @@ pub fn parse_series_cite(value: &str) -> Option<SeriesCite> {
     })
 }
 
-/// A heading's anchor: lower case, spaces as `-`, and only ASCII letters, digits, `-`
+/// A heading's anchor, which names a section in a `series` cite (entry-format.md,
+/// Fields: `series`): lower case, spaces as `-`, and only ASCII letters, digits, `-`
 /// and `_` kept, so `## Model access (v2)` is `model-access-v2`.
 pub fn heading_anchor(heading: &str) -> String {
     heading
@@ -148,8 +152,9 @@ pub fn heading_anchor(heading: &str) -> String {
         .collect()
 }
 
-/// The section of `markdown` under the first heading whose anchor is `anchor`: the
-/// heading through to the next heading of the same or a higher level.
+/// The section of a series description a `series` cite names (entry-format.md,
+/// Fields: `series`): under the first heading whose anchor is `anchor`, the heading
+/// through to the next heading of the same or a higher level.
 pub fn description_section<'a>(markdown: &'a str, anchor: &str) -> Option<&'a str> {
     let mut headings = Vec::new();
     let mut open: Option<(pulldown_cmark::HeadingLevel, usize, String)> = None;
