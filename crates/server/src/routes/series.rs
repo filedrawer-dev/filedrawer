@@ -32,6 +32,7 @@ fn byline(display_name: Option<&str>) -> String {
 async fn accept_series(
     state: &AppState,
     account: &TokenAccount,
+    versioning: Option<&str>,
     body: &Bytes,
 ) -> Result<SeriesText, AppError> {
     let refused = |reasons| AppError::Refused {
@@ -55,13 +56,17 @@ async fn accept_series(
         // A model wrote these from the series, so they go below the delimiter.
         Screened::Verdict(Verdict::Reject { reasons }) => Err(AppError::ScreenRejected(reasons)),
         Screened::Guarded => Err(refused(vec![
-            "one of this account's entries is waiting on the owner's review, so the server stores no series from it until the owner clears the account"
+            "the archive's owner has put this account under review, so the server stores no series from it until the owner clears the account"
                 .into(),
         ])),
-        Screened::Verdict(Verdict::Review { .. }) => Err(refused(vec![
-            "the screen saw a possible info hazard, so the series can't be stored as written"
-                .into(),
-        ])),
+        Screened::Verdict(Verdict::Review { why }) => {
+            // Kept for the owner, who confirms it (guarding the account) or dismisses it.
+            series::record_refusal(&state.pool, &account.id, versioning, &series, &why).await?;
+            Err(refused(vec![
+                "the screen held this series back, and the archive's owner will look at it; don't send it again reworded"
+                    .into(),
+            ]))
+        }
         Screened::OverCap => Err(AppError::Refused {
             status: StatusCode::TOO_MANY_REQUESTS,
             reasons: vec![
@@ -91,7 +96,7 @@ pub async fn create(
     format: Format,
     body: Bytes,
 ) -> Result<Response, AppError> {
-    let text = accept_series(&state, &account, &body).await?;
+    let text = accept_series(&state, &account, None, &body).await?;
     let (id, key) = series::create(&state.pool, &account.id, &text).await?;
     let url = format!("{}/series/{id}", state.public_url);
     let reply = format!(
@@ -120,7 +125,7 @@ pub async fn new_version(
     body: Bytes,
 ) -> Result<Response, AppError> {
     let found = creator_series(&state, &id, &account.id).await?;
-    let text = accept_series(&state, &account, &body).await?;
+    let text = accept_series(&state, &account, Some(&id), &body).await?;
     let version = series::add_version(&state.pool, found.seq, &text).await?;
     let url = format!("{}/series/{id}@{version}", state.public_url);
     let reply = format!(

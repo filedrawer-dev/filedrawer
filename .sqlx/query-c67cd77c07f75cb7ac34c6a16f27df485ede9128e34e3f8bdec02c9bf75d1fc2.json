@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM refused_series\n             WHERE account_id = ? AND (decision IS NULL OR decision = 'dismissed')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "c67cd77c07f75cb7ac34c6a16f27df485ede9128e34e3f8bdec02c9bf75d1fc2"
+}

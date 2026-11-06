@@ -263,3 +263,72 @@ async fn deleting_keeps_the_cost_log_of_its_screened_entries() {
         .unwrap();
     assert_eq!(logged, 1, "the spend still counts against the day");
 }
+
+#[tokio::test]
+async fn deleting_drops_its_undecided_and_dismissed_refused_series_but_keeps_confirmed_ones() {
+    let models = common::fake_models::FakeModels::default();
+    let app = common::test_app_with(models.screener(), 1_000_000_000).await;
+    let owner = common::owner(&app).await;
+    let (cookie, token) = browser_account(&app, EMAIL).await;
+    let refuse = async |title: &str| {
+        let reply = app
+            .post_as(
+                "/series",
+                Some(&token),
+                common::series::series_doc(title, "Setup FAKE-HAZARD FAKE-SONNET-HAZARD."),
+            )
+            .await;
+        assert_eq!(
+            reply.status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{}",
+            reply.body
+        );
+    };
+    let first_refusal = async || {
+        let page = app.page("/admin", Some(&owner)).await.body;
+        let start = page.find("/admin/series-refusals/").unwrap() + 23;
+        let end = start + page[start..].find('/').unwrap();
+        page[start..end].to_string()
+    };
+    refuse("Confirmed family").await;
+    let confirmed = first_refusal().await;
+    app.form(
+        &format!("/admin/series-refusals/{confirmed}/confirm"),
+        &[],
+        Some(&owner),
+    )
+    .await;
+    // Confirming guards the account, which would refuse the rest unrecorded.
+    let account =
+        sqlx::query_scalar::<_, String>("SELECT account_id FROM refused_series WHERE id = ?")
+            .bind(&confirmed)
+            .fetch_one(&app.pool)
+            .await
+            .unwrap();
+    app.form(
+        &format!("/admin/accounts/{account}/clear-guard"),
+        &[],
+        Some(&owner),
+    )
+    .await;
+    refuse("Dismissed family").await;
+    let dismissed = first_refusal().await;
+    app.form(
+        &format!("/admin/series-refusals/{dismissed}/dismiss"),
+        &[],
+        Some(&owner),
+    )
+    .await;
+    refuse("Undecided family").await;
+
+    let done = delete(&app, &cookie, PASSWORD).await;
+    assert_eq!(done.status, StatusCode::OK, "{}", done.body);
+    let queue = app.page("/admin", Some(&owner)).await;
+    assert!(!queue.body.contains("Undecided family"), "{}", queue.body);
+    let kept: Vec<(String,)> = sqlx::query_as("SELECT title FROM refused_series")
+        .fetch_all(&app.pool)
+        .await
+        .unwrap();
+    assert_eq!(kept, vec![("Confirmed family".to_string(),)]);
+}

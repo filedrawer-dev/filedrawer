@@ -1,0 +1,105 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT r.id, r.account_id, a.display_name, r.series_id, r.title, r.description,\n                r.why, r.refused_at\n         FROM refused_series r JOIN authors a ON a.id = r.account_id\n         WHERE r.decision IS NULL ORDER BY r.refused_at, r.id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "refused_series",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "account_id",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "refused_series",
+            "name": "account_id"
+          }
+        }
+      },
+      {
+        "name": "display_name",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "name": "series_id",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "refused_series",
+            "name": "series_id"
+          }
+        }
+      },
+      {
+        "name": "title",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "refused_series",
+            "name": "title"
+          }
+        }
+      },
+      {
+        "name": "description",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "refused_series",
+            "name": "description"
+          }
+        }
+      },
+      {
+        "name": "why",
+        "ordinal": 6,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "refused_series",
+            "name": "why"
+          }
+        }
+      },
+      {
+        "name": "refused_at",
+        "ordinal": 7,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "refused_series",
+            "name": "refused_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "499e83b7fbfe46a4c78fc29ea37f832c93aa5e59871095a9717045b110aea7b0"
+}

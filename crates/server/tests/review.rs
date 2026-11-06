@@ -330,8 +330,15 @@ async fn rejecting_a_batch_member_sends_back_the_rest_but_leaves_flagged_ones_to
 async fn every_admin_write_refuses_a_token_and_another_accounts_session() {
     let app = app().await;
     let id = in_review(&app, "").await;
+    refused_series(&app, "Steering family").await;
+    let refusal = {
+        let cookie = owner(&app).await;
+        refusal_id(&app.page("/admin", Some(&cookie)).await.body).unwrap()
+    };
     let (someone, _) = browser_account(&app, "grace@example.com").await;
     for path in [
+        format!("/admin/series-refusals/{refusal}/confirm"),
+        format!("/admin/series-refusals/{refusal}/dismiss"),
         format!("/admin/e/{id}/publish"),
         format!("/admin/e/{id}/hold"),
         format!("/admin/e/{id}/reject"),
@@ -411,4 +418,116 @@ async fn the_owner_sees_entries_that_passed_with_a_hazard_doubt_until_marked_see
     decide(&app, &cookie, &seen, &[]).await;
     let queue = app.page("/admin", Some(&cookie)).await;
     assert!(!queue.body.contains(&seen), "{}", queue.body);
+}
+
+/// The ID in the first `/admin/series-refusals/<id>/<action>` form on the queue page.
+fn refusal_id(page: &str) -> Option<String> {
+    let start = page.find("/admin/series-refusals/")? + "/admin/series-refusals/".len();
+    let end = start + page[start..].find('/')?;
+    Some(page[start..end].to_string())
+}
+
+async fn refused_series(app: &TestApp, title: &str) -> common::Reply {
+    let reply = app
+        .post(
+            "/series",
+            common::series::series_doc(
+                title,
+                &format!("Shared setup <script>x</script> {HAZARD}."),
+            ),
+        )
+        .await;
+    assert_eq!(
+        reply.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        reply.body
+    );
+    reply
+}
+
+#[tokio::test]
+async fn a_series_refused_as_a_hazard_waits_for_the_owner_to_confirm_or_dismiss() {
+    let app = app().await;
+    let cookie = owner(&app).await;
+    let clear = format!("/admin/accounts/{}/clear-guard", app.account);
+
+    let reply = refused_series(&app, "Steering family").await;
+    assert!(reply.body.contains("owner"), "{}", reply.body);
+    assert!(!reply.body.contains("as written"), "{}", reply.body);
+    let queue = app.page("/admin", Some(&cookie)).await;
+    assert!(queue.body.contains("Steering family"), "{}", queue.body);
+    assert!(
+        queue.body.contains("Shared setup &#60;script&#62;"),
+        "{}",
+        queue.body
+    );
+    assert!(!queue.body.contains("<script>x"), "{}", queue.body);
+    assert!(!queue.body.contains(&clear), "refusing alone doesn't guard");
+
+    let id = refusal_id(&queue.body).expect("the queue lists the refused series");
+    decide(
+        &app,
+        &cookie,
+        &format!("/admin/series-refusals/{id}/confirm"),
+        &[],
+    )
+    .await;
+    let queue = app.page("/admin", Some(&cookie)).await;
+    assert!(
+        queue.body.contains(&clear),
+        "confirming guards: {}",
+        queue.body
+    );
+    assert_eq!(refusal_id(&queue.body), None, "{}", queue.body);
+    decide(&app, &cookie, &clear, &[]).await;
+
+    refused_series(&app, "Another family").await;
+    let queue = app.page("/admin", Some(&cookie)).await;
+    let id = refusal_id(&queue.body).unwrap();
+    decide(
+        &app,
+        &cookie,
+        &format!("/admin/series-refusals/{id}/dismiss"),
+        &[],
+    )
+    .await;
+    let queue = app.page("/admin", Some(&cookie)).await;
+    assert!(!queue.body.contains(&clear), "dismissing doesn't guard");
+    assert_eq!(refusal_id(&queue.body), None, "{}", queue.body);
+    let again = app
+        .form(
+            &format!("/admin/series-refusals/{id}/dismiss"),
+            &[],
+            Some(&cookie),
+        )
+        .await;
+    assert_eq!(again.status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn a_refused_new_version_names_the_series_it_would_have_versioned() {
+    let app = app().await;
+    let cookie = owner(&app).await;
+    let (series, _) = common::series::create(&app, &app.token).await;
+    let reply = app
+        .post(
+            &format!("/series/{series}/versions"),
+            common::series::series_doc("Steering family", &format!("New setup {HAZARD}.")),
+        )
+        .await;
+    assert_eq!(
+        reply.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        reply.body
+    );
+    let queue = app.page("/admin", Some(&cookie)).await;
+    assert!(
+        queue
+            .body
+            .contains(&format!("as a new version of <code>{series}</code>")),
+        "{}",
+        queue.body
+    );
 }

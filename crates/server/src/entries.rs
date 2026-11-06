@@ -1028,24 +1028,16 @@ pub async fn to_review(pool: &SqlitePool, seq: i64) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
-/// Puts the account that wrote entry `seq` under the review guard, if it isn't
-/// already: the owner held or rejected one of its entries (the owner's decision,
-/// 2026-11-06: the guard trips on that, not on reaching review).
+/// Puts the account that wrote entry `seq` under the review guard: the owner held or
+/// rejected one of its entries (the guard trips on that, not on reaching review).
 async fn guard_author(
     transaction: &mut sqlx::SqliteConnection,
     seq: i64,
 ) -> Result<(), sqlx::Error> {
-    let at = now();
-    sqlx::query!(
-        "UPDATE accounts SET review_guard_at = ?
-         WHERE id = (SELECT account_id FROM entries WHERE seq = ?)
-           AND review_guard_at IS NULL",
-        at,
-        seq
-    )
-    .execute(&mut *transaction)
-    .await?;
-    Ok(())
+    let account = sqlx::query_scalar!("SELECT account_id FROM entries WHERE seq = ?", seq)
+        .fetch_one(&mut *transaction)
+        .await?;
+    crate::accounts::guard(transaction, &account).await
 }
 
 /// Holds an entry in review until a vendor fixes the hole, and guards its account.

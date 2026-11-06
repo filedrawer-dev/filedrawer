@@ -28,6 +28,8 @@ const NOT_FOR_AGENTS: &[&str] = &[
     "/admin/e/{id}/hold",
     "/admin/e/{id}/reject",
     "/admin/e/{id}/doubt-seen",
+    "/admin/series-refusals/{id}/confirm",
+    "/admin/series-refusals/{id}/dismiss",
     "/admin/accounts/{id}/clear-guard",
     "/skill.md",
 ];

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO refused_series (id, account_id, series_id, title, description, why, refused_at)\n         VALUES (?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "8f1b37c8d43831f29d3815a6103dbf80196156ec223f49abc76f4fae54c9c8da"
+}

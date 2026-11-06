@@ -309,6 +309,24 @@ pub async fn guarded(pool: &SqlitePool) -> Result<Vec<Guarded>, sqlx::Error> {
     .await
 }
 
+/// Puts `account_id` under the review guard, if it isn't already: the owner rejected
+/// or held one of its entries, or confirmed a refused series (the owner's decision,
+/// 2026-11-06).
+pub async fn guard(
+    connection: &mut sqlx::SqliteConnection,
+    account_id: &str,
+) -> Result<(), sqlx::Error> {
+    let at = now();
+    sqlx::query!(
+        "UPDATE accounts SET review_guard_at = ? WHERE id = ? AND review_guard_at IS NULL",
+        at,
+        account_id
+    )
+    .execute(&mut *connection)
+    .await?;
+    Ok(())
+}
+
 /// Whether `account_id` is under the review guard.
 pub async fn is_guarded(pool: &SqlitePool, account_id: &str) -> Result<bool, sqlx::Error> {
     let since = sqlx::query_scalar!(

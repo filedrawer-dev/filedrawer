@@ -13,7 +13,7 @@ use crate::pages::{AdminEntryPage, AdminQueuePage, QueueRow, page};
 use crate::review::{self, Decided, Decision};
 use crate::routes::account::SessionAccount;
 use crate::time::now_utc;
-use crate::{AppState, accounts, entries};
+use crate::{AppState, accounts, entries, series};
 
 /// The admin's browser session.
 pub struct AdminSession;
@@ -50,6 +50,7 @@ pub async fn queue(_: AdminSession, State(state): State<AppState>) -> Result<Res
         .collect();
     let (review, held) = rows.iter().partition(|row| row.entry.status == "review");
     let guarded = accounts::guarded(&state.pool).await?;
+    let refusals = series::refusals(&state.pool).await?;
     let doubted = entries::doubted(&state.pool).await?;
     let doubted: Vec<_> = doubted
         .iter()
@@ -63,6 +64,7 @@ pub async fn queue(_: AdminSession, State(state): State<AppState>) -> Result<Res
                 ("Held until a vendor fixes the hole", held),
             ],
             doubted: &doubted,
+            refusals: &refusals,
             guarded: &guarded,
         },
     ))
@@ -129,6 +131,31 @@ pub async fn reject(
     Path(id): Path<String>,
 ) -> Result<Response, AppError> {
     decide(&state, &id, Decision::Reject).await
+}
+
+async fn decide_refusal(state: &AppState, id: &str, confirm: bool) -> Result<Response, AppError> {
+    if !series::decide_refusal(&state.pool, id, confirm).await? {
+        return Err(AppError::NotFound);
+    }
+    Ok(Redirect::to("/admin").into_response())
+}
+
+/// Confirms a refused series as a hazard: its account goes under the review guard.
+pub async fn confirm_refusal(
+    _: AdminSession,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Response, AppError> {
+    decide_refusal(&state, &id, true).await
+}
+
+/// Dismisses a refused series: a false flag, so no guard.
+pub async fn dismiss_refusal(
+    _: AdminSession,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Response, AppError> {
+    decide_refusal(&state, &id, false).await
 }
 
 /// Takes an entry off the list of those that passed with a hazard doubt.

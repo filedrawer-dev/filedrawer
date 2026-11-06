@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE refused_series SET decision = ?, decided_at = ?\n         WHERE id = ? AND decision IS NULL RETURNING account_id",
+  "describe": {
+    "columns": [
+      {
+        "name": "account_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "refused_series",
+            "name": "account_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "a7f5fd011a4276613d166f5929c9ee302699787c883b8d797de747202ae75a6b"
+}

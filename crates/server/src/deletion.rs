@@ -85,8 +85,10 @@ pub async fn password_hash(
 /// Deletes the account in one transaction, or names the series that stop it.
 /// Deleted: its email, login, name, sessions, tokens, email links, private feedback
 /// and series memberships; every entry of its that isn't public or removed, with what
-/// was read from it; runs and batches nothing left uses; the hidden series it made.
-/// Kept: the account ID, its public entries, and the public series it made.
+/// was read from it; runs and batches nothing left uses; the hidden series it made;
+/// the series the screen refused that the owner hasn't confirmed as a hazard.
+/// Kept: the account ID, its public entries, the public series it made, and refused
+/// series the owner confirmed.
 pub async fn delete(pool: &SqlitePool, account_id: &str) -> Result<Outcome, sqlx::Error> {
     let mut transaction = pool.begin().await?;
     let blocked = blocking(&mut transaction, account_id).await?;
@@ -103,6 +105,12 @@ pub async fn delete(pool: &SqlitePool, account_id: &str) -> Result<Outcome, sqlx
         sqlx::query!("DELETE FROM feedback WHERE account_id = ?", account_id),
         sqlx::query!(
             "DELETE FROM series_members WHERE account_id = ?",
+            account_id
+        ),
+        // A series the owner confirmed as a hazard stays, like a removed entry.
+        sqlx::query!(
+            "DELETE FROM refused_series
+             WHERE account_id = ? AND (decision IS NULL OR decision = 'dismissed')",
             account_id
         ),
     ] {

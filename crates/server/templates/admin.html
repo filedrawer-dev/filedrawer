@@ -14,6 +14,17 @@
 </table>
 {% endif %}
 {% endfor %}
+<h2>Series refused as a likely hazard</h2>
+<p>The screen refused these series and told the author you'd look. Confirm puts the account under the review guard; Dismiss doesn't. Until you act, the author can send a rewording, which is screened as usual.</p>
+{% if refusals.is_empty() %}<p>None.</p>{% else %}
+{% for refusal in refusals %}
+<h3>{{ refusal.title }}</h3>
+<p>From {{ refusal.display_name.as_deref().unwrap_or("account deleted") }} <code>{{ refusal.account_id }}</code>, {{ refusal.refused_at }}{% if let Some(series) = refusal.series_id %}, as a new version of <code>{{ series }}</code>{% endif %}. The screen: {{ refusal.why }}.</p>
+<pre>{{ refusal.description }}</pre>
+<form method="post" action="/admin/series-refusals/{{ refusal.id }}/confirm"><button type="submit">Confirm: guard the account</button></form>
+<form method="post" action="/admin/series-refusals/{{ refusal.id }}/dismiss"><button type="submit">Dismiss</button></form>
+{% endfor %}
+{% endif %}
 <h2>Passed with a hazard doubt</h2>
 <p>The screen suspected a hazard but couldn't show one, so these passed. Only you see the doubt; it isn't on the card.</p>
 {% if doubted.is_empty() %}<p>None.</p>{% else %}

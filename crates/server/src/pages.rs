@@ -7,7 +7,7 @@ use axum::response::{Html, IntoResponse, Response};
 
 use crate::accounts::{Guarded, TokenView};
 use crate::entries::{Doubted, Undecided};
-use crate::series::Owned;
+use crate::series::{Owned, Refused};
 
 /// A rendered page with its status code.
 pub fn page(status: StatusCode, template: &impl Template) -> Response {
@@ -99,6 +99,8 @@ pub struct AdminQueuePage<'a> {
     /// Entries that passed although the screen doubted they hold a hazard: the
     /// entry, its title, and the doubt.
     pub doubted: &'a [(&'a Doubted, String)],
+    /// Series the screen refused as a likely hazard, waiting for the owner's call.
+    pub refusals: &'a [Refused],
     pub guarded: &'a [Guarded],
 }
 

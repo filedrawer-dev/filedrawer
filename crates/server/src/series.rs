@@ -453,3 +453,84 @@ pub async fn make_public(
     transaction.commit().await?;
     Ok(found.is_some())
 }
+
+/// A series the screen refused as a likely hazard, waiting for the owner.
+pub struct Refused {
+    pub id: String,
+    pub account_id: String,
+    pub display_name: Option<String>,
+    pub series_id: Option<String>,
+    pub title: String,
+    pub description: String,
+    pub why: String,
+    pub refused_at: String,
+}
+
+/// Keeps a series the screen refused as a likely hazard for the owner (the owner's
+/// decision, 2026-11-06). `series_id` is the series it would have versioned.
+pub async fn record_refusal(
+    pool: &SqlitePool,
+    account_id: &str,
+    series_id: Option<&str>,
+    text: &SeriesText,
+    why: &str,
+) -> Result<(), sqlx::Error> {
+    let id = ids::new_id();
+    let at = now();
+    sqlx::query!(
+        "INSERT INTO refused_series (id, account_id, series_id, title, description, why, refused_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
+        id,
+        account_id,
+        series_id,
+        text.title,
+        text.description,
+        why,
+        at
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// The refused series the owner hasn't decided, oldest first.
+pub async fn refusals(pool: &SqlitePool) -> Result<Vec<Refused>, sqlx::Error> {
+    sqlx::query_as!(
+        Refused,
+        "SELECT r.id, r.account_id, a.display_name, r.series_id, r.title, r.description,
+                r.why, r.refused_at
+         FROM refused_series r JOIN authors a ON a.id = r.account_id
+         WHERE r.decision IS NULL ORDER BY r.refused_at, r.id"
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// The owner's call on a refused series: confirming puts its account under the
+/// review guard, dismissing doesn't. False if there's no such undecided refusal.
+pub async fn decide_refusal(
+    pool: &SqlitePool,
+    id: &str,
+    confirm: bool,
+) -> Result<bool, sqlx::Error> {
+    let decision = if confirm { "confirmed" } else { "dismissed" };
+    let at = now();
+    let mut transaction = pool.begin().await?;
+    let account = sqlx::query_scalar!(
+        "UPDATE refused_series SET decision = ?, decided_at = ?
+         WHERE id = ? AND decision IS NULL RETURNING account_id",
+        decision,
+        at,
+        id
+    )
+    .fetch_optional(&mut *transaction)
+    .await?;
+    let Some(account) = account else {
+        return Ok(false);
+    };
+    if confirm {
+        crate::accounts::guard(&mut transaction, &account).await?;
+    }
+    transaction.commit().await?;
+    Ok(true)
+}
