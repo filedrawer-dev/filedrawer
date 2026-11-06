@@ -37,54 +37,141 @@ const MIN_DECODED: usize = 24;
 const MIN_ESCAPES: usize = 6;
 /// The shortest line that may be part of a blob wrapped over several lines.
 const MIN_WRAPPED_LINE: usize = 16;
+/// The shortest base64 run tried as a zlib stream: one that inflates to
+/// [`MIN_DECODED`] characters is rarely shorter.
+const MIN_ZLIB_RUN: usize = 24;
 /// The shortest `<~ ... ~>` token refused as base85.
 const MIN_BASE85: usize = 24;
 /// How many characters of a refused run its reason shows.
 const SHOWN: usize = 16;
 
+/// A long run of encoded text that decodes to readable text or starts a compressed
+/// stream (a `<~ ... ~>` base85 token or a URL-escaped token counts whatever it
+/// decodes to).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Decoded {
+    pub kind: Encoding,
+    /// The run's first characters, as a refusal shows them.
+    pub start: String,
+    /// What the run decodes to.
+    pub bytes: Vec<u8>,
+}
+
 /// A refusal for each kind of long encoded run in `text`, the first of each kind.
 pub fn refusals(text: &str) -> Vec<Refusal> {
-    let text = without_invisible(text);
     let mut found: Vec<Refusal> = Vec::new();
-    let mut add = |kind: Encoding, run: &str| {
+    for Decoded { kind, start, .. } in decodings(text) {
         let seen = found
             .iter()
             .any(|refusal| matches!(refusal, Refusal::EncodedText { kind: k, .. } if *k == kind));
         if !seen {
-            found.push(Refusal::EncodedText {
-                kind,
-                start: run.chars().take(SHOWN).collect(),
-            });
+            found.push(Refusal::EncodedText { kind, start });
         }
+    }
+    found
+}
+
+/// A compressed stream, as its signature names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Compression {
+    Gzip,
+    Bzip2,
+    Xz,
+    Zip,
+}
+
+/// The compressed stream `bytes` start, by a signature of three bytes or more,
+/// checked only at the start: zlib's two-byte header turns up in about one random
+/// hash in a few thousand.
+pub fn compression(bytes: &[u8]) -> Option<Compression> {
+    if bytes.starts_with(&[0x1f, 0x8b, 0x08]) {
+        Some(Compression::Gzip)
+    } else if bytes.starts_with(b"BZh") && bytes.get(3).is_some_and(|b| (b'1'..=b'9').contains(b)) {
+        Some(Compression::Bzip2)
+    } else if bytes.starts_with(&[0xfd, b'7', b'z', b'X', b'Z', 0]) {
+        Some(Compression::Xz)
+    } else if bytes.starts_with(b"PK\x03\x04") {
+        Some(Compression::Zip)
+    } else {
+        None
+    }
+}
+
+/// Like [`decodings`], with base64 runs whose bytes start with a zlib header too.
+/// A random hash starts with one about once in a few thousand, so only a caller
+/// that then inflates the stream to see what it holds should ask.
+pub fn decodings_with_zlib(text: &str) -> Vec<Decoded> {
+    find(text, true)
+}
+
+/// Every long encoded run in `text` that hides text or a compressed stream, decoded,
+/// base64 runs first.
+pub fn decodings(text: &str) -> Vec<Decoded> {
+    find(text, false)
+}
+
+fn find(text: &str, with_zlib: bool) -> Vec<Decoded> {
+    let text = without_invisible(text);
+    let mut found = Vec::new();
+    let mut add = |kind: Encoding, run: &str, bytes: Vec<u8>| {
+        found.push(Decoded {
+            kind,
+            start: run.chars().take(SHOWN).collect(),
+            bytes,
+        });
     };
-    let mut candidates: Vec<String> = text
-        .split_whitespace()
-        .flat_map(|token| runs(token, is_base64_char).map(str::to_string))
-        .collect();
-    candidates.extend(wrapped_blobs(&text));
-    for run in &candidates {
-        if hides_text(run, decode_base64) {
-            add(Encoding::Base64, run);
+    let decode = |run: &str, decode: fn(&str) -> Vec<u8>| {
+        hidden(run, decode).or_else(|| with_zlib.then(|| zlib_stream(run, decode)).flatten())
+    };
+    // A blob wrapped over lines is decoded whole, and its lines then not one by one,
+    // so the screen reads it once.
+    let mut wrapped = Vec::new();
+    let mut wrapped_lines = Vec::new();
+    for (blob, lines) in wrapped_blobs(&text) {
+        if let Some(bytes) = decode(&blob, decode_base64) {
+            wrapped.push((blob, bytes));
+            wrapped_lines.extend(lines);
         }
     }
     for token in text.split_whitespace() {
+        if wrapped_lines.contains(&token) {
+            continue;
+        }
+        for run in runs(token, is_base64_char) {
+            if let Some(bytes) = decode(run, decode_base64) {
+                add(Encoding::Base64, run, bytes);
+            }
+        }
+    }
+    for (blob, bytes) in wrapped {
+        add(Encoding::Base64, &blob, bytes);
+    }
+    for token in text.split_whitespace() {
         for run in runs(token, is_base32_char) {
-            if run.chars().any(|c| c.is_ascii_alphabetic()) && hides_text(run, decode_base32) {
-                add(Encoding::Base32, run);
+            if run.chars().any(|c| c.is_ascii_alphabetic())
+                && let Some(bytes) = decode(run, decode_base32)
+            {
+                add(Encoding::Base32, run, bytes);
             }
         }
         for run in runs(token, |c| c.is_ascii_hexdigit()) {
-            if run.chars().any(|c| c.is_ascii_alphabetic()) && hides_text(run, decode_hex) {
-                add(Encoding::Hex, run);
+            if run.chars().any(|c| c.is_ascii_alphabetic())
+                && let Some(bytes) = decode(run, decode_hex)
+            {
+                add(Encoding::Hex, run, bytes);
             }
         }
         if !is_link(token) && escaped_ascii(token) >= MIN_ESCAPES {
-            add(Encoding::UrlEncoding, token);
+            add(Encoding::UrlEncoding, token, decode_url(token));
         }
         let bare = token.trim_end_matches(['.', ',', ';', ')', '`', '"']);
         let bare = bare.trim_start_matches(['(', '`', '"']);
         if bare.len() >= MIN_BASE85 && bare.starts_with("<~") && bare.ends_with("~>") {
-            add(Encoding::Base85, bare);
+            add(
+                Encoding::Base85,
+                bare,
+                decode_base85(&bare[2..bare.len() - 2]),
+            );
         }
     }
     found
@@ -98,24 +185,24 @@ fn without_invisible(text: &str) -> String {
         .collect()
 }
 
-/// Blobs wrapped over consecutive lines that hold nothing else, joined.
-fn wrapped_blobs(text: &str) -> Vec<String> {
+/// Blobs wrapped over consecutive lines that hold nothing else, joined, each with
+/// its lines.
+fn wrapped_blobs(text: &str) -> Vec<(String, Vec<&str>)> {
     let mut blobs = Vec::new();
     let mut current: Vec<&str> = Vec::new();
-    let mut flush = |current: &mut Vec<&str>| {
-        if current.len() >= 2 {
-            blobs.push(current.concat());
-        }
-        current.clear();
-    };
     for line in text.lines().map(str::trim) {
         if line.len() >= MIN_WRAPPED_LINE && line.chars().all(is_base64_char) {
             current.push(line);
-        } else {
-            flush(&mut current);
+            continue;
+        }
+        let lines = std::mem::take(&mut current);
+        if lines.len() >= 2 {
+            blobs.push((lines.concat(), lines));
         }
     }
-    flush(&mut current);
+    if current.len() >= 2 {
+        blobs.push((current.concat(), current));
+    }
     blobs
 }
 
@@ -158,23 +245,39 @@ fn is_base32_char(c: char) -> bool {
     c.is_ascii_uppercase() || ('2'..='7').contains(&c) || c == '='
 }
 
-/// Whether `run` is a compressed stream, or, decoded by `decode` from any of its
-/// first few characters (so a prefix such as `sha512-` can't misalign it), readable
-/// text.
-fn hides_text(run: &str, decode: fn(&str) -> Vec<u8>) -> bool {
+/// What `run` decodes to by `decode`, when that is a compressed stream, or, decoded
+/// from any of its first few characters (so a prefix such as `sha512-` can't
+/// misalign it), readable text.
+fn hidden(run: &str, decode: fn(&str) -> Vec<u8>) -> Option<Vec<u8>> {
     let run = run.trim_matches('=');
-    is_compressed(&decode(run))
-        || (0..8.min(run.len())).any(|offset| is_text(&decode(&run[offset..])))
+    let whole = decode(run);
+    if compression(&whole).is_some() {
+        return Some(whole);
+    }
+    (0..8.min(run.len()))
+        .map(|offset| decode(&run[offset..]))
+        .find(|bytes| is_text(bytes))
 }
 
-/// Whether `bytes` start like gzip, bzip2, xz or zip. Only signatures of three
-/// bytes or more, checked only at the start: zlib's two-byte header turns up in
-/// about one random hash in a few thousand.
-fn is_compressed(bytes: &[u8]) -> bool {
-    bytes.starts_with(&[0x1f, 0x8b, 0x08])
-        || (bytes.starts_with(b"BZh") && bytes.get(3).is_some_and(|b| (b'1'..=b'9').contains(b)))
-        || bytes.starts_with(&[0xfd, b'7', b'z', b'X', b'Z', 0])
-        || bytes.starts_with(b"PK\x03\x04")
+/// What `run` decodes to by `decode`, when that starts with a zlib header and the
+/// run is long enough to hold a stream worth inflating.
+fn zlib_stream(run: &str, decode: fn(&str) -> Vec<u8>) -> Option<Vec<u8>> {
+    let bytes = decode(run.trim_matches('='));
+    (run.len() >= MIN_ZLIB_RUN && starts_zlib(&bytes)).then_some(bytes)
+}
+
+/// Whether `bytes` start with a zlib header for a deflate stream with no preset
+/// dictionary.
+fn starts_zlib(bytes: &[u8]) -> bool {
+    match bytes {
+        [cmf, flg, ..] => {
+            cmf & 0x0f == 8
+                && cmf >> 4 <= 7
+                && flg & 0x20 == 0
+                && (u16::from(*cmf) * 256 + u16::from(*flg)) % 31 == 0
+        }
+        _ => false,
+    }
 }
 
 /// Whether `bytes` read as text: UTF-8 (a stray last byte allowed), long enough,
@@ -219,6 +322,65 @@ fn decode_base32(run: &str) -> Vec<u8> {
 
 fn decode_hex(run: &str) -> Vec<u8> {
     pack(run.chars().filter_map(|c| c.to_digit(16)), 4)
+}
+
+/// `%XX` escapes decoded; everything else as it stands.
+fn decode_url(token: &str) -> Vec<u8> {
+    let bytes = token.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let escaped = (bytes[i] == b'%')
+            .then(|| token.get(i + 1..i + 3))
+            .flatten()
+            .and_then(|hex| u8::from_str_radix(hex, 16).ok());
+        match escaped {
+            Some(byte) => {
+                out.push(byte);
+                i += 3;
+            }
+            None => {
+                out.push(bytes[i]);
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
+/// Ascii85 (Adobe's, between `<~` and `~>`): groups of five characters from `!` to
+/// `u` make four bytes, `z` four zero bytes, and a short last group fewer.
+fn decode_base85(inner: &str) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut group: Vec<u32> = Vec::with_capacity(5);
+    let flush = |group: &mut Vec<u32>, out: &mut Vec<u8>| {
+        if group.len() < 2 {
+            group.clear();
+            return;
+        }
+        let kept = group.len() - 1;
+        group.resize(5, 84);
+        let value = group
+            .iter()
+            .fold(0u64, |value, digit| value * 85 + u64::from(*digit));
+        let value = u32::try_from(value).unwrap_or(u32::MAX);
+        out.extend_from_slice(&value.to_be_bytes()[..kept]);
+        group.clear();
+    };
+    for c in inner.chars() {
+        match c {
+            'z' if group.is_empty() => out.extend_from_slice(&[0; 4]),
+            '!'..='u' => {
+                group.push(c as u32 - '!' as u32);
+                if group.len() == 5 {
+                    flush(&mut group, &mut out);
+                }
+            }
+            _ => {}
+        }
+    }
+    flush(&mut group, &mut out);
+    out
 }
 
 /// Packs `bits`-wide values into bytes, dropping a partial last byte.
