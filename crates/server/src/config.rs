@@ -27,8 +27,8 @@ pub struct Config {
     pub public_url: String,
     /// `None` sends email to the log.
     pub smtp: Option<SmtpSettings>,
-    /// Staging's smoke-test account, whose entries are screened but never rejected,
-    /// so CI's smoke test can publish them. Production refuses it.
+    /// Staging's smoke-test account, whose entries aren't screened, so CI's smoke
+    /// test calls no model after each deploy. Production refuses it.
     pub smoke_account: Option<String>,
 }
 
@@ -69,7 +69,7 @@ pub enum ConfigError {
     )]
     UnscreenedProduction,
     #[error(
-        "FILEDRAWER_SMOKE_ACCOUNT lets an account's entries past a rejection, so production refuses it"
+        "FILEDRAWER_SMOKE_ACCOUNT publishes an account's entries unscreened, so production refuses it"
     )]
     SmokeAccountInProduction,
     #[error(

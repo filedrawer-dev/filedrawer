@@ -113,6 +113,13 @@ pub async fn screen_text(
     text: &str,
     now: OffsetDateTime,
 ) -> Result<Screened, sqlx::Error> {
+    // Staging's smoke-test account isn't screened, so CI's smoke test, which runs
+    // after every deploy, calls no model; production refuses the setting.
+    if state.smoke_account.as_deref() == Some(account_id) {
+        return Ok(Screened::Verdict(Verdict::Pass {
+            note: Some("staging smoke account: not screened".into()),
+        }));
+    }
     // design.md: once any of an account's entries reaches review, everything it
     // submits goes straight to review, whatever the day's cap.
     if accounts::is_guarded(&state.pool, account_id).await? {
@@ -123,16 +130,7 @@ pub async fn screen_text(
     }
     let screening = state.screener.screen(text).await;
     log_calls(&state.pool, entry_seq, account_id, &screening.calls, now).await?;
-    let smoke = state.smoke_account.as_deref() == Some(account_id);
     Ok(match screening.verdict {
-        // Staging's smoke-test entries are screened but never rejected, so CI's smoke
-        // test can publish them; production refuses the setting.
-        Ok(Verdict::Reject { reasons }) if smoke => Screened::Verdict(Verdict::Pass {
-            note: Some(format!(
-                "staging smoke account: the screen would have rejected it: {}",
-                reasons.join("; ")
-            )),
-        }),
         Ok(verdict) => Screened::Verdict(verdict),
         Err(error) => {
             tracing::warn!(%error, ?entry_seq, "screening failed");

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Names staging's smoke-test account to the server, in its own settings file: that
-# account's entries are screened but never rejected, so CI's smoke test can publish
-# them (FILEDRAWER_SMOKE_ACCOUNT; production refuses it). SMOKE_ACCOUNT comes as a
+# account's entries aren't screened, so CI's smoke test calls no model after each
+# deploy (FILEDRAWER_SMOKE_ACCOUNT; production refuses it). SMOKE_ACCOUNT comes as a
 # variable. Runs as root; safe to rerun. Exits 2 for an ID that isn't one.
 set -euo pipefail
 

@@ -88,33 +88,54 @@ async fn smoke_app(models: &FakeModels, other: Option<&str>) -> TestApp {
 }
 
 #[tokio::test]
-async fn the_smoke_accounts_rejected_entry_is_published_with_the_screens_reasons() {
+async fn the_smoke_accounts_entries_publish_unscreened_and_say_so() {
+    // CI's smoke test runs after every deploy; it must not call the model each time.
     let models = FakeModels::default();
     let app = smoke_app(&models, None).await;
-    let (id, status) = publish(&app, &marked("FAKE-OFFTOPIC", "")).await;
+    let (id, status) = publish(&app, &marked("FAKE-OFFTOPIC FAKE-HAZARD", "")).await;
     assert_eq!(status, "public");
-    assert_eq!(models.asked(), vec![Model::Haiku]);
+    assert_eq!(models.asked(), vec![]);
     let page = app.get(&format!("/e/{id}")).await;
     assert!(
-        page.body.contains(
-            "staging smoke account: the screen would have rejected it: It is about cooking, not AI safety."
-        ),
+        page.body.contains("staging smoke account: not screened"),
         "{}",
         page.body
     );
-    let cost: i64 = sqlx::query_scalar("SELECT SUM(cost_nano_usd) FROM screenings")
+    let calls: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM screenings")
         .fetch_one(&app.pool)
         .await
         .unwrap();
-    assert!(cost > 0);
+    assert_eq!(calls, 0);
 }
 
 #[tokio::test]
-async fn the_smoke_accounts_possible_hazard_still_goes_to_review() {
+async fn the_smoke_accounts_batches_and_series_skip_the_model_too() {
     let models = FakeModels::default();
     let app = smoke_app(&models, None).await;
-    let (_, status) = publish(&app, &marked("FAKE-HAZARD FAKE-SONNET-HAZARD", "")).await;
-    assert_eq!(status, "review");
+    let reply = batch(
+        &app,
+        &[
+            marked("FAKE-OFFTOPIC", "slug: one\n"),
+            marked("FAKE-SPAM", "slug: two\n"),
+        ],
+    )
+    .await;
+    let batch_id = reply["id"].as_str().unwrap();
+    let published = app.post(&format!("/batches/{batch_id}/publish"), "").await;
+    assert_eq!(
+        published.body.matches(" public").count(),
+        2,
+        "{}",
+        published.body
+    );
+    let series = app
+        .post(
+            "/series",
+            common::series::series_doc("Smoke series FAKE-OFFTOPIC", "Shared setup."),
+        )
+        .await;
+    assert_eq!(series.status, StatusCode::CREATED, "{}", series.body);
+    assert_eq!(models.asked(), vec![]);
 }
 
 #[tokio::test]

@@ -250,9 +250,9 @@ Choices the docs left open, made while building the analyzer. Once the owner set
 
 ## The smoke-test account's screening note
 
-- Options: put "the screen would have rejected it" and the screen's reasons in the entry's screening note, or show them as a separate line the server owns.
-- Chosen: the screening note, as `staging smoke account: the screen would have rejected it: <reasons>`. It is staging only (production refuses `FILEDRAWER_SMOKE_ACCOUNT`), and it needs no new card line.
-- Against: entry-format.md defines the screening note as the screen's doubt about `outcome`, quoted as model text, so the server's own prefix reads as the model's words, and the real doubt, if any, is lost.
+- Options: say "not screened" in the entry's screening note, or show it as a separate line the server owns. (The owner decided on 2026-11-06 that the smoke account isn't screened at all, so CI calls no model.)
+- Chosen: the screening note, as `staging smoke account: not screened`. It is staging only (production refuses `FILEDRAWER_SMOKE_ACCOUNT`), and it needs no new card line.
+- Against: entry-format.md defines the screening note as the screen's doubt about `outcome`, quoted as model text, so the server's own words read as the model's.
 
 ## Publishing early skips the fair queue
 

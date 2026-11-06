@@ -298,9 +298,8 @@ smoke_stage() {
   fi
   SMOKE_ACCOUNT=$(_existing SMOKE_ACCOUNT || true)
   if [[ -n "$SMOKE_ACCOUNT" ]]; then
-    # Staging screens the smoke test's entries but never rejects them, so a real
-    # screen calling "SMOKE TEST, not a real result" off topic doesn't fail CI. The
-    # unit first, so it reads the file smoke-env.sh writes.
+    # Staging doesn't screen the smoke test's entries, so CI calls no model after
+    # each deploy. The unit first, so it reads the file smoke-env.sh writes.
     remote staging-service.sh
     remote smoke-env.sh "SMOKE_ACCOUNT=$SMOKE_ACCOUNT"
   fi

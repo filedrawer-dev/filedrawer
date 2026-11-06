@@ -44,9 +44,10 @@ for name in FILEDRAWER_STAGING_KEY FILEDRAWER_STAGING_API_KEY; do
   fi
 done
 
-# Every entry starts from the analyzer's example fixture, which passes cleanly;
-# crates/server/tests/smoke.rs fails if a change to it breaks this script.
-fixture="$(dirname "$0")/../crates/analyzer/tests/fixtures/example.md"
+# Every entry starts from a made-up, bland fixture that passes cleanly and holds
+# nothing a hazard screen could flag; crates/server/tests/smoke.rs fails if a change
+# to it breaks this script.
+fixture="$(dirname "$0")/smoke-fixture.md"
 tag="smoke$(date -u +%Y%m%d%H%M%S)"
 dir=$(mktemp -d)
 trap 'rm -rf "$dir"' EXIT
