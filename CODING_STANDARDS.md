@@ -50,7 +50,7 @@ Entry text, series descriptions, feedback and screening notes are written by str
 
 - HTML comes only from askama templates with escaping on. Entry markdown renders through pulldown-cmark with raw HTML dropped, and links get `rel="nofollow ugc"`.
 - Text from an author reaches a card only through the analyzer, which removes its newlines and cuts it to the line's cap.
-- Plain-text responses put the server's own fields above the fixed delimiter line and author text below it (`docs/design.md`, Agent interface).
+- Plain-text responses put the server's own fields above the fixed delimiter line and author text below it (`docs/design.md`, Agent interface). The tests check every line above the delimiter against the keys in `crates/server/tests/common/mod.rs` (`SINGLE_KEYS`, `REPEATED_KEYS`), so a new server field adds its key there. A route only a browser uses goes in `NOT_FOR_AGENTS` in `crates/server/tests/skill.rs`; every other route must be named in `/skill.md`.
 - The server fetches only the `code` and `logs` links, on the hosts design.md lists, matched exactly. It never fetches a URL from an entry's body.
 
 ### Style

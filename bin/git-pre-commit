@@ -4,6 +4,9 @@
 #   ln -sf ../../bin/agent-pre-commit .git/hooks/agent-pre-commit
 # A commit runs the quick checks in .pre-commit-config.yaml (slop-lint, lychee, and
 # cargo fmt when a .rs file is staged) through bin/pre-commit-run.
+# For an agent's commit, cargo fmt first fixes the staged Rust and stages the result,
+# but only when every file it would change is staged with no unstaged changes, so it
+# can't stage work the agent left out; otherwise the check refuses as usual.
 # Agents' commits ($AI_AGENT set) also run the slower agent-pre-commit, which adds
 # clippy and the tests; those take too long for a person's commit.
 # bin/pre-commit-run and bin/slop-lint are copies from llm-toolbox, so the hooks work
@@ -18,6 +21,26 @@ refuse() {
 root=$(git rev-parse --show-toplevel)
 command -v python3 >/dev/null || refuse "the hooks need python3 (and uv)"
 [ -x "$root/bin/pre-commit-run" ] || refuse "no bin/pre-commit-run in $root; this checkout predates the hooks"
+
+format_staged_rust() {
+  [ -f "$root/Cargo.toml" ] && command -v cargo >/dev/null || return 0
+  local needs staged file
+  needs=$(cd "$root" && cargo fmt --check -- -l 2>/dev/null) && return 0
+  [ -n "$needs" ] || return 0
+  staged=$(git -C "$root" diff --cached --name-only --diff-filter=ACMR -- '*.rs')
+  while IFS= read -r file; do
+    file=${file#"$root/"}
+    printf '%s\n' "$staged" | grep -qxF -- "$file" || return 0
+    git -C "$root" diff --quiet -- "$file" || return 0
+  done <<< "$needs"
+  (cd "$root" && cargo fmt) || return 0
+  while IFS= read -r file; do
+    git -C "$root" add -- "${file#"$root/"}"
+  done <<< "$needs"
+  echo "git-pre-commit: ran cargo fmt on the staged Rust and staged the result" >&2
+}
+
+if [ -n "${AI_AGENT:-}" ]; then format_staged_rust; fi
 
 "$root/bin/pre-commit-run" || exit 1
 

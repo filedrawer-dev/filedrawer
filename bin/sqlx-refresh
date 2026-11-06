@@ -1,0 +1,82 @@
+#!/usr/bin/env python3
+"""Rebuild the development database from the migrations, then refresh .sqlx/.
+
+  bin/sqlx-refresh [--repo DIR]
+
+Deletes target/dev.db (the database in .env's DATABASE_URL, when .env names one),
+creates it again, runs every migration in crates/server/migrations, and runs
+`cargo sqlx prepare --workspace`, so the committed query data in .sqlx/ matches the
+code. Starting from an empty database means an edited, unpushed migration needs no
+manual cleanup. Writes .env with DATABASE_URL when it is missing.
+
+Needs sqlx-cli (`cargo install sqlx-cli --no-default-features --features
+sqlite,rustls --locked`). A step that fails stops the rest, with one line naming it.
+"""
+
+import argparse
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+DEFAULT_REPO = Path(__file__).resolve().parents[1]
+MIGRATIONS = "crates/server/migrations"
+
+
+def database_url(repo: Path) -> str:
+    """.env's DATABASE_URL, written there first when .env doesn't exist."""
+    env_file = repo / ".env"
+    if not env_file.exists():
+        url = f"sqlite://{repo / 'target/dev.db'}"
+        env_file.write_text(f"DATABASE_URL={url}\n")
+        return url
+    for line in env_file.read_text().splitlines():
+        name, _, value = line.partition("=")
+        if name.strip() == "DATABASE_URL":
+            return value.strip()
+    sys.exit(
+        f"sqlx-refresh: {env_file} has no DATABASE_URL; add one or delete the file"
+    )
+
+
+def delete_database(repo: Path, url: str) -> None:
+    if not url.startswith("sqlite://"):
+        sys.exit(f"sqlx-refresh: DATABASE_URL {url} isn't a SQLite file")
+    path = Path(url.removeprefix("sqlite://").split("?")[0])
+    if not path.is_absolute():
+        path = repo / path
+    for suffix in ("", "-wal", "-shm"):
+        path.with_name(path.name + suffix).unlink(missing_ok=True)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "--repo",
+        type=Path,
+        default=DEFAULT_REPO,
+        help="the repository (default: this one)",
+    )
+    repo = parser.parse_args().repo.resolve()
+    url = database_url(repo)
+    delete_database(repo, url)
+    env = {**os.environ, "DATABASE_URL": url}
+    for step in (
+        ["sqlx", "database", "create"],
+        ["sqlx", "migrate", "run", "--source", MIGRATIONS],
+        ["cargo", "sqlx", "prepare", "--workspace"],
+    ):
+        done = subprocess.run(step, cwd=repo, env=env, check=False)
+        if done.returncode != 0:
+            print(
+                f"sqlx-refresh: `{' '.join(step)}` failed (exit {done.returncode}); its output is above",
+                file=sys.stderr,
+            )
+            return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

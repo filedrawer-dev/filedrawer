@@ -31,13 +31,7 @@ The field test's entries and logs are in `field-test/`, git-excluded and local o
 
 ### SQL
 
-Queries go through sqlx's checked macros (`CODING_STANDARDS.md`), which compile against `.sqlx/`, the committed query data, when `DATABASE_URL` is unset, as in CI and the commit hook. To add or change a query, point `DATABASE_URL` at a migrated database in a git-ignored `.env`, then refresh `.sqlx/`:
-
-```sh
-echo "DATABASE_URL=sqlite://$PWD/target/dev.db" > .env
-sqlx database create && sqlx migrate run --source crates/server/migrations
-cargo sqlx prepare --workspace
-```
+Queries go through sqlx's checked macros (`CODING_STANDARDS.md`), which compile against `.sqlx/`, the committed query data, when `DATABASE_URL` is unset, as in CI and the commit hook: `bin/agent-pre-commit` builds a copy of the index with no `.env`, so a stale `.sqlx/` refuses the commit. After adding or changing a query or a migration, run `bin/sqlx-refresh`. It rebuilds `target/dev.db` from the migrations (writing `.env` if it's missing), so an edited, unpushed migration needs no cleanup, then runs `cargo sqlx prepare --workspace`.
 
 `sqlx` is sqlx-cli: `cargo install sqlx-cli --no-default-features --features sqlite,rustls --locked`.
 
