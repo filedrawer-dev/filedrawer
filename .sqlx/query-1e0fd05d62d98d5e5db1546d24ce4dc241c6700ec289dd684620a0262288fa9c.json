@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT COALESCE(SUM(status NOT IN (?2, ?3)), 0) AS \"unpublished!: i64\",\n                  COALESCE(SUM(status = ?2), 0) AS \"public!: i64\"\n           FROM entries WHERE account_id = ?1",
+  "query": "SELECT COALESCE(SUM(status NOT IN ('public', 'removed')), 0) AS \"unpublished!: i64\",\n                  COALESCE(SUM(status = 'public'), 0) AS \"public!: i64\"\n           FROM entries WHERE account_id = ?",
   "describe": {
     "columns": [
       {
@@ -17,12 +17,12 @@
       }
     ],
     "parameters": {
-      "Right": 3
+      "Right": 1
     },
     "nullable": [
       false,
       false
     ]
   },
-  "hash": "d63ee68a5272165d2e00b76fd9382f70f18ada00be50e3c11b6e78b475d34c87"
+  "hash": "1e0fd05d62d98d5e5db1546d24ce4dc241c6700ec289dd684620a0262288fa9c"
 }

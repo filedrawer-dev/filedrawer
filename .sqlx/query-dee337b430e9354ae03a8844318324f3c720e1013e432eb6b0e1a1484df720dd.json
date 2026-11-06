@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT e.id, e.account_id,\n                  CASE WHEN a.deleted_at IS NULL THEN a.display_name END AS \"display_name?: String\"\n           FROM entries e JOIN accounts a ON a.id = e.account_id\n           WHERE e.series_seq = ? AND e.status = 'public' AND e.series_removed_at IS NULL\n             AND NOT EXISTS (SELECT 1 FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public')\n           ORDER BY e.published_at, e.seq",
+  "query": "SELECT e.id, e.account_id,\n                  a.display_name AS \"display_name?: String\"\n           FROM entries e JOIN authors a ON a.id = e.account_id\n           WHERE e.series_seq = ? AND e.status = 'public' AND e.series_removed_at IS NULL\n             AND NOT EXISTS (SELECT 1 FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public')\n           ORDER BY e.published_at, e.seq",
   "describe": {
     "columns": [
       {
@@ -41,5 +41,5 @@
       true
     ]
   },
-  "hash": "4b144df36051e0f36b9f2d6170b18ab31d03ceeceaaf62bfe2722a384b59fa5f"
+  "hash": "dee337b430e9354ae03a8844318324f3c720e1013e432eb6b0e1a1484df720dd"
 }

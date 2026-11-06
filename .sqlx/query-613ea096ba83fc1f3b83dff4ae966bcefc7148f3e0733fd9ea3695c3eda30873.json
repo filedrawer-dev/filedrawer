@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT m.account_id,\n                  CASE WHEN a.deleted_at IS NULL THEN a.display_name END AS \"display_name?: String\"\n           FROM series_members m JOIN accounts a ON a.id = m.account_id\n           WHERE m.series_seq = ? ORDER BY m.joined_at, m.account_id",
+  "query": "SELECT m.account_id,\n                  a.display_name AS \"display_name?: String\"\n           FROM series_members m JOIN authors a ON a.id = m.account_id\n           WHERE m.series_seq = ? ORDER BY m.joined_at, m.account_id",
   "describe": {
     "columns": [
       {
@@ -29,5 +29,5 @@
       true
     ]
   },
-  "hash": "57aca55bed60519d5535b85da1e6966fd7844544a10cada876cbfbb6b4ea24f4"
+  "hash": "613ea096ba83fc1f3b83dff4ae966bcefc7148f3e0733fd9ea3695c3eda30873"
 }

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM entry_tags WHERE entry_seq IN (SELECT seq FROM entries\n                 WHERE account_id = ? AND status NOT IN ('public', 'removed'))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "e04fc8d2dc469e2975b881857dcf69cbf39919decce0dce12b438f0594efe37e"
+}

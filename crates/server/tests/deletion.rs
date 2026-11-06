@@ -120,7 +120,7 @@ async fn deleting_needs_a_browser_session() {
     let app = test_app().await;
     let (_, token) = browser_account(&app, EMAIL).await;
     let by_token = app.post_as("/account/delete", Some(&token), "").await;
-    assert_ne!(by_token.status, StatusCode::OK, "{}", by_token.body);
+    assert_eq!(by_token.status, StatusCode::FORBIDDEN, "{}", by_token.body);
     let page = app.page("/account/delete", None).await;
     assert_eq!(page.location(), Some("/login"));
     let still = app

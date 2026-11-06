@@ -17,7 +17,7 @@ use crate::auth::optional_token_account;
 use crate::embargo::parse_date;
 use crate::entries::{self, Filters};
 use crate::error::AppError;
-use crate::respond::{DELIMITER, Format, card_and_warnings, one_line};
+use crate::respond::{DELIMITER, Format, author_name, card_and_warnings, one_line};
 use crate::series;
 use analyzer::slug_references;
 
@@ -59,10 +59,7 @@ pub async fn entry(
         entry.id,
         entry.submitted_at,
         entry.published_at.as_deref().unwrap_or(""),
-        entry
-            .display_name
-            .as_deref()
-            .map_or_else(|| "account deleted".to_string(), one_line),
+        author_name(entry.display_name.as_deref()),
         entry.account_id
     );
     if let Some(previous) = &entry.previous_id {

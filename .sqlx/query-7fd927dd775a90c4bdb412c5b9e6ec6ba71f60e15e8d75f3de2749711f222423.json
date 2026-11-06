@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT e.seq AS \"seq!: i64\", e.id, e.source, e.account_id,\n                  CASE WHEN a.deleted_at IS NULL THEN a.display_name END AS \"display_name?: String\", e.submitted_at, e.published_at,\n                  (SELECT p.id FROM entries p WHERE p.seq = e.previous_seq AND p.status = 'public') AS \"previous_id?\",\n                  (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS \"superseded_by?\"\n         FROM entries e JOIN accounts a ON a.id = e.account_id\n         WHERE e.id = ? AND e.status = 'public'",
+  "query": "SELECT e.seq AS \"seq!: i64\", e.id, e.source, e.account_id,\n                  a.display_name AS \"display_name?: String\", e.submitted_at, e.published_at,\n                  (SELECT p.id FROM entries p WHERE p.seq = e.previous_seq AND p.status = 'public') AS \"previous_id?\",\n                  (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS \"superseded_by?\"\n         FROM entries e JOIN authors a ON a.id = e.account_id\n         WHERE e.id = ? AND e.status = 'public'",
   "describe": {
     "columns": [
       {
@@ -113,5 +113,5 @@
       true
     ]
   },
-  "hash": "b7699d973a17bb464e9c33a2fe23d0ae4a7a5a14b6bb9a3eba34c37c18116ece"
+  "hash": "7fd927dd775a90c4bdb412c5b9e6ec6ba71f60e15e8d75f3de2749711f222423"
 }

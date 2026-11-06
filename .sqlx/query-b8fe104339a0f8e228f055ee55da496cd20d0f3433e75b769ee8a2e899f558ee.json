@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE entries SET previous_seq = NULL WHERE previous_seq IN (SELECT seq\n                 FROM entries WHERE account_id = ? AND status NOT IN ('public', 'removed'))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "b8fe104339a0f8e228f055ee55da496cd20d0f3433e75b769ee8a2e899f558ee"
+}

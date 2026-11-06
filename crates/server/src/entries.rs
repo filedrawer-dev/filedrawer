@@ -525,10 +525,10 @@ pub async fn public_entry(pool: &SqlitePool, id: &str) -> Result<Option<PublicEn
     sqlx::query_as!(
         PublicEntry,
         r#"SELECT e.seq AS "seq!: i64", e.id, e.source, e.account_id,
-                  CASE WHEN a.deleted_at IS NULL THEN a.display_name END AS "display_name?: String", e.submitted_at, e.published_at,
+                  a.display_name AS "display_name?: String", e.submitted_at, e.published_at,
                   (SELECT p.id FROM entries p WHERE p.seq = e.previous_seq AND p.status = 'public') AS "previous_id?",
                   (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS "superseded_by?"
-         FROM entries e JOIN accounts a ON a.id = e.account_id
+         FROM entries e JOIN authors a ON a.id = e.account_id
          WHERE e.id = ? AND e.status = 'public'"#,
         id
     )
@@ -566,10 +566,10 @@ pub async fn search(
     sqlx::query_as!(
         PublicEntry,
         r#"SELECT e.seq AS "seq!: i64", e.id, e.source, e.account_id,
-                  CASE WHEN a.deleted_at IS NULL THEN a.display_name END AS "display_name?: String", e.submitted_at, e.published_at,
+                  a.display_name AS "display_name?: String", e.submitted_at, e.published_at,
                   (SELECT p.id FROM entries p WHERE p.seq = e.previous_seq AND p.status = 'public') AS "previous_id?",
                   (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS "superseded_by?"
-           FROM entries e JOIN accounts a ON a.id = e.account_id
+           FROM entries e JOIN authors a ON a.id = e.account_id
            WHERE e.status = 'public'
              -- Only the latest version in each chain (design.md, Entry lifecycle).
              AND NOT EXISTS (SELECT 1 FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public')
@@ -610,10 +610,10 @@ pub async fn all_public(pool: &SqlitePool) -> Result<Vec<PublicEntry>, sqlx::Err
     sqlx::query_as!(
         PublicEntry,
         r#"SELECT e.seq AS "seq!: i64", e.id, e.source, e.account_id,
-                  CASE WHEN a.deleted_at IS NULL THEN a.display_name END AS "display_name?: String", e.submitted_at, e.published_at,
+                  a.display_name AS "display_name?: String", e.submitted_at, e.published_at,
                   (SELECT p.id FROM entries p WHERE p.seq = e.previous_seq AND p.status = 'public') AS "previous_id?",
                   (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS "superseded_by?"
-         FROM entries e JOIN accounts a ON a.id = e.account_id
+         FROM entries e JOIN authors a ON a.id = e.account_id
          WHERE e.status = 'public'
            AND NOT EXISTS (SELECT 1 FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public')
          ORDER BY e.seq"#

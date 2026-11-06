@@ -241,8 +241,8 @@ pub async fn public_entries(pool: &SqlitePool, seq: i64) -> Result<Vec<Listed>, 
     sqlx::query_as!(
         Listed,
         r#"SELECT e.id, e.account_id,
-                  CASE WHEN a.deleted_at IS NULL THEN a.display_name END AS "display_name?: String"
-           FROM entries e JOIN accounts a ON a.id = e.account_id
+                  a.display_name AS "display_name?: String"
+           FROM entries e JOIN authors a ON a.id = e.account_id
            WHERE e.series_seq = ? AND e.status = 'public' AND e.series_removed_at IS NULL
              AND NOT EXISTS (SELECT 1 FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public')
            ORDER BY e.published_at, e.seq"#,
@@ -361,8 +361,8 @@ pub async fn members(pool: &SqlitePool, seq: i64) -> Result<Vec<Member>, sqlx::E
     sqlx::query_as!(
         Member,
         r#"SELECT m.account_id,
-                  CASE WHEN a.deleted_at IS NULL THEN a.display_name END AS "display_name?: String"
-           FROM series_members m JOIN accounts a ON a.id = m.account_id
+                  a.display_name AS "display_name?: String"
+           FROM series_members m JOIN authors a ON a.id = m.account_id
            WHERE m.series_seq = ? ORDER BY m.joined_at, m.account_id"#,
         seq
     )

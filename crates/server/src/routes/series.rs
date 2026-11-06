@@ -11,7 +11,7 @@ use serde_json::json;
 
 use crate::auth::{TokenAccount, optional_token_account};
 use crate::error::AppError;
-use crate::respond::{DELIMITER, Format, one_line};
+use crate::respond::{DELIMITER, Format, author_name, one_line};
 use crate::screening::Verdict;
 use crate::series::{self, Series, Version};
 use crate::{AppState, jobs};
@@ -21,7 +21,7 @@ use crate::{AppState, jobs};
 fn byline(display_name: Option<&str>) -> String {
     match display_name {
         Some(name) => format!("by {}", one_line(name)),
-        None => "account deleted".into(),
+        None => author_name(None),
     }
 }
 

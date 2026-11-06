@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM entries WHERE account_id = ? AND status NOT IN ('public', 'removed')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "9a2ad2e48118576861cd48052b8315c39cb3df0db01598b42c4453757ec0844d"
+}

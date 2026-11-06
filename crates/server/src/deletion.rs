@@ -17,20 +17,26 @@ pub struct Preview {
     pub blocking: Vec<String>,
 }
 
-/// Statuses deletion leaves: public entries stay under "account deleted", and the
-/// owner keeps removed ones for analysis (design.md, Admin).
-const KEPT: [&str; 2] = ["public", "removed"];
+/// What `delete` did.
+#[derive(Debug)]
+pub enum Outcome {
+    Deleted,
+    /// Nothing was deleted: hidden series it made hold other accounts' entries, as
+    /// `preview` lists.
+    Blocked,
+}
+
+// Deletion keeps public entries, under "account deleted", and the ones the owner
+// removed, for analysis (design.md, Admin). Every query below spells those two
+// statuses out.
 
 pub async fn preview(pool: &SqlitePool, account_id: &str) -> Result<Preview, sqlx::Error> {
     let mut connection = pool.acquire().await?;
-    let (kept_public, kept_removed) = (KEPT[0], KEPT[1]);
     let counts = sqlx::query!(
-        r#"SELECT COALESCE(SUM(status NOT IN (?2, ?3)), 0) AS "unpublished!: i64",
-                  COALESCE(SUM(status = ?2), 0) AS "public!: i64"
-           FROM entries WHERE account_id = ?1"#,
-        account_id,
-        kept_public,
-        kept_removed
+        r#"SELECT COALESCE(SUM(status NOT IN ('public', 'removed')), 0) AS "unpublished!: i64",
+                  COALESCE(SUM(status = 'public'), 0) AS "public!: i64"
+           FROM entries WHERE account_id = ?"#,
+        account_id
     )
     .fetch_one(&mut *connection)
     .await?;
@@ -81,14 +87,11 @@ pub async fn password_hash(
 /// and series memberships; every entry of its that isn't public or removed, with what
 /// was read from it; runs and batches nothing left uses; the hidden series it made.
 /// Kept: the account ID, its public entries, and the public series it made.
-pub async fn delete(
-    pool: &SqlitePool,
-    account_id: &str,
-) -> Result<Result<(), Vec<String>>, sqlx::Error> {
+pub async fn delete(pool: &SqlitePool, account_id: &str) -> Result<Outcome, sqlx::Error> {
     let mut transaction = pool.begin().await?;
     let blocked = blocking(&mut transaction, account_id).await?;
     if !blocked.is_empty() {
-        return Ok(Err(blocked));
+        return Ok(Outcome::Blocked);
     }
     delete_entries(&mut transaction, account_id).await?;
     delete_hidden_series(&mut transaction, account_id).await?;
@@ -119,7 +122,7 @@ pub async fn delete(
     // Its entries may have been all that held a version back.
     series::mark_readable(&mut transaction).await?;
     transaction.commit().await?;
-    Ok(Ok(()))
+    Ok(Outcome::Deleted)
 }
 
 /// Deletes every entry of the account that isn't public or removed, and the runs,
@@ -128,33 +131,54 @@ async fn delete_entries(
     transaction: &mut SqliteConnection,
     account_id: &str,
 ) -> Result<(), sqlx::Error> {
-    let (kept_public, kept_removed) = (KEPT[0], KEPT[1]);
-    let doomed = sqlx::query_scalar!(
-        r#"SELECT seq AS "seq!: i64" FROM entries
-           WHERE account_id = ? AND status NOT IN (?, ?)"#,
-        account_id,
-        kept_public,
-        kept_removed
-    )
-    .fetch_all(&mut *transaction)
-    .await?;
-    for seq in doomed {
-        for statement in [
-            sqlx::query!("DELETE FROM entry_models WHERE entry_seq = ?", seq),
-            sqlx::query!("DELETE FROM entry_tags WHERE entry_seq = ?", seq),
-            sqlx::query!("DELETE FROM entry_rows WHERE entry_seq = ?", seq),
-            sqlx::query!("DELETE FROM entry_unknown_fields WHERE entry_seq = ?", seq),
-            sqlx::query!("DELETE FROM entry_runs WHERE entry_seq = ?", seq),
-            sqlx::query!("DELETE FROM slugs WHERE entry_seq = ?", seq),
-            sqlx::query!("DELETE FROM entries_fts WHERE rowid = ?", seq),
-            sqlx::query!(
-                "UPDATE entries SET previous_seq = NULL WHERE previous_seq = ?",
-                seq
-            ),
-            sqlx::query!("DELETE FROM entries WHERE seq = ?", seq),
-        ] {
-            statement.execute(&mut *transaction).await?;
-        }
+    // Each statement names the doomed entries the same way; the last deletes them.
+    for statement in [
+        sqlx::query!(
+            "DELETE FROM entry_models WHERE entry_seq IN (SELECT seq FROM entries
+                 WHERE account_id = ? AND status NOT IN ('public', 'removed'))",
+            account_id
+        ),
+        sqlx::query!(
+            "DELETE FROM entry_tags WHERE entry_seq IN (SELECT seq FROM entries
+                 WHERE account_id = ? AND status NOT IN ('public', 'removed'))",
+            account_id
+        ),
+        sqlx::query!(
+            "DELETE FROM entry_rows WHERE entry_seq IN (SELECT seq FROM entries
+                 WHERE account_id = ? AND status NOT IN ('public', 'removed'))",
+            account_id
+        ),
+        sqlx::query!(
+            "DELETE FROM entry_unknown_fields WHERE entry_seq IN (SELECT seq FROM entries
+                 WHERE account_id = ? AND status NOT IN ('public', 'removed'))",
+            account_id
+        ),
+        sqlx::query!(
+            "DELETE FROM entry_runs WHERE entry_seq IN (SELECT seq FROM entries
+                 WHERE account_id = ? AND status NOT IN ('public', 'removed'))",
+            account_id
+        ),
+        sqlx::query!(
+            "DELETE FROM slugs WHERE entry_seq IN (SELECT seq FROM entries
+                 WHERE account_id = ? AND status NOT IN ('public', 'removed'))",
+            account_id
+        ),
+        sqlx::query!(
+            "DELETE FROM entries_fts WHERE rowid IN (SELECT seq FROM entries
+                 WHERE account_id = ? AND status NOT IN ('public', 'removed'))",
+            account_id
+        ),
+        sqlx::query!(
+            "UPDATE entries SET previous_seq = NULL WHERE previous_seq IN (SELECT seq
+                 FROM entries WHERE account_id = ? AND status NOT IN ('public', 'removed'))",
+            account_id
+        ),
+        sqlx::query!(
+            "DELETE FROM entries WHERE account_id = ? AND status NOT IN ('public', 'removed')",
+            account_id
+        ),
+    ] {
+        statement.execute(&mut *transaction).await?;
     }
     sqlx::query!(
         "DELETE FROM runs WHERE account_id = ?1

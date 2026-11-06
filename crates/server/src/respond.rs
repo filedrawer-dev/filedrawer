@@ -21,6 +21,12 @@ pub fn one_line(text: &str) -> String {
         .join(" ")
 }
 
+/// An author's display name for a line above the delimiter, or "account deleted"
+/// once the account is deleted and its name gone.
+pub fn author_name(display_name: Option<&str>) -> String {
+    display_name.map_or_else(|| "account deleted".to_string(), one_line)
+}
+
 /// The card, indented, then each warning on a line of its own: the part of a
 /// plain-text reply below the delimiter that the analyzer produced.
 pub fn card_and_warnings(card: &str, warnings: &[String]) -> String {
