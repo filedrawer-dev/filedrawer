@@ -27,6 +27,9 @@ pub struct Config {
     pub public_url: String,
     /// `None` sends email to the log.
     pub smtp: Option<SmtpSettings>,
+    /// Staging's smoke-test account, whose entries are screened but never rejected,
+    /// so CI's smoke test can publish them. Production refuses it.
+    pub smoke_account: Option<String>,
 }
 
 /// How to reach the SMTP server. Its Debug output leaves the password out.
@@ -65,6 +68,10 @@ pub enum ConfigError {
         "FILEDRAWER_SCREENER=pass-all publishes every entry unscreened, so production refuses it"
     )]
     UnscreenedProduction,
+    #[error(
+        "FILEDRAWER_SMOKE_ACCOUNT lets an account's entries past a rejection, so production refuses it"
+    )]
+    SmokeAccountInProduction,
     #[error(
         "production sends verification and reset email, so it needs FILEDRAWER_SMTP_HOST, FILEDRAWER_SMTP_USER, FILEDRAWER_SMTP_PASSWORD and FILEDRAWER_MAIL_FROM"
     )]
@@ -179,6 +186,10 @@ impl Config {
         if environment == Environment::Production && matches!(screener, Screener::PassAll) {
             return Err(ConfigError::UnscreenedProduction);
         }
+        let smoke_account = var("FILEDRAWER_SMOKE_ACCOUNT").filter(|id| !id.is_empty());
+        if environment == Environment::Production && smoke_account.is_some() {
+            return Err(ConfigError::SmokeAccountInProduction);
+        }
         Ok(Config {
             database,
             listen,
@@ -187,6 +198,7 @@ impl Config {
             screening_daily_nano_usd,
             public_url,
             smtp,
+            smoke_account,
         })
     }
 }

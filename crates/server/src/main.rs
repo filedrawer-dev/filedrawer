@@ -22,6 +22,10 @@ staging or dev), FILEDRAWER_SCREENER (pass-all; production refuses it) and
 FILEDRAWER_PUBLIC_URL (such as https://staging.filedrawer.dev), which emails link to
 and forms must come from.
 
+FILEDRAWER_SMOKE_ACCOUNT names staging's smoke-test account: its entries are
+screened, but a rejection becomes a pass with the screen's reasons as its screening
+note, so CI's smoke test can publish them. Production refuses it.
+
 Email goes through SMTP over TLS when FILEDRAWER_SMTP_HOST, FILEDRAWER_SMTP_USER,
 FILEDRAWER_SMTP_PASSWORD and FILEDRAWER_MAIL_FROM are all set (FILEDRAWER_SMTP_PORT
 defaults to 465), and to the log otherwise. Production refuses to start without them.
@@ -141,6 +145,7 @@ async fn serve() -> ExitCode {
         screening_lock: Default::default(),
         mailer,
         public_url: config.public_url.clone(),
+        smoke_account: config.smoke_account.clone(),
     };
     tokio::spawn(filedrawer_server::jobs::run_publisher(state.clone()));
     let router = app(state);

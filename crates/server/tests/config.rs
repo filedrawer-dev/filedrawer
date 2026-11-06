@@ -112,3 +112,20 @@ fn the_daily_screening_cap_defaults_to_a_dollar() {
         assert!(matches!(refused, ConfigError::Invalid { .. }), "{bad}");
     }
 }
+
+#[test]
+fn staging_reads_the_smoke_account_and_production_refuses_it() {
+    let staging = config(&[("FILEDRAWER_SMOKE_ACCOUNT", "a-smoke1")]).unwrap();
+    assert_eq!(staging.smoke_account.as_deref(), Some("a-smoke1"));
+    assert_eq!(config(&[]).unwrap().smoke_account, None);
+    let mut production = vec![
+        ("FILEDRAWER_ENVIRONMENT", "production"),
+        ("FILEDRAWER_SCREENER", "anthropic"),
+        ("FILEDRAWER_ANTHROPIC_API_KEY", "sk-ant-not-real"),
+        ("FILEDRAWER_SMOKE_ACCOUNT", "a-smoke1"),
+    ];
+    production.extend(SMTP);
+    let error = config(&production).unwrap_err();
+    assert_eq!(error, ConfigError::SmokeAccountInProduction);
+    assert!(error.to_string().contains("FILEDRAWER_SMOKE_ACCOUNT"));
+}

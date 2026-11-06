@@ -296,6 +296,14 @@ smoke_stage() {
     fi
     unset reply
   fi
+  SMOKE_ACCOUNT=$(_existing SMOKE_ACCOUNT || true)
+  if [[ -n "$SMOKE_ACCOUNT" ]]; then
+    # Staging screens the smoke test's entries but never rejects them, so a real
+    # screen calling "SMOKE TEST, not a real result" off topic doesn't fail CI. The
+    # unit first, so it reads the file smoke-env.sh writes.
+    remote staging-service.sh
+    remote smoke-env.sh "SMOKE_ACCOUNT=$SMOKE_ACCOUNT"
+  fi
   set_staging_secret STAGING_KEY "$STAGING_KEY"
   note "The next deploy runs the smoke test. To run it from here instead:"
   note "  FILEDRAWER_STAGING_KEY=... FILEDRAWER_STAGING_API_KEY=... ops/smoke-staging"

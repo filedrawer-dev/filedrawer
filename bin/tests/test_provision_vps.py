@@ -113,9 +113,12 @@ def smoke(tmp_path):
         "#!/bin/bash\n"
         'for last in "$@"; do :; done\n'
         f'echo "ssh $last" >> {log}\n'
-        f"cat > {tmp_path}/sent-script\n"
+        f'n=$(grep -c "^ssh " {log})\n'
+        f"cat > {tmp_path}/sent-$n\n"
         f"exit_status=$(cat {tmp_path}/ssh-exit 2>/dev/null || echo 0)\n"
-        '[[ $exit_status == 0 ]] && printf "a-new\\tfdt_s3cret\\n"\n'
+        # Only smoke-account.sh answers with an account and a token.
+        f"grep -q create-token {tmp_path}/sent-$n && [[ $exit_status == 0 ]] "
+        '&& printf "a-new\\tfdt_s3cret\\n"\n'
         "exit $exit_status\n"
     )
     (fakes / "gh").write_text(
@@ -160,8 +163,20 @@ def test_smoke_stores_the_token_and_key_as_staging_secrets_and_shows_neither(smo
     assert "fdt_s3cret" not in shown
     assert STAGING_KEY not in shown
     assert "fdt_s3cret" not in smoke.log.read_text()
-    sent = (smoke.tmp / "sent-script").read_text()
+    sent = (smoke.tmp / "sent-1").read_text()
     assert sent == (REPO / "ops/remote/smoke-account.sh").read_text()
+
+
+def test_smoke_names_the_account_to_staging_so_its_entries_arent_rejected(smoke):
+    result = smoke.run()
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = [c for c in smoke.log.read_text().splitlines() if c.startswith("ssh ")]
+    assert calls[-1] == "ssh env SMOKE_ACCOUNT=a-new bash -s"
+    sent = (smoke.tmp / f"sent-{len(calls)}").read_text()
+    assert sent == (REPO / "ops/remote/smoke-env.sh").read_text()
+    # The unit first, so it reads the file smoke-env.sh writes.
+    unit = (smoke.tmp / f"sent-{len(calls) - 1}").read_text()
+    assert unit == (REPO / "ops/remote/staging-service.sh").read_text()
 
 
 def test_a_rerun_passes_the_known_account_and_keeps_the_token_unless_asked(smoke):
@@ -170,7 +185,12 @@ def test_a_rerun_passes_the_known_account_and_keeps_the_token_unless_asked(smoke
     kept = smoke.run("n\n\n")
     assert kept.returncode == 0, kept.stdout + kept.stderr
     assert (smoke.secrets / "SMOKE_TEST_TOKEN").read_text() == "fdt_kept"
-    assert smoke.log.read_text().count("ssh ") == 1
+    # The kept run sends only the setting, not smoke-account.sh.
+    calls = [c for c in smoke.log.read_text().splitlines() if c.startswith("ssh ")]
+    assert len(calls) == 5, calls
+    assert (smoke.tmp / "sent-5").read_text() == (
+        REPO / "ops/remote/smoke-env.sh"
+    ).read_text()
     renewed = smoke.run("y\n\n")
     assert renewed.returncode == 0, renewed.stdout + renewed.stderr
     assert (smoke.secrets / "SMOKE_TEST_TOKEN").read_text() == "fdt_s3cret"

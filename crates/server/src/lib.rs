@@ -48,6 +48,8 @@ pub struct AppState {
     pub mailer: std::sync::Arc<dyn mail::Mailer>,
     /// The site's address, with no trailing slash (`Config::public_url`).
     pub public_url: String,
+    /// Staging's smoke-test account (`Config::smoke_account`).
+    pub smoke_account: Option<String>,
 }
 
 /// The router with every route.

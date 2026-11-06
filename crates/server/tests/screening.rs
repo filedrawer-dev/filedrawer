@@ -79,6 +79,54 @@ async fn an_off_topic_entry_is_rejected_and_its_author_reads_why() {
     assert_eq!(again.status, StatusCode::CREATED, "{}", again.body);
 }
 
+/// A test app whose own account is staging's smoke-test account.
+async fn smoke_app(models: &FakeModels) -> TestApp {
+    let mut app = app_with(models).await;
+    app.state.smoke_account = Some(app.account.clone());
+    app.router = filedrawer_server::app(app.state.clone());
+    app
+}
+
+#[tokio::test]
+async fn the_smoke_accounts_rejected_entry_is_published_with_the_screens_reasons() {
+    let models = FakeModels::default();
+    let app = smoke_app(&models).await;
+    let (id, status) = publish(&app, &marked("FAKE-OFFTOPIC", "")).await;
+    assert_eq!(status, "public");
+    assert_eq!(models.asked(), vec![Model::Haiku]);
+    let page = app.get(&format!("/e/{id}")).await;
+    assert!(
+        page.body.contains(
+            "staging smoke account: the screen would have rejected it: It is about cooking, not AI safety."
+        ),
+        "{}",
+        page.body
+    );
+    let cost: i64 = sqlx::query_scalar("SELECT SUM(cost_nano_usd) FROM screenings")
+        .fetch_one(&app.pool)
+        .await
+        .unwrap();
+    assert!(cost > 0);
+}
+
+#[tokio::test]
+async fn the_smoke_accounts_possible_hazard_still_goes_to_review() {
+    let models = FakeModels::default();
+    let app = smoke_app(&models).await;
+    let (_, status) = publish(&app, &marked("FAKE-HAZARD FAKE-SONNET-HAZARD", "")).await;
+    assert_eq!(status, "review");
+}
+
+#[tokio::test]
+async fn another_accounts_rejected_entry_stays_rejected_beside_a_smoke_account() {
+    let models = FakeModels::default();
+    let mut app = app_with(&models).await;
+    app.state.smoke_account = Some("a-someone".to_string());
+    app.router = filedrawer_server::app(app.state.clone());
+    let (_, status) = publish(&app, &marked("FAKE-OFFTOPIC", "")).await;
+    assert_eq!(status, "rejected");
+}
+
 #[tokio::test]
 async fn spam_and_a_download_piped_into_a_shell_are_rejected() {
     let models = FakeModels::default();

@@ -168,3 +168,31 @@ def test_admin_grant_refuses_an_id_that_isnt_one(staged, account):
 def test_admin_grant_exits_3_before_the_first_deploy(box):
     result = run(box, ADMIN_GRANT, ADMIN_ACCOUNT="a-known")
     assert result.returncode == 3
+
+
+# smoke-env.sh
+
+SMOKE_ENV = REPO / "ops/remote/smoke-env.sh"
+
+
+def test_smoke_env_names_the_smoke_account_for_staging_and_restarts_it(box):
+    result = run(box, SMOKE_ENV, SMOKE_ACCOUNT="a-smoke1")
+    assert result.returncode == 0, result.stderr
+    env_file = box.root / "etc/filedrawer/staging-smoke.env"
+    assert env_file.read_text() == "FILEDRAWER_SMOKE_ACCOUNT=a-smoke1\n"
+    assert stat.S_IMODE(env_file.stat().st_mode) == 0o640
+    log = box.log.read_text()
+    assert f"chown root:filedrawer {env_file}" in log
+    assert "systemctl try-restart filedrawer-staging.service" in log
+
+
+@pytest.mark.parametrize("account", ["", "a-", "a-x y", "a-X", "b-smoke"])
+def test_smoke_env_refuses_an_id_that_isnt_one(box, account):
+    result = run(box, SMOKE_ENV, SMOKE_ACCOUNT=account)
+    assert result.returncode == 2
+    assert not (box.root / "etc/filedrawer/staging-smoke.env").exists()
+
+
+def test_the_staging_unit_reads_the_smoke_account_setting():
+    unit = (REPO / "ops/remote/staging-service.sh").read_text()
+    assert "EnvironmentFile=-/etc/filedrawer/staging-smoke.env" in unit

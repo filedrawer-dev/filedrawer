@@ -30,6 +30,9 @@ EnvironmentFile=-/etc/filedrawer/staging-mail.env
 # The screening settings, which ops/remote/screening.sh writes. Read last, so its
 # FILEDRAWER_SCREENER replaces staging.env's pass-all.
 EnvironmentFile=-/etc/filedrawer/staging-screening.env
+# The smoke-test account, which ops/remote/smoke-env.sh names: its entries are
+# screened but never rejected.
+EnvironmentFile=-/etc/filedrawer/staging-smoke.env
 ExecStart=/srv/filedrawer/staging/bin/filedrawer serve
 Restart=on-failure
 RestartSec=2

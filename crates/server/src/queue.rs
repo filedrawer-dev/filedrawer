@@ -103,7 +103,16 @@ pub async fn screen_text(
     }
     let screening = state.screener.screen(text).await;
     log_calls(&state.pool, entry_seq, account_id, &screening.calls, now).await?;
+    let smoke = state.smoke_account.as_deref() == Some(account_id);
     Ok(match screening.verdict {
+        // Staging's smoke-test entries are screened but never rejected, so CI's smoke
+        // test can publish them; production refuses the setting.
+        Ok(Verdict::Reject { reasons }) if smoke => Screened::Verdict(Verdict::Pass {
+            note: Some(format!(
+                "staging smoke account: the screen would have rejected it: {}",
+                reasons.join("; ")
+            )),
+        }),
         Ok(verdict) => Screened::Verdict(verdict),
         Err(error) => {
             tracing::warn!(%error, ?entry_seq, "screening failed");
