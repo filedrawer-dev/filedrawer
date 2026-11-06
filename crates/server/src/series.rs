@@ -506,14 +506,33 @@ pub async fn refusals(pool: &SqlitePool) -> Result<Vec<Refused>, sqlx::Error> {
     .await
 }
 
-/// The owner's call on a refused series: confirming puts its account under the
-/// review guard, dismissing doesn't. False if there's no such undecided refusal.
+/// The owner's call on a refused series.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefusalCall {
+    /// A hazard: its account goes under the review guard.
+    Confirm,
+    /// A false flag.
+    Dismiss,
+}
+
+impl RefusalCall {
+    /// As `refused_series.decision` stores it.
+    fn as_str(self) -> &'static str {
+        match self {
+            RefusalCall::Confirm => "confirmed",
+            RefusalCall::Dismiss => "dismissed",
+        }
+    }
+}
+
+/// Records the owner's call on a refused series. False if there's no such
+/// undecided refusal.
 pub async fn decide_refusal(
     pool: &SqlitePool,
     id: &str,
-    confirm: bool,
+    call: RefusalCall,
 ) -> Result<bool, sqlx::Error> {
-    let decision = if confirm { "confirmed" } else { "dismissed" };
+    let decision = call.as_str();
     let at = now();
     let mut transaction = pool.begin().await?;
     let account = sqlx::query_scalar!(
@@ -528,7 +547,9 @@ pub async fn decide_refusal(
     let Some(account) = account else {
         return Ok(false);
     };
-    if confirm {
+    // A confirmed hazard guards the account, as the owner's reject or hold of an
+    // entry does (the owner's decision, 2026-11-06).
+    if call == RefusalCall::Confirm {
         crate::accounts::guard(&mut transaction, &account).await?;
     }
     transaction.commit().await?;

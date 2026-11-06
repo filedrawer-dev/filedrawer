@@ -12,6 +12,7 @@ use crate::error::AppError;
 use crate::pages::{AdminEntryPage, AdminQueuePage, QueueRow, page};
 use crate::review::{self, Decided, Decision};
 use crate::routes::account::SessionAccount;
+use crate::series::RefusalCall;
 use crate::time::now_utc;
 use crate::{AppState, accounts, entries, series};
 
@@ -133,8 +134,12 @@ pub async fn reject(
     decide(&state, &id, Decision::Reject).await
 }
 
-async fn decide_refusal(state: &AppState, id: &str, confirm: bool) -> Result<Response, AppError> {
-    if !series::decide_refusal(&state.pool, id, confirm).await? {
+async fn decide_refusal(
+    state: &AppState,
+    id: &str,
+    call: RefusalCall,
+) -> Result<Response, AppError> {
+    if !series::decide_refusal(&state.pool, id, call).await? {
         return Err(AppError::NotFound);
     }
     Ok(Redirect::to("/admin").into_response())
@@ -146,7 +151,7 @@ pub async fn confirm_refusal(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Response, AppError> {
-    decide_refusal(&state, &id, true).await
+    decide_refusal(&state, &id, RefusalCall::Confirm).await
 }
 
 /// Dismisses a refused series: a false flag, so no guard.
@@ -155,7 +160,7 @@ pub async fn dismiss_refusal(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Response, AppError> {
-    decide_refusal(&state, &id, false).await
+    decide_refusal(&state, &id, RefusalCall::Dismiss).await
 }
 
 /// Takes an entry off the list of those that passed with a hazard doubt.

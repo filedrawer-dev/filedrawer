@@ -309,9 +309,8 @@ pub async fn guarded(pool: &SqlitePool) -> Result<Vec<Guarded>, sqlx::Error> {
     .await
 }
 
-/// Puts `account_id` under the review guard, if it isn't already: the owner rejected
-/// or held one of its entries, or confirmed a refused series (the owner's decision,
-/// 2026-11-06).
+/// Puts `account_id` under the review guard, if it isn't already. Only the owner's
+/// calls trip it (design.md, Submission and screening).
 pub async fn guard(
     connection: &mut sqlx::SqliteConnection,
     account_id: &str,
