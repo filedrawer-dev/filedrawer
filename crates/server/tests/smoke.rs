@@ -99,7 +99,8 @@ fn smoke(args: &[&str], key: Option<&str>, token: Option<&str>) -> Output {
         .args(args)
         .env_remove("BASH_ENV")
         .env_remove("FILEDRAWER_STAGING_KEY")
-        .env_remove("FILEDRAWER_STAGING_API_KEY");
+        .env_remove("FILEDRAWER_STAGING_API_KEY")
+        .env_remove("FILEDRAWER_STAGING_SCREEN_API_KEY");
     if let Some(key) = key {
         command.env("FILEDRAWER_STAGING_KEY", key);
     }
@@ -174,4 +175,57 @@ fn h_says_what_it_does() {
     let usage = String::from_utf8_lossy(&output.stdout);
     assert!(usage.contains("usage: ops/smoke-staging"), "{usage}");
     assert!(usage.contains("--wait"), "{usage}");
+}
+
+/// Runs `ops/smoke-staging screen`, with its settings files looked for in an empty
+/// folder so a real token on this machine can't be read.
+fn screen(args: &[&str], key: Option<&str>, token: Option<&str>) -> Output {
+    let empty = std::env::temp_dir().join(format!("filedrawer-screen-{}", std::process::id()));
+    std::fs::create_dir_all(&empty).unwrap();
+    let mut command = Command::new(SCRIPT);
+    command
+        .arg("screen")
+        .args(args)
+        .env_remove("BASH_ENV")
+        .env_remove("FILEDRAWER_STAGING_KEY")
+        .env_remove("FILEDRAWER_STAGING_API_KEY")
+        .env_remove("FILEDRAWER_STAGING_SCREEN_API_KEY")
+        .env("FILEDRAWER_OPS_DIR", &empty);
+    if let Some(key) = key {
+        command.env("FILEDRAWER_STAGING_KEY", key);
+    }
+    if let Some(token) = token {
+        command.env("FILEDRAWER_STAGING_SCREEN_API_KEY", token);
+    }
+    command.output().unwrap()
+}
+
+#[test]
+fn screen_against_a_server_that_doesnt_screen_fails_on_the_off_topic_entry() {
+    let (server, token) = server_and_token("screen");
+    let output = screen(&["--wait", "30", &server.url], Some("unused"), Some(&token));
+    let printed = text(&output);
+    assert_eq!(output.status.code(), Some(1), "{printed}");
+    assert!(printed.contains("PASS on-topic entry: public"), "{printed}");
+    assert!(
+        printed.contains("FAIL off-topic entry: rejected"),
+        "{printed}"
+    );
+    assert!(printed.contains("pass-all"), "{printed}");
+    assert!(!printed.contains(&token), "{printed}");
+}
+
+#[test]
+fn screen_without_its_settings_names_where_it_looked() {
+    let output = screen(&[], Some("unused"), None);
+    let printed = text(&output);
+    assert_eq!(output.status.code(), Some(2), "{printed}");
+    assert!(
+        printed.contains("FILEDRAWER_STAGING_SCREEN_API_KEY"),
+        "{printed}"
+    );
+    assert!(printed.contains(".screen-test.env"), "{printed}");
+    let output = screen(&[], None, Some("fdt_x"));
+    assert_eq!(output.status.code(), Some(2), "{}", text(&output));
+    assert!(text(&output).contains(".vps.env"), "{}", text(&output));
 }

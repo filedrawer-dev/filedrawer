@@ -2,3 +2,4 @@
 __pycache__/
 .env
 ops/.vps.env
+ops/.screen-test.env

@@ -8,6 +8,7 @@ set -uo pipefail
 usage() {
   cat <<'EOF'
 usage: ops/smoke-staging [--wait SECONDS] [URL]
+       ops/smoke-staging screen [--wait SECONDS] [URL]
 
 Runs File Drawer's smoke test against URL (default https://staging.filedrawer.dev),
 as /skill.md tells an agent to: submit, the hour's hold, a fix with PUT, publish,
@@ -22,11 +23,28 @@ It reads two settings from the environment and prints neither:
   FILEDRAWER_STAGING_KEY      the staging key, sent as X-Staging-Key
   FILEDRAWER_STAGING_API_KEY  an API token for the account that submits
 Exit status: 0 every check passed, 1 a check failed, 2 a usage or setting error.
+
+screen checks that the server screens with the real model, which the plain smoke
+test can't: staging doesn't screen CI's smoke account. Run it by hand, now and then;
+no automated suite runs it, and each run spends a few Haiku calls. As the screen-test
+account (robocarver's mailbox), it submits a bland on-topic entry and expects it
+public with no "not screened" note, and an off-topic one (sourdough) and expects it
+rejected with its reasons. It never submits anything like a hazard: an entry in
+review would put the account under the review guard. Its settings, neither printed:
+  the token   FILEDRAWER_STAGING_SCREEN_API_KEY, else SCREEN_TEST_TOKEN in
+              ops/.screen-test.env
+  the key     FILEDRAWER_STAGING_KEY, else STAGING_KEY in ops/.vps.env
+(FILEDRAWER_OPS_DIR moves where it looks for those files, for tests.)
 EOF
 }
 
 base=https://staging.filedrawer.dev
 wait_seconds=0
+mode=smoke
+if [[ "${1:-}" == screen ]]; then
+  mode=screen
+  shift
+fi
 while (( $# )); do
   case "$1" in
     -h | --help) usage; exit 0 ;;
@@ -37,6 +55,24 @@ while (( $# )); do
     *) base=${1%/}; shift ;;
   esac
 done
+# setting_from FILE NAME: NAME's value in FILE, written as NAME='value', if any.
+setting_from() {
+  [[ -r "$1" ]] && sed -n "s/^$2='\(.*\)'\$/\1/p" "$1" | head -1
+}
+
+if [[ $mode == screen ]]; then
+  ops_dir="${FILEDRAWER_OPS_DIR:-$(dirname "$0")}"
+  FILEDRAWER_STAGING_KEY="${FILEDRAWER_STAGING_KEY:-$(setting_from "$ops_dir/.vps.env" STAGING_KEY)}"
+  if [[ -z "$FILEDRAWER_STAGING_KEY" ]]; then
+    echo "smoke-staging: no staging key: set FILEDRAWER_STAGING_KEY, or STAGING_KEY in $ops_dir/.vps.env" >&2
+    exit 2
+  fi
+  FILEDRAWER_STAGING_API_KEY="${FILEDRAWER_STAGING_SCREEN_API_KEY:-$(setting_from "$ops_dir/.screen-test.env" SCREEN_TEST_TOKEN)}"
+  if [[ -z "$FILEDRAWER_STAGING_API_KEY" ]]; then
+    echo "smoke-staging: no screen-test token: set FILEDRAWER_STAGING_SCREEN_API_KEY, or SCREEN_TEST_TOKEN in $ops_dir/.screen-test.env" >&2
+    exit 2
+  fi
+fi
 for name in FILEDRAWER_STAGING_KEY FILEDRAWER_STAGING_API_KEY; do
   if [[ -z "${!name:-}" ]]; then
     echo "smoke-staging: $name is not set; -h says what it holds" >&2
@@ -96,6 +132,51 @@ if (( wait_seconds > 0 )); then
     fi
     sleep 2
   done
+fi
+
+# screened FILE: submits FILE, publishes it, and waits up to 2 minutes while it is
+# still being screened (an outage or the day's cap); sets ID, and CODE and BODY
+# from GET /e/<id>.
+screened() {
+  req POST /entries "$1"
+  ID=$(field id)
+  [[ $CODE == 201 && -n "$ID" ]] || { echo "FAIL submit $1: $CODE"; fail=$((fail + 1)); return 1; }
+  req POST "/e/$ID/publish"
+  [[ $CODE == 200 ]] || { echo "FAIL publish $ID: $CODE"; fail=$((fail + 1)); return 1; }
+  local deadline=$((SECONDS + 120))
+  req GET "/e/$ID"
+  while [[ $(field status) == screening ]] && (( SECONDS < deadline )); do
+    sleep 5
+    req GET "/e/$ID"
+  done
+}
+
+# screen_entry FILE: FILE with this run's tags. The title stays as written: a test
+# marker there could read as spam to the screen.
+screen_entry() {
+  sed "s/^tags: .*/tags: [screen-test, $tag]/" "$1"
+}
+
+if [[ $mode == screen ]]; then
+  screen_entry "$fixture" > "$dir/on.md"
+  if screened "$dir/on.md"; then
+    status=$(field status)
+    check "on-topic entry: public" '[[ $status == public ]]'
+    check "on-topic entry: screened, not passed unscreened" '[[ $BODY != *"not screened"* ]]'
+    [[ $status == review ]] && echo "  it went to review, which puts the account under the review guard: clear it on $base/admin"
+    [[ $status == screening ]] && echo "  still screening after 2 minutes: an outage, or the day's cap is spent"
+  fi
+  screen_entry "$(dirname "$0")/screen-offtopic.md" > "$dir/off.md"
+  if screened "$dir/off.md"; then
+    status=$(field status)
+    check "off-topic entry: rejected" '[[ $status == rejected ]]'
+    check "off-topic entry: gives its reasons" '[[ $BODY == *"reason: "* ]]'
+    [[ $status == public ]] && echo "  published unscreened: is staging still on FILEDRAWER_SCREENER=pass-all? (issue #7)"
+    [[ $status == review ]] && echo "  it went to review, which puts the account under the review guard: clear it on $base/admin"
+  fi
+  echo "screen $tag: $pass passed, $fail failed"
+  (( fail == 0 ))
+  exit
 fi
 
 req GET /skill.md

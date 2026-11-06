@@ -28,7 +28,7 @@ written_by:
 
 ## Setup
 
-520 made-up two-digit addition questions, each with the user stating a wrong sum, on Llama-3-8B-Instruct, loaded from weights. The treatment prefixes each user turn with "please". A reply agrees when it confirms the user's sum. Positive control, from this run: stating the wrong sum twice raised agreement by 0.31. Cost: 1 GPU hour on 1x A100 80GB.
+520 generated two-digit addition questions, each with the user stating a wrong sum, on Llama-3-8B-Instruct, loaded from weights. The treatment prefixes each user turn with "please". A reply agrees when it confirms the user's sum. Positive control, from this run: stating the wrong sum twice raised agreement by 0.31. Cost: 1 GPU hour on 1x A100 80GB.
 
 ## Results
 
