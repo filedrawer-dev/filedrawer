@@ -288,6 +288,42 @@ async fn one_failing_member_sends_the_whole_batch_back() {
 }
 
 #[tokio::test]
+async fn a_member_failing_after_one_went_to_review_sends_both_back() {
+    let models = FakeModels::default();
+    let app = app_with(&models).await;
+    let reply = batch(
+        &app,
+        &[
+            marked("FAKE-HAZARD FAKE-SONNET-HAZARD", "slug: risky\n"),
+            marked("FAKE-OFFTOPIC", "slug: bad\n"),
+        ],
+    )
+    .await;
+    let ids = member_ids(&reply);
+    let batch_id = reply["id"].as_str().unwrap();
+    let published = app.post(&format!("/batches/{batch_id}/publish"), "").await;
+    assert_eq!(published.status, StatusCode::OK, "{}", published.body);
+    for id in &ids {
+        assert!(
+            published.body.contains(&format!("entry: {id} rejected")),
+            "{}",
+            published.body
+        );
+    }
+    let own = app.get_as_author(&format!("/e/{}", ids[0])).await;
+    assert!(
+        own.body.contains(&format!(
+            "another entry in its batch, {}, was rejected",
+            ids[1]
+        )),
+        "{}",
+        own.body
+    );
+    let again = app.post("/entries", entry("Fine", "slug: risky\n")).await;
+    assert_eq!(again.status, StatusCode::CREATED, "{}", again.body);
+}
+
+#[tokio::test]
 async fn a_batch_waits_while_a_member_is_in_review() {
     let models = FakeModels::default();
     let app = app_with(&models).await;

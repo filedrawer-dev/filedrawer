@@ -957,14 +957,15 @@ pub async fn store_verdict(
     Ok(())
 }
 
-/// Rejects an entry in screening, with `reasons` (a JSON array) when it has none of
-/// its own, and gives back the slug it took, so its author can submit again with it.
+/// Rejects an entry in screening, review or held, with `reasons` (a JSON array) when
+/// it has none of its own, and gives back the slug it took, so its author can submit
+/// again with it.
 pub async fn reject(pool: &SqlitePool, seq: i64, reasons: Option<&str>) -> Result<(), sqlx::Error> {
     let mut transaction = pool.begin().await?;
     sqlx::query!(
         "UPDATE entries SET status = 'rejected', screen_verdict = 'reject',
              rejection_reasons = COALESCE(?, rejection_reasons)
-         WHERE seq = ? AND status = 'screening'",
+         WHERE seq = ? AND status IN ('screening', 'review', 'held')",
         reasons,
         seq
     )

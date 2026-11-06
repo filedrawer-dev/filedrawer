@@ -203,7 +203,10 @@ async fn settle(state: &AppState, seq: i64, now: OffsetDateTime) -> Result<(), s
         .iter()
         .find(|member| member.screen_verdict.as_deref() == Some("reject"))
     {
-        for member in members.iter().filter(in_screening) {
+        // A member already in review or held goes back too: its batch has failed.
+        let undecided =
+            |member: &&Member| matches!(member.status.as_str(), "screening" | "review" | "held");
+        for member in members.iter().filter(undecided) {
             let reasons = (member.screen_verdict.as_deref() != Some("reject")).then(|| {
                 serde_json::json!([format!(
                     "another entry in its batch, {}, was rejected, and a batch is screened as one",
