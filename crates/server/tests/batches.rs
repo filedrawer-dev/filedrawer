@@ -441,3 +441,41 @@ async fn a_runs_entries_are_listed_once_they_are_all_public() {
         "{page}"
     );
 }
+
+#[tokio::test]
+async fn the_plain_text_reply_lists_each_member_above_the_delimiter() {
+    let app = test_app().await;
+    let reply = app
+        .send(
+            Request::post("/entries/batch")
+                .header("authorization", format!("Bearer {}", app.token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"entries": [member("a", "A", ""), member("b", "B", "")]}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
+    let (above, below) = reply.body.split_once(common::DELIMITER).unwrap();
+    assert_eq!(field(above, "status"), Some("pending"), "{}", reply.body);
+    let id = field(above, "id").expect("the batch's ID");
+    assert_eq!(
+        field(above, "publish"),
+        Some(format!("{}/batches/{id}/publish", common::PUBLIC_URL).as_str())
+    );
+    let members: Vec<&str> = above
+        .lines()
+        .filter_map(|line| line.strip_prefix("entry: "))
+        .collect();
+    assert_eq!(members.len(), 2, "{}", reply.body);
+    for member in members {
+        let (id, url) = member.split_once(' ').unwrap();
+        assert_eq!(url, format!("{}/e/{id}", common::PUBLIC_URL));
+        assert!(
+            below.contains(&format!("entry {id}, slug ")),
+            "{}",
+            reply.body
+        );
+    }
+}
