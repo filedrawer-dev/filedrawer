@@ -22,7 +22,7 @@ mod time;
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
-use axum::routing::{get, post};
+use axum::routing::{MethodRouter, get, post};
 use sqlx::SqlitePool;
 
 pub use screening::Screener;
@@ -44,8 +44,50 @@ pub struct AppState {
 
 /// The router with every route.
 pub fn app(state: AppState) -> Router {
+    build(state).router
+}
+
+/// Every path the router serves, in axum's syntax (`/e/{id}`), in the order added.
+pub fn route_paths(state: AppState) -> Vec<&'static str> {
+    build(state).paths
+}
+
+/// A router being built, and the path of each route added to it, so the list of paths
+/// can't drift from the router.
+struct Routes<R> {
+    router: R,
+    paths: Vec<&'static str>,
+}
+
+impl Routes<Router<AppState>> {
+    fn new() -> Self {
+        Routes {
+            router: Router::new(),
+            paths: Vec::new(),
+        }
+    }
+
+    fn route(mut self, path: &'static str, method_router: MethodRouter<AppState>) -> Self {
+        self.router = self.router.route(path, method_router);
+        self.paths.push(path);
+        self
+    }
+}
+
+impl<R> Routes<R> {
+    /// The same paths, with `wrap` applied to the router, such as a layer.
+    fn map_router<S>(self, wrap: impl FnOnce(R) -> S) -> Routes<S> {
+        Routes {
+            router: wrap(self.router),
+            paths: self.paths,
+        }
+    }
+}
+
+/// The router with every route, and their paths.
+fn build(state: AppState) -> Routes<Router> {
     use routes::account;
-    let accounts = Router::new()
+    let accounts = Routes::new()
         .route("/signup", get(account::signup_page).post(account::signup))
         .route("/verify", get(account::verify_page).post(account::verify))
         .route("/login", get(account::login_page).post(account::login))
@@ -58,13 +100,10 @@ pub fn app(state: AppState) -> Router {
         .route("/account", get(account::account))
         .route("/account/tokens", post(account::create_token))
         .route("/account/tokens/{id}/revoke", post(account::revoke_token))
-        .route("/account/verify-email", post(account::resend_verification))
-        .layer(axum::middleware::from_fn_with_state(
-            state.clone(),
-            account::same_origin,
-        ));
-    Router::new()
-        .merge(accounts)
+        .route("/account/verify-email", post(account::resend_verification));
+    let same_origin = axum::middleware::from_fn_with_state(state.clone(), account::same_origin);
+    accounts
+        .map_router(|router| Router::new().merge(router.layer(same_origin)))
         .route("/entries", post(routes::submit::submit))
         .route(
             "/e/{id}",
@@ -80,7 +119,10 @@ pub fn app(state: AppState) -> Router {
         .route("/feedback", post(routes::feedback::feedback))
         .route("/skill.md", get(routes::docs::skill))
         .route("/entry-format.md", get(routes::docs::entry_format))
-        .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
-        .layer(axum::middleware::from_fn(respond::json_errors))
-        .with_state(state)
+        .map_router(|router| {
+            router
+                .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
+                .layer(axum::middleware::from_fn(respond::json_errors))
+                .with_state(state)
+        })
 }

@@ -1,12 +1,39 @@
 //! Seam: the router, for `/skill.md` and `/entry-format.md` (design.md, Agent
-//! interface), and what `/skill.md` promises: its routes exist, and its example
-//! entry passes the analyzer.
+//! interface), and what `/skill.md` promises: its routes exist, it names every route
+//! meant for agents, and its example entry passes the analyzer.
 
 mod common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use common::{PUBLIC_URL, test_app};
+use filedrawer_server::route_paths;
+
+/// Routes /skill.md needn't name: the account pages a person uses in a browser, and
+/// /skill.md itself.
+const NOT_FOR_AGENTS: &[&str] = &[
+    "/verify",
+    "/login",
+    "/logout",
+    "/reset",
+    "/reset/confirm",
+    "/account/tokens",
+    "/account/tokens/{id}/revoke",
+    "/account/verify-email",
+    "/skill.md",
+];
+
+/// Each URL on this site that `text` names, as a path without its query, with `<id>`
+/// written as the router writes it, `{id}`.
+fn named_paths(text: &str) -> Vec<String> {
+    text.split(|c: char| c.is_whitespace() || c == '`')
+        .filter_map(|word| word.strip_prefix(PUBLIC_URL))
+        .map(|path| path.trim_end_matches(['.', ',', ')', ':']))
+        .map(|path| path.split(['?', '#']).next().unwrap_or(path))
+        .filter(|path| !path.is_empty())
+        .map(|path| path.replace("<id>", "{id}"))
+        .collect()
+}
 
 async fn skill() -> String {
     let app = test_app().await;
@@ -43,13 +70,9 @@ async fn every_route_skill_md_names_exists() {
     let text = skill().await;
     let app = test_app().await;
     let mut seen = 0;
-    for word in text.split(|c: char| c.is_whitespace() || c == '`') {
-        let Some(path) = word.strip_prefix(PUBLIC_URL) else {
-            continue;
-        };
-        let path = path.trim_end_matches(['.', ',', ')', ':']);
-        let path = path.replace("<id>", "0000000000");
-        if path.is_empty() || path.contains('<') {
+    for path in named_paths(&text) {
+        let path = path.replace("{id}", "0000000000");
+        if path.contains('<') {
             continue;
         }
         seen += 1;
@@ -72,6 +95,28 @@ async fn every_route_skill_md_names_exists() {
         }
     }
     assert!(seen >= 6, "skill.md names only {seen} URLs");
+}
+
+#[tokio::test]
+async fn skill_md_names_every_route_meant_for_agents() {
+    let named = named_paths(&skill().await);
+    let routes = route_paths(test_app().await.state);
+    assert!(routes.len() >= 20, "the router lists only {routes:?}");
+    for route in &routes {
+        let listed = NOT_FOR_AGENTS.contains(route);
+        let is_named = named.iter().any(|path| path == route);
+        assert!(
+            is_named || listed,
+            "/skill.md doesn't name {route}; name it, or list it in NOT_FOR_AGENTS"
+        );
+        assert!(
+            !(is_named && listed),
+            "/skill.md names {route}, so take it off NOT_FOR_AGENTS"
+        );
+    }
+    for listed in NOT_FOR_AGENTS {
+        assert!(routes.contains(listed), "{listed} is not a route");
+    }
 }
 
 #[tokio::test]
