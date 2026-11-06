@@ -101,8 +101,9 @@ pub enum ModelError {
     #[error("the request failed: {0}")]
     Http(String),
     /// The API refused the request, as when overloaded; retried the same way.
-    #[error("the API answered {status}")]
-    Status { status: u16 },
+    /// `message` is the API's reason, for the server's log.
+    #[error("the API answered {status}: {message}")]
+    Status { status: u16, message: String },
     /// The reply came but can't be used; the entry goes to review after
     /// [`MAX_ATTEMPTS`] of these.
     #[error("the API's reply couldn't be read: {0}")]
@@ -161,6 +162,39 @@ pub fn parse_reply(body: &Value) -> ModelReply {
     ModelReply { answer, usage }
 }
 
+/// How many characters of the API's reason go in the log.
+const MAX_REASON_CHARS: usize = 300;
+
+/// The error for a reply with a status other than success, from its `status` and
+/// `body`: the API's error type and message, on one line and cut short, or a note
+/// that the body held none, as a proxy's page doesn't.
+pub fn status_error(status: u16, body: &str) -> ModelError {
+    let reason = serde_json::from_str::<Value>(body).ok().and_then(|body| {
+        let error = &body["error"];
+        let kind = error["type"].as_str()?;
+        Some(format!(
+            "{kind}: {}",
+            error["message"].as_str().unwrap_or("")
+        ))
+    });
+    let message = match reason {
+        Some(reason) => short_line(&reason),
+        None => "no error in the reply".into(),
+    };
+    ModelError::Status { status, message }
+}
+
+/// `text` on one line, cut to `MAX_REASON_CHARS` with an ellipsis.
+fn short_line(text: &str) -> String {
+    let line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if line.chars().count() <= MAX_REASON_CHARS {
+        return line;
+    }
+    let mut cut: String = line.chars().take(MAX_REASON_CHARS - 1).collect();
+    cut.push('…');
+    cut
+}
+
 /// Calls the Messages API with the server's own key (design.md, Stack: this service
 /// is the one exception to running Claude on the owner's subscription).
 pub struct AnthropicClient {
@@ -192,9 +226,8 @@ impl ModelClient for AnthropicClient {
                 .map_err(|error| ModelError::Http(error.without_url().to_string()))?;
             let status = response.status();
             if !status.is_success() {
-                return Err(ModelError::Status {
-                    status: status.as_u16(),
-                });
+                let body = response.text().await.unwrap_or_default();
+                return Err(status_error(status.as_u16(), &body));
             }
             let body: Value = response
                 .json()

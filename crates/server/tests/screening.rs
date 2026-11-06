@@ -11,7 +11,8 @@ use common::fake_models::FakeModels;
 use common::{DELIMITER, TestApp, entry, field, id_in, test_app_with};
 use filedrawer_server::jobs::publish_due;
 use filedrawer_server::screening::{
-    Answer, Model, ModelRequest, Subject, Usage, parse_reply, request_body,
+    Answer, Model, ModelError, ModelRequest, Subject, Usage, parse_reply, request_body,
+    status_error,
 };
 use serde_json::json;
 use time::{Duration, OffsetDateTime};
@@ -593,6 +594,47 @@ fn the_request_asks_for_structured_output_at_the_models_effort() {
     });
     assert_eq!(sonnet["model"], "claude-sonnet-5-5");
     assert_eq!(sonnet["output_config"]["effort"], "medium");
+}
+
+#[test]
+fn a_refused_request_carries_the_apis_reason_for_the_log() {
+    // The reply staging got from 2026-11-06 20:04 UTC on, with its log line.
+    let refused = status_error(
+        400,
+        r#"{"type":"error","error":{"type":"invalid_request_error","message":"output_config.format.schema: Invalid schema: Enum value 'working_attack' does not match declared type '['string', 'null']'"},"request_id":"req_011CgnYtYoEHDeFPJDwZxntD"}"#,
+    );
+    assert_eq!(
+        refused.to_string(),
+        "the API answered 400: invalid_request_error: output_config.format.schema: Invalid schema: Enum value 'working_attack' does not match declared type '['string', 'null']'"
+    );
+    // A proxy's page or an empty body holds no reason.
+    for body in ["<html><body>502 Bad Gateway</body></html>", ""] {
+        assert_eq!(
+            status_error(502, body).to_string(),
+            "the API answered 502: no error in the reply"
+        );
+    }
+}
+
+#[test]
+fn the_apis_reason_is_kept_to_one_short_line() {
+    let message = format!("first line\nsecond {}", "é".repeat(1_000));
+    let body = json!({"type": "error", "error": {"type": "api_error", "message": message}});
+    let ModelError::Status { status, message } = status_error(500, &body.to_string()) else {
+        panic!("not a status error");
+    };
+    assert_eq!(status, 500);
+    assert!(
+        message.starts_with("api_error: first line second éé"),
+        "{message}"
+    );
+    assert!(!message.contains('\n'));
+    assert!(
+        message.chars().count() <= 300,
+        "{} chars",
+        message.chars().count()
+    );
+    assert!(message.ends_with('…'), "{message}");
 }
 
 #[test]

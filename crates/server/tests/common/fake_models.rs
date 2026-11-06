@@ -96,7 +96,10 @@ impl ModelClient for FakeModels {
         let has = |marker: &str| text.contains(marker);
         let sonnet = request.model == Model::Sonnet;
         let reply = if has("FAKE-ERROR") {
-            Err(ModelError::Status { status: 529 })
+            Err(ModelError::Status {
+                status: 529,
+                message: "overloaded_error: Overloaded".into(),
+            })
         } else if has("FAKE-GARBLED") {
             Ok(ModelReply {
                 answer: Answer::Unreadable("stop_reason max_tokens".into()),

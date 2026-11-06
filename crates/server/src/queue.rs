@@ -339,16 +339,22 @@ async fn screen_file(
                 return Ok(Some(FileCall::Reject(reason)));
             }
             Ok(Verdict::Review { why }) => return Ok(Some(FileCall::Review(why))),
-            Err(ModelError::Unreadable(_)) if waiting.screen_attempts + 1 >= MAX_ATTEMPTS => {
-                return Ok(Some(FileCall::Review(format!(
-                    "screening replies couldn't be read {MAX_ATTEMPTS} times"
-                ))));
+            Err(error) => {
+                // Logged as `screen_text` logs a failure on an entry's text.
+                tracing::warn!(%error, entry_seq = waiting.seq, sha256 = %file.sha256, "screening attached code failed");
+                return match error {
+                    ModelError::Unreadable(_) if waiting.screen_attempts + 1 >= MAX_ATTEMPTS => {
+                        Ok(Some(FileCall::Review(format!(
+                            "screening replies couldn't be read {MAX_ATTEMPTS} times"
+                        ))))
+                    }
+                    ModelError::Unreadable(_) => {
+                        entries::count_screen_attempt(&state.pool, waiting.seq).await?;
+                        Ok(None)
+                    }
+                    ModelError::Http(_) | ModelError::Status { .. } => Ok(None),
+                };
             }
-            Err(ModelError::Unreadable(_)) => {
-                entries::count_screen_attempt(&state.pool, waiting.seq).await?;
-                return Ok(None);
-            }
-            Err(_) => return Ok(None),
         }
     }
     let doubt = (!doubts.is_empty()).then(|| doubts.join("; "));
