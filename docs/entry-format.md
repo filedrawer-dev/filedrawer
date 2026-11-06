@@ -55,6 +55,7 @@ smallest_effect_of_interest:   # optional
   value:              #   a positive number in metric units
   set:                #   before_run | after_run
 code:                 # a URL pinned to a commit or version; leave out when the code is attached
+attachments:          # the attachment set holding the attached code, as as-...: uploaded first, cited here
 code_state:           # committed | uncommitted | never_committed: whether the code that ran is in a commit
 code_license:         # for attached code; MIT when left out
 data:                 # one item per dataset the results come from:

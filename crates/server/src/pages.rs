@@ -6,6 +6,7 @@ use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Response};
 
 use crate::accounts::{Guarded, TokenView};
+use crate::attachments::EntryFile;
 use crate::entries::{Doubted, Undecided};
 use crate::series::{Owned, Refused};
 
@@ -114,4 +115,6 @@ pub struct AdminEntryPage<'a> {
     pub runs: &'a [(String, String)],
     /// Another member of its batch was rejected, so publishing it rejects it too.
     pub batch_failed: bool,
+    /// Its attached files, with their text and the screen's verdict so far.
+    pub files: &'a [EntryFile],
 }

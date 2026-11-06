@@ -3,7 +3,7 @@
 
 use time::OffsetDateTime;
 
-use crate::{AppState, entries, queue};
+use crate::{AppState, attachments, entries, queue};
 
 /// The one reason the author reads for a rejection in review. The author already saw
 /// `review`, which `/skill.md` says means a possible info hazard, so a category would
@@ -39,7 +39,13 @@ pub async fn decide(
     };
     let changed = match decision {
         Decision::Hold => entries::hold(&state.pool, seq).await?,
-        Decision::Publish => entries::owner_pass(&state.pool, seq).await?,
+        Decision::Publish => {
+            let passed = entries::owner_pass(&state.pool, seq).await?;
+            if passed {
+                attachments::pass_unjudged_files(&state.pool, seq).await?;
+            }
+            passed
+        }
         Decision::Reject => {
             let reasons = serde_json::json!([REJECTED_IN_REVIEW]).to_string();
             entries::owner_reject(&state.pool, seq, &reasons).await?

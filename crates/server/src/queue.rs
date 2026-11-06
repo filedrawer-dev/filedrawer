@@ -8,8 +8,8 @@ use sqlx::SqlitePool;
 use time::OffsetDateTime;
 
 use crate::embargo::embargoed_until;
-use crate::screening::{Call, MAX_ATTEMPTS, ModelError, Verdict};
-use crate::{AppState, accounts, entries, series, time::stamp};
+use crate::screening::{Call, MAX_ATTEMPTS, ModelError, Subject, Verdict};
+use crate::{AppState, accounts, attachments, entries, series, time::stamp};
 
 /// The share of the day's cap one account may spend (design.md: 10%).
 const ACCOUNT_SHARE_PERCENT: i64 = 10;
@@ -20,6 +20,20 @@ struct Waiting {
     account_id: String,
     source: String,
     screen_attempts: i64,
+}
+
+/// Screens entry `seq` at once, as when its author ends the hold early, unless it
+/// cites attachments: those wait in the queue behind entries without (design.md,
+/// Attached code), for the worker. Returns its status afterwards.
+pub async fn screen_now(
+    state: &AppState,
+    seq: i64,
+    now: OffsetDateTime,
+) -> Result<Option<String>, sqlx::Error> {
+    if entries::has_attachments(&state.pool, seq).await? {
+        return entries::status(&state.pool, seq).await;
+    }
+    screen_entry(state, seq, now).await
 }
 
 /// Screens entry `seq` if it is in `screening` without a verdict and the caps allow,
@@ -53,6 +67,22 @@ async fn screen_waiting(
     waiting: &Waiting,
     now: OffsetDateTime,
 ) -> Result<(), sqlx::Error> {
+    // The files first: they're screened once by hash, and an entry whose files must
+    // wait shouldn't spend on its text yet. A guarded or smoke-test account's files
+    // aren't screened; its text decides, as `screen_text` does for it.
+    let unscreened_account = state.smoke_account.as_deref() == Some(waiting.account_id.as_str())
+        || accounts::is_guarded(&state.pool, &waiting.account_id).await?;
+    let mut file_doubts = Vec::new();
+    if !unscreened_account {
+        match screen_files(state, waiting, now).await? {
+            Files::Clear(doubts) => file_doubts = doubts,
+            Files::Wait => return Ok(()),
+            Files::Decided(verdict) => {
+                entries::store_verdict(&state.pool, waiting.seq, &verdict).await?;
+                return settle(state, waiting.seq, now).await;
+            }
+        }
+    }
     let text = screened_text(state, waiting).await?;
     let verdict = match screen_text(state, &waiting.account_id, Some(waiting.seq), &text, now)
         .await?
@@ -74,6 +104,20 @@ async fn screen_waiting(
         Screened::Failed(ModelError::Unreadable(_)) => Verdict::Review {
             why: format!("screening replies couldn't be read {MAX_ATTEMPTS} times"),
         },
+    };
+    // The files' lesser doubts join the text's, for the owner's list.
+    let verdict = match verdict {
+        Verdict::Pass { note, hazard_doubt } if !file_doubts.is_empty() => Verdict::Pass {
+            note,
+            hazard_doubt: Some(
+                hazard_doubt
+                    .into_iter()
+                    .chain(file_doubts)
+                    .collect::<Vec<_>>()
+                    .join("; "),
+            ),
+        },
+        verdict => verdict,
     };
     entries::store_verdict(&state.pool, waiting.seq, &verdict).await?;
     settle(state, waiting.seq, now).await
@@ -131,7 +175,15 @@ pub async fn screen_text(
         return Ok(Screened::OverCap);
     }
     let screening = state.screener.screen(text).await;
-    log_calls(&state.pool, entry_seq, account_id, &screening.calls, now).await?;
+    log_calls(
+        &state.pool,
+        entry_seq,
+        account_id,
+        &screening.calls,
+        now,
+        Subject::Submission,
+    )
+    .await?;
     Ok(match screening.verdict {
         Ok(verdict) => Screened::Verdict(verdict),
         Err(error) => {
@@ -150,6 +202,137 @@ async fn over_cap(
     let (total, account) = spent_on(&state.pool, account_id, now).await?;
     let cap = state.screening_daily_nano_usd;
     Ok(total >= cap || account.saturating_mul(100) >= cap.saturating_mul(ACCOUNT_SHARE_PERCENT))
+}
+
+/// Whether attached code may not be screened now: the day, or the account's share,
+/// is spent, or attachments have spent half of either (design.md, Attached code).
+async fn attachments_over_cap(
+    state: &AppState,
+    account_id: &str,
+    now: OffsetDateTime,
+) -> Result<bool, sqlx::Error> {
+    if over_cap(state, account_id, now).await? {
+        return Ok(true);
+    }
+    let day = format!("{}%", now.date());
+    let row = sqlx::query!(
+        r#"SELECT COALESCE(SUM(cost_nano_usd), 0) AS "total!: i64",
+                  COALESCE(SUM(CASE WHEN account_id = ?2 THEN cost_nano_usd END), 0) AS "account!: i64"
+           FROM screenings WHERE at LIKE ?1 AND attachment = 1"#,
+        day,
+        account_id
+    )
+    .fetch_one(&state.pool)
+    .await?;
+    let cap = state.screening_daily_nano_usd;
+    Ok(row.total.saturating_mul(2) >= cap
+        || row.account.saturating_mul(200) >= cap.saturating_mul(ACCOUNT_SHARE_PERCENT))
+}
+
+/// What screening the attached files of `waiting` came to.
+enum Files {
+    /// Every file passed, or there are none: screen the entry's text. Holds each
+    /// lesser hazard doubt, naming its file, for the owner.
+    Clear(Vec<String>),
+    /// A file waits for the caps or an outage; so does the entry.
+    Wait,
+    /// A file failed or went to review, and so does the entry.
+    Decided(Verdict),
+}
+
+/// The screen's call on one file: a pass, with any lesser hazard doubt for the
+/// owner, a rejection, or review, each with its reason.
+enum FileCall {
+    Pass(Option<String>),
+    Reject(String),
+    Review(String),
+}
+
+/// Screens the files of `waiting`'s set that have no verdict yet, chunk by chunk,
+/// within the attachment caps. A pass or a rejection is stored by hash, for every
+/// set that holds the file; review isn't, since the owner decides per entry.
+async fn screen_files(
+    state: &AppState,
+    waiting: &Waiting,
+    now: OffsetDateTime,
+) -> Result<Files, sqlx::Error> {
+    let mut doubts = Vec::new();
+    for file in attachments::entry_files(&state.pool, waiting.seq).await? {
+        let call = match file.verdict.as_deref() {
+            Some("pass") => FileCall::Pass(file.reason.clone()),
+            Some(_) => FileCall::Reject(file.reason.clone().unwrap_or_default()),
+            None => match screen_file(state, waiting, &file, now).await? {
+                Some(call) => call,
+                None => return Ok(Files::Wait),
+            },
+        };
+        match call {
+            FileCall::Pass(doubt) => {
+                doubts.extend(doubt.map(|doubt| format!("attached file {}: {doubt}", file.path)));
+            }
+            FileCall::Reject(reason) => {
+                return Ok(Files::Decided(Verdict::Reject {
+                    reasons: vec![format!("attached file {}: {reason}", file.path)],
+                }));
+            }
+            FileCall::Review(why) => {
+                return Ok(Files::Decided(Verdict::Review {
+                    why: format!("attached file {}: {why}", file.path),
+                }));
+            }
+        }
+    }
+    Ok(Files::Clear(doubts))
+}
+
+/// Screens one file, chunk by chunk, and stores a pass or a rejection. `None` when
+/// it must wait: the caps are spent, a call failed, or a reply couldn't be read
+/// (counted against the entry, which goes to review after too many).
+async fn screen_file(
+    state: &AppState,
+    waiting: &Waiting,
+    file: &attachments::EntryFile,
+    now: OffsetDateTime,
+) -> Result<Option<FileCall>, sqlx::Error> {
+    let mut doubts = Vec::new();
+    for chunk in attachments::chunks(&file.text) {
+        if attachments_over_cap(state, &waiting.account_id, now).await? {
+            return Ok(None);
+        }
+        let screening = state.screener.screen_as(chunk, Subject::Code).await;
+        log_calls(
+            &state.pool,
+            Some(waiting.seq),
+            &waiting.account_id,
+            &screening.calls,
+            now,
+            Subject::Code,
+        )
+        .await?;
+        match screening.verdict {
+            Ok(Verdict::Pass { hazard_doubt, .. }) => doubts.extend(hazard_doubt),
+            Ok(Verdict::Reject { reasons }) => {
+                let reason = reasons.join("; ");
+                attachments::store_file_verdict(&state.pool, &file.sha256, "reject", Some(&reason))
+                    .await?;
+                return Ok(Some(FileCall::Reject(reason)));
+            }
+            Ok(Verdict::Review { why }) => return Ok(Some(FileCall::Review(why))),
+            Err(ModelError::Unreadable(_)) if waiting.screen_attempts + 1 >= MAX_ATTEMPTS => {
+                return Ok(Some(FileCall::Review(format!(
+                    "screening replies couldn't be read {MAX_ATTEMPTS} times"
+                ))));
+            }
+            Err(ModelError::Unreadable(_)) => {
+                entries::count_screen_attempt(&state.pool, waiting.seq).await?;
+                return Ok(None);
+            }
+            Err(_) => return Ok(None),
+        }
+    }
+    let doubt = (!doubts.is_empty()).then(|| doubts.join("; "));
+    attachments::store_file_verdict(&state.pool, &file.sha256, "pass", doubt.as_deref()).await?;
+    Ok(Some(FileCall::Pass(doubt)))
 }
 
 /// What screening has spent today (UTC), in all and by `account_id`.
@@ -173,28 +356,33 @@ pub async fn spent_on(
 
 /// Logs each model call and what it cost (design.md: "the server logs what each
 /// screening cost").
+/// Calls whose `subject` is attached code are marked so: they may spend at most
+/// half the caps.
 pub async fn log_calls(
     pool: &SqlitePool,
     entry_seq: Option<i64>,
     account_id: &str,
     calls: &[Call],
     now: OffsetDateTime,
+    subject: Subject,
 ) -> Result<(), sqlx::Error> {
     let at = stamp(now);
+    let attachment = subject == Subject::Code;
     for call in calls {
         let model = call.model.id();
         let cost = call.model.cost_nano_usd(call.usage);
         sqlx::query!(
             "INSERT INTO screenings (entry_seq, account_id, model, input_tokens, output_tokens,
-                 cost_nano_usd, at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
+                 cost_nano_usd, at, attachment)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             entry_seq,
             account_id,
             model,
             call.usage.input_tokens,
             call.usage.output_tokens,
             cost,
-            at
+            at,
+            attachment
         )
         .execute(pool)
         .await?;
@@ -322,7 +510,7 @@ pub async fn unscreened(pool: &SqlitePool) -> Result<Vec<i64>, sqlx::Error> {
     sqlx::query_scalar!(
         r#"SELECT seq AS "seq!: i64" FROM entries
            WHERE status = 'screening' AND screen_verdict IS NULL
-           ORDER BY queue_position, submitted_at, seq"#
+           ORDER BY attachment_set_seq IS NOT NULL, queue_position, submitted_at, seq"#
     )
     .fetch_all(pool)
     .await

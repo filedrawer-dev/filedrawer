@@ -469,3 +469,14 @@ fn slug_references_are_found_in_fields_and_body_and_end_at_punctuation() {
     assert!(!analyzer::is_valid_slug("x\nstatus: public"));
     assert!(!analyzer::is_valid_slug(&"a".repeat(65)));
 }
+
+#[test]
+fn attachments_names_the_attachment_set_an_entry_cites() {
+    let analysis = analyze(&example_with(
+        "tags: [steering, refusal, transfer]",
+        "tags: [steering, refusal, transfer]\nattachments: as-0123abcd",
+    ));
+    assert_eq!(analysis.fields.attachments.as_deref(), Some("as-0123abcd"));
+    assert_eq!(analysis.unrecognised_fields, Vec::<String>::new());
+    assert_eq!(analyze(EXAMPLE).fields.attachments, None);
+}

@@ -38,6 +38,16 @@ pub enum MailError {
 }
 
 /// Sends through an SMTP server, over implicit TLS.
+/// Sends `email` without waiting for it; a failure is logged.
+pub fn send_later(mailer: &std::sync::Arc<dyn Mailer>, email: Email) {
+    let mailer = mailer.clone();
+    tokio::spawn(async move {
+        if let Err(error) = mailer.send(email).await {
+            tracing::error!(%error, "an email wasn't sent");
+        }
+    });
+}
+
 pub struct SmtpMailer {
     transport: AsyncSmtpTransport<Tokio1Executor>,
     from: Mailbox,

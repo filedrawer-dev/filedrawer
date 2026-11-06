@@ -26,6 +26,8 @@ pub struct PublicEntry {
     pub superseded_by: Option<String>,
     /// The screen's doubt that the body matches `outcome`, for the card.
     pub screening_note: Option<String>,
+    /// It cites an attachment set.
+    pub code_attached: bool,
 }
 
 /// The card context only the server knows: the entry's ID and its author, whose
@@ -39,6 +41,20 @@ pub fn card_context(id: &str, account_id: &str, display_name: Option<&str>) -> C
             handles: Vec::new(),
         }),
         ..CardContext::default()
+    }
+}
+
+/// The card context of an entry not yet public, as its author sees it: its
+/// attachment set, checked at submission, means "code attached".
+pub fn own_card_context(
+    id: &str,
+    account_id: &str,
+    display_name: &str,
+    analysis: &Analysis,
+) -> CardContext {
+    CardContext {
+        code_attached: analysis.fields.attachments.is_some(),
+        ..card_context(id, account_id, Some(display_name))
     }
 }
 
@@ -62,6 +78,7 @@ impl PublicEntry {
         let context = CardContext {
             superseded_by_version: superseded_by,
             screening_note: self.screening_note.clone(),
+            code_attached: self.code_attached,
             ..card_context(&self.id, &self.account_id, self.display_name.as_deref())
         };
         render_card(&analyze(&self.source), &context)
@@ -112,6 +129,8 @@ pub struct NewEntry<'a> {
     pub register_slug: bool,
     /// The series version it cites, checked beforehand.
     pub series: Option<&'a Cited>,
+    /// The attachment set it cites, checked beforehand to be its account's.
+    pub attachments: Option<i64>,
 }
 
 /// Stores an accepted submission as `pending` until its hold ends, with the columns
@@ -139,6 +158,7 @@ pub async fn insert_on(
         batch_seq,
         register_slug,
         series,
+        attachments,
     } = *entry;
     let id = ids::new_id();
     let submitted_at = now();
@@ -151,8 +171,8 @@ pub async fn insert_on(
     let seq = sqlx::query_scalar!(
         r#"INSERT INTO entries (id, account_id, status, source, submitted_at, first_submitted_at,
                embargo_until, analyzer_version, outcome, kind, stage, hold_until, previous_seq,
-               batch_seq, series_seq, series_version, series_section)
-           VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               batch_seq, series_seq, series_version, series_section, attachment_set_seq)
+           VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            RETURNING seq AS "seq!: i64""#,
         id,
         account_id,
@@ -169,7 +189,8 @@ pub async fn insert_on(
         batch_seq,
         series_seq,
         series_version,
-        series_section
+        series_section,
+        attachments
     )
     .fetch_one(&mut *transaction)
     .await?;
@@ -230,6 +251,7 @@ pub async fn replace(
     analysis: &Analysis,
     hold_until: &str,
     series: Option<&Cited>,
+    attachments: Option<i64>,
 ) -> Result<bool, sqlx::Error> {
     let submitted_at = now();
     let columns = columns(analysis);
@@ -238,7 +260,8 @@ pub async fn replace(
     let done = sqlx::query!(
         "UPDATE entries SET source = ?, submitted_at = ?, embargo_until = ?,
              analyzer_version = ?, outcome = ?, kind = ?, stage = ?, hold_until = ?,
-             series_seq = ?, series_version = ?, series_section = ?, series_removed_at = NULL
+             series_seq = ?, series_version = ?, series_section = ?, series_removed_at = NULL,
+             attachment_set_seq = ?
          WHERE seq = ? AND status = 'pending'",
         source,
         submitted_at,
@@ -251,6 +274,7 @@ pub async fn replace(
         series_seq,
         series_version,
         series_section,
+        attachments,
         seq
     )
     .execute(&mut *transaction)
@@ -533,7 +557,8 @@ pub async fn public_entry(pool: &SqlitePool, id: &str) -> Result<Option<PublicEn
                   a.display_name AS "display_name?: String", e.submitted_at, e.published_at,
                   (SELECT p.id FROM entries p WHERE p.seq = e.previous_seq AND p.status = 'public') AS "previous_id?",
                   (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS "superseded_by?",
-                  e.screening_note
+                  e.screening_note,
+                  e.attachment_set_seq IS NOT NULL AS "code_attached!: bool"
          FROM entries e JOIN authors a ON a.id = e.account_id
          WHERE e.id = ? AND e.status = 'public'"#,
         id
@@ -575,7 +600,8 @@ pub async fn search(
                   a.display_name AS "display_name?: String", e.submitted_at, e.published_at,
                   (SELECT p.id FROM entries p WHERE p.seq = e.previous_seq AND p.status = 'public') AS "previous_id?",
                   (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS "superseded_by?",
-                  e.screening_note
+                  e.screening_note,
+                  e.attachment_set_seq IS NOT NULL AS "code_attached!: bool"
            FROM entries e JOIN authors a ON a.id = e.account_id
            WHERE e.status = 'public'
              -- Only the latest version in each chain (design.md, Entry lifecycle).
@@ -620,7 +646,8 @@ pub async fn all_public(pool: &SqlitePool) -> Result<Vec<PublicEntry>, sqlx::Err
                   a.display_name AS "display_name?: String", e.submitted_at, e.published_at,
                   (SELECT p.id FROM entries p WHERE p.seq = e.previous_seq AND p.status = 'public') AS "previous_id?",
                   (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS "superseded_by?",
-                  e.screening_note
+                  e.screening_note,
+                  e.attachment_set_seq IS NOT NULL AS "code_attached!: bool"
          FROM entries e JOIN authors a ON a.id = e.account_id
          WHERE e.status = 'public'
            AND NOT EXISTS (SELECT 1 FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public')
@@ -1171,6 +1198,14 @@ pub async fn batch_failed(pool: &SqlitePool, seq: i64) -> Result<bool, sqlx::Err
     .fetch_one(pool)
     .await?;
     Ok(failed)
+}
+
+/// Whether entry `seq` cites an attachment set.
+pub async fn has_attachments(pool: &SqlitePool, seq: i64) -> Result<bool, sqlx::Error> {
+    let set = sqlx::query_scalar!("SELECT attachment_set_seq FROM entries WHERE seq = ?", seq)
+        .fetch_optional(pool)
+        .await?;
+    Ok(set.flatten().is_some())
 }
 
 /// The seq of entry `id`, whatever its status.

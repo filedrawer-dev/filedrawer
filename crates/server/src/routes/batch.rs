@@ -20,7 +20,7 @@ use crate::jobs::hold_until;
 use crate::links::{self, Linked, SlugRule};
 use crate::queue;
 use crate::respond::{DELIMITER, Format, card_and_warnings};
-use crate::routes::submit::{Accepted, accept, cited_series};
+use crate::routes::submit::{Accepted, accept, cited_series, cited_set};
 use crate::series::Cited;
 use crate::{AppState, time};
 
@@ -156,11 +156,17 @@ pub async fn submit_batch(
             .collect();
         problems.extend(links::problems(&state, &account, &linked, &run_ids).await?);
     }
+    // Each member's series cite and attachment set.
     let mut cites = Vec::new();
     for (member, label) in accepted.iter().zip(&labels) {
-        match cited_series(&state, &account, member).await? {
-            Ok(cited) => cites.push(cited),
-            Err(reason) => problems.push(format!("{label}: {reason}")),
+        let series = cited_series(&state, &account, member).await?;
+        let set = cited_set(&state, &account, member).await?;
+        match (series, set) {
+            (Ok(series), Ok(set)) => cites.push((series, set)),
+            (series, set) => {
+                problems.extend(series.err().map(|reason| format!("{label}: {reason}")));
+                problems.extend(set.err().map(|reason| format!("{label}: {reason}")));
+            }
         }
     }
     if !problems.is_empty() {
@@ -195,7 +201,7 @@ async fn store<'a>(
     account: &TokenAccount,
     runs: &[(String, String)],
     accepted: &'a [Accepted],
-    cites: &[Option<Cited>],
+    cites: &[(Option<Cited>, Option<i64>)],
     publish_at: &str,
 ) -> Result<(String, Vec<(String, &'a Accepted)>), sqlx::Error> {
     let mut transaction = state.pool.begin().await?;
@@ -204,7 +210,7 @@ async fn store<'a>(
         entries::insert_run(&mut transaction, &account.id, run_id, declaration).await?;
     }
     let mut members = Vec::new();
-    for (member, cited) in accepted.iter().zip(cites) {
+    for (member, (cited, set)) in accepted.iter().zip(cites) {
         let new = NewEntry {
             account_id: &account.id,
             source: &member.source,
@@ -214,6 +220,7 @@ async fn store<'a>(
             batch_seq: Some(batch_seq),
             register_slug: true,
             series: cited.as_ref(),
+            attachments: *set,
         };
         let (_, id) = entries::insert_on(&mut transaction, &new).await?;
         members.push((id, member));
@@ -243,7 +250,8 @@ fn batch_reply(
     text.push_str(&format!("{DELIMITER}\n"));
     let mut json_members = Vec::new();
     for (id, member) in members {
-        let context = entries::card_context(id, &account.id, Some(&account.display_name));
+        let context =
+            entries::own_card_context(id, &account.id, &account.display_name, &member.analysis);
         let card = render_card(&member.analysis, &context);
         let warnings: Vec<String> = member
             .analysis
@@ -297,7 +305,7 @@ pub async fn publish_batch(
         entries::start_screening(&state.pool, *seq, None).await?;
     }
     for seq in &members {
-        queue::screen_entry(&state, *seq, now).await?;
+        queue::screen_now(&state, *seq, now).await?;
     }
     let statuses = entries::batch_statuses(&state.pool, &id).await?;
     let mut text = format!("id: {id}\n");

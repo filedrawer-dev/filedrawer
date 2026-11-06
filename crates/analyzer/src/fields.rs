@@ -38,6 +38,9 @@ pub struct Fields {
     pub published_in: Option<String>,
     pub slug: Option<String>,
     pub series: Option<String>,
+    /// The attachment set holding the entry's attached code (design.md, Attached
+    /// code), as `as-...`.
+    pub attachments: Option<String>,
     pub written_by: Vec<Writer>,
     pub embargo_until: Option<String>,
 }

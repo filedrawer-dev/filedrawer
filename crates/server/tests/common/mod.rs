@@ -33,6 +33,8 @@ use tower::ServiceExt;
 
 /// The site's address in tests; emails link to it and forms must come from it.
 pub const PUBLIC_URL: &str = "http://localhost";
+/// The files host in tests.
+pub const FILES_URL: &str = "http://files.localhost";
 
 /// The line between the server's own fields and author text (design.md, Agent
 /// interface).
@@ -63,6 +65,8 @@ const SINGLE_KEYS: &[&str] = &[
     "description",
     "removed",
     "series_description",
+    "attachments",
+    "bytes",
     "error",
 ];
 
@@ -79,7 +83,10 @@ const INSTRUCTION_LINES: &[&str] = &[
 
 /// A line above the delimiter that starts as the server's own instruction does, with
 /// the series ID in it.
-const INSTRUCTION_PREFIXES: &[&str] = &["Keep the key private. A teammate's agent joins by"];
+const INSTRUCTION_PREFIXES: &[&str] = &[
+    "Keep the key private. A teammate's agent joins by",
+    "Cite it in each entry's front matter as",
+];
 
 /// Checks the part of a plain-text reply above its first delimiter
 /// (CODING_STANDARDS.md, Untrusted text): only the server's own `key: value` lines,
@@ -135,6 +142,8 @@ pub fn state(pool: sqlx::SqlitePool, outbox: &Outbox) -> AppState {
         mailer: Arc::new(outbox.clone()),
         public_url: PUBLIC_URL.to_string(),
         smoke_account: None,
+        files_url: Some(FILES_URL.to_string()),
+        attachment_store_cap_bytes: filedrawer_server::ATTACHMENT_STORE_CAP_BYTES,
     }
 }
 

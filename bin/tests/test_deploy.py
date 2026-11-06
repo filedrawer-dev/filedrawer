@@ -263,3 +263,22 @@ def test_the_smoke_test_runs_after_the_deploy_and_waits_for_it():
     assert re.search(
         r"ops/smoke-staging --wait \d+ https://staging\.filedrawer\.dev", job
     )
+
+
+def test_the_files_host_has_a_caddy_site_behind_the_staging_gate_and_a_dns_record():
+    caddy = (REPO / "ops/remote/caddy.sh").read_text()
+    sites = re.findall(r"^([a-z.]+\.filedrawer\.dev) \{\n(.*?)^\}", caddy, re.M | re.S)
+    blocks = dict(sites)
+    assert "files.staging.filedrawer.dev" in blocks, blocks.keys()
+    for name in ("staging.filedrawer.dev", "files.staging.filedrawer.dev"):
+        block = blocks[name]
+        assert "X-Staging-Key" in block or "import staging_gate" in block, name
+        assert "basic_auth" in block or "import staging_gate" in block, name
+        assert (
+            "reverse_proxy 127.0.0.1:8081" in block or "import staging_gate" in block
+        ), name
+    service = (REPO / "ops/remote/staging-service.sh").read_text()
+    assert "FILEDRAWER_FILES_URL=https://files.staging.filedrawer.dev" in service
+    wizard = (REPO / "ops/provision-vps").read_text()
+    dns = re.search(r"for name in (.*?); do", wizard).group(1)
+    assert '"files.staging.filedrawer.dev"' in dns

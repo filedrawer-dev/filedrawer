@@ -17,6 +17,14 @@
 <pre>{{ card }}</pre>
 <h2>Text</h2>
 <pre>{{ entry.source }}</pre>
+{% if !files.is_empty() %}
+<h2>Attached files</h2>
+<p>Publishing the entry passes any file the screen hasn't judged, for later entries too.</p>
+{% for file in files %}
+<h3><code>{{ file.path }}</code> ({{ file.verdict.as_deref().unwrap_or("not screened") }})</h3>
+<pre>{{ file.text }}</pre>
+{% endfor %}
+{% endif %}
 {% if !runs.is_empty() %}
 <h2>Runs it uses</h2>
 <p>Each run's description is shown with the entries that use it, once they are all public.</p>

@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT attachment_set_seq FROM entries WHERE seq = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "attachment_set_seq",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "attachment_set_seq"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "a43cc11c5a9c626d2a48a55cfe18577911df7ed064811376fe732e6b91273b49"
+}

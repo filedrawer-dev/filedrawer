@@ -129,3 +129,19 @@ fn staging_reads_the_smoke_account_and_production_refuses_it() {
     assert_eq!(error, ConfigError::SmokeAccountInProduction);
     assert!(error.to_string().contains("FILEDRAWER_SMOKE_ACCOUNT"));
 }
+
+#[test]
+fn the_files_url_is_read_without_a_trailing_slash_and_must_be_an_http_address() {
+    assert_eq!(config(&[]).unwrap().files_url, None);
+    let set = config(&[(
+        "FILEDRAWER_FILES_URL",
+        "https://files.staging.filedrawer.dev/",
+    )])
+    .unwrap();
+    assert_eq!(
+        set.files_url.as_deref(),
+        Some("https://files.staging.filedrawer.dev")
+    );
+    let bad = config(&[("FILEDRAWER_FILES_URL", "files.staging.filedrawer.dev")]).unwrap_err();
+    assert!(bad.to_string().contains("FILEDRAWER_FILES_URL"), "{bad}");
+}

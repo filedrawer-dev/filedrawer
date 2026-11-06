@@ -278,6 +278,16 @@ pub async fn session_account(
     .await
 }
 
+/// The email addresses of the admin accounts, for notices to the owner.
+pub async fn admin_emails(pool: &SqlitePool) -> Result<Vec<String>, sqlx::Error> {
+    sqlx::query_scalar!(
+        r#"SELECT email AS "email!" FROM accounts
+           WHERE is_admin = 1 AND email IS NOT NULL AND deleted_at IS NULL"#
+    )
+    .fetch_all(pool)
+    .await
+}
+
 /// Whether `account_id` is the admin (design.md, Admin).
 pub async fn is_admin(pool: &SqlitePool, account_id: &str) -> Result<bool, sqlx::Error> {
     let admin = sqlx::query_scalar!(

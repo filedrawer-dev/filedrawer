@@ -9,6 +9,7 @@ FILEDRAWER_LISTEN=127.0.0.1:8081
 FILEDRAWER_ENVIRONMENT=staging
 FILEDRAWER_SCREENER=pass-all
 FILEDRAWER_PUBLIC_URL=https://staging.filedrawer.dev
+FILEDRAWER_FILES_URL=https://files.staging.filedrawer.dev
 RUST_LOG=info
 CONF
 chown root:filedrawer /etc/filedrawer/staging.env

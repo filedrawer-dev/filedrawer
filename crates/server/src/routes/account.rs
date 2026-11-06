@@ -79,12 +79,7 @@ fn send(state: &AppState, to: &str, subject: &str, body: String) {
         subject: subject.to_string(),
         body,
     };
-    let mailer = state.mailer.clone();
-    tokio::spawn(async move {
-        if let Err(error) = mailer.send(email).await {
-            tracing::error!(%error, "an email wasn't sent");
-        }
-    });
+    crate::mail::send_later(&state.mailer, email);
 }
 
 async fn send_verification(state: &AppState, account_id: &str, to: &str) -> Result<(), AppError> {

@@ -265,3 +265,9 @@ Choices the docs left open, made while building the analyzer. Once the owner set
 - Options: move every waiting item of the account to review the moment the guard trips, or check the account as each item leaves the queue for screening.
 - Chosen: as each item leaves, without a model call and past a spent cap, so within one worker run. design.md says "The server checks the account again each time an item leaves its queue for screening."
 - Against: "so does everything it already has waiting" reads as at once; until the worker runs, the owner's queue doesn't yet show them.
+
+## Status codes for refused attachment uploads
+
+- Options: 422 for every refused `POST /attachments`, as for refused entries, or a code per cause.
+- Chosen: 422 for bad origins or text, 413 for a set over 1 MiB, 429 past the account's 10 MB a day, 507 when the site's storage is full, 501 when the server has no files host. An agent can tell "fix the set" from "wait" from "link the code instead" by the code alone, and an entry over 100 KB is already a 413.
+- Against: the brief said 422, and the entry routes answer every content refusal with 422 except size.

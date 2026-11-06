@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COALESCE(SUM(bytes), 0) AS \"held!: i64\" FROM files",
+  "describe": {
+    "columns": [
+      {
+        "name": "held!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "142de5687a42d59e21b34afd2f751f3fb55750943c1b3f040d3a3e90201ef70f"
+}

@@ -30,6 +30,9 @@ pub struct Config {
     /// Staging's smoke-test account, whose entries aren't screened, so CI's smoke
     /// test calls no model after each deploy. Production refuses it.
     pub smoke_account: Option<String>,
+    /// Where attached files are served, on a host of their own with no cookies
+    /// (design.md, Attached code), with no trailing slash. `None` turns attachments off.
+    pub files_url: Option<String>,
 }
 
 /// How to reach the SMTP server. Its Debug output leaves the password out.
@@ -186,6 +189,19 @@ impl Config {
         if environment == Environment::Production && matches!(screener, Screener::PassAll) {
             return Err(ConfigError::UnscreenedProduction);
         }
+        let files_url = match var("FILEDRAWER_FILES_URL").filter(|url| !url.is_empty()) {
+            None => None,
+            Some(text) if text.starts_with("https://") || text.starts_with("http://") => {
+                Some(text.trim_end_matches('/').to_string())
+            }
+            Some(text) => {
+                return Err(ConfigError::Invalid {
+                    name: "FILEDRAWER_FILES_URL",
+                    value: text,
+                    expected: "the files host's address, such as https://files.staging.filedrawer.dev",
+                });
+            }
+        };
         let smoke_account = var("FILEDRAWER_SMOKE_ACCOUNT").filter(|id| !id.is_empty());
         if environment == Environment::Production && smoke_account.is_some() {
             return Err(ConfigError::SmokeAccountInProduction);
@@ -199,6 +215,7 @@ impl Config {
             public_url,
             smtp,
             smoke_account,
+            files_url,
         })
     }
 }

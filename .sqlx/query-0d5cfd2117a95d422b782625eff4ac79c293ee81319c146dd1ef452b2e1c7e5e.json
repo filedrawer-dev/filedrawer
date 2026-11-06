@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT f.text FROM files f WHERE f.sha256 = ?1 AND EXISTS (\n             SELECT 1 FROM attachment_files af\n             JOIN entries e ON e.attachment_set_seq = af.set_seq\n             WHERE af.sha256 = ?1 AND e.status = 'public')",
+  "describe": {
+    "columns": [
+      {
+        "name": "text",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "files",
+            "name": "text"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "0d5cfd2117a95d422b782625eff4ac79c293ee81319c146dd1ef452b2e1c7e5e"
+}

@@ -19,7 +19,7 @@ use crate::jobs::{end_hold, hold_until};
 use crate::links::{self, Linked, SlugRule};
 use crate::respond::{DELIMITER, Format, card_and_warnings};
 use crate::series::{self, Cited};
-use crate::{AppState, time};
+use crate::{AppState, attachments, time};
 use ::time::OffsetDateTime;
 use ::time::format_description::well_known::Rfc3339;
 use analyzer::{SeriesCite, parse_series_cite, without_series};
@@ -156,6 +156,40 @@ pub(crate) async fn cited_series(
         .map(Some))
 }
 
+/// The attachment set an accepted entry cites, which must be its account's own.
+/// `Err` holds the reason to refuse it.
+pub(crate) async fn cited_set(
+    state: &AppState,
+    account: &TokenAccount,
+    accepted: &Accepted,
+) -> Result<Result<Option<i64>, String>, AppError> {
+    let Some(id) = accepted.analysis.fields.attachments.as_deref() else {
+        return Ok(Ok(None));
+    };
+    Ok(
+        match attachments::owned_set(&state.pool, &account.id, id).await? {
+            Some(seq) => Ok(Some(seq)),
+            None => Err(format!(
+                "`attachments: {id}` names no attachment set this account uploaded; upload one with POST /attachments"
+            )),
+        },
+    )
+}
+
+/// `cited_set` for one entry, refusing it with the reason.
+async fn one_set(
+    state: &AppState,
+    account: &TokenAccount,
+    accepted: &Accepted,
+) -> Result<Option<i64>, AppError> {
+    cited_set(state, account, accepted)
+        .await?
+        .map_err(|reason| AppError::Refused {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            reasons: vec![reason],
+        })
+}
+
 /// `cited_series` for one entry, refusing it with the reason.
 async fn one_cite(
     state: &AppState,
@@ -190,7 +224,7 @@ fn held_reply(state: &AppState, format: Format, status: StatusCode, held: &Held<
         publish_at,
         previous,
     } = *held;
-    let context = entries::card_context(id, &account.id, Some(&account.display_name));
+    let context = entries::own_card_context(id, &account.id, &account.display_name, analysis);
     let card = render_card(analysis, &context);
     let warnings: Vec<String> = analysis.warnings.iter().map(ToString::to_string).collect();
     let embargo = parse_date(analysis.fields.embargo_until.as_deref()).map(|date| date.to_string());
@@ -229,6 +263,7 @@ pub async fn submit(
     let accepted = accept(&body, None)?;
     check_links(&state, &account, &accepted, SlugRule::New, None).await?;
     let cited = one_cite(&state, &account, &accepted).await?;
+    let set = one_set(&state, &account, &accepted).await?;
     let publish_at = hold_until(time::now_utc());
     let new = NewEntry {
         account_id: &account.id,
@@ -239,6 +274,7 @@ pub async fn submit(
         batch_seq: None,
         register_slug: true,
         series: cited.as_ref(),
+        attachments: set,
     };
     let (_, id) = entries::insert(&state.pool, &new).await?;
     let held = Held {
@@ -292,6 +328,7 @@ pub async fn new_version(
     )
     .await?;
     let cited = one_cite(&state, &account, &accepted).await?;
+    let set = one_set(&state, &account, &accepted).await?;
     let publish_at = hold_until(time::now_utc());
     let new = NewEntry {
         account_id: &account.id,
@@ -305,6 +342,7 @@ pub async fn new_version(
         batch_seq: None,
         register_slug,
         series: cited.as_ref(),
+        attachments: set,
     };
     let inserted = entries::insert(&state.pool, &new).await;
     let (_, new_id) = match inserted {
@@ -416,6 +454,7 @@ pub async fn resubmit(
     )
     .await?;
     let cited = one_cite(&state, &account, &accepted).await?;
+    let set = one_set(&state, &account, &accepted).await?;
     let publish_at = hold_until(time::now_utc());
     let replaced = entries::replace(
         &state.pool,
@@ -424,6 +463,7 @@ pub async fn resubmit(
         &accepted.analysis,
         &publish_at,
         cited.as_ref(),
+        set,
     )
     .await?;
     if !replaced {

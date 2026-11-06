@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT e.seq AS \"seq!: i64\", e.id, e.source, e.account_id,\n                  a.display_name AS \"display_name?: String\", e.submitted_at, e.published_at,\n                  (SELECT p.id FROM entries p WHERE p.seq = e.previous_seq AND p.status = 'public') AS \"previous_id?\",\n                  (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS \"superseded_by?\",\n                  e.screening_note\n         FROM entries e JOIN authors a ON a.id = e.account_id\n         WHERE e.id = ? AND e.status = 'public'",
+  "query": "SELECT e.seq AS \"seq!: i64\", e.id, e.source, e.account_id,\n                  a.display_name AS \"display_name?: String\", e.submitted_at, e.published_at,\n                  (SELECT p.id FROM entries p WHERE p.seq = e.previous_seq AND p.status = 'public') AS \"previous_id?\",\n                  (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS \"superseded_by?\",\n                  e.screening_note,\n                  e.attachment_set_seq IS NOT NULL AS \"code_attached!: bool\"\n         FROM entries e JOIN authors a ON a.id = e.account_id\n         WHERE e.id = ? AND e.status = 'public'",
   "describe": {
     "columns": [
       {
@@ -107,6 +107,12 @@
             "name": "screening_note"
           }
         }
+      },
+      {
+        "name": "code_attached!: bool",
+        "ordinal": 10,
+        "type_info": "Integer",
+        "origin": "Expression"
       }
     ],
     "parameters": {
@@ -122,8 +128,9 @@
       true,
       true,
       true,
-      true
+      true,
+      false
     ]
   },
-  "hash": "bb5dcfaa8d80ea224ec3092645665366ebc61095523ca549b94f15a009cf905e"
+  "hash": "1ee2567d7ec754090f4a1ac578a287506d60048279e92d2dcb6ee9c3d3af8d19"
 }

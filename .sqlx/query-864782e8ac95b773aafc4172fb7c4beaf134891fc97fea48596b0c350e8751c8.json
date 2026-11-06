@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COALESCE(SUM(bytes), 0) AS \"spent!: i64\" FROM attachment_sets\n           WHERE account_id = ? AND created_at LIKE ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "spent!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "864782e8ac95b773aafc4172fb7c4beaf134891fc97fea48596b0c350e8751c8"
+}

@@ -14,7 +14,7 @@ use crate::review::{self, Decided, Decision};
 use crate::routes::account::SessionAccount;
 use crate::series::RefusalCall;
 use crate::time::now_utc;
-use crate::{AppState, accounts, entries, series};
+use crate::{AppState, accounts, attachments, entries, series};
 
 /// The admin's browser session.
 pub struct AdminSession;
@@ -88,6 +88,8 @@ pub async fn entry(
     // Shown with the entry once public, so the owner reads them too.
     let runs = entries::run_declarations(&state.pool, entry.seq).await?;
     let batch_failed = entries::batch_failed(&state.pool, entry.seq).await?;
+    // Its attached files, which a guarded account's entry reaches here unscreened.
+    let files = attachments::entry_files(&state.pool, entry.seq).await?;
     Ok(page(
         StatusCode::OK,
         &AdminEntryPage {
@@ -96,6 +98,7 @@ pub async fn entry(
             card: &card,
             runs: &runs,
             batch_failed,
+            files: &files,
         },
     ))
 }

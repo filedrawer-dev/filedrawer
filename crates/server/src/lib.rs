@@ -3,6 +3,7 @@
 
 mod accounts;
 pub mod admin;
+mod attachments;
 mod auth;
 pub mod config;
 pub mod db;
@@ -36,6 +37,10 @@ pub use screening::Screener;
 /// server buffer more.
 const MAX_BODY_BYTES: usize = 1024 * 1024;
 
+/// The largest `POST /attachments` body: 1 MiB of files, which JSON escaping can
+/// more than double, so the set's own 1 MiB cap is what refuses with a reason.
+const MAX_ATTACHMENT_BODY_BYTES: usize = 4 * 1024 * 1024;
+
 /// What every request handler shares.
 #[derive(Clone)]
 pub struct AppState {
@@ -50,7 +55,14 @@ pub struct AppState {
     pub public_url: String,
     /// Staging's smoke-test account (`Config::smoke_account`).
     pub smoke_account: Option<String>,
+    /// Where attached files are served (`Config::files_url`).
+    pub files_url: Option<String>,
+    /// The most bytes of attached files the site stores in all (design.md: 20 GB).
+    pub attachment_store_cap_bytes: i64,
 }
+
+/// The site's cap on stored attachments (design.md, Attached code: 20 GB).
+pub const ATTACHMENT_STORE_CAP_BYTES: i64 = 20_000_000_000;
 
 /// The router with every route.
 pub fn app(state: AppState) -> Router {
@@ -145,6 +157,11 @@ fn build(state: AppState) -> Routes<Router> {
         .route("/e/{id}/publish", post(routes::submit::publish))
         .route("/e/{id}/versions", post(routes::submit::new_version))
         .route("/entries/batch", post(routes::batch::submit_batch))
+        .route(
+            "/attachments",
+            post(routes::attachments::upload)
+                .layer(DefaultBodyLimit::max(MAX_ATTACHMENT_BODY_BYTES)),
+        )
         .route("/batches/{id}/publish", post(routes::batch::publish_batch))
         .route("/search", get(routes::read::search))
         .route("/cards.txt", get(routes::read::cards))
@@ -166,9 +183,12 @@ fn build(state: AppState) -> Routes<Router> {
         .route("/skill.md", get(routes::docs::skill))
         .route("/entry-format.md", get(routes::docs::entry_format))
         .map_router(|router| {
+            let files_host =
+                axum::middleware::from_fn_with_state(state.clone(), routes::files::files_host);
             router
                 .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
                 .layer(axum::middleware::from_fn(respond::json_errors))
+                .layer(files_host)
                 .with_state(state)
         })
 }

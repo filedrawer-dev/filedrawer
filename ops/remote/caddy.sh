@@ -50,6 +50,27 @@ Disallow: /
 		reverse_proxy 127.0.0.1:8081
 	}
 }
+
+# Staging's attached files (design.md, Attached code): the same process, which
+# answers only /f/<sha256> on this host. Behind the same key and password.
+files.staging.filedrawer.dev {
+	handle /robots.txt {
+		respond "User-agent: *
+Disallow: /
+"
+	}
+	@agent header X-Staging-Key "${STAGING_KEY}"
+	handle @agent {
+		request_header -X-Staging-Key
+		reverse_proxy 127.0.0.1:8081
+	}
+	handle {
+		basic_auth {
+			${STAGING_USER} ${hash}
+		}
+		reverse_proxy 127.0.0.1:8081
+	}
+}
 CONF
 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 systemctl enable caddy

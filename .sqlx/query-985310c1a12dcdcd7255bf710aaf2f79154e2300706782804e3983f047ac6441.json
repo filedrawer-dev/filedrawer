@@ -1,0 +1,74 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT af.sha256, af.path, f.text, f.screen_verdict AS verdict, f.screen_reason AS reason\n           FROM entries e\n           JOIN attachment_files af ON af.set_seq = e.attachment_set_seq\n           JOIN files f ON f.sha256 = af.sha256\n           WHERE e.seq = ? ORDER BY af.path",
+  "describe": {
+    "columns": [
+      {
+        "name": "sha256",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "attachment_files",
+            "name": "sha256"
+          }
+        }
+      },
+      {
+        "name": "path",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "attachment_files",
+            "name": "path"
+          }
+        }
+      },
+      {
+        "name": "text",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "files",
+            "name": "text"
+          }
+        }
+      },
+      {
+        "name": "verdict",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "files",
+            "name": "screen_verdict"
+          }
+        }
+      },
+      {
+        "name": "reason",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "files",
+            "name": "screen_reason"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "985310c1a12dcdcd7255bf710aaf2f79154e2300706782804e3983f047ac6441"
+}

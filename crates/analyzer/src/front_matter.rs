@@ -279,6 +279,7 @@ impl Reader {
             "published_in" => self.fields.published_in = self.published_in(value),
             "slug" => self.fields.slug = self.text(name, value),
             "series" => self.fields.series = self.text(name, value),
+            "attachments" => self.fields.attachments = self.text(name, value),
             "written_by" => self.fields.written_by = self.mapping_list(name, value, Self::writer),
             "embargo_until" => self.fields.embargo_until = self.embargo(value),
             "label" => self.warn(

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE files SET screen_verdict = 'pass'\n         WHERE screen_verdict IS NULL AND sha256 IN (\n             SELECT af.sha256 FROM entries e\n             JOIN attachment_files af ON af.set_seq = e.attachment_set_seq\n             WHERE e.seq = ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "ad004cf8f16324daa03caccf13262ab055d9623f61c4c79e21e98c33d057453b"
+}

@@ -332,3 +332,69 @@ async fn deleting_drops_its_undecided_and_dismissed_refused_series_but_keeps_con
         .unwrap();
     assert_eq!(kept, vec![("Confirmed family".to_string(),)]);
 }
+
+#[tokio::test]
+async fn deleting_drops_the_attachment_sets_no_kept_entry_cites_and_their_lone_files() {
+    let app = common::test_app().await;
+    let (cookie, token) = browser_account(&app, EMAIL).await;
+    let upload = async |text: &str| -> String {
+        let reply = app
+            .send(
+                axum::http::Request::post("/attachments")
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .header("accept", "application/json")
+                    .body(axum::body::Body::from(
+                        serde_json::json!({"files": [
+                            {"origin": "author:shared.py", "text": "print('shared')\n"},
+                            {"origin": "author:own.py", "text": text},
+                        ]})
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
+        serde_json::from_str::<serde_json::Value>(&reply.body).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let kept = upload("print('kept')\n").await;
+    let held = upload("print('held')\n").await;
+    upload("print('unused')\n").await;
+    let public = app
+        .post_as(
+            "/entries",
+            Some(&token),
+            entry("Public", &format!("slug: p\nattachments: {kept}\n")),
+        )
+        .await;
+    let public = common::id_in(&public.body);
+    app.post_as(&format!("/e/{public}/publish"), Some(&token), "")
+        .await;
+    // Publishing early leaves an entry citing a set to the worker.
+    filedrawer_server::jobs::publish_due(&app.state, time::OffsetDateTime::now_utc())
+        .await
+        .unwrap();
+    app.post_as(
+        "/entries",
+        Some(&token),
+        entry("Held", &format!("slug: h\nattachments: {held}\n")),
+    )
+    .await;
+
+    let done = delete(&app, &cookie, PASSWORD).await;
+    assert_eq!(done.status, StatusCode::OK, "{}", done.body);
+    let sets: Vec<(String,)> = sqlx::query_as("SELECT id FROM attachment_sets")
+        .fetch_all(&app.pool)
+        .await
+        .unwrap();
+    assert_eq!(sets, vec![(kept.clone(),)]);
+    let mut files: Vec<String> = sqlx::query_scalar("SELECT text FROM files")
+        .fetch_all(&app.pool)
+        .await
+        .unwrap();
+    files.sort();
+    assert_eq!(files, vec!["print('kept')\n", "print('shared')\n"]);
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE files SET screen_verdict = ?, screen_reason = ?\n         WHERE sha256 = ? AND screen_verdict IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "f222fda503c1ceb1b08e936b67c6ac9ab938a3b97b057e8d01b4f3d5b034c5b0"
+}

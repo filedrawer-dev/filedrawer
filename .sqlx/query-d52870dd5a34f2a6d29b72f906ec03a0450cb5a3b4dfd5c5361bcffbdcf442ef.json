@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT seq AS \"seq!: i64\" FROM entries\n           WHERE status = 'screening' AND screen_verdict IS NULL\n           ORDER BY queue_position, submitted_at, seq",
+  "query": "SELECT seq AS \"seq!: i64\" FROM attachment_sets WHERE id = ? AND account_id = ?",
   "describe": {
     "columns": [
       {
@@ -9,18 +9,18 @@
         "type_info": "Integer",
         "origin": {
           "Table": {
-            "table": "entries",
+            "table": "attachment_sets",
             "name": "seq"
           }
         }
       }
     ],
     "parameters": {
-      "Right": 0
+      "Right": 2
     },
     "nullable": [
       false
     ]
   },
-  "hash": "19c9a78792009fb1450a9835b163ee765ad4b44256bf53fa76dd40636bf759b5"
+  "hash": "d52870dd5a34f2a6d29b72f906ec03a0450cb5a3b4dfd5c5361bcffbdcf442ef"
 }

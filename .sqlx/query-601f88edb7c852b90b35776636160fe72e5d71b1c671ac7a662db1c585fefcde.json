@@ -1,0 +1,28 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COALESCE(SUM(cost_nano_usd), 0) AS \"total!: i64\",\n                  COALESCE(SUM(CASE WHEN account_id = ?2 THEN cost_nano_usd END), 0) AS \"account!: i64\"\n           FROM screenings WHERE at LIKE ?1 AND attachment = 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "total!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "account!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "601f88edb7c852b90b35776636160fe72e5d71b1c671ac7a662db1c585fefcde"
+}

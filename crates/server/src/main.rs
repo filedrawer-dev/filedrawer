@@ -146,6 +146,8 @@ async fn serve() -> ExitCode {
         mailer,
         public_url: config.public_url.clone(),
         smoke_account: config.smoke_account.clone(),
+        files_url: config.files_url.clone(),
+        attachment_store_cap_bytes: filedrawer_server::ATTACHMENT_STORE_CAP_BYTES,
     };
     tokio::spawn(filedrawer_server::jobs::run_publisher(state.clone()));
     let router = app(state);

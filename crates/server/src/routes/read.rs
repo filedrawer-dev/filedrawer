@@ -12,13 +12,13 @@ use serde_json::json;
 use analyzer::render_card;
 use axum::http::HeaderMap;
 
-use crate::AppState;
 use crate::auth::optional_token_account;
 use crate::embargo::parse_date;
 use crate::entries::{self, Filters};
 use crate::error::AppError;
 use crate::respond::{DELIMITER, Format, author_name, card_and_warnings, one_line};
 use crate::series;
+use crate::{AppState, attachments};
 use analyzer::slug_references;
 
 pub async fn entry(
@@ -95,6 +95,19 @@ pub async fn entry(
             None => text.push_str(&format!("run: {run}: description not public yet\n")),
         }
     }
+    // The set's files: each path is author text, so the lines go below the delimiter.
+    let set = attachments::entry_set(&state.pool, entry.seq).await?;
+    let files_url = state.files_url.as_deref().unwrap_or("");
+    if let Some((set_id, files)) = &set {
+        text.push_str(&format!("attachments: {set_id}, {} files\n", files.len()));
+        for file in files {
+            descriptions.push_str(&format!(
+                "file: {files_url}/f/{} {}\n",
+                file.sha256,
+                one_line(&file.path)
+            ));
+        }
+    }
     if notes.is_empty() {
         text.push_str("rows: Results table not read\n");
     }
@@ -137,6 +150,17 @@ pub async fn entry(
             "section": cited.cite.section,
             "title": cited.shown.as_ref().map(|(title, _)| title),
             "description": cited.shown.as_ref().map(|(_, description)| description),
+        })),
+        "attachments": set.as_ref().map(|(set_id, files)| json!({
+            "id": set_id,
+            "files": files.iter().map(|file| json!({
+                "path": file.path,
+                "origin": file.origin,
+                "repo_url": file.repo_url,
+                "sha256": file.sha256,
+                "bytes": file.bytes,
+                "url": format!("{files_url}/f/{}", file.sha256),
+            })).collect::<Vec<_>>(),
         })),
     });
     Ok(format.reply(StatusCode::OK, text, json))
@@ -225,7 +249,8 @@ async fn own_entry(
     for (number, note) in (1..).zip(&notes) {
         text.push_str(&format!("row {number}: {note}\n"));
     }
-    let context = entries::card_context(&entry.id, &account.id, Some(&account.display_name));
+    let context =
+        entries::own_card_context(&entry.id, &account.id, &account.display_name, &analysis);
     let card = render_card(&analysis, &context);
     let warnings: Vec<String> = analysis.warnings.iter().map(ToString::to_string).collect();
     // A model wrote the reasons from the entry, so they are author text.
@@ -234,10 +259,19 @@ async fn own_entry(
         .as_deref()
         .and_then(|json| serde_json::from_str(json).ok())
         .unwrap_or_default();
-    let reason_lines: String = reasons
+    let mut reason_lines: String = reasons
         .iter()
         .map(|reason| format!("reason: {}\n", one_line(reason)))
         .collect();
+    // Its attached files, as the public page will list them.
+    let files_url = state.files_url.as_deref().unwrap_or("");
+    for file in attachments::entry_files(&state.pool, entry.seq).await? {
+        reason_lines.push_str(&format!(
+            "file: {files_url}/f/{} {}\n",
+            file.sha256,
+            one_line(&file.path)
+        ));
+    }
     text.push_str(&format!(
         "{DELIMITER}\n{reason_lines}{}\n{}",
         card_and_warnings(&card, &warnings),

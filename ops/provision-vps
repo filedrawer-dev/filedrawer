@@ -416,11 +416,11 @@ stage "DNS: point the names at the server"
 say "In Cloudflare's DNS for filedrawer.dev, add these records, each set to"
 say "'DNS only' (the grey cloud), not 'Proxied' (design.md, Hosting and operations):"
 open_url "https://dash.cloudflare.com/"
-for name in "filedrawer.dev" "www.filedrawer.dev" "staging.filedrawer.dev" "files.filedrawer.dev"; do
+for name in "filedrawer.dev" "www.filedrawer.dev" "staging.filedrawer.dev" "files.filedrawer.dev" "files.staging.filedrawer.dev"; do
   step "$name  A     $VPS_HOST"
   [[ -n "$VPS_IPV6" ]] && step "$name  AAAA  $VPS_IPV6"
 done
-note "Only staging is served for now. Caddy asks for certificates only for the"
+note "Only staging and its files host are served for now. Caddy asks for certificates only for the"
 note "sites it serves, so the other names can sit idle until launch, when www"
 note "redirects to filedrawer.dev."
 pause "Press Enter once the records are saved"

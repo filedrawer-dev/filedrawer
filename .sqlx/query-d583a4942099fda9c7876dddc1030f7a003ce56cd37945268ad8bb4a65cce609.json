@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT email AS \"email!\" FROM accounts\n           WHERE is_admin = 1 AND email IS NOT NULL AND deleted_at IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "email!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "accounts",
+            "name": "email"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "d583a4942099fda9c7876dddc1030f7a003ce56cd37945268ad8bb4a65cce609"
+}

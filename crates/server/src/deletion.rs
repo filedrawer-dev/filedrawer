@@ -86,9 +86,10 @@ pub async fn password_hash(
 /// Deleted: its email, login, name, sessions, tokens, email links, private feedback
 /// and series memberships; every entry of its that isn't public or removed, with what
 /// was read from it; runs and batches nothing left uses; the hidden series it made;
-/// the series the screen refused that the owner hasn't confirmed as a hazard.
-/// Kept: the account ID, its public entries, the public series it made, and refused
-/// series the owner confirmed.
+/// the series the screen refused that the owner hasn't confirmed as a hazard; the
+/// attachment sets no kept entry cites, and the files no remaining set holds.
+/// Kept: the account ID, its public entries, the public series it made, refused
+/// series the owner confirmed, and the attachment sets kept entries cite.
 pub async fn delete(pool: &SqlitePool, account_id: &str) -> Result<Outcome, sqlx::Error> {
     let mut transaction = pool.begin().await?;
     let blocked = blocking(&mut transaction, account_id).await?;
@@ -106,6 +107,24 @@ pub async fn delete(pool: &SqlitePool, account_id: &str) -> Result<Outcome, sqlx
         sqlx::query!(
             "DELETE FROM series_members WHERE account_id = ?",
             account_id
+        ),
+        // Attachment sets no kept entry cites go, and then files no set holds.
+        sqlx::query!(
+            "DELETE FROM attachment_files WHERE set_seq IN (
+                 SELECT s.seq FROM attachment_sets s
+                 WHERE s.account_id = ? AND NOT EXISTS (
+                     SELECT 1 FROM entries e WHERE e.attachment_set_seq = s.seq))",
+            account_id
+        ),
+        sqlx::query!(
+            "DELETE FROM attachment_sets
+             WHERE account_id = ? AND NOT EXISTS (
+                 SELECT 1 FROM entries e WHERE e.attachment_set_seq = attachment_sets.seq)",
+            account_id
+        ),
+        sqlx::query!(
+            "DELETE FROM files WHERE NOT EXISTS (
+                 SELECT 1 FROM attachment_files af WHERE af.sha256 = files.sha256)"
         ),
         // A series the owner confirmed as a hazard stays, like a removed entry.
         sqlx::query!(

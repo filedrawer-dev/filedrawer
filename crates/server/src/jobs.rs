@@ -28,7 +28,7 @@ pub async fn end_hold(
     {
         return Ok(None);
     }
-    queue::screen_entry(state, seq, now).await
+    queue::screen_now(state, seq, now).await
 }
 
 /// Publishes every entry in `waiting_on_series` that no longer waits, as when its
