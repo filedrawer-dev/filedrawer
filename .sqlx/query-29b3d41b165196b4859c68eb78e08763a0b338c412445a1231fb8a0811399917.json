@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT review_guard_at FROM accounts WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "review_guard_at",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "accounts",
+            "name": "review_guard_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "29b3d41b165196b4859c68eb78e08763a0b338c412445a1231fb8a0811399917"
+}

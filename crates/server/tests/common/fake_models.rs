@@ -28,6 +28,8 @@ pub const USAGE: Usage = Usage {
 #[derive(Clone)]
 pub struct FakeModels {
     asked: Arc<Mutex<Vec<Model>>>,
+    /// The text each Haiku call screened, in order.
+    screened: Arc<Mutex<Vec<String>>>,
     /// Closed until `release`; then every slow call goes through.
     gate: Arc<tokio::sync::Semaphore>,
 }
@@ -36,6 +38,7 @@ impl Default for FakeModels {
     fn default() -> Self {
         FakeModels {
             asked: Arc::default(),
+            screened: Arc::default(),
             gate: Arc::new(tokio::sync::Semaphore::new(0)),
         }
     }
@@ -48,6 +51,11 @@ impl FakeModels {
 
     pub fn asked(&self) -> Vec<Model> {
         self.asked.lock().unwrap().clone()
+    }
+
+    /// The text each Haiku call screened, in order.
+    pub fn screened(&self) -> Vec<String> {
+        self.screened.lock().unwrap().clone()
     }
 
     /// Lets every `FAKE-SLOW` call finish, now and later.
@@ -67,6 +75,9 @@ impl FakeModels {
 impl ModelClient for FakeModels {
     fn call<'a>(&'a self, request: &'a ModelRequest) -> Calling<'a> {
         self.asked.lock().unwrap().push(request.model);
+        if request.model == Model::Haiku {
+            self.screened.lock().unwrap().push(request.user.clone());
+        }
         let text = &request.user;
         let has = |marker: &str| text.contains(marker);
         let sonnet = request.model == Model::Sonnet;

@@ -309,6 +309,17 @@ pub async fn guarded(pool: &SqlitePool) -> Result<Vec<Guarded>, sqlx::Error> {
     .await
 }
 
+/// Whether `account_id` is under the review guard.
+pub async fn is_guarded(pool: &SqlitePool, account_id: &str) -> Result<bool, sqlx::Error> {
+    let since = sqlx::query_scalar!(
+        "SELECT review_guard_at FROM accounts WHERE id = ?",
+        account_id
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(since.flatten().is_some())
+}
+
 /// Lifts the review guard from `account_id`. False if it wasn't guarded.
 pub async fn clear_guard(pool: &SqlitePool, account_id: &str) -> Result<bool, sqlx::Error> {
     let done = sqlx::query!(

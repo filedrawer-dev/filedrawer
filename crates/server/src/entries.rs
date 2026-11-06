@@ -418,8 +418,14 @@ pub async fn start_screening(
     seq: i64,
     due_by: Option<&str>,
 ) -> Result<Option<String>, sqlx::Error> {
+    // It joins the screening queue one place behind its account's last waiting entry
+    // (design.md: the fair queue).
     sqlx::query_scalar!(
-        "UPDATE entries SET status = 'screening', hold_until = NULL
+        "UPDATE entries SET status = 'screening', hold_until = NULL,
+             queue_position = 1 + COALESCE((
+                 SELECT MAX(w.queue_position) FROM entries w
+                 WHERE w.account_id = entries.account_id AND w.status = 'screening'
+                   AND w.screen_verdict IS NULL AND w.seq != entries.seq), 0)
          WHERE seq = ?1 AND status = 'pending' AND (?2 IS NULL OR hold_until <= ?2)
          RETURNING source",
         seq,
@@ -458,7 +464,8 @@ pub async fn wait_on_series(pool: &SqlitePool, seq: i64) -> Result<Option<Placed
 /// The pending entries whose hold ends at or before `now`.
 pub async fn due(pool: &SqlitePool, now: &str) -> Result<Vec<i64>, sqlx::Error> {
     sqlx::query_scalar!(
-        r#"SELECT seq AS "seq!: i64" FROM entries WHERE status = 'pending' AND hold_until <= ?"#,
+        r#"SELECT seq AS "seq!: i64" FROM entries WHERE status = 'pending' AND hold_until <= ?
+           ORDER BY hold_until, seq"#,
         now
     )
     .fetch_all(pool)
@@ -982,8 +989,13 @@ pub async fn reject(pool: &SqlitePool, seq: i64, reasons: Option<&str>) -> Resul
 /// screening), if it isn't already.
 pub async fn to_review(pool: &SqlitePool, seq: i64) -> Result<(), sqlx::Error> {
     let mut transaction = pool.begin().await?;
+    // It joins the review queue one place behind its account's last entry there.
     let moved = sqlx::query_scalar!(
-        "UPDATE entries SET status = 'review'
+        "UPDATE entries SET status = 'review',
+             queue_position = 1 + COALESCE((
+                 SELECT MAX(w.queue_position) FROM entries w
+                 WHERE w.account_id = entries.account_id
+                   AND w.status IN ('review', 'held')), 0)
          WHERE seq = ? AND status = 'screening' AND screen_verdict = 'review'
          RETURNING account_id",
         seq
@@ -1064,7 +1076,7 @@ pub async fn undecided(pool: &SqlitePool, id: Option<&str>) -> Result<Vec<Undeci
            FROM entries e JOIN authors a ON a.id = e.account_id
            LEFT JOIN batches b ON b.seq = e.batch_seq
            WHERE e.status IN ('review', 'held') AND (?1 IS NULL OR e.id = ?1)
-           ORDER BY e.submitted_at, e.seq"#,
+           ORDER BY e.queue_position, e.submitted_at, e.seq"#,
         id
     )
     .fetch_all(pool)

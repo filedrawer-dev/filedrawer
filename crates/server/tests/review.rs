@@ -7,8 +7,7 @@ mod common;
 
 use axum::http::StatusCode;
 use common::fake_models::FakeModels;
-use common::{TestApp, browser_account, date_in, entry, field, id_in, test_app_with};
-use filedrawer_server::admin;
+use common::{TestApp, browser_account, date_in, entry, field, id_in, owner, test_app_with};
 use filedrawer_server::jobs::publish_due;
 use time::OffsetDateTime;
 
@@ -16,20 +15,6 @@ const HAZARD: &str = "FAKE-HAZARD FAKE-SONNET-HAZARD";
 
 async fn app() -> TestApp {
     test_app_with(FakeModels::default().screener(), 1_000_000_000).await
-}
-
-/// A browser session for a new account made admin, as `filedrawer admin grant` does.
-async fn owner(app: &TestApp) -> String {
-    let (cookie, _) = browser_account(app, "owner@example.com").await;
-    let page = app.page("/account", Some(&cookie)).await;
-    let start = page
-        .body
-        .find("<code>a-")
-        .expect("the page shows the account ID")
-        + 6;
-    let account = &page.body[start..start + 12];
-    admin::grant(&app.pool, account).await.unwrap();
-    cookie
 }
 
 /// Submits `text` as the app's account and ends its hold; returns its ID and status.
@@ -279,17 +264,22 @@ async fn rejecting_a_batch_member_sends_the_whole_batch_back() {
             entry("Fine", "slug: fine\n"),
             entry(&format!("One {HAZARD}"), "slug: one\n"),
             entry(&format!("Two {HAZARD}"), "slug: two\n"),
+            entry(&format!("Three {HAZARD}"), "slug: three\n"),
         ],
     )
     .await;
+    // Two is held; Three stays in review.
     decide(&app, &cookie, &format!("/admin/e/{}/hold", ids[2]), &[]).await;
+    assert_eq!(author_status(&app, &ids[3]).await, "review");
     decide(&app, &cookie, &format!("/admin/e/{}/reject", ids[1]), &[]).await;
     for id in &ids {
         assert_eq!(author_status(&app, id).await, "rejected", "{id}");
     }
-    let sibling = app.get_as_author(&format!("/e/{}", ids[2])).await;
-    let reason = field(&sibling.body, "reason").unwrap();
-    assert!(reason.contains(&ids[1]), "{reason}");
+    for sibling in [&ids[2], &ids[3]] {
+        let own = app.get_as_author(&format!("/e/{sibling}")).await;
+        let reason = field(&own.body, "reason").unwrap();
+        assert!(reason.contains(&ids[1]), "{reason}");
+    }
     let again = app.post("/entries", entry("Fine", "slug: fine\n")).await;
     assert_eq!(again.status, StatusCode::CREATED, "{}", again.body);
 }

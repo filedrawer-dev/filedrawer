@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT e.id, e.status, e.source, e.account_id,\n                  a.display_name, e.submitted_at, b.id AS \"batch_id?\"\n           FROM entries e JOIN authors a ON a.id = e.account_id\n           LEFT JOIN batches b ON b.seq = e.batch_seq\n           WHERE e.status IN ('review', 'held') AND (?1 IS NULL OR e.id = ?1)\n           ORDER BY e.submitted_at, e.seq",
+  "query": "SELECT e.id, e.status, e.source, e.account_id,\n                  a.display_name, e.submitted_at, b.id AS \"batch_id?\"\n           FROM entries e JOIN authors a ON a.id = e.account_id\n           LEFT JOIN batches b ON b.seq = e.batch_seq\n           WHERE e.status IN ('review', 'held') AND (?1 IS NULL OR e.id = ?1)\n           ORDER BY e.queue_position, e.submitted_at, e.seq",
   "describe": {
     "columns": [
       {
@@ -89,5 +89,5 @@
       true
     ]
   },
-  "hash": "d290711d0ff6e135564cda60668703c3364992470cf3f10f39c79b9a7abb8ddb"
+  "hash": "bbb8de8323f684a24825567ab42d7a288eb769f123ca8ec3ddd465cb242b5f33"
 }

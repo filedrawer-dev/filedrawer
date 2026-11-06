@@ -253,3 +253,15 @@ Choices the docs left open, made while building the analyzer. Once the owner set
 - Options: put "the screen would have rejected it" and the screen's reasons in the entry's screening note, or show them as a separate line the server owns.
 - Chosen: the screening note, as `staging smoke account: the screen would have rejected it: <reasons>`. It is staging only (production refuses `FILEDRAWER_SMOKE_ACCOUNT`), and it needs no new card line.
 - Against: entry-format.md defines the screening note as the screen's doubt about `outcome`, quoted as model text, so the server's own prefix reads as the model's words, and the real doubt, if any, is lost.
+
+## Publishing early skips the fair queue
+
+- Options: `POST /e/<id>/publish` and `POST /batches/<id>/publish` screen the entry at once, or leave it in `screening` to wait its turn in the fair queue.
+- Chosen: at once. The fair order binds the worker's backlog, where entries pile up: holds that end on their own, and entries waiting past a spent cap. A spent cap stops an early publish too, so it can't jump that backlog.
+- Against: within one 30-second worker run, an account that publishes early goes ahead of other accounts' entries whose holds have ended, which the design's "every account's first item goes ahead of anyone's second" doesn't allow.
+
+## When the review guard moves waiting items
+
+- Options: move every waiting item of the account to review the moment the guard trips, or check the account as each item leaves the queue for screening.
+- Chosen: as each item leaves, without a model call and past a spent cap, so within one worker run. design.md says "The server checks the account again each time an item leaves its queue for screening."
+- Against: "so does everything it already has waiting" reads as at once; until the worker runs, the owner's queue doesn't yet show them.

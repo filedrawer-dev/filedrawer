@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT seq AS \"seq!: i64\" FROM entries WHERE status = 'pending' AND hold_until <= ?",
+  "query": "SELECT seq AS \"seq!: i64\" FROM entries\n           WHERE status = 'screening' AND screen_verdict IS NULL\n           ORDER BY queue_position, submitted_at, seq",
   "describe": {
     "columns": [
       {
@@ -16,11 +16,11 @@
       }
     ],
     "parameters": {
-      "Right": 1
+      "Right": 0
     },
     "nullable": [
       false
     ]
   },
-  "hash": "64cd94eafa3e12b323f22c8871c521a9b43cd02f7ffc5479c5bd48ef4d2c9fb8"
+  "hash": "19c9a78792009fb1450a9835b163ee765ad4b44256bf53fa76dd40636bf759b5"
 }

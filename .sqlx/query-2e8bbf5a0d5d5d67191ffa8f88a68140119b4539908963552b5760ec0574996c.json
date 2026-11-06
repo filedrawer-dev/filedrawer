@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE entries SET status = 'screening', hold_until = NULL,\n             queue_position = 1 + COALESCE((\n                 SELECT MAX(w.queue_position) FROM entries w\n                 WHERE w.account_id = entries.account_id AND w.status = 'screening'\n                   AND w.screen_verdict IS NULL AND w.seq != entries.seq), 0)\n         WHERE seq = ?1 AND status = 'pending' AND (?2 IS NULL OR hold_until <= ?2)\n         RETURNING source",
+  "describe": {
+    "columns": [
+      {
+        "name": "source",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "source"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "2e8bbf5a0d5d5d67191ffa8f88a68140119b4539908963552b5760ec0574996c"
+}

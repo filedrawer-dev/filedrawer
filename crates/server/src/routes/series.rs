@@ -49,6 +49,10 @@ async fn accept_series(
         Screened::Verdict(Verdict::Pass { .. }) => Ok(series),
         // A model wrote these from the series, so they go below the delimiter.
         Screened::Verdict(Verdict::Reject { reasons }) => Err(AppError::ScreenRejected(reasons)),
+        Screened::Guarded => Err(refused(vec![
+            "one of this account's entries is waiting on the owner's review, so the server stores no series from it until the owner clears the account"
+                .into(),
+        ])),
         Screened::Verdict(Verdict::Review { .. }) => Err(refused(vec![
             "the screen saw a possible info hazard, so the series can't be stored as written"
                 .into(),

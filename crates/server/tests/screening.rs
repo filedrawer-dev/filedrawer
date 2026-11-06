@@ -334,7 +334,10 @@ async fn one_failing_member_sends_the_whole_batch_back() {
 }
 
 #[tokio::test]
-async fn a_member_failing_after_one_went_to_review_sends_both_back() {
+async fn a_member_after_one_went_to_review_follows_it_there_unscreened() {
+    // The first member's review puts the account under the review guard, so the
+    // second skips the screen that would have failed it (design.md: everything the
+    // account has waiting goes to review).
     let models = FakeModels::default();
     let app = app_with(&models).await;
     let reply = batch(
@@ -351,22 +354,12 @@ async fn a_member_failing_after_one_went_to_review_sends_both_back() {
     assert_eq!(published.status, StatusCode::OK, "{}", published.body);
     for id in &ids {
         assert!(
-            published.body.contains(&format!("entry: {id} rejected")),
+            published.body.contains(&format!("entry: {id} review")),
             "{}",
             published.body
         );
     }
-    let own = app.get_as_author(&format!("/e/{}", ids[0])).await;
-    assert!(
-        own.body.contains(&format!(
-            "another entry in its batch, {}, was rejected",
-            ids[1]
-        )),
-        "{}",
-        own.body
-    );
-    let again = app.post("/entries", entry("Fine", "slug: risky\n")).await;
-    assert_eq!(again.status, StatusCode::CREATED, "{}", again.body);
+    assert_eq!(models.asked(), vec![Model::Haiku, Model::Sonnet]);
 }
 
 #[tokio::test]

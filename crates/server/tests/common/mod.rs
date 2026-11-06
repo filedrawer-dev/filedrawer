@@ -466,3 +466,19 @@ fn encode(text: &str) -> String {
         })
         .collect()
 }
+
+/// A browser session for a new account made the admin, as `filedrawer admin grant`
+/// does.
+pub async fn owner(app: &TestApp) -> String {
+    let (cookie, _) = browser_account(app, "owner@example.com").await;
+    let page = app.page("/account", Some(&cookie)).await;
+    let start = page
+        .body
+        .find("<code>a-")
+        .expect("the page shows the account ID")
+        + 6;
+    admin::grant(&app.pool, &page.body[start..start + 12])
+        .await
+        .unwrap();
+    cookie
+}

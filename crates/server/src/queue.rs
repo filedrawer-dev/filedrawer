@@ -9,7 +9,7 @@ use time::OffsetDateTime;
 
 use crate::embargo::embargoed_until;
 use crate::screening::{Call, MAX_ATTEMPTS, ModelError, Verdict};
-use crate::{AppState, entries, series, time::stamp};
+use crate::{AppState, accounts, entries, series, time::stamp};
 
 /// The share of the day's cap one account may spend (design.md: 10%).
 const ACCOUNT_SHARE_PERCENT: i64 = 10;
@@ -63,6 +63,9 @@ async fn screen_waiting(
     .await?
     {
         Screened::Verdict(verdict) => verdict,
+        Screened::Guarded => Verdict::Review {
+            why: "the account is under the review guard".into(),
+        },
         Screened::OverCap | Screened::Failed(ModelError::Http(_) | ModelError::Status { .. }) => {
             // Waits for a later tick; an outage doesn't count against the entry.
             return Ok(());
@@ -84,6 +87,9 @@ async fn screen_waiting(
 /// What screening one text came to.
 pub enum Screened {
     Verdict(Verdict),
+    /// The account is under the review guard, so nothing was screened: what it sends
+    /// goes to the owner's review queue.
+    Guarded,
     /// The day, or the account's share of it, is spent; nothing was called.
     OverCap,
     Failed(ModelError),
@@ -98,6 +104,11 @@ pub async fn screen_text(
     text: &str,
     now: OffsetDateTime,
 ) -> Result<Screened, sqlx::Error> {
+    // design.md: once any of an account's entries reaches review, everything it
+    // submits goes straight to review, whatever the day's cap.
+    if accounts::is_guarded(&state.pool, account_id).await? {
+        return Ok(Screened::Guarded);
+    }
     if over_cap(state, account_id, now).await? {
         return Ok(Screened::OverCap);
     }
@@ -296,12 +307,14 @@ pub async fn settle_screened(state: &AppState, now: OffsetDateTime) -> Result<()
     Ok(())
 }
 
-/// Entries in `screening` with no verdict yet, oldest submission first.
+/// Entries in `screening` with no verdict yet, in the fair queue's order: by
+/// position, then submission time, so every account's first goes ahead of anyone's
+/// second.
 pub async fn unscreened(pool: &SqlitePool) -> Result<Vec<i64>, sqlx::Error> {
     sqlx::query_scalar!(
         r#"SELECT seq AS "seq!: i64" FROM entries
            WHERE status = 'screening' AND screen_verdict IS NULL
-           ORDER BY submitted_at, seq"#
+           ORDER BY queue_position, submitted_at, seq"#
     )
     .fetch_all(pool)
     .await
