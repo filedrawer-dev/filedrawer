@@ -4,6 +4,8 @@ the openers itself (the owner's machine got tabs from wizard tests on 2026-11-06
 import os
 import subprocess
 
+from conftest import opened_urls
+
 
 def test_every_browser_opener_a_test_reaches_is_a_no_op_fake():
     for opener in ("xdg-open", "wslview", "explorer.exe", "open"):
@@ -20,6 +22,4 @@ def test_every_browser_opener_a_test_reaches_is_a_no_op_fake():
         ["xdg-open", "https://example.com"], capture_output=True, text=True, check=False
     )
     assert opened.returncode == 0
-    noted = os.path.join(os.environ["NO_BROWSER_DIR"], "opened")
-    with open(noted) as log:
-        assert log.read() == "https://example.com\n"
+    assert opened_urls().read_text() == "https://example.com\n"

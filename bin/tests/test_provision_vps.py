@@ -4,25 +4,20 @@ as the server's shell would, so the quoting is tested the way the server sees it
 """
 
 import os
-import stat
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from conftest import opened_urls
 
 REPO = Path(__file__).resolve().parents[2]
 WIZARD = REPO / "ops/provision-vps"
 
 
 @pytest.fixture
-def run(tmp_path):
-    fakes = tmp_path / "fakes"
-    fakes.mkdir()
-    ssh = fakes / "ssh"
-    # The last argument is the remote command line; ssh hands it to the login shell.
-    ssh.write_text('#!/bin/bash\nfor last in "$@"; do :; done\nexec bash -c "$last"\n')
-    ssh.chmod(ssh.stat().st_mode | stat.S_IXUSR)
+def run(tmp_path, fake_host):
+    fake_host.run_locally()
     remote = tmp_path / "remote"
     remote.mkdir()
     (remote / "show.sh").write_text(
@@ -33,7 +28,8 @@ def run(tmp_path):
         script = f'PROVISION_VPS_SOURCE_ONLY=1 source "{WIZARD}"\nVPS_HOST=h\nREMOTE="{remote}"\n{call}\n'
         return subprocess.run(
             ["bash", "-c", script],
-            env={**os.environ, "PATH": f"{fakes}:{os.environ['PATH']}"},
+            stdin=subprocess.DEVNULL,
+            env=fake_host.env,
             capture_output=True,
             text=True,
             check=False,
@@ -99,39 +95,11 @@ STAGING_KEY = "ab" * 32
 
 
 @pytest.fixture
-def smoke(tmp_path):
+def smoke(tmp_path, fake_host):
     """Runs `ops/provision-vps smoke` in a folder with an ops/.vps.env, against a fake
-    ssh that answers as ops/remote/smoke-account.sh would and a fake gh that keeps the
-    secrets it is given."""
-    fakes = tmp_path / "fakes"
-    fakes.mkdir()
-    log = tmp_path / "log"
-    log.touch()
-    secrets = tmp_path / "secrets"
-    secrets.mkdir()
-    (fakes / "ssh").write_text(
-        "#!/bin/bash\n"
-        'for last in "$@"; do :; done\n'
-        f'echo "ssh $last" >> {log}\n'
-        f'n=$(grep -c "^ssh " {log})\n'
-        f"cat > {tmp_path}/sent-$n\n"
-        f"exit_status=$(cat {tmp_path}/ssh-exit 2>/dev/null || echo 0)\n"
-        # Only smoke-account.sh answers with an account and a token.
-        f"grep -q create-token {tmp_path}/sent-$n && [[ $exit_status == 0 ]] "
-        '&& printf "a-new\\tfdt_s3cret\\n"\n'
-        "exit $exit_status\n"
-    )
-    (fakes / "gh").write_text(
-        "#!/bin/bash\n"
-        f'echo "gh $*" >> {log}\n'
-        'case "$1 $2" in\n'
-        '  "auth status") exit 0 ;;\n'
-        f'  "secret list") ls {secrets} ;;\n'
-        f'  "secret set") [[ "$4 $5" == "--env staging" ]] && cat > {secrets}/"$3" ;;\n'
-        "esac\n"
-    )
-    for fake in fakes.iterdir():
-        fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
+    ssh that answers as ops/remote/smoke-account.sh would."""
+    # Only smoke-account.sh answers with an account and a token.
+    fake_host.answer("*", stdout="a-new\tfdt_s3cret\n", stdin="create-token")
     ops = tmp_path / "ops"
     ops.mkdir()
     env_file = ops / ".vps.env"
@@ -142,14 +110,19 @@ def smoke(tmp_path):
             ["bash", WIZARD, "smoke"],
             cwd=tmp_path,
             input=answers,
-            env={**os.environ, "PATH": f"{fakes}:{os.environ['PATH']}"},
+            env=fake_host.env,
             capture_output=True,
             text=True,
             check=False,
         )
 
     return SimpleNamespace(
-        run=run, tmp=tmp_path, log=log, secrets=secrets, env_file=env_file
+        run=run,
+        tmp=tmp_path,
+        host=fake_host,
+        log=fake_host.log,
+        secrets=fake_host.secrets,
+        env_file=env_file,
     )
 
 
@@ -163,7 +136,7 @@ def test_smoke_stores_the_token_and_key_as_staging_secrets_and_shows_neither(smo
     assert "fdt_s3cret" not in shown
     assert STAGING_KEY not in shown
     assert "fdt_s3cret" not in smoke.log.read_text()
-    sent = (smoke.tmp / "sent-1").read_text()
+    sent = smoke.host.sent(1)
     assert sent == (REPO / "ops/remote/smoke-account.sh").read_text()
 
 
@@ -185,10 +158,10 @@ def test_smoke_names_the_account_to_staging_so_its_entries_arent_rejected(smoke)
     assert result.returncode == 0, result.stdout + result.stderr
     calls = [c for c in smoke.log.read_text().splitlines() if c.startswith("ssh ")]
     assert calls[-1] == "ssh env SMOKE_ACCOUNT=a-new bash -s"
-    sent = (smoke.tmp / f"sent-{len(calls)}").read_text()
+    sent = smoke.host.sent(len(calls))
     assert sent == (REPO / "ops/remote/smoke-env.sh").read_text()
     # The unit first, so it reads the file smoke-env.sh writes.
-    unit = (smoke.tmp / f"sent-{len(calls) - 1}").read_text()
+    unit = smoke.host.sent(len(calls) - 1)
     assert unit == (REPO / "ops/remote/staging-service.sh").read_text()
 
 
@@ -201,9 +174,7 @@ def test_a_rerun_passes_the_known_account_and_keeps_the_token_unless_asked(smoke
     # The kept run sends only the setting, not smoke-account.sh.
     calls = [c for c in smoke.log.read_text().splitlines() if c.startswith("ssh ")]
     assert len(calls) == 5, calls
-    assert (smoke.tmp / "sent-5").read_text() == (
-        REPO / "ops/remote/smoke-env.sh"
-    ).read_text()
+    assert smoke.host.sent(5) == (REPO / "ops/remote/smoke-env.sh").read_text()
     renewed = smoke.run("y\n\n")
     assert renewed.returncode == 0, renewed.stdout + renewed.stderr
     assert (smoke.secrets / "SMOKE_TEST_TOKEN").read_text() == "fdt_s3cret"
@@ -211,7 +182,7 @@ def test_a_rerun_passes_the_known_account_and_keeps_the_token_unless_asked(smoke
 
 
 def test_before_the_first_deploy_it_says_to_rerun_and_still_sets_the_key(smoke):
-    (smoke.tmp / "ssh-exit").write_text("3")
+    smoke.host.answer("*", status=3)
     result = smoke.run()
     assert result.returncode == 0, result.stdout + result.stderr
     assert "ops/provision-vps smoke" in result.stdout
@@ -220,7 +191,7 @@ def test_before_the_first_deploy_it_says_to_rerun_and_still_sets_the_key(smoke):
 
 
 def test_a_failure_on_the_server_stops_the_wizard(smoke):
-    (smoke.tmp / "ssh-exit").write_text("1")
+    smoke.host.answer("*", status=1)
     result = smoke.run()
     assert result.returncode == 1
     assert not (smoke.secrets / "SMOKE_TEST_TOKEN").exists()
@@ -232,29 +203,9 @@ API_KEY = "sk-ant-api03-" + "k" * 40
 
 
 @pytest.fixture
-def stage(tmp_path):
-    """Runs `ops/provision-vps <name>` in a folder with an ops/.vps.env, against a fake
-    ssh that keeps each call's command line in `log` and its stdin in sent-<n>, and
-    fake browser openers that only note the URL in `opened`, so no tab opens."""
-    fakes = tmp_path / "fakes"
-    fakes.mkdir()
-    log = tmp_path / "log"
-    log.touch()
-    ssh = fakes / "ssh"
-    ssh.write_text(
-        "#!/bin/bash\n"
-        'for last in "$@"; do :; done\n'
-        f'echo "ssh $last" >> {log}\n'
-        f'n=$(grep -c "^ssh " {log})\n'
-        f"cat > {tmp_path}/sent-$n\n"
-        f"exit $(cat {tmp_path}/ssh-exit 2>/dev/null || echo 0)\n"
-    )
-    ssh.chmod(ssh.stat().st_mode | stat.S_IXUSR)
-    opened = tmp_path / "opened"
-    for opener in ("wslview", "explorer.exe", "xdg-open", "open"):
-        fake = fakes / opener
-        fake.write_text(f'#!/bin/sh\necho "$1" >> {opened}\n')
-        fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
+def stage(tmp_path, fake_host):
+    """Runs `ops/provision-vps <name>` in a folder with an ops/.vps.env, against
+    fake_host, with the URLs the wizard opens in `opened`."""
     ops = tmp_path / "ops"
     ops.mkdir()
     env_file = ops / ".vps.env"
@@ -265,17 +216,19 @@ def stage(tmp_path):
             ["bash", WIZARD, name],
             cwd=tmp_path,
             input=answers,
-            env={**os.environ, "PATH": f"{fakes}:{os.environ['PATH']}"},
+            env=fake_host.env,
             capture_output=True,
             text=True,
             check=False,
         )
 
-    def sent(n: int) -> str:
-        return (tmp_path / f"sent-{n}").read_text()
-
     return SimpleNamespace(
-        run=run, tmp=tmp_path, log=log, sent=sent, env_file=env_file, opened=opened
+        run=run,
+        host=fake_host,
+        log=fake_host.log,
+        sent=fake_host.sent,
+        env_file=env_file,
+        opened=opened_urls(),
     )
 
 
@@ -319,7 +272,7 @@ def test_admin_grants_the_account_named(stage):
 
 
 def test_admin_before_the_first_deploy_asks_nothing_and_says_to_rerun(stage):
-    (stage.tmp / "ssh-exit").write_text("1")
+    stage.host.answer("*", status=1)
     result = stage.run("admin", "\n")
     assert result.returncode == 0, result.stdout + result.stderr
     assert "ops/provision-vps admin" in result.stdout
@@ -331,55 +284,28 @@ def test_admin_before_the_first_deploy_asks_nothing_and_says_to_rerun(stage):
 
 
 @pytest.fixture
-def rerun(tmp_path):
+def rerun(tmp_path, fake_host):
     """Runs `ops/provision-vps --only-new` with empty stdin, so any prompt fails it,
-    against fakes for ssh, gh, getent, curl, ssh-keygen and the browser openers, and
-    an ops/.vps.env holding every saved value."""
-    fakes = tmp_path / "fakes"
-    fakes.mkdir()
-    log = tmp_path / "log"
-    log.touch()
-    present = tmp_path / "present"
-    present.write_text(
-        "/etc/filedrawer/staging-mail.env\n/etc/filedrawer/staging-screening.env\n"
-    )
+    against fake_host answering as a server it has set up, and an ops/.vps.env
+    holding every saved value."""
 
-    def fake(name, body):
-        path = fakes / name
-        path.write_text("#!/bin/bash\n" + body)
-        path.chmod(path.stat().st_mode | stat.S_IXUSR)
+    def present(*paths: str) -> None:
+        """Only these settings files are on the server."""
+        fake_host.answer("test -f *", status=1)
+        for path in paths:
+            fake_host.answer(f"test -f {path}")
 
-    fake(
-        "ssh",
-        'for last in "$@"; do :; done\n'
-        f'echo "ssh $last" >> {log}\n'
-        f'n=$(grep -c "^ssh " {log})\n'
-        f"cat > {tmp_path}/sent-$n\n"
-        'case "$last" in\n'
-        f'  "test -f "*) grep -qx "${{last#test -f }}" {present} ;;\n'
-        "  *os-release*) echo ID=debian ;;\n"
-        "  *ssh_host_ed25519_key.pub*) echo 'ssh-ed25519 AAAAhost root@vps' ;;\n"
-        "  *) exit 0 ;;\n"
-        "esac\n",
+    present("/etc/filedrawer/staging-mail.env", "/etc/filedrawer/staging-screening.env")
+    fake_host.answer("*os-release*", stdout="ID=debian\n")
+    fake_host.answer(
+        "*ssh_host_ed25519_key.pub*", stdout="ssh-ed25519 AAAAhost root@vps\n"
     )
-    fake(
-        "gh",
-        f'echo "gh $*" >> {log}\n'
-        'case "$1 $2" in\n'
-        '  "secret list") printf "DEPLOY_SSH_KEY\\nSMOKE_TEST_TOKEN\\nSTAGING_KEY\\n" ;;\n'
-        "esac\n"
-        "cat > /dev/null\n",
-    )
-    fake("getent", 'echo "203.0.113.7 STREAM $2"\n')
-    fake(
-        "curl",
-        f'echo "curl $*" >> {log}\n'
-        'case "$*" in *robots.txt*) echo 200 ;; *X-Staging-Key*) echo 200 ;; *) echo 401 ;; esac\n',
-    )
-    fake("ssh-keygen", f'echo "ssh-keygen $*" >> {log}\n')
-    opened = tmp_path / "opened"
-    for opener in ("wslview", "explorer.exe", "xdg-open", "open"):
-        fake(opener, f'echo "$1" >> {opened}\n')
+    for secret in ("DEPLOY_SSH_KEY", "SMOKE_TEST_TOKEN", "STAGING_KEY"):
+        (fake_host.secrets / secret).write_text("kept")
+    fake_host.answer("*", stdout="203.0.113.7 STREAM x\n", tool="getent")
+    fake_host.answer("*", stdout="401\n", tool="curl")
+    fake_host.answer("*robots.txt*", stdout="200\n", tool="curl")
+    fake_host.answer("*X-Staging-Key*", stdout="200\n", tool="curl")
     ops = tmp_path / "ops"
     ops.mkdir()
     env_file = ops / ".vps.env"
@@ -395,7 +321,7 @@ def rerun(tmp_path):
             ["bash", WIZARD, "--only-new"],
             cwd=tmp_path,
             input="",
-            env={**os.environ, "PATH": f"{fakes}:{os.environ['PATH']}"},
+            env=fake_host.env,
             capture_output=True,
             text=True,
             check=False,
@@ -403,13 +329,14 @@ def rerun(tmp_path):
         )
 
     def sent_scripts() -> list[str]:
-        return [
-            path.read_text()
-            for path in sorted(tmp_path.glob("sent-*"), key=lambda p: int(p.name[5:]))
-        ]
+        return [fake_host.sent(n + 1) for n in range(len(fake_host.calls()))]
 
     return SimpleNamespace(
-        run=run, log=log, present=present, sent=sent_scripts, opened=opened
+        run=run,
+        log=fake_host.log,
+        present=present,
+        sent=sent_scripts,
+        opened=opened_urls(),
     )
 
 
@@ -445,7 +372,7 @@ def test_only_new_reruns_every_stage_without_asking_for_anything_saved(rerun):
 
 
 def test_only_new_runs_a_stage_whose_settings_the_server_lacks(rerun):
-    rerun.present.write_text("/etc/filedrawer/staging-mail.env\n")
+    rerun.present("/etc/filedrawer/staging-mail.env")
     result = rerun.run()
     # Screening isn't set up yet, so it asks for the API key, and stdin is empty.
     assert result.returncode != 0
