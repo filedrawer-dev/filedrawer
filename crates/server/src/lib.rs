@@ -31,6 +31,7 @@ use axum::extract::DefaultBodyLimit;
 use axum::routing::{MethodRouter, get, post};
 use sqlx::SqlitePool;
 
+pub use attachments::StoreError;
 pub use screening::Screener;
 
 /// The largest request body the server reads. Entries are capped at 100 KiB by the

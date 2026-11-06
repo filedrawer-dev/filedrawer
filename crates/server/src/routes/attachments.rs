@@ -7,7 +7,7 @@ use axum::http::StatusCode;
 use axum::response::Response;
 use serde_json::json;
 
-use crate::attachments::{self, Invalid, SetRequest, Stored};
+use crate::attachments::{self, Invalid, Limit, SetRequest, Stored};
 use crate::auth::TokenAccount;
 use crate::error::AppError;
 use crate::mail::{Email, send_later};
@@ -60,31 +60,12 @@ pub async fn upload(
                 )],
             ));
         }
-        Stored::StoreFull => {
-            tell_owner(
-                &state,
-                "attachment storage full",
-                "attachment storage is full",
-                format!(
-                    "the files it stores have reached the cap of {} bytes",
-                    state.attachment_store_cap_bytes
-                ),
-            )
-            .await?;
-            return Err(storage_full());
-        }
-        Stored::DiskLow => {
-            tell_owner(
-                &state,
-                "attachment disk low",
-                "the disk for attachments is nearly full",
-                format!(
-                    "storing more would leave under {} bytes free on the disk that holds them",
-                    state.attachment_disk_floor_bytes
-                ),
-            )
-            .await?;
-            return Err(storage_full());
+        Stored::Full(limit) => {
+            tell_owner(&state, limit).await?;
+            return Err(refused(
+                StatusCode::INSUFFICIENT_STORAGE,
+                vec!["the site's storage for attachments is full; publish the code on GitHub or Zenodo instead".into()],
+            ));
         }
     };
     // Each path is the sender's own text, so the file lines go below the delimiter.
@@ -105,18 +86,26 @@ pub async fn upload(
     Ok(format.reply(StatusCode::CREATED, text, json))
 }
 
-/// The refusal when the site can't store more attachments, at its cap or its disk's
-/// floor.
-fn storage_full() -> AppError {
-    refused(
-        StatusCode::INSUFFICIENT_STORAGE,
-        vec!["the site's storage for attachments is full; publish the code on GitHub or Zenodo instead".into()],
-    )
-}
-
-/// Emails the admins, once a day for each `kind`, that uploads are refused: the
-/// subject says `what`, and the body `why`.
-async fn tell_owner(state: &AppState, kind: &str, what: &str, why: String) -> Result<(), AppError> {
+/// Emails the admins, once a day for each limit, that `limit` refuses uploads.
+async fn tell_owner(state: &AppState, limit: Limit) -> Result<(), AppError> {
+    let (kind, what, why) = match limit {
+        Limit::StoreCap => (
+            "attachment storage full",
+            "attachment storage is full",
+            format!(
+                "the files it stores have reached the cap of {} bytes",
+                state.attachment_store_cap_bytes
+            ),
+        ),
+        Limit::DiskFloor => (
+            "attachment disk low",
+            "the disk for attachments is nearly full",
+            format!(
+                "storing more would leave under {} bytes free on the disk that holds them",
+                state.attachment_disk_floor_bytes
+            ),
+        ),
+    };
     if !attachments::first_notice_today(&state.pool, kind).await? {
         return Ok(());
     }

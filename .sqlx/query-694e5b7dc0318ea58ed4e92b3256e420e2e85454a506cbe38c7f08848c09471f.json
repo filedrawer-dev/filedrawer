@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM attachment_sets\n         WHERE (?1 IS NULL OR account_id = ?1) AND (?2 IS NULL OR created_at < ?2)\n             AND NOT EXISTS (\n                 SELECT 1 FROM entries e WHERE e.attachment_set_seq = attachment_sets.seq)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "694e5b7dc0318ea58ed4e92b3256e420e2e85454a506cbe38c7f08848c09471f"
+}

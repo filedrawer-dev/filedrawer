@@ -67,7 +67,8 @@ impl FileStore {
 /// Where a write keeps a file until it is complete.
 const TMP: &str = "tmp";
 
-fn is_sha256(name: &str) -> bool {
+/// Whether `name` is a SHA-256 in lower-case hex, as the store names files.
+pub fn is_sha256(name: &str) -> bool {
     name.len() == 64
         && name
             .bytes()

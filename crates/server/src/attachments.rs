@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, HashSet};
 
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use sqlx::SqlitePool;
+use sqlx::{SqliteConnection, SqlitePool};
 
 use crate::file_store::Writer;
 use crate::{AppState, ids, time::now};
@@ -178,10 +178,17 @@ pub enum Stored {
     },
     /// The account's day is spent.
     DailyCap,
+    /// The site can store no more.
+    Full(Limit),
+}
+
+/// What stops the site storing more attachments.
+#[derive(Debug, Clone, Copy)]
+pub enum Limit {
     /// The site's storage cap is reached.
-    StoreFull,
+    StoreCap,
     /// Storing the files would leave the disk under its floor.
-    DiskLow,
+    DiskFloor,
 }
 
 /// Why storing or deleting attached files failed.
@@ -234,14 +241,14 @@ pub async fn store(
         .fetch_one(&mut *transaction)
         .await?;
     if new_bytes > 0 && held + new_bytes > state.attachment_store_cap_bytes {
-        return Ok(Stored::StoreFull);
+        return Ok(Stored::Full(Limit::StoreCap));
     }
     // Non-negative, as a sum of sizes.
     let new_bytes = u64::try_from(new_bytes).unwrap_or(u64::MAX);
     if new_bytes > 0
         && state.files.free_bytes()?.saturating_sub(new_bytes) < state.attachment_disk_floor_bytes
     {
-        return Ok(Stored::DiskLow);
+        return Ok(Stored::Full(Limit::DiskFloor));
     }
     let at = now();
     let id = format!("as-{}", ids::new_id());
@@ -350,10 +357,43 @@ pub async fn is_public_file(pool: &SqlitePool, sha256: &str) -> Result<bool, sql
     Ok(found.is_some())
 }
 
-/// Deletes the record of every file no set holds, and returns their hashes, for
-/// [`remove_bytes`] once the transaction commits.
+/// Deletes the sets no entry cites, with their files' places in them: only
+/// `account_id`'s when given, and only those uploaded before `uploaded_before`, a
+/// stored time, when given. The files' records go with [`delete_lone_files`].
+pub async fn delete_uncited_sets(
+    transaction: &mut SqliteConnection,
+    account_id: Option<&str>,
+    uploaded_before: Option<&str>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        "DELETE FROM attachment_files WHERE set_seq IN (
+             SELECT s.seq FROM attachment_sets s
+             WHERE (?1 IS NULL OR s.account_id = ?1) AND (?2 IS NULL OR s.created_at < ?2)
+                 AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.attachment_set_seq = s.seq))",
+        account_id,
+        uploaded_before
+    )
+    .execute(&mut *transaction)
+    .await?;
+    sqlx::query!(
+        "DELETE FROM attachment_sets
+         WHERE (?1 IS NULL OR account_id = ?1) AND (?2 IS NULL OR created_at < ?2)
+             AND NOT EXISTS (
+                 SELECT 1 FROM entries e WHERE e.attachment_set_seq = attachment_sets.seq)",
+        account_id,
+        uploaded_before
+    )
+    .execute(&mut *transaction)
+    .await?;
+    Ok(())
+}
+
+/// Deletes the record of every file no set holds, and returns their hashes. Their
+/// bytes stay on disk until [`remove_bytes`] or [`sweep`] removes them, after the
+/// transaction commits; `_lock` proves the store's lock is held until then.
 pub async fn delete_lone_files(
-    transaction: &mut sqlx::SqliteConnection,
+    _lock: &Writer<'_>,
+    transaction: &mut SqliteConnection,
 ) -> Result<Vec<String>, sqlx::Error> {
     sqlx::query_scalar!(
         "DELETE FROM files WHERE NOT EXISTS (
@@ -364,40 +404,25 @@ pub async fn delete_lone_files(
     .await
 }
 
-/// Deletes every set no entry cites that was uploaded before `before`, a stored
-/// time, with the files no other set holds.
-pub async fn delete_uncited_sets(state: &AppState, before: &str) -> Result<(), StoreError> {
-    let writer = state.files.write().await;
-    let mut transaction = state.pool.begin().await?;
-    sqlx::query!(
-        "DELETE FROM attachment_files WHERE set_seq IN (
-             SELECT s.seq FROM attachment_sets s
-             WHERE s.created_at < ? AND NOT EXISTS (
-                 SELECT 1 FROM entries e WHERE e.attachment_set_seq = s.seq))",
-        before
-    )
-    .execute(&mut *transaction)
-    .await?;
-    sqlx::query!(
-        "DELETE FROM attachment_sets
-         WHERE created_at < ? AND NOT EXISTS (
-             SELECT 1 FROM entries e WHERE e.attachment_set_seq = attachment_sets.seq)",
-        before
-    )
-    .execute(&mut *transaction)
-    .await?;
-    let lone = delete_lone_files(&mut transaction).await?;
-    transaction.commit().await?;
-    remove_bytes(&writer, &lone).await;
-    Ok(())
+/// Deletes the sets no entry cites that were uploaded before `uploaded_before`, a
+/// stored time, and the records of the files no set holds then. Their bytes are
+/// left to [`sweep`], which the caller runs next under the same lock.
+pub async fn expire_uncited_sets(
+    pool: &SqlitePool,
+    lock: &Writer<'_>,
+    uploaded_before: &str,
+) -> Result<(), sqlx::Error> {
+    let mut transaction = pool.begin().await?;
+    delete_uncited_sets(&mut transaction, None, Some(uploaded_before)).await?;
+    delete_lone_files(lock, &mut transaction).await?;
+    transaction.commit().await
 }
 
 /// Removes the bytes on disk that no file's record holds, such as those a crash
 /// left between writing a file and committing its record, and any half-written file.
-pub async fn sweep(state: &AppState) -> Result<(), StoreError> {
-    let writer = state.files.write().await;
+pub async fn sweep(pool: &SqlitePool, writer: &Writer<'_>) -> Result<(), StoreError> {
     let recorded: HashSet<String> = sqlx::query_scalar!("SELECT sha256 FROM files")
-        .fetch_all(&state.pool)
+        .fetch_all(pool)
         .await?
         .into_iter()
         .collect();
@@ -407,13 +432,12 @@ pub async fn sweep(state: &AppState) -> Result<(), StoreError> {
         .into_iter()
         .filter(|sha256| !recorded.contains(sha256))
         .collect();
-    remove_bytes(&writer, &unrecorded).await;
+    remove_bytes(writer, &unrecorded).await;
     Ok(())
 }
 
-/// Removes the bytes of files whose records are deleted and committed. A file that
-/// can't be removed is logged; the hourly tidy removes it later, since it has no
-/// record.
+/// Removes the bytes of files `hashes`, whose records are gone. A file that can't
+/// be removed is logged, and the next sweep tries again.
 pub async fn remove_bytes(writer: &Writer<'_>, hashes: &[String]) {
     for sha256 in hashes {
         if let Err(error) = writer.remove(sha256).await {
@@ -427,7 +451,7 @@ pub async fn remove_bytes(writer: &Writer<'_>, hashes: &[String]) {
 pub const CHUNK_BYTES: usize = 256 * 1024;
 
 /// A file of an entry's set, with the screen's verdict on it so far. Its bytes are
-/// in the [`FileStore`].
+/// in the [`FileStore`](crate::file_store::FileStore).
 pub struct EntryFile {
     pub sha256: String,
     pub path: String,

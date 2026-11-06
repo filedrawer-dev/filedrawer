@@ -3,9 +3,8 @@
 
 use sqlx::{SqliteConnection, SqlitePool};
 
-use crate::file_store::FileStore;
 use crate::time::now;
-use crate::{attachments, series};
+use crate::{AppState, attachments, series};
 
 /// What deleting an account would do, for the confirm page.
 pub struct Preview {
@@ -92,13 +91,9 @@ pub async fn password_hash(
 /// bytes leave `files` once the rest has committed.
 /// Kept: the account ID, its public entries, the public series it made, refused
 /// series the owner confirmed, and the attachment sets kept entries cite.
-pub async fn delete(
-    pool: &SqlitePool,
-    files: &FileStore,
-    account_id: &str,
-) -> Result<Outcome, sqlx::Error> {
-    let writer = files.write().await;
-    let mut transaction = pool.begin().await?;
+pub async fn delete(state: &AppState, account_id: &str) -> Result<Outcome, sqlx::Error> {
+    let writer = state.files.write().await;
+    let mut transaction = state.pool.begin().await?;
     let blocked = blocking(&mut transaction, account_id).await?;
     if !blocked.is_empty() {
         return Ok(Outcome::Blocked);
@@ -115,20 +110,6 @@ pub async fn delete(
             "DELETE FROM series_members WHERE account_id = ?",
             account_id
         ),
-        // Attachment sets no kept entry cites go, and then files no set holds.
-        sqlx::query!(
-            "DELETE FROM attachment_files WHERE set_seq IN (
-                 SELECT s.seq FROM attachment_sets s
-                 WHERE s.account_id = ? AND NOT EXISTS (
-                     SELECT 1 FROM entries e WHERE e.attachment_set_seq = s.seq))",
-            account_id
-        ),
-        sqlx::query!(
-            "DELETE FROM attachment_sets
-             WHERE account_id = ? AND NOT EXISTS (
-                 SELECT 1 FROM entries e WHERE e.attachment_set_seq = attachment_sets.seq)",
-            account_id
-        ),
         // A series the owner confirmed as a hazard stays, like a removed entry.
         sqlx::query!(
             "DELETE FROM refused_series
@@ -138,7 +119,9 @@ pub async fn delete(
     ] {
         statement.execute(&mut *transaction).await?;
     }
-    let lone = attachments::delete_lone_files(&mut transaction).await?;
+    // Attachment sets no kept entry cites go, and then files no set holds.
+    attachments::delete_uncited_sets(&mut transaction, Some(account_id), None).await?;
+    let lone = attachments::delete_lone_files(&writer, &mut transaction).await?;
     // The name column can't be empty; this placeholder is never shown, since every
     // read checks `deleted_at` first.
     sqlx::query!(

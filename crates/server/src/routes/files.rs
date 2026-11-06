@@ -7,7 +7,7 @@ use axum::http::{HeaderValue, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 
-use crate::{AppState, attachments};
+use crate::{AppState, attachments, file_store};
 
 /// Middleware in front of every route: a request addressed to the files host is
 /// answered here, and never reaches the site's routes.
@@ -29,11 +29,10 @@ pub async fn files_host(State(state): State<AppState>, request: Request, next: N
         .uri()
         .path()
         .strip_prefix("/f/")
-        .filter(|sha| sha.len() == 64 && sha.chars().all(|c| c.is_ascii_hexdigit()));
+        .map(str::to_ascii_lowercase)
+        .filter(|sha| file_store::is_sha256(sha));
     let served = match sha {
-        Some(sha) if request.method() == axum::http::Method::GET => {
-            public_text(&state, &sha.to_ascii_lowercase()).await
-        }
+        Some(sha) if request.method() == axum::http::Method::GET => public_text(&state, &sha).await,
         _ => Ok(None),
     };
     match served {

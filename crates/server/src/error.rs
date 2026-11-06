@@ -31,16 +31,16 @@ pub enum AppError {
     ScreenRejected(Vec<String>),
     #[error("internal error")]
     Database(#[from] sqlx::Error),
-    /// Reading or writing attached files' bytes failed.
+    /// Reading or writing a file failed, such as an attached file's bytes.
     #[error("internal error")]
-    Files(#[from] std::io::Error),
+    Io(#[from] std::io::Error),
 }
 
 impl From<crate::attachments::StoreError> for AppError {
     fn from(error: crate::attachments::StoreError) -> Self {
         match error {
             crate::attachments::StoreError::Database(error) => AppError::Database(error),
-            crate::attachments::StoreError::Files(error) => AppError::Files(error),
+            crate::attachments::StoreError::Files(error) => AppError::Io(error),
         }
     }
 }
@@ -59,8 +59,8 @@ impl IntoResponse for AppError {
                 tracing::error!(%error, "database error");
                 StatusCode::INTERNAL_SERVER_ERROR
             }
-            AppError::Files(error) => {
-                tracing::error!(%error, "attached files' error");
+            AppError::Io(error) => {
+                tracing::error!(%error, "I/O error");
                 StatusCode::INTERNAL_SERVER_ERROR
             }
         };

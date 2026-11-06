@@ -86,10 +86,11 @@ pub const UNCITED_SET_DAYS: i64 = 7;
 /// and removes bytes on disk that no record holds.
 pub async fn tidy_files(state: &AppState, now: OffsetDateTime) -> Result<(), StoreError> {
     let before = stamp(now - Duration::days(UNCITED_SET_DAYS));
-    let deleted = attachments::delete_uncited_sets(state, &before).await;
-    // Bytes no record holds go even when the deletion failed.
-    let swept = attachments::sweep(state).await;
-    deleted.and(swept)
+    let writer = state.files.write().await;
+    let expired = attachments::expire_uncited_sets(&state.pool, &writer, &before).await;
+    // Bytes no record holds go even when expiring sets failed.
+    let swept = attachments::sweep(&state.pool, &writer).await;
+    expired.map_err(StoreError::from).and(swept)
 }
 
 /// Runs `tidy_files` every hour, for `filedrawer serve`. An error is logged and the
