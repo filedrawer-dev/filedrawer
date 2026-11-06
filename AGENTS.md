@@ -54,7 +54,7 @@ When the owner settles a question, move it from Open questions into its section 
 
 ## Checks
 
-Committing runs the checks, so commit and read the hook's output instead of running them first. Every commit runs `bin/slop-lint` on staged markdown, lychee (links and anchors, offline) over every markdown file, and `cargo fmt --check` when a `.rs` file is staged. Agents' commits add the tests in `bin/tests`, clippy and the Rust tests (`bin/agent-pre-commit`). CI runs all of them. Link the hooks once per clone with the two `ln -sf` lines at the top of `bin/git-pre-commit`.
+Committing runs the checks, so commit and read the hook's output instead of running them first. Every commit runs `bin/slop-lint` on staged markdown, lychee (links and anchors, offline) over every markdown file, and `cargo fmt --check` when a `.rs` file is staged. Agents' commits add the tests in `bin/tests`, clippy and the Rust tests (`bin/agent-pre-commit`). CI runs all of them. `python3 install.py` links the hooks once per clone and installs cargo-nextest and sqlx-cli; sandbox-setup runs it after a recreate.
 
 The Rust tests run under cargo-nextest, set in `.config/nextest.toml` to print only the tests that fail, with their output, and a summary line. To run them that way, run `cargo nextest run --cargo-quiet`. nextest skips doctests, so the hook also runs `cargo test --doc`. Install nextest once per machine: `cargo install cargo-nextest --locked`, or the prebuilt binary from https://get.nexte.st/latest/linux.
 
