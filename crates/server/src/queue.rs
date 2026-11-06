@@ -104,7 +104,8 @@ pub enum Screened {
 }
 
 /// Screens `text` for `account_id` within the caps, and logs every call it made;
-/// for an account under the review guard, screens nothing and says so. The caller
+/// for staging's smoke-test account, passes it unscreened, and for an account under
+/// the review guard, screens nothing and says so. The caller
 /// holds `screening_lock`, or is the series route, which takes it here.
 pub async fn screen_text(
     state: &AppState,

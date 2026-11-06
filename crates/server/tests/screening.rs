@@ -122,12 +122,16 @@ async fn the_smoke_accounts_batches_and_series_skip_the_model_too() {
     .await;
     let batch_id = reply["id"].as_str().unwrap();
     let published = app.post(&format!("/batches/{batch_id}/publish"), "").await;
-    assert_eq!(
-        published.body.matches(" public").count(),
-        2,
-        "{}",
-        published.body
-    );
+    assert_eq!(published.status, StatusCode::OK, "{}", published.body);
+    for id in member_ids(&reply) {
+        let page = app.get(&format!("/e/{id}")).await;
+        assert_eq!(page.status, StatusCode::OK, "{id} isn't public");
+        assert!(
+            page.body.contains("staging smoke account: not screened"),
+            "{}",
+            page.body
+        );
+    }
     let series = app
         .post(
             "/series",

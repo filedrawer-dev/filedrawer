@@ -7,7 +7,7 @@ outcome: no_effect
 predicted_direction: increase
 hypothesis_set: before_run
 stage: main
-stopped_because: failed check
+stopped_because: out of time
 run_dates: [2026-10-20, 2026-10-20]
 models:
   - name: Llama-3-8B-Instruct

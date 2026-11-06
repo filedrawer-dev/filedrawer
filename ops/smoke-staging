@@ -110,7 +110,7 @@ anon "/e/$ID"
 check "held entry hidden from others" '[[ $CODE == 404 ]]'
 req GET "/e/$ID"
 check "held entry shown to its author" '[[ $CODE == 200 && $(field status) == pending ]]'
-make_entry single "logs: [https:\/\/wandb.ai\/example\/steering\/runs\/abc123]" > "$dir/e1b.md"
+make_entry single "logs: [https:\/\/wandb.ai\/example\/politeness\/runs\/abc123]" > "$dir/e1b.md"
 req PUT "/e/$ID" "$dir/e1b.md"
 check "PUT fixes it: 200, no warnings" '[[ $CODE == 200 && $BODY != *"warning:"* ]]'
 req POST "/e/$ID/publish"
@@ -120,7 +120,7 @@ check "public entry readable" '[[ $CODE == 200 ]]'
 req GET "/search?q=$tag"
 check "search finds it" '[[ $BODY == *"$ID"* ]]'
 
-make_entry version "logs: [https:\/\/wandb.ai\/example\/steering\/runs\/abc123]" > "$dir/v.md"
+make_entry version "logs: [https:\/\/wandb.ai\/example\/politeness\/runs\/abc123]" > "$dir/v.md"
 req POST "/e/$ID/versions" "$dir/v.md"
 check "version: 201 with previous" '[[ $CODE == 201 && $(field previous) == "$ID" ]]'
 VID=$(field id)
