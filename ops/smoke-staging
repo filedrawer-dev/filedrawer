@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+# Smoke test of a File Drawer server, staging by default, following /skill.md as an
+# agent would: submit, the hour's hold, a fix with PUT, publish, search, a new
+# version, and a batch with slugs and runs. Each entry's title says it is a smoke
+# test, and staging keeps them. CI runs it after each deploy to staging.
+set -uo pipefail
+
+usage() {
+  cat <<'EOF'
+usage: ops/smoke-staging [--wait SECONDS] [URL]
+
+Runs File Drawer's smoke test against URL (default https://staging.filedrawer.dev),
+as /skill.md tells an agent to: submit, the hour's hold, a fix with PUT, publish,
+search, a new version, and a batch with slugs and runs. Prints PASS or FAIL for each
+check, then a tally, and exits 1 when any check fails.
+
+  --wait SECONDS  first wait up to SECONDS for URL/skill.md to answer 200, as just
+                  after a deploy (default: try once)
+  -h, --help      print this
+
+It reads two settings from the environment and prints neither:
+  FILEDRAWER_STAGING_KEY      the staging key, sent as X-Staging-Key
+  FILEDRAWER_STAGING_API_KEY  an API token for the account that submits
+Exit status: 0 every check passed, 1 a check failed, 2 a usage or setting error.
+EOF
+}
+
+base=https://staging.filedrawer.dev
+wait_seconds=0
+while (( $# )); do
+  case "$1" in
+    -h | --help) usage; exit 0 ;;
+    --wait)
+      [[ "${2:-}" =~ ^[0-9]+$ ]] || { echo "smoke-staging: --wait takes a number of seconds" >&2; exit 2; }
+      wait_seconds=$2; shift 2 ;;
+    -*) echo "smoke-staging: unknown option $1 (-h lists them)" >&2; exit 2 ;;
+    *) base=${1%/}; shift ;;
+  esac
+done
+for name in FILEDRAWER_STAGING_KEY FILEDRAWER_STAGING_API_KEY; do
+  if [[ -z "${!name:-}" ]]; then
+    echo "smoke-staging: $name is not set; -h says what it holds" >&2
+    exit 2
+  fi
+done
+
+# Every entry starts from the analyzer's example fixture, which passes cleanly;
+# crates/server/tests/smoke.rs fails if a change to it breaks this script.
+fixture="$(dirname "$0")/../crates/analyzer/tests/fixtures/example.md"
+tag="smoke$(date -u +%Y%m%d%H%M%S)"
+dir=$(mktemp -d)
+trap 'rm -rf "$dir"' EXIT
+pass=0
+fail=0
+
+# check NAME CONDITION: CONDITION is a [[ ]] test written in this file.
+check() {
+  if eval "$2"; then echo "PASS $1"; pass=$((pass + 1)); else echo "FAIL $1"; fail=$((fail + 1)); fi
+}
+
+# The secrets go to curl in a config read from a pipe, never on its command line.
+headers() {
+  printf 'header = "X-Staging-Key: %s"\n' "$FILEDRAWER_STAGING_KEY"
+  [[ "${1:-}" == token ]] && printf 'header = "Authorization: Bearer %s"\n' "$FILEDRAWER_STAGING_API_KEY"
+}
+
+# req METHOD PATH [BODY-FILE] [CONTENT-TYPE]: a request with the token; sets CODE and BODY.
+req() {
+  local args=(-s -w '\n%{http_code}' -X "$1") out
+  [[ -n "${3:-}" ]] && args+=(-H "Content-Type: ${4:-text/markdown}" --data-binary "@$3")
+  out=$(curl "${args[@]}" -K <(headers token) "$base$2")
+  CODE=${out##*$'\n'}
+  BODY=${out%$'\n'*}
+}
+
+# anon PATH: a GET without the token; sets CODE.
+anon() {
+  CODE=$(curl -s -o /dev/null -w '%{http_code}' -K <(headers) "$base$1")
+}
+
+# field NAME: the first `NAME: value` line's value in BODY.
+field() { printf '%s\n' "$BODY" | sed -n "s/^$1: //p" | head -1; }
+
+# make_entry TITLE LOGS-LINE: the fixture with a smoke-test title and tags.
+make_entry() {
+  sed "s/^title: .*/title: SMOKE TEST $tag $1, not a real result/; s/^tags: .*/tags: [smoke-test, $tag]/; s/^logs: .*/$2/" "$fixture"
+}
+
+if (( wait_seconds > 0 )); then
+  deadline=$((SECONDS + wait_seconds))
+  until anon /skill.md; [[ $CODE == 200 ]]; do
+    if (( SECONDS >= deadline )); then
+      echo "FAIL $base/skill.md didn't answer 200 within ${wait_seconds}s (last: $CODE)"
+      exit 1
+    fi
+    sleep 2
+  done
+fi
+
+req GET /skill.md
+check "skill.md is live" '[[ $CODE == 200 ]]'
+
+make_entry single "compute: 1h" > "$dir/e1.md"
+req POST /entries "$dir/e1.md"
+check "submit: 201 pending" '[[ $CODE == 201 && $(field status) == pending ]]'
+ID=$(field id)
+check "submit: warns about the unknown field" '[[ $BODY == *"warning: \`compute\`"* ]]'
+anon "/e/$ID"
+check "held entry hidden from others" '[[ $CODE == 404 ]]'
+req GET "/e/$ID"
+check "held entry shown to its author" '[[ $CODE == 200 && $(field status) == pending ]]'
+make_entry single "logs: [https:\/\/wandb.ai\/example\/steering\/runs\/abc123]" > "$dir/e1b.md"
+req PUT "/e/$ID" "$dir/e1b.md"
+check "PUT fixes it: 200, no warnings" '[[ $CODE == 200 && $BODY != *"warning:"* ]]'
+req POST "/e/$ID/publish"
+check "publish: public" '[[ $CODE == 200 && $(field status) == public ]]'
+anon "/e/$ID"
+check "public entry readable" '[[ $CODE == 200 ]]'
+req GET "/search?q=$tag"
+check "search finds it" '[[ $BODY == *"$ID"* ]]'
+
+make_entry version "logs: [https:\/\/wandb.ai\/example\/steering\/runs\/abc123]" > "$dir/v.md"
+req POST "/e/$ID/versions" "$dir/v.md"
+check "version: 201 with previous" '[[ $CODE == 201 && $(field previous) == "$ID" ]]'
+VID=$(field id)
+req POST "/e/$VID/publish"
+check "version published" '[[ $(field status) == public ]]'
+req GET "/e/$ID"
+check "old version says superseded_by" '[[ $(field superseded_by) == "$VID" ]]'
+req GET "/search?q=$tag"
+check "search shows only the new version" '[[ $BODY == *"$VID"* && $BODY != *"$ID;"* ]]'
+
+python3 - "$tag" "$fixture" > "$dir/batch.json" <<'PY'
+import json, re, sys
+tag, fixture = sys.argv[1:]
+base = open(fixture).read()
+def member(slug, title, extra):
+    text = re.sub(r"^title: .*$", f"title: SMOKE TEST {tag} {title}, not a real result", base, flags=re.M)
+    return re.sub(r"^tags: .*$", f"tags: [smoke-test, {tag}]\nslug: {tag}-{slug}\nuses_runs: [{tag}-run]{extra}", text, flags=re.M)
+print(json.dumps({"runs": [{"id": f"{tag}-run", "description": "Smoke-test run, made up.", "n": 520}],
+  "entries": [member("pilot", "pilot", f"\nsuperseded_by: slug:{tag}-main"), member("main", "main", "")]}))
+PY
+req POST /entries/batch "$dir/batch.json" application/json
+check "batch: 201 pending" '[[ $CODE == 201 && $(field status) == pending ]]'
+BID=$(field id)
+members=$(printf '%s\n' "$BODY" | sed -n 's/^entry: \([^ ]*\) .*/\1/p')
+PILOT=$(sed -n 1p <<< "$members")
+MAIN=$(sed -n 2p <<< "$members")
+req POST "/e/$PILOT/publish"
+check "a member can't publish alone" '[[ $CODE == 409 ]]'
+req POST "/batches/$BID/publish"
+check "batch published" '[[ $CODE == 200 ]]'
+req GET "/e/$PILOT"
+check "slug link resolves" '[[ $BODY == *"link: slug:$tag-main = $MAIN"* ]]'
+check "run listed with its entries" '[[ $BODY == *"run: $tag-run: entries"* ]]'
+
+echo "tag $tag: $pass passed, $fail failed"
+(( fail == 0 ))

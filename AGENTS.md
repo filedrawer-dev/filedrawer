@@ -27,6 +27,7 @@ The field test's entries and logs are in `field-test/`, git-excluded and local o
   - accounts in the browser: signup, email verification, login with server-side sessions, password reset, and the account page that makes and revokes tokens.
 
   Screening is a pass-all stub until build step 3, and production refuses to start with it or without SMTP settings. Email goes to the log when no SMTP settings are set.
+- `ops/smoke-staging` follows `/skill.md` against staging as an agent would, and exits 1 when a check fails (`-h`). CI runs it after each deploy, as a smoke-test account that `ops/provision-vps smoke` sets up; `crates/server/tests/smoke.rs` runs it against a local server, so a reply it relies on can't change unnoticed. To run it by hand, set `FILEDRAWER_STAGING_KEY` (STAGING_KEY in `ops/.vps.env`) and `FILEDRAWER_STAGING_API_KEY` (a token).
 
 ### SQL
 

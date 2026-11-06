@@ -211,7 +211,10 @@ def test_every_secret_and_variable_the_workflow_reads_is_one_the_wizard_sets():
     wizard = (REPO / "ops/provision-vps").read_text()
     read = set(re.findall(r"\$\{\{\s*(?:secrets|vars)\.(\w+)\s*\}\}", workflow))
     set_by_wizard = set(
-        re.findall(r"(?:set_var|gh secret set|gh variable set)\s+(\w+)", wizard)
+        re.findall(
+            r"(?:set_var|set_staging_secret|gh secret set|gh variable set)\s+(\w+)",
+            wizard,
+        )
     )
     assert read, "the workflow reads no secrets or variables"
     assert read <= set_by_wizard, read - set_by_wizard
@@ -233,3 +236,30 @@ def test_the_settings_the_vps_scripts_write_are_the_ones_the_server_reads():
         "FILEDRAWER_PUBLIC_URL",
     }
     assert required <= written, required - written
+
+
+def workflow_jobs() -> dict[str, str]:
+    """Each job in ci.yml, by name, as its text."""
+    workflow = (REPO / ".github/workflows/ci.yml").read_text()
+    jobs = workflow.split("\njobs:\n", 1)[1]
+    parts = re.split(r"^  ([\w-]+):\n", jobs, flags=re.MULTILINE)
+    return dict(zip(parts[1::2], parts[2::2]))
+
+
+def test_a_job_that_reads_secrets_runs_only_githubs_own_actions():
+    jobs = workflow_jobs()
+    holding = {name: text for name, text in jobs.items() if "secrets." in text}
+    assert {"deploy-staging", "smoke-staging"} <= holding.keys(), jobs.keys()
+    for name, text in holding.items():
+        actions = re.findall(r"uses:\s*(\S+)", text)
+        third_party = [a for a in actions if not a.startswith("actions/")]
+        assert not third_party, f"{name} holds secrets and runs {third_party}"
+
+
+def test_the_smoke_test_runs_after_the_deploy_and_waits_for_it():
+    job = workflow_jobs()["smoke-staging"]
+    assert re.search(r"^    needs: deploy-staging$", job, re.MULTILINE), job
+    assert re.search(r"^    environment: staging$", job, re.MULTILINE), job
+    assert re.search(
+        r"ops/smoke-staging --wait \d+ https://staging\.filedrawer\.dev", job
+    )

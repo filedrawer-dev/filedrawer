@@ -236,11 +236,80 @@ run_wizard() {
 # It saves the host name and basic-auth user in ops/.vps.env (git-ignored); the
 # password is never saved. Every remote step is a script in ops/remote/ that is safe
 # to rerun, so rerunning the wizard repairs a half-finished setup.
+# `ops/provision-vps smoke` runs only the last stage, the smoke test's account and
+# secrets, on a server the full wizard has set up.
 
-TOTAL_STAGES=9
+TOTAL_STAGES=10
 ENV_FILE="ops/.vps.env"
 REMOTE="$(dirname "$0")/remote"
 [[ -d "$REMOTE" ]] || { echo "run this from the repo: $REMOTE is missing" >&2; exit 1; }
+
+# need_gh: stops the wizard unless gh is logged in.
+need_gh() {
+  if ! { command -v gh >/dev/null && gh auth status >/dev/null 2>&1; }; then
+    warn "gh isn't logged in here. Run 'gh auth login', then rerun the wizard."
+    exit 1
+  fi
+}
+
+# set_staging_secret NAME VALUE: sets NAME as a secret of the `staging` environment,
+# with VALUE on stdin so it never sits in a command line.
+set_staging_secret() {
+  printf '%s' "$2" | gh secret set "$1" --env staging
+  WRITTEN_SECRET+=("$1 (environment staging)")
+  printf '  %s✓ set%s GitHub secret %s (environment staging)\n' "$GREEN" "$RESET" "$1"
+}
+
+# smoke_stage: the account CI's smoke test submits as, after each deploy
+# (.github/workflows/ci.yml, smoke-staging), and the two secrets it reads.
+smoke_stage() {
+  stage "Smoke-test account for CI"
+  say "After each deploy, CI runs ops/smoke-staging against staging, as an agent would,"
+  say "as an account of its own. Its entries say SMOKE TEST in the title, and stay."
+  say "This makes the account and a token on the server, and stores the token and the"
+  say "staging key as secrets of the 'staging' environment. Neither is shown."
+  need_gh
+  STAGING_KEY=$(_existing STAGING_KEY || true)
+  if [[ ! "$STAGING_KEY" =~ ^[0-9a-f]{64}$ ]]; then
+    warn "$ENV_FILE has no staging key. Run the whole wizard (ops/provision-vps) first."
+    exit 1
+  fi
+  SMOKE_ACCOUNT=$(_existing SMOKE_ACCOUNT || true)
+  local reply status=0 secrets
+  secrets=$(gh secret list --env staging --json name --jq '.[].name' 2>/dev/null || true)
+  if [[ -n "$SMOKE_ACCOUNT" ]] && grep -qx SMOKE_TEST_TOKEN <<< "$secrets" \
+    && ! confirm "SMOKE_TEST_TOKEN is set already. Make a new token anyway?"; then
+    note "Kept the token in SMOKE_TEST_TOKEN."
+  else
+    step "Making the account and a token on $VPS_HOST..."
+    reply=$(remote smoke-account.sh "SMOKE_ACCOUNT=$SMOKE_ACCOUNT") || status=$?
+    if (( status == 3 )); then
+      warn "Staging has no server yet. Once a push to main deploys it, run:"
+      warn "  ops/provision-vps smoke"
+      SKIPPED+=("smoke-test account: run 'ops/provision-vps smoke' after the first deploy")
+    elif (( status != 0 )) || [[ ! "$reply" =~ ^a-[^[:space:]]+$'\t'fdt_[^[:space:]]+$ ]]; then
+      warn "Making the account failed; the server said why above. Rerun to try again."
+      exit 1
+    else
+      write_env SMOKE_ACCOUNT "${reply%%$'\t'*}"
+      set_staging_secret SMOKE_TEST_TOKEN "${reply#*$'\t'}"
+    fi
+    unset reply
+  fi
+  set_staging_secret STAGING_KEY "$STAGING_KEY"
+  note "The next deploy runs the smoke test. To run it from here instead:"
+  note "  FILEDRAWER_STAGING_KEY=... FILEDRAWER_STAGING_API_KEY=... ops/smoke-staging"
+  pause
+}
+
+if [[ "${1:-}" == smoke ]]; then
+  TOTAL_STAGES=1
+  VPS_HOST=$(_existing VPS_HOST || true)
+  [[ -n "$VPS_HOST" ]] || { warn "$ENV_FILE has no VPS_HOST. Run the whole wizard first."; exit 1; }
+  smoke_stage
+  finish
+  return 0
+fi
 
 # ask_new_secret KEY "Prompt": asks twice, and stops the wizard if the two differ or
 # are empty.
@@ -377,10 +446,7 @@ say "A key that lets GitHub Actions upload a new staging binary, and nothing els
 say "the server runs only filedrawer-receive for it, which checks the upload's hash"
 say "and installs it with a health check and rollback. The private half goes straight"
 say "into the repo's secrets through gh, and is deleted from this machine."
-if ! { command -v gh >/dev/null && gh auth status >/dev/null 2>&1; }; then
-  warn "gh isn't logged in here. Run 'gh auth login', then rerun the wizard."
-  exit 1
-fi
+need_gh
 ssh -o BatchMode=yes "root@$VPS_HOST" \
   "install -o root -g root -m 0755 /dev/stdin /usr/local/bin/filedrawer-receive" \
   < "$REMOTE/filedrawer-receive"
@@ -435,6 +501,8 @@ esac
 note "With the password, / answers 502 until the first deploy starts the server."
 note "That happens on the next push to main once CI passes."
 pause
+
+smoke_stage
 
 finish
 }

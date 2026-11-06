@@ -98,3 +98,28 @@ jobs:
           ssh -i "$key" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile=known_hosts \
             "deploy@$VPS_HOST" "deploy staging $hash" < filedrawer
+
+  # After each deploy, ops/smoke-staging follows /skill.md against staging as an agent
+  # would, as an account of its own. deploy-staging succeeds only once the new binary
+  # passed filedrawer-install's health check, and the script's --wait then waits for
+  # /skill.md to answer through Caddy. Smoke entries stay on staging. This job holds
+  # the staging key and the smoke account's token (STAGING_KEY and SMOKE_TEST_TOKEN,
+  # secrets of the `staging` environment that ops/provision-vps sets), so it runs no
+  # third-party action.
+  smoke-staging:
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: staging
+    concurrency:
+      group: smoke-staging
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Smoke test
+        env:
+          FILEDRAWER_STAGING_KEY: ${{ secrets.STAGING_KEY }}
+          FILEDRAWER_STAGING_API_KEY: ${{ secrets.SMOKE_TEST_TOKEN }}
+        run: ops/smoke-staging --wait 120 https://staging.filedrawer.dev
