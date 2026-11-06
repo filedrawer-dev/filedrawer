@@ -3,6 +3,7 @@
 
 use time::{Duration, OffsetDateTime};
 
+use crate::attachments::{self, StoreError};
 use crate::{AppState, entries, queue, series, time::stamp};
 
 /// How long an accepted submission is held so its author can fix it. Each
@@ -75,6 +76,32 @@ pub async fn publish_due(state: &AppState, now: OffsetDateTime) -> Result<usize,
         }
     }
     Ok(done)
+}
+
+/// How long a set may wait for an entry to cite it (design.md, Attached code).
+pub const UNCITED_SET_DAYS: i64 = 7;
+
+/// Tidies attached files at `now`: deletes the sets no entry cites that were
+/// uploaded more than [`UNCITED_SET_DAYS`] ago, with the files no other set holds,
+/// and removes bytes on disk that no record holds.
+pub async fn tidy_files(state: &AppState, now: OffsetDateTime) -> Result<(), StoreError> {
+    let before = stamp(now - Duration::days(UNCITED_SET_DAYS));
+    let deleted = attachments::delete_uncited_sets(state, &before).await;
+    // Bytes no record holds go even when the deletion failed.
+    let swept = attachments::sweep(state).await;
+    deleted.and(swept)
+}
+
+/// Runs `tidy_files` every hour, for `filedrawer serve`. An error is logged and the
+/// loop goes on.
+pub async fn run_tidier(state: AppState) {
+    let mut ticks = tokio::time::interval(std::time::Duration::from_secs(60 * 60));
+    loop {
+        ticks.tick().await;
+        if let Err(error) = tidy_files(&state, OffsetDateTime::now_utc()).await {
+            tracing::error!(%error, "tidying attached files failed");
+        }
+    }
 }
 
 /// Runs `publish_due` every 30 seconds, for `filedrawer serve`. An error is logged and

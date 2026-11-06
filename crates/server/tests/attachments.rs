@@ -314,6 +314,139 @@ async fn a_public_file_whose_bytes_are_missing_answers_500_and_says_nothing_of_w
     assert_eq!(reply.body, "internal error\n");
 }
 
+mod tidy {
+    //! The hourly tidy of attached files (design.md, Attached code).
+
+    use super::*;
+    use time::{Duration, OffsetDateTime};
+
+    async fn tidy_at(app: &TestApp, now: OffsetDateTime) {
+        filedrawer_server::jobs::tidy_files(&app.state, now)
+            .await
+            .unwrap();
+    }
+
+    async fn set_of(app: &TestApp, files: Value) -> String {
+        let reply = upload(app, &app.token, json!({"files": files})).await;
+        assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
+        serde_json::from_str::<Value>(&reply.body).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    }
+
+    #[tokio::test]
+    async fn a_set_no_entry_cites_goes_seven_days_after_upload_with_the_files_no_other_set_holds() {
+        let app = test_app().await;
+        let uploaded = OffsetDateTime::now_utc();
+        let uncited = set_of(
+            &app,
+            json!([
+                file("author:shared.py", "shared\n"),
+                file("author:lone.py", "lone\n")
+            ]),
+        )
+        .await;
+        let cited = set_of(
+            &app,
+            json!([
+                file("author:shared.py", "shared\n"),
+                file("author:own.py", "own\n")
+            ]),
+        )
+        .await;
+        let held = app.post("/entries", citing(&cited)).await;
+        assert_eq!(held.status, StatusCode::CREATED, "{}", held.body);
+
+        tidy_at(&app, uploaded + Duration::days(6)).await;
+        assert_eq!(
+            common::stored_texts(&app),
+            vec!["lone\n", "own\n", "shared\n"]
+        );
+
+        tidy_at(&app, uploaded + Duration::days(7) + Duration::seconds(2)).await;
+        assert_eq!(common::stored_texts(&app), vec!["own\n", "shared\n"]);
+        let late = app.post("/entries", citing(&uncited)).await;
+        assert_eq!(
+            late.status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{}",
+            late.body
+        );
+        assert!(
+            late.body.contains("names no attachment set"),
+            "{}",
+            late.body
+        );
+        // The cited set is as old, and stays.
+        let again = app.post("/entries", citing(&cited)).await;
+        assert_eq!(again.status, StatusCode::CREATED, "{}", again.body);
+    }
+
+    #[tokio::test]
+    async fn an_older_version_keeps_its_set_after_a_newer_one_cites_another() {
+        // The owner's decision, 2026-11-06: older versions stay readable, so their
+        // code stays too.
+        let app = test_app().await;
+        let uploaded = OffsetDateTime::now_utc();
+        let first = set_of(&app, json!([file("author:v1.py", "print('v1')\n")])).await;
+        let held = app.post("/entries", citing(&first)).await;
+        let v1 = common::id_in(&held.body);
+        publish_and_place(&app, &v1).await;
+        let second = set_of(&app, json!([file("author:v2.py", "print('v2')\n")])).await;
+        let version = app
+            .post(&format!("/e/{v1}/versions"), citing(&second))
+            .await;
+        assert_eq!(version.status, StatusCode::CREATED, "{}", version.body);
+        publish_and_place(&app, &common::id_in(&version.body)).await;
+
+        tidy_at(&app, uploaded + Duration::days(8)).await;
+        assert_eq!(
+            common::stored_texts(&app),
+            vec!["print('v1')\n", "print('v2')\n"]
+        );
+        let served = get_on(
+            &app,
+            "files.localhost",
+            &format!("/f/{}", sha256("print('v1')\n")),
+        )
+        .await;
+        assert_eq!(served.status, StatusCode::OK, "{}", served.body);
+        assert_eq!(served.body, "print('v1')\n");
+    }
+
+    #[tokio::test]
+    async fn bytes_with_no_record_and_leftover_temporary_files_are_swept() {
+        let app = test_app().await;
+        a_set(&app, &app.token).await;
+        let root = app.files_dir.path().join("files");
+        let stray = sha256("stray\n");
+        std::fs::create_dir_all(root.join(&stray[..2])).unwrap();
+        std::fs::write(root.join(&stray[..2]).join(&stray), "stray\n").unwrap();
+        std::fs::write(root.join("tmp").join(sha256("half")), "ha").unwrap();
+        assert_eq!(common::stored_texts(&app), vec![SCRIPT, "stray\n"]);
+
+        tidy_at(&app, OffsetDateTime::now_utc()).await;
+        assert_eq!(common::stored_texts(&app), vec![SCRIPT]);
+        assert_eq!(std::fs::read_dir(root.join("tmp")).unwrap().count(), 0);
+    }
+
+    #[tokio::test]
+    async fn something_the_sweep_cant_remove_doesnt_stop_it() {
+        let app = test_app().await;
+        let root = app.files_dir.path().join("files");
+        // Neither a file nor a hash's name: nothing a write leaves, and remove_file
+        // can't remove it.
+        std::fs::create_dir_all(root.join("tmp").join("odd")).unwrap();
+        let stray = sha256("stray\n");
+        std::fs::create_dir_all(root.join(&stray[..2])).unwrap();
+        std::fs::write(root.join(&stray[..2]).join(&stray), "stray\n").unwrap();
+
+        tidy_at(&app, OffsetDateTime::now_utc()).await;
+        assert_eq!(common::stored_texts(&app), Vec::<String>::new());
+    }
+}
+
 /// An entry citing `set`, with no `code` link.
 fn citing(set: &str) -> String {
     common::entry(

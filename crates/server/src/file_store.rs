@@ -109,6 +109,33 @@ impl Writer<'_> {
             _ => Ok(()),
         }
     }
+
+    /// The hash of every file the store holds. Clears any temporary file a write
+    /// left behind, which, with the lock held, no write is still making; one that
+    /// can't be removed is logged and left.
+    pub async fn stored(&self) -> io::Result<Vec<String>> {
+        let mut hashes = Vec::new();
+        let mut dirs = tokio::fs::read_dir(&self.store.root).await?;
+        while let Some(dir) = dirs.next_entry().await? {
+            let tmp = dir.file_name() == TMP;
+            if !dir.file_type().await?.is_dir() {
+                continue;
+            }
+            let mut files = tokio::fs::read_dir(dir.path()).await?;
+            while let Some(file) = files.next_entry().await? {
+                if tmp {
+                    if let Err(error) = tokio::fs::remove_file(file.path()).await {
+                        tracing::error!(path = %file.path().display(), %error, "removing a half-written attached file failed");
+                    }
+                } else if let Some(name) = file.file_name().to_str().filter(|name| is_sha256(name))
+                {
+                    hashes.push(name.to_string());
+                }
+            }
+        }
+        hashes.sort();
+        Ok(hashes)
+    }
 }
 
 async fn sync_dir(dir: &Path) -> io::Result<()> {

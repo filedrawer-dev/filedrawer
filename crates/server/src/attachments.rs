@@ -364,8 +364,56 @@ pub async fn delete_lone_files(
     .await
 }
 
+/// Deletes every set no entry cites that was uploaded before `before`, a stored
+/// time, with the files no other set holds.
+pub async fn delete_uncited_sets(state: &AppState, before: &str) -> Result<(), StoreError> {
+    let writer = state.files.write().await;
+    let mut transaction = state.pool.begin().await?;
+    sqlx::query!(
+        "DELETE FROM attachment_files WHERE set_seq IN (
+             SELECT s.seq FROM attachment_sets s
+             WHERE s.created_at < ? AND NOT EXISTS (
+                 SELECT 1 FROM entries e WHERE e.attachment_set_seq = s.seq))",
+        before
+    )
+    .execute(&mut *transaction)
+    .await?;
+    sqlx::query!(
+        "DELETE FROM attachment_sets
+         WHERE created_at < ? AND NOT EXISTS (
+             SELECT 1 FROM entries e WHERE e.attachment_set_seq = attachment_sets.seq)",
+        before
+    )
+    .execute(&mut *transaction)
+    .await?;
+    let lone = delete_lone_files(&mut transaction).await?;
+    transaction.commit().await?;
+    remove_bytes(&writer, &lone).await;
+    Ok(())
+}
+
+/// Removes the bytes on disk that no file's record holds, such as those a crash
+/// left between writing a file and committing its record, and any half-written file.
+pub async fn sweep(state: &AppState) -> Result<(), StoreError> {
+    let writer = state.files.write().await;
+    let recorded: HashSet<String> = sqlx::query_scalar!("SELECT sha256 FROM files")
+        .fetch_all(&state.pool)
+        .await?
+        .into_iter()
+        .collect();
+    let unrecorded: Vec<String> = writer
+        .stored()
+        .await?
+        .into_iter()
+        .filter(|sha256| !recorded.contains(sha256))
+        .collect();
+    remove_bytes(&writer, &unrecorded).await;
+    Ok(())
+}
+
 /// Removes the bytes of files whose records are deleted and committed. A file that
-/// can't be removed is logged, and stays on disk with no record.
+/// can't be removed is logged; the hourly tidy removes it later, since it has no
+/// record.
 pub async fn remove_bytes(writer: &Writer<'_>, hashes: &[String]) {
     for sha256 in hashes {
         if let Err(error) = writer.remove(sha256).await {
