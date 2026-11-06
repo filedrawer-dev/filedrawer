@@ -420,6 +420,32 @@ async fn the_owner_sees_entries_that_passed_with_a_hazard_doubt_until_marked_see
     assert!(!queue.body.contains(&seen), "{}", queue.body);
 }
 
+#[tokio::test]
+async fn a_doubt_whose_category_is_none_shows_as_unnamed() {
+    let app = app().await;
+    let cookie = owner(&app).await;
+    let held = app
+        .post(
+            "/entries",
+            entry("Steering FAKE-HAZARD FAKE-SONNET-NOCATEGORY", ""),
+        )
+        .await;
+    let id = id_in(&held.body);
+    let placed = app.post(&format!("/e/{id}/publish"), "").await;
+    assert_eq!(
+        field(&placed.body, "status"),
+        Some("public"),
+        "{}",
+        placed.body
+    );
+    let queue = app.page("/admin", Some(&cookie)).await;
+    assert!(
+        queue.body.contains("unnamed: the quoted passage"),
+        "{}",
+        queue.body
+    );
+}
+
 /// The ID in the first `/admin/series-refusals/<id>/<action>` form on the queue page.
 fn refusal_id(page: &str) -> Option<String> {
     let start = page.find("/admin/series-refusals/")? + "/admin/series-refusals/".len();

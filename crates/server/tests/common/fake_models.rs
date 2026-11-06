@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use filedrawer_server::screening::{
     Answer, Calling, Model, ModelClient, ModelError, ModelReply, ModelRequest, Screener, Usage,
 };
-use serde_json::json;
+use serde_json::{Value, json};
 
 /// What each call reports it used.
 pub const USAGE: Usage = Usage {
@@ -22,8 +22,9 @@ pub const USAGE: Usage = Usage {
 ///   unsure. Sonnet says likely, with a category and a quote, only with
 ///   `FAKE-SONNET-HAZARD`; unsure with `FAKE-SONNET-UNSURE`; likely but with no
 ///   quote with `FAKE-SONNET-NOQUOTE`, with an empty quote with
-///   `FAKE-SONNET-EMPTYQUOTE`, or with a quote but no category with
-///   `FAKE-SONNET-NOCATEGORY`.
+///   `FAKE-SONNET-EMPTYQUOTE`, or with a quote but category `"none"` with
+///   `FAKE-SONNET-NOCATEGORY`. Without a hazard the category is `"none"` too, as
+///   the schema has it.
 /// - `FAKE-REFUSE`: Haiku declines; Sonnet declines too with `FAKE-SONNET-REFUSE`.
 /// - `FAKE-DOUBT`: a doubt about `outcome`.
 /// - `FAKE-ERROR`: every call fails, as in an outage.
@@ -34,6 +35,8 @@ pub struct FakeModels {
     asked: Arc<Mutex<Vec<Model>>>,
     /// The text each Haiku call screened, in order.
     screened: Arc<Mutex<Vec<String>>>,
+    /// The schema each call asked for, in order.
+    schemas: Arc<Mutex<Vec<Value>>>,
     /// Closed until `release`; then every slow call goes through.
     gate: Arc<tokio::sync::Semaphore>,
 }
@@ -43,6 +46,7 @@ impl Default for FakeModels {
         FakeModels {
             asked: Arc::default(),
             screened: Arc::default(),
+            schemas: Arc::default(),
             gate: Arc::new(tokio::sync::Semaphore::new(0)),
         }
     }
@@ -62,6 +66,11 @@ impl FakeModels {
         self.screened.lock().unwrap().clone()
     }
 
+    /// The schema each call asked for, in order.
+    pub fn schemas(&self) -> Vec<Value> {
+        self.schemas.lock().unwrap().clone()
+    }
+
     /// Lets every `FAKE-SLOW` call finish, now and later.
     pub fn release(&self) {
         self.gate
@@ -79,6 +88,7 @@ impl FakeModels {
 impl ModelClient for FakeModels {
     fn call<'a>(&'a self, request: &'a ModelRequest) -> Calling<'a> {
         self.asked.lock().unwrap().push(request.model);
+        self.schemas.lock().unwrap().push(request.schema.clone());
         if request.model == Model::Haiku {
             self.screened.lock().unwrap().push(request.user.clone());
         }
@@ -130,8 +140,11 @@ impl ModelClient for FakeModels {
                 (hazard != "none" && !(sonnet && has("FAKE-SONNET-NOQUOTE")))
                     .then_some("the quoted passage")
             };
-            let category = (hazard != "none" && !(sonnet && has("FAKE-SONNET-NOCATEGORY")))
-                .then_some("working_attack");
+            let category = if hazard != "none" && !(sonnet && has("FAKE-SONNET-NOCATEGORY")) {
+                "working_attack"
+            } else {
+                "none"
+            };
             let mut reasons = Vec::new();
             if on_topic == "no" {
                 reasons.push("It is about cooking, not AI safety.");

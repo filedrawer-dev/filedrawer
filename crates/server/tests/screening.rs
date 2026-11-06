@@ -10,7 +10,9 @@ use axum::http::{Request, StatusCode};
 use common::fake_models::FakeModels;
 use common::{DELIMITER, TestApp, entry, field, id_in, test_app_with};
 use filedrawer_server::jobs::publish_due;
-use filedrawer_server::screening::{Answer, Model, ModelRequest, Usage, parse_reply, request_body};
+use filedrawer_server::screening::{
+    Answer, Model, ModelRequest, Subject, Usage, parse_reply, request_body,
+};
 use serde_json::json;
 use time::{Duration, OffsetDateTime};
 
@@ -524,6 +526,46 @@ async fn a_series_the_screen_fails_is_refused() {
         .await
         .unwrap();
     assert_eq!(logged, 1);
+}
+
+/// Where `schema` breaks the API's rule for `enum` (the API's 400 of 2026-11-06:
+/// "Enum value 'working_attack' does not match declared type '['string', 'null']'"):
+/// each `enum` needs one declared `type`, and every value must be of that type.
+fn enum_mismatches(schema: &serde_json::Value, path: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    if let Some(values) = schema.get("enum").and_then(|values| values.as_array()) {
+        let fits = |value: &serde_json::Value| match schema["type"].as_str() {
+            Some("string") => value.is_string(),
+            Some("boolean") => value.is_boolean(),
+            Some("integer") => value.is_i64() || value.is_u64(),
+            Some("number") => value.is_number(),
+            Some("null") => value.is_null(),
+            _ => false,
+        };
+        for value in values.iter().filter(|value| !fits(value)) {
+            found.push(format!("{path}: {value} under type {}", schema["type"]));
+        }
+    }
+    for (name, property) in schema["properties"].as_object().into_iter().flatten() {
+        found.extend(enum_mismatches(property, &format!("{path}.{name}")));
+    }
+    if schema.get("items").is_some() {
+        found.extend(enum_mismatches(&schema["items"], &format!("{path}[]")));
+    }
+    found
+}
+
+#[tokio::test]
+async fn every_enum_in_the_schemas_sent_matches_its_declared_type() {
+    let models = FakeModels::default();
+    let screener = models.screener();
+    screener.screen_as("an entry", Subject::Submission).await;
+    screener.screen_as("some code", Subject::Code).await;
+    let schemas = models.schemas();
+    assert_eq!(schemas.len(), 2);
+    for schema in &schemas {
+        assert_eq!(enum_mismatches(schema, "schema"), Vec::<String>::new());
+    }
 }
 
 #[test]

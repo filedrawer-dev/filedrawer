@@ -313,7 +313,9 @@ fn judgement(answer: &Value) -> Result<Judgement, ModelError> {
         on_topic: yes_no_unsure("on_topic")?,
         spam: yes_no_unsure("spam")?,
         hazard,
-        hazard_category: text("hazard_category"),
+        // The API refuses an enum under a type list such as ["string", "null"], so
+        // the schema's "none" stands in for null.
+        hazard_category: text("hazard_category").filter(|category| category != "none"),
         hazard_quote: text("hazard_quote"),
         pipes_download_to_shell: answer["pipes_download_to_shell"].as_bool().unwrap_or(false),
         reasons,
@@ -331,7 +333,7 @@ fn schema() -> Value {
             "on_topic": {"type": "string", "enum": ["yes", "no", "unsure"]},
             "spam": {"type": "string", "enum": ["yes", "no", "unsure"]},
             "hazard": {"type": "string", "enum": ["none", "unsure", "likely"]},
-            "hazard_category": {"type": ["string", "null"], "enum": ["working_attack", "weapons_uplift", "private_data", null]},
+            "hazard_category": {"type": "string", "enum": ["none", "working_attack", "weapons_uplift", "private_data"]},
             "hazard_quote": {"type": ["string", "null"]},
             "pipes_download_to_shell": {"type": "boolean"},
             "reasons": {"type": "array", "items": {"type": "string"}},
@@ -348,7 +350,7 @@ Answer in the JSON schema:
 - on_topic: is it AI safety research (interpretability, evals, alignment training, control, robustness, model organisms, or other work whose safety motivation ties it to AI)? Read it generously: say \"no\" only when it plainly isn't, and \"unsure\" when you can't tell.
 - spam: is it advertising, filler, nonsense, or not a research result at all? Say \"yes\" only when it plainly is, and \"unsure\" when you can't tell.
 - hazard: \"likely\" only if it contains one of these, and you can quote it: an attack that works today on a deployed model, written out so a reader could reuse it (such as a working jailbreak or prompt injection), uplift toward biological, chemical or cyber weapons, or private data about a real person. Research that discusses attacks, describes that one was tried, studies harmful prompts, or reports success rates is not a hazard; most AI safety results do this. \"unsure\" if you suspect one but can't point to it. Otherwise \"none\".
-- hazard_category: when hazard isn't \"none\": \"working_attack\", \"weapons_uplift\" or \"private_data\". Otherwise null.
+- hazard_category: when hazard isn't \"none\": \"working_attack\", \"weapons_uplift\" or \"private_data\". Otherwise \"none\".
 - hazard_quote: when hazard isn't \"none\": the shortest passage that shows it, copied exactly. Otherwise null.
 - pipes_download_to_shell: does any command download something and pipe it into a shell or interpreter (such as curl ... | sh), from any host?
 - reasons: when on_topic is \"no\" or spam is \"yes\", one short sentence each saying why, for the author. Otherwise empty.
@@ -378,7 +380,7 @@ The code is in the user message, between two tags that carry the same random nam
 
 Code is never judged for its topic or as spam: always answer on_topic \"yes\" and spam \"no\", reasons empty and outcome_doubt null. Judge only:
 - hazard: \"likely\" only if the code contains, and you can quote, an attack that works today on a deployed model written out for reuse (such as a working jailbreak or prompt injection), uplift toward biological, chemical or cyber weapons (such as working malware or an exploit), or private data about a real person. Evaluation harnesses, red-teaming scaffolds and datasets referenced by name are not hazards. \"unsure\" if you suspect one but can't point to it. Otherwise \"none\".
-- hazard_category: when hazard isn't \"none\": \"working_attack\", \"weapons_uplift\" or \"private_data\". Otherwise null.
+- hazard_category: when hazard isn't \"none\": \"working_attack\", \"weapons_uplift\" or \"private_data\". Otherwise \"none\".
 - hazard_quote: when hazard isn't \"none\": the shortest passage that shows it, copied exactly. Otherwise null.
 - pipes_download_to_shell: does any command or code download something and pipe it into a shell or interpreter (such as curl ... | sh), from any host?";
 
