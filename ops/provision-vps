@@ -237,9 +237,11 @@ run_wizard() {
 # password is never saved. Every remote step is a script in ops/remote/ that is safe
 # to rerun, so rerunning the wizard repairs a half-finished setup.
 # `ops/provision-vps smoke` runs only the last stage, the smoke test's account and
-# secrets, on a server the full wizard has set up.
+# secrets, on a server the full wizard has set up; `ops/provision-vps screening`
+# only staging's API key and cap, and `ops/provision-vps admin` only making your
+# staging account the admin.
 
-TOTAL_STAGES=10
+TOTAL_STAGES=12
 ENV_FILE="ops/.vps.env"
 REMOTE="$(dirname "$0")/remote"
 [[ -d "$REMOTE" ]] || { echo "run this from the repo: $REMOTE is missing" >&2; exit 1; }
@@ -284,9 +286,7 @@ smoke_stage() {
     step "Making the account and a token on $VPS_HOST..."
     reply=$(remote smoke-account.sh "SMOKE_ACCOUNT=$SMOKE_ACCOUNT") || status=$?
     if (( status == 3 )); then
-      warn "Staging has no server yet. Once a push to main deploys it, run:"
-      warn "  ops/provision-vps smoke"
-      SKIPPED+=("smoke-test account: run 'ops/provision-vps smoke' after the first deploy")
+      not_deployed_yet smoke "smoke-test account"
     elif (( status != 0 )) || [[ ! "$reply" =~ ^a-[^[:space:]]+$'\t'fdt_[^[:space:]]+$ ]]; then
       warn "Making the account failed; the server said why above. Rerun to try again."
       exit 1
@@ -302,14 +302,68 @@ smoke_stage() {
   pause
 }
 
-if [[ "${1:-}" == smoke ]]; then
-  TOTAL_STAGES=1
-  VPS_HOST=$(_existing VPS_HOST || true)
-  [[ -n "$VPS_HOST" ]] || { warn "$ENV_FILE has no VPS_HOST. Run the whole wizard first."; exit 1; }
-  smoke_stage
-  finish
-  return 0
-fi
+# screening_stage: staging's own Anthropic API key and daily cap (design.md, Submission
+# and screening). Until it runs, staging publishes everything unscreened.
+screening_stage() {
+  stage "Screening with the Anthropic API"
+  say "Staging screens entries with Haiku and Sonnet on an API key of its own, billed to"
+  say "you, within a daily cap. Until this runs, staging publishes everything unscreened."
+  open_url "https://console.anthropic.com/settings/keys"
+  step "Make a key for staging alone, named such as 'filedrawer staging'. A workspace"
+  step "with its own monthly spend limit is a second guard beside the server's cap."
+  ask SCREENING_DAILY_USD "Staging's screening cap, in dollars a day (Enter for 1):"
+  SCREENING_DAILY_USD="${SCREENING_DAILY_USD:-1}"
+  write_env SCREENING_DAILY_USD "$SCREENING_DAILY_USD"
+  ask_new_secret API_KEY "The API key (sk-ant-...):"
+  # The unit first, so it reads the file screening.sh writes.
+  remote staging-service.sh
+  remote_with_secret screening.sh API_KEY "$API_KEY" "DAILY_USD=$SCREENING_DAILY_USD"
+  unset API_KEY
+  note "The key is on the server only. To check it, submit an entry: it should come back"
+  note "public, rejected or review, and journalctl -u filedrawer-staging logs each call."
+  pause
+}
+
+# not_deployed_yet NAME WHAT: says staging has no server yet, and how to run the
+# stage NAME once it has.
+not_deployed_yet() {
+  warn "Staging has no server yet. Once a push to main deploys it, run:"
+  warn "  ops/provision-vps $1"
+  SKIPPED+=("$2: run 'ops/provision-vps $1' after the first deploy")
+}
+
+# admin_stage: makes your own staging account the admin, so its browser session
+# reaches the review queue at /admin.
+admin_stage() {
+  stage "Your admin account"
+  say "The review queue at https://staging.filedrawer.dev/admin answers only the admin's"
+  say "browser session."
+  if ! ssh -o BatchMode=yes "root@$VPS_HOST" "test -x /srv/filedrawer/staging/bin/filedrawer" < /dev/null; then
+    not_deployed_yet admin "admin account"
+    pause
+    return 0
+  fi
+  say "Sign up and verify on staging first if you haven't."
+  open_url "https://staging.filedrawer.dev/account"
+  step "Copy the account ID the page shows (a-...)."
+  ask ADMIN_ACCOUNT "Your account ID:"
+  if [[ ! "$ADMIN_ACCOUNT" =~ ^a-[0-9a-z]+$ ]]; then
+    warn "That isn't an account ID (a- then lowercase letters and digits). Rerun to try again."
+    exit 1
+  fi
+  write_env ADMIN_ACCOUNT "$ADMIN_ACCOUNT"
+  local status=0
+  remote admin-grant.sh "ADMIN_ACCOUNT=$ADMIN_ACCOUNT" || status=$?
+  if (( status == 3 )); then
+    not_deployed_yet admin "admin account"
+  elif (( status != 0 )); then
+    warn "Granting failed; the server said why above. Rerun to try again."
+    exit 1
+  else
+    say "Your account is the admin. ✓"
+  fi
+  pause
+}
 
 # ask_new_secret KEY "Prompt": asks twice, and stops the wizard if the two differ or
 # are empty.
@@ -323,6 +377,16 @@ ask_new_secret() {
     exit 1
   fi
 }
+
+case "${1:-}" in
+  smoke | screening | admin)
+    TOTAL_STAGES=1
+    VPS_HOST=$(_existing VPS_HOST || true)
+    [[ -n "$VPS_HOST" ]] || { warn "$ENV_FILE has no VPS_HOST. Run the whole wizard first."; exit 1; }
+    "${1}_stage"
+    finish
+    return 0 ;;
+esac
 
 banner "File Drawer VPS: staging setup"
 
@@ -502,6 +566,8 @@ note "With the password, / answers 502 until the first deploy starts the server.
 note "That happens on the next push to main once CI passes."
 pause
 
+screening_stage
+admin_stage
 smoke_stage
 
 finish

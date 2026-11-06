@@ -222,7 +222,7 @@ def test_every_secret_and_variable_the_workflow_reads_is_one_the_wizard_sets():
 
 def test_the_settings_the_vps_scripts_write_are_the_ones_the_server_reads():
     written = set()
-    for script in ("staging-service.sh", "mail.sh"):
+    for script in ("staging-service.sh", "mail.sh", "screening.sh"):
         text = (REPO / "ops/remote" / script).read_text()
         written |= set(re.findall(r"^(FILEDRAWER_\w+)=", text, re.MULTILINE))
     config = (REPO / "crates/server/src/config.rs").read_text()

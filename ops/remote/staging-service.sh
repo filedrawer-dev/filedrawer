@@ -27,6 +27,9 @@ Group=filedrawer
 EnvironmentFile=/etc/filedrawer/staging.env
 # The SMTP settings, which ops/remote/mail.sh writes; without them email goes to the log.
 EnvironmentFile=-/etc/filedrawer/staging-mail.env
+# The screening settings, which ops/remote/screening.sh writes. Read last, so its
+# FILEDRAWER_SCREENER replaces staging.env's pass-all.
+EnvironmentFile=-/etc/filedrawer/staging-screening.env
 ExecStart=/srv/filedrawer/staging/bin/filedrawer serve
 Restart=on-failure
 RestartSec=2
