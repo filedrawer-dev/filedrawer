@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT account_id FROM sessions WHERE hash = ? AND expires_at > ?",
+  "query": "SELECT s.account_id FROM sessions s JOIN accounts a ON a.id = s.account_id\n         WHERE s.hash = ? AND s.expires_at > ? AND a.deleted_at IS NULL",
   "describe": {
     "columns": [
       {
@@ -22,5 +22,5 @@
       false
     ]
   },
-  "hash": "9206af04ecd233a9dc0f03c0904c40415846a9ffc7cf69b121e370c88760ba7b"
+  "hash": "bc61d80f530f7b33ef6daceee7fa268336110c106f3e83ca1b8438762b79d10c"
 }

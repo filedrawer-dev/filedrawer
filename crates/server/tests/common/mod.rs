@@ -1,6 +1,8 @@
 //! A fresh server on an in-memory database, with one account and its token.
 #![allow(dead_code)]
 
+pub mod series;
+
 use axum::Router;
 use axum::body::Body;
 use axum::http::{HeaderMap, Request, StatusCode};
@@ -58,11 +60,13 @@ const SINGLE_KEYS: &[&str] = &[
     "key",
     "join",
     "description",
+    "removed",
+    "series_description",
 ];
 
 /// Keys a reply may repeat, one line per item: slug links, runs and batch members.
 /// `row N` repeats too, once per N.
-const REPEATED_KEYS: &[&str] = &["link", "run", "entry"];
+const REPEATED_KEYS: &[&str] = &["link", "run", "entry", "member"];
 
 /// The lines above the delimiter that hold no key: the hold's instructions, written
 /// by the server.

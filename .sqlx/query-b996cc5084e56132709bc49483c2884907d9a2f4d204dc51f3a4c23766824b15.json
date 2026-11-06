@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE series SET key_hash = ? WHERE seq = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "b996cc5084e56132709bc49483c2884907d9a2f4d204dc51f3a4c23766824b15"
+}

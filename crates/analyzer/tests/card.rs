@@ -53,7 +53,7 @@ fn the_server_context_fills_the_id_flags_and_author() {
     let context = CardContext {
         id: Some("fd-7k2q".into()),
         author: Some(Author {
-            display_name: "Ada".into(),
+            display_name: Some("Ada".into()),
             account_id: "a91x".into(),
             handles: vec!["github:ada".into()],
         }),
@@ -410,4 +410,18 @@ fn the_primary_row_summary_echoes_what_the_analyzer_read() {
         analyze(&no_table).primary_row_summary(),
         "none (Results table not read)"
     );
+}
+
+#[test]
+fn a_deleted_accounts_card_says_so_and_shows_no_name() {
+    let context = CardContext {
+        author: Some(Author {
+            display_name: None,
+            account_id: "a-91x".into(),
+            handles: Vec::new(),
+        }),
+        ..CardContext::default()
+    };
+    let card = render_card(&analyze(EXAMPLE), &context);
+    assert_eq!(card.lines().last(), Some("account deleted, a-91x"));
 }

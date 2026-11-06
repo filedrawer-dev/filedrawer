@@ -201,7 +201,8 @@ pub async fn latest_readable(pool: &SqlitePool, seq: i64) -> Result<Option<Versi
 /// Makes readable, for good, every version whose series is public, that a public
 /// entry cites, and that no entry still on its way to public cites (design.md,
 /// Series: a new version "stays unreadable ... until every entry citing it is
-/// public"). Run whenever an entry becomes public or a series does.
+/// public"). An entry taken out of the series counts neither way. Run whenever an
+/// entry becomes public, leaves a series, or a series becomes public.
 pub async fn mark_readable(connection: &mut sqlx::SqliteConnection) -> Result<(), sqlx::Error> {
     let readable_at = now();
     sqlx::query!(
@@ -211,11 +212,13 @@ pub async fn mark_readable(connection: &mut sqlx::SqliteConnection) -> Result<()
            AND EXISTS (
                SELECT 1 FROM entries x
                WHERE x.series_seq = series_versions.series_seq
-                 AND x.series_version = series_versions.version AND x.status = 'public')
+                 AND x.series_version = series_versions.version AND x.status = 'public'
+                 AND x.series_removed_at IS NULL)
            AND NOT EXISTS (
                SELECT 1 FROM entries x
                WHERE x.series_seq = series_versions.series_seq
                  AND x.series_version = series_versions.version
+                 AND x.series_removed_at IS NULL
                  AND x.status NOT IN ('public', 'rejected', 'withdrawn', 'removed'))",
         readable_at
     )
@@ -228,17 +231,19 @@ pub async fn mark_readable(connection: &mut sqlx::SqliteConnection) -> Result<()
 pub struct Listed {
     pub id: String,
     pub account_id: String,
-    pub display_name: String,
+    /// `None` once the account is deleted.
+    pub display_name: Option<String>,
 }
 
 /// The public entries in a series, oldest first: the latest public version in each
-/// chain, when it cites the series.
+/// chain, when it cites the series and hasn't been taken out of it.
 pub async fn public_entries(pool: &SqlitePool, seq: i64) -> Result<Vec<Listed>, sqlx::Error> {
     sqlx::query_as!(
         Listed,
-        r#"SELECT e.id, e.account_id, a.display_name
+        r#"SELECT e.id, e.account_id,
+                  CASE WHEN a.deleted_at IS NULL THEN a.display_name END AS "display_name?: String"
            FROM entries e JOIN accounts a ON a.id = e.account_id
-           WHERE e.series_seq = ? AND e.status = 'public'
+           WHERE e.series_seq = ? AND e.status = 'public' AND e.series_removed_at IS NULL
              AND NOT EXISTS (SELECT 1 FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public')
            ORDER BY e.published_at, e.seq"#,
         seq
@@ -324,7 +329,7 @@ pub async fn waits(pool: &SqlitePool, seq: i64) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar!(
         r#"SELECT EXISTS (
                SELECT 1 FROM entries m JOIN series s ON s.seq = m.series_seq
-               WHERE s.public_at IS NULL
+               WHERE s.public_at IS NULL AND m.series_removed_at IS NULL
                  AND m.status NOT IN ('rejected', 'withdrawn', 'removed')
                  AND (m.seq = ?1 OR m.batch_seq = (SELECT batch_seq FROM entries WHERE seq = ?1))
            ) AS "waits!: bool""#,
@@ -332,6 +337,76 @@ pub async fn waits(pool: &SqlitePool, seq: i64) -> Result<bool, sqlx::Error> {
     )
     .fetch_one(pool)
     .await
+}
+
+/// Gives series `seq` a new join key and returns it; the old key stops working.
+pub async fn rotate_key(pool: &SqlitePool, seq: i64) -> Result<String, sqlx::Error> {
+    let key = ids::new_join_key();
+    let hash = ids::token_hash(&key);
+    sqlx::query!("UPDATE series SET key_hash = ? WHERE seq = ?", hash, seq)
+        .execute(pool)
+        .await?;
+    Ok(key)
+}
+
+/// A member of a series, for its creator.
+pub struct Member {
+    pub account_id: String,
+    /// `None` once the account is deleted.
+    pub display_name: Option<String>,
+}
+
+/// The members of series `seq`, in the order they joined.
+pub async fn members(pool: &SqlitePool, seq: i64) -> Result<Vec<Member>, sqlx::Error> {
+    sqlx::query_as!(
+        Member,
+        r#"SELECT m.account_id,
+                  CASE WHEN a.deleted_at IS NULL THEN a.display_name END AS "display_name?: String"
+           FROM series_members m JOIN accounts a ON a.id = m.account_id
+           WHERE m.series_seq = ? ORDER BY m.joined_at, m.account_id"#,
+        seq
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// Takes `account_id` out of series `seq`'s members. False if it wasn't one.
+pub async fn remove_member(
+    pool: &SqlitePool,
+    seq: i64,
+    account_id: &str,
+) -> Result<bool, sqlx::Error> {
+    let done = sqlx::query!(
+        "DELETE FROM series_members WHERE series_seq = ? AND account_id = ?",
+        seq,
+        account_id
+    )
+    .execute(pool)
+    .await?;
+    Ok(done.rows_affected() == 1)
+}
+
+/// Takes entry `entry_id` out of series `seq`. False if it doesn't cite the series.
+/// Taking it out again changes nothing.
+pub async fn remove_entry(
+    pool: &SqlitePool,
+    seq: i64,
+    entry_id: &str,
+) -> Result<bool, sqlx::Error> {
+    let removed_at = now();
+    let mut transaction = pool.begin().await?;
+    let done = sqlx::query!(
+        "UPDATE entries SET series_removed_at = COALESCE(series_removed_at, ?)
+         WHERE id = ? AND series_seq = ?",
+        removed_at,
+        entry_id,
+        seq
+    )
+    .execute(&mut *transaction)
+    .await?;
+    mark_readable(&mut transaction).await?;
+    transaction.commit().await?;
+    Ok(done.rows_affected() == 1)
 }
 
 /// A series on its creator's account page.

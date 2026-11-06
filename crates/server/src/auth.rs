@@ -56,7 +56,7 @@ async fn token_account(headers: &HeaderMap, state: &AppState) -> Result<TokenAcc
         TokenRow,
         r#"SELECT a.id, a.display_name, a.email_verified_at IS NOT NULL AS "verified!: bool"
                FROM tokens t JOIN accounts a ON a.id = t.account_id
-               WHERE t.hash = ? AND t.revoked_at IS NULL"#,
+               WHERE t.hash = ? AND t.revoked_at IS NULL AND a.deleted_at IS NULL"#,
         hash
     )
     .fetch_optional(&state.pool)

@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT seq AS \"seq!: i64\" FROM series WHERE account_id = ? AND public_at IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "seq!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "series",
+            "name": "seq"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "761441b7d45e754d7dd21b590031a83186228fdf3136e468f6deee72e8ff00ad"
+}

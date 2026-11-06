@@ -15,7 +15,8 @@ pub struct PublicEntry {
     pub id: String,
     pub source: String,
     pub account_id: String,
-    pub display_name: String,
+    /// `None` once the account is deleted.
+    pub display_name: Option<String>,
     pub submitted_at: String,
     pub published_at: Option<String>,
     /// The version this one replaced.
@@ -24,12 +25,13 @@ pub struct PublicEntry {
     pub superseded_by: Option<String>,
 }
 
-/// The card context only the server knows: the entry's ID and its author.
-pub fn card_context(id: &str, account_id: &str, display_name: &str) -> CardContext {
+/// The card context only the server knows: the entry's ID and its author, whose
+/// name is `None` once the account is deleted.
+pub fn card_context(id: &str, account_id: &str, display_name: Option<&str>) -> CardContext {
     CardContext {
         id: Some(id.to_string()),
         author: Some(Author {
-            display_name: display_name.to_string(),
+            display_name: display_name.map(str::to_string),
             account_id: account_id.to_string(),
             handles: Vec::new(),
         }),
@@ -67,7 +69,7 @@ impl PublicEntry {
     pub fn card_with(&self, superseded_by: Option<String>) -> String {
         let context = CardContext {
             superseded_by_version: superseded_by,
-            ..card_context(&self.id, &self.account_id, &self.display_name)
+            ..card_context(&self.id, &self.account_id, self.display_name.as_deref())
         };
         render_card(&analyze(&self.source), &context)
     }
@@ -243,7 +245,7 @@ pub async fn replace(
     let done = sqlx::query!(
         "UPDATE entries SET source = ?, submitted_at = ?, embargo_until = ?,
              analyzer_version = ?, outcome = ?, kind = ?, stage = ?, hold_until = ?,
-             series_seq = ?, series_version = ?, series_section = ?
+             series_seq = ?, series_version = ?, series_section = ?, series_removed_at = NULL
          WHERE seq = ? AND status = 'pending'",
         source,
         submitted_at,
@@ -522,7 +524,8 @@ pub async fn publish(
 pub async fn public_entry(pool: &SqlitePool, id: &str) -> Result<Option<PublicEntry>, sqlx::Error> {
     sqlx::query_as!(
         PublicEntry,
-        r#"SELECT e.seq AS "seq!: i64", e.id, e.source, e.account_id, a.display_name, e.submitted_at, e.published_at,
+        r#"SELECT e.seq AS "seq!: i64", e.id, e.source, e.account_id,
+                  CASE WHEN a.deleted_at IS NULL THEN a.display_name END AS "display_name?: String", e.submitted_at, e.published_at,
                   (SELECT p.id FROM entries p WHERE p.seq = e.previous_seq AND p.status = 'public') AS "previous_id?",
                   (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS "superseded_by?"
          FROM entries e JOIN accounts a ON a.id = e.account_id
@@ -562,7 +565,8 @@ pub async fn search(
     let row_claim = filters.row_claim.map(Claim::name);
     sqlx::query_as!(
         PublicEntry,
-        r#"SELECT e.seq AS "seq!: i64", e.id, e.source, e.account_id, a.display_name, e.submitted_at, e.published_at,
+        r#"SELECT e.seq AS "seq!: i64", e.id, e.source, e.account_id,
+                  CASE WHEN a.deleted_at IS NULL THEN a.display_name END AS "display_name?: String", e.submitted_at, e.published_at,
                   (SELECT p.id FROM entries p WHERE p.seq = e.previous_seq AND p.status = 'public') AS "previous_id?",
                   (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS "superseded_by?"
            FROM entries e JOIN accounts a ON a.id = e.account_id
@@ -605,7 +609,8 @@ pub async fn search(
 pub async fn all_public(pool: &SqlitePool) -> Result<Vec<PublicEntry>, sqlx::Error> {
     sqlx::query_as!(
         PublicEntry,
-        r#"SELECT e.seq AS "seq!: i64", e.id, e.source, e.account_id, a.display_name, e.submitted_at, e.published_at,
+        r#"SELECT e.seq AS "seq!: i64", e.id, e.source, e.account_id,
+                  CASE WHEN a.deleted_at IS NULL THEN a.display_name END AS "display_name?: String", e.submitted_at, e.published_at,
                   (SELECT p.id FROM entries p WHERE p.seq = e.previous_seq AND p.status = 'public') AS "previous_id?",
                   (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS "superseded_by?"
          FROM entries e JOIN accounts a ON a.id = e.account_id

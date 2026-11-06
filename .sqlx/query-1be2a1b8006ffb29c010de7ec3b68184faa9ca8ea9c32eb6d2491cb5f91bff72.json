@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE entries SET series_removed_at = COALESCE(series_removed_at, ?)\n         WHERE id = ? AND series_seq = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "1be2a1b8006ffb29c010de7ec3b68184faa9ca8ea9c32eb6d2491cb5f91bff72"
+}

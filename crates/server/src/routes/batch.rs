@@ -225,7 +225,7 @@ fn batch_reply(
     text.push_str(&format!("{DELIMITER}\n"));
     let mut json_members = Vec::new();
     for (id, member) in members {
-        let context = entries::card_context(id, &account.id, &account.display_name);
+        let context = entries::card_context(id, &account.id, Some(&account.display_name));
         let card = render_card(&member.analysis, &context);
         let warnings: Vec<String> = member
             .analysis

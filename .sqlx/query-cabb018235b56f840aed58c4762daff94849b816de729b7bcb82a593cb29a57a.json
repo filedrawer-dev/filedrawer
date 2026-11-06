@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM series_versions WHERE series_seq = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "cabb018235b56f840aed58c4762daff94849b816de729b7bcb82a593cb29a57a"
+}

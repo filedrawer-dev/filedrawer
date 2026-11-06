@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT seq AS \"seq!: i64\" FROM entries\n           WHERE account_id = ? AND status NOT IN (?, ?)",
+  "describe": {
+    "columns": [
+      {
+        "name": "seq!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "seq"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "cdf0fde9362e43d30e15aecdd0568dca5f68a68cce7acbb752afbbdef0c073c5"
+}

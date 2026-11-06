@@ -269,7 +269,8 @@ pub async fn session_account(
     let hash = ids::token_hash(secret);
     let now = now();
     sqlx::query_scalar!(
-        "SELECT account_id FROM sessions WHERE hash = ? AND expires_at > ?",
+        "SELECT s.account_id FROM sessions s JOIN accounts a ON a.id = s.account_id
+         WHERE s.hash = ? AND s.expires_at > ? AND a.deleted_at IS NULL",
         hash,
         now
     )

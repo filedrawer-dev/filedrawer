@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Delete your account{% endblock %}
+{% block content %}
+<h1>Delete your account</h1>
+{% if let Some(error) = error %}<p class="error">{{ error }}</p>{% endif %}
+{% if !blocking.is_empty() %}
+<p>You can't delete this account yet. These hidden series hold other accounts' entries, and only you can make them public: {% for id in blocking %}<code>{{ id }}</code>{% if !loop.last %}, {% endif %}{% endfor %}. Make each one public from <a href="/account">your account page</a>, or take those entries out of it first.</p>
+{% else %}
+<p>Deleting it removes your email address, password, name and tokens, and deletes {{ unpublished }} {% if unpublished == 1 %}entry that isn't{% else %}entries that aren't{% endif %} public yet, embargoed ones included, along with the hidden series you made. It can't be undone.</p>
+<p>{{ public }} public {% if public == 1 %}entry stays{% else %}entries stay{% endif %} up, shown as "account deleted" with your account ID and no name. To have public entries erased as well, ask the site's owner for a purge.</p>
+<form method="post" action="/account/delete">
+<label>Password <input type="password" name="password" autocomplete="current-password" required></label>
+<button type="submit">Delete my account</button>
+</form>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT password_hash FROM accounts WHERE id = ? AND deleted_at IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "password_hash",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "accounts",
+            "name": "password_hash"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "0683aa17f8cf4ef70739db9669c5fc20ec071d97e13243f4187b7378b117b5a2"
+}

@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT 1 AS found FROM accounts WHERE id = ?",
+  "query": "SELECT 1 AS found FROM accounts WHERE id = ? AND deleted_at IS NULL",
   "describe": {
     "columns": [
       {
@@ -17,5 +17,5 @@
       false
     ]
   },
-  "hash": "d1f3624351a911e59456434bb360180a850477fdc7f5fe3a641a8ae04cfef28d"
+  "hash": "921e9253521dd034a15a7363f45f23207c8aed57d5a9efb555809a7167559f10"
 }

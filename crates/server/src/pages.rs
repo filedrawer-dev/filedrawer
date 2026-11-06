@@ -61,6 +61,16 @@ pub struct ResetConfirmPage<'a> {
 }
 
 #[derive(Template)]
+#[template(path = "delete.html")]
+pub struct DeletePage<'a> {
+    pub error: Option<&'a str>,
+    pub unpublished: i64,
+    pub public: i64,
+    /// Hidden series that stop the deletion.
+    pub blocking: &'a [String],
+}
+
+#[derive(Template)]
 #[template(path = "account.html")]
 pub struct AccountPage<'a> {
     pub display_name: &'a str,

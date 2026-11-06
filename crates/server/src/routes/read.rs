@@ -59,7 +59,10 @@ pub async fn entry(
         entry.id,
         entry.submitted_at,
         entry.published_at.as_deref().unwrap_or(""),
-        one_line(&entry.display_name),
+        entry
+            .display_name
+            .as_deref()
+            .map_or_else(|| "account deleted".to_string(), one_line),
         entry.account_id
     );
     if let Some(previous) = &entry.previous_id {
@@ -219,7 +222,7 @@ async fn own_entry(
     for (number, note) in (1..).zip(&notes) {
         text.push_str(&format!("row {number}: {note}\n"));
     }
-    let context = entries::card_context(&entry.id, &account.id, &account.display_name);
+    let context = entries::card_context(&entry.id, &account.id, Some(&account.display_name));
     let card = render_card(&analysis, &context);
     let warnings: Vec<String> = analysis.warnings.iter().map(ToString::to_string).collect();
     text.push_str(&format!(

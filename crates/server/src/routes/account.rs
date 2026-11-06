@@ -15,9 +15,10 @@ use crate::accounts::{self, EMAIL_LINK_HOURS, Login, Purpose, SESSION_DAYS, Sign
 use crate::error::AppError;
 use crate::mail::Email;
 use crate::pages::{
-    AccountPage, LoginPage, Message, ResetConfirmPage, ResetPage, SignupPage, VerifyPage, page,
+    AccountPage, DeletePage, LoginPage, Message, ResetConfirmPage, ResetPage, SignupPage,
+    VerifyPage, page,
 };
-use crate::{AppState, admin, jobs, passwords, series};
+use crate::{AppState, admin, deletion, jobs, passwords, series};
 
 const COOKIE: &str = "fd_session";
 
@@ -409,6 +410,65 @@ pub async fn revoke_token(
         return Err(AppError::NotFound);
     }
     Ok(Redirect::to("/account").into_response())
+}
+
+/// The confirm page for deleting the account: what goes, what stays, and anything
+/// that stops it.
+pub async fn delete_page(
+    State(state): State<AppState>,
+    session: SessionAccount,
+) -> Result<Response, AppError> {
+    delete_form(&state, &session.id, StatusCode::OK, None).await
+}
+
+async fn delete_form(
+    state: &AppState,
+    account_id: &str,
+    status: StatusCode,
+    error: Option<&str>,
+) -> Result<Response, AppError> {
+    let preview = deletion::preview(&state.pool, account_id).await?;
+    let template = DeletePage {
+        error,
+        unpublished: preview.unpublished,
+        public: preview.public,
+        blocking: &preview.blocking,
+    };
+    Ok(page(status, &template))
+}
+
+#[derive(Deserialize)]
+pub struct DeleteForm {
+    password: String,
+}
+
+/// Deletes the account once its password is confirmed (the owner's decision,
+/// 2026-11-05: everything not yet public goes, public entries stay without the
+/// name), then ends the session.
+pub async fn delete_account(
+    State(state): State<AppState>,
+    session: SessionAccount,
+    Form(form): Form<DeleteForm>,
+) -> Result<Response, AppError> {
+    let stored = deletion::password_hash(&state.pool, &session.id).await?;
+    if !password_matches(form.password, stored).await {
+        let error = "The password is wrong.";
+        return delete_form(&state, &session.id, StatusCode::UNAUTHORIZED, Some(error)).await;
+    }
+    if deletion::delete(&state.pool, &session.id).await?.is_err() {
+        // A series became blocking since the page was shown; it lists them.
+        return delete_form(&state, &session.id, StatusCode::CONFLICT, None).await;
+    }
+    let clear = format!("{COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0");
+    let done = page(
+        StatusCode::OK,
+        &Message {
+            title: "Account deleted",
+            text: "Your account is deleted. Its public entries stay up as \"account deleted\", with no name.",
+            link: None,
+        },
+    );
+    Ok(([(header::SET_COOKIE, clear)], done).into_response())
 }
 
 /// Makes one of the account's series public, then places the entries that waited on

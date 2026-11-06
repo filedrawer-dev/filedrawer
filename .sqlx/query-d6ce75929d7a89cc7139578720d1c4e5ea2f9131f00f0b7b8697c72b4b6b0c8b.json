@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM series_members WHERE account_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "d6ce75929d7a89cc7139578720d1c4e5ea2f9131f00f0b7b8697c72b4b6b0c8b"
+}

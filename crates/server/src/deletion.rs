@@ -1,0 +1,206 @@
+//! Deleting an account (design.md, Accounts): everything not yet public goes with
+//! it, and its public entries stay without its name.
+
+use sqlx::{SqliteConnection, SqlitePool};
+
+use crate::series;
+use crate::time::now;
+
+/// What deleting an account would do, for the confirm page.
+pub struct Preview {
+    /// Entries that would be deleted: every one that isn't public.
+    pub unpublished: i64,
+    /// Public entries that would stay, under "account deleted".
+    pub public: i64,
+    /// Hidden series the account made that hold another account's entries, which
+    /// stop the deletion.
+    pub blocking: Vec<String>,
+}
+
+/// Statuses deletion leaves: public entries stay under "account deleted", and the
+/// owner keeps removed ones for analysis (design.md, Admin).
+const KEPT: [&str; 2] = ["public", "removed"];
+
+pub async fn preview(pool: &SqlitePool, account_id: &str) -> Result<Preview, sqlx::Error> {
+    let mut connection = pool.acquire().await?;
+    let (kept_public, kept_removed) = (KEPT[0], KEPT[1]);
+    let counts = sqlx::query!(
+        r#"SELECT COALESCE(SUM(status NOT IN (?2, ?3)), 0) AS "unpublished!: i64",
+                  COALESCE(SUM(status = ?2), 0) AS "public!: i64"
+           FROM entries WHERE account_id = ?1"#,
+        account_id,
+        kept_public,
+        kept_removed
+    )
+    .fetch_one(&mut *connection)
+    .await?;
+    Ok(Preview {
+        unpublished: counts.unpublished,
+        public: counts.public,
+        blocking: blocking(&mut connection, account_id).await?,
+    })
+}
+
+/// The hidden series `account_id` made that another account's live entry cites:
+/// nobody else could make them public (the owner's decision, 2026-11-05).
+async fn blocking(
+    connection: &mut SqliteConnection,
+    account_id: &str,
+) -> Result<Vec<String>, sqlx::Error> {
+    sqlx::query_scalar!(
+        "SELECT s.id FROM series s
+         WHERE s.account_id = ?1 AND s.public_at IS NULL
+           AND EXISTS (
+               SELECT 1 FROM entries e
+               WHERE e.series_seq = s.seq AND e.account_id != ?1
+                 AND e.series_removed_at IS NULL
+                 AND e.status NOT IN ('rejected', 'withdrawn', 'removed'))
+         ORDER BY s.seq",
+        account_id
+    )
+    .fetch_all(&mut *connection)
+    .await
+}
+
+/// The account's password hash, to confirm a deletion.
+pub async fn password_hash(
+    pool: &SqlitePool,
+    account_id: &str,
+) -> Result<Option<String>, sqlx::Error> {
+    let hash = sqlx::query_scalar!(
+        "SELECT password_hash FROM accounts WHERE id = ? AND deleted_at IS NULL",
+        account_id
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(hash.flatten())
+}
+
+/// Deletes the account in one transaction, or names the series that stop it.
+/// Deleted: its email, login, name, sessions, tokens, email links, private feedback
+/// and series memberships; every entry of its that isn't public or removed, with what
+/// was read from it; runs and batches nothing left uses; the hidden series it made.
+/// Kept: the account ID, its public entries, and the public series it made.
+pub async fn delete(
+    pool: &SqlitePool,
+    account_id: &str,
+) -> Result<Result<(), Vec<String>>, sqlx::Error> {
+    let mut transaction = pool.begin().await?;
+    let blocked = blocking(&mut transaction, account_id).await?;
+    if !blocked.is_empty() {
+        return Ok(Err(blocked));
+    }
+    delete_entries(&mut transaction, account_id).await?;
+    delete_hidden_series(&mut transaction, account_id).await?;
+    let deleted_at = now();
+    for statement in [
+        sqlx::query!("DELETE FROM sessions WHERE account_id = ?", account_id),
+        sqlx::query!("DELETE FROM email_tokens WHERE account_id = ?", account_id),
+        sqlx::query!("DELETE FROM tokens WHERE account_id = ?", account_id),
+        sqlx::query!("DELETE FROM feedback WHERE account_id = ?", account_id),
+        sqlx::query!(
+            "DELETE FROM series_members WHERE account_id = ?",
+            account_id
+        ),
+    ] {
+        statement.execute(&mut *transaction).await?;
+    }
+    // The name column can't be empty; this placeholder is never shown, since every
+    // read checks `deleted_at` first.
+    sqlx::query!(
+        "UPDATE accounts SET email = NULL, password_hash = NULL, email_verified_at = NULL,
+             display_name = 'deleted', deleted_at = ?
+         WHERE id = ?",
+        deleted_at,
+        account_id
+    )
+    .execute(&mut *transaction)
+    .await?;
+    // Its entries may have been all that held a version back.
+    series::mark_readable(&mut transaction).await?;
+    transaction.commit().await?;
+    Ok(Ok(()))
+}
+
+/// Deletes every entry of the account that isn't public or removed, and the runs,
+/// slugs and batches only those entries used.
+async fn delete_entries(
+    transaction: &mut SqliteConnection,
+    account_id: &str,
+) -> Result<(), sqlx::Error> {
+    let (kept_public, kept_removed) = (KEPT[0], KEPT[1]);
+    let doomed = sqlx::query_scalar!(
+        r#"SELECT seq AS "seq!: i64" FROM entries
+           WHERE account_id = ? AND status NOT IN (?, ?)"#,
+        account_id,
+        kept_public,
+        kept_removed
+    )
+    .fetch_all(&mut *transaction)
+    .await?;
+    for seq in doomed {
+        for statement in [
+            sqlx::query!("DELETE FROM entry_models WHERE entry_seq = ?", seq),
+            sqlx::query!("DELETE FROM entry_tags WHERE entry_seq = ?", seq),
+            sqlx::query!("DELETE FROM entry_rows WHERE entry_seq = ?", seq),
+            sqlx::query!("DELETE FROM entry_unknown_fields WHERE entry_seq = ?", seq),
+            sqlx::query!("DELETE FROM entry_runs WHERE entry_seq = ?", seq),
+            sqlx::query!("DELETE FROM slugs WHERE entry_seq = ?", seq),
+            sqlx::query!("DELETE FROM entries_fts WHERE rowid = ?", seq),
+            sqlx::query!(
+                "UPDATE entries SET previous_seq = NULL WHERE previous_seq = ?",
+                seq
+            ),
+            sqlx::query!("DELETE FROM entries WHERE seq = ?", seq),
+        ] {
+            statement.execute(&mut *transaction).await?;
+        }
+    }
+    sqlx::query!(
+        "DELETE FROM runs WHERE account_id = ?1
+           AND NOT EXISTS (SELECT 1 FROM entry_runs er
+                           WHERE er.account_id = runs.account_id AND er.run_id = runs.id)",
+        account_id
+    )
+    .execute(&mut *transaction)
+    .await?;
+    sqlx::query!(
+        "DELETE FROM batches WHERE account_id = ?
+           AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.batch_seq = batches.seq)",
+        account_id
+    )
+    .execute(&mut *transaction)
+    .await?;
+    Ok(())
+}
+
+/// Deletes the hidden series the account made, which no other account's live entry
+/// cites by now. An entry that still names one (taken out of it, or rejected) loses
+/// the cite.
+async fn delete_hidden_series(
+    transaction: &mut SqliteConnection,
+    account_id: &str,
+) -> Result<(), sqlx::Error> {
+    let hidden = sqlx::query_scalar!(
+        r#"SELECT seq AS "seq!: i64" FROM series WHERE account_id = ? AND public_at IS NULL"#,
+        account_id
+    )
+    .fetch_all(&mut *transaction)
+    .await?;
+    for seq in hidden {
+        for statement in [
+            sqlx::query!(
+                "UPDATE entries SET series_seq = NULL, series_version = NULL,
+                     series_section = NULL, series_removed_at = NULL
+                 WHERE series_seq = ?",
+                seq
+            ),
+            sqlx::query!("DELETE FROM series_members WHERE series_seq = ?", seq),
+            sqlx::query!("DELETE FROM series_versions WHERE series_seq = ?", seq),
+            sqlx::query!("DELETE FROM series WHERE seq = ?", seq),
+        ] {
+            statement.execute(&mut *transaction).await?;
+        }
+    }
+    Ok(())
+}

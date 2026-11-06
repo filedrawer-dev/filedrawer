@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM series WHERE seq = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "6ad5fe605e270b32529401618d4cd2b0df4a4bc9aa15c168eba31996b56ff76f"
+}

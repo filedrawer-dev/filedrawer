@@ -45,9 +45,12 @@ pub async fn create_token(
     account_id: &str,
     name: &str,
 ) -> Result<String, AdminError> {
-    let exists = sqlx::query_scalar!("SELECT 1 AS found FROM accounts WHERE id = ?", account_id)
-        .fetch_optional(pool)
-        .await?;
+    let exists = sqlx::query_scalar!(
+        "SELECT 1 AS found FROM accounts WHERE id = ? AND deleted_at IS NULL",
+        account_id
+    )
+    .fetch_optional(pool)
+    .await?;
     if exists.is_none() {
         return Err(AdminError::NoAccount(account_id.to_string()));
     }

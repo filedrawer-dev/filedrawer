@@ -21,18 +21,19 @@ const NOT_FOR_AGENTS: &[&str] = &[
     "/account/tokens/{id}/revoke",
     "/account/verify-email",
     "/account/series/{id}/publish",
+    "/account/delete",
     "/skill.md",
 ];
 
-/// Each URL on this site that `text` names, as a path without its query, with `<id>`
-/// written as the router writes it, `{id}`.
+/// Each URL on this site that `text` names, as a path without its query, with each
+/// `<name>` written as the router writes it, `{name}`.
 fn named_paths(text: &str) -> Vec<String> {
     text.split(|c: char| c.is_whitespace() || c == '`')
         .filter_map(|word| word.strip_prefix(PUBLIC_URL))
         .map(|path| path.trim_end_matches(['.', ',', ')', ':']))
         .map(|path| path.split(['?', '#']).next().unwrap_or(path))
         .filter(|path| !path.is_empty())
-        .map(|path| path.replace("<id>", "{id}"))
+        .map(|path| path.replace('<', "{").replace('>', "}"))
         .collect()
 }
 

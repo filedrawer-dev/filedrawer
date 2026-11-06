@@ -34,7 +34,8 @@ pub struct CardContext {
 /// The account behind an entry, for card line 11 (entry-format.md, The card).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Author {
-    pub display_name: String,
+    /// `None` once the account is deleted: the card then says so and shows no name.
+    pub display_name: Option<String>,
     pub account_id: String,
     /// Linked GitHub or ORCID handles, as the card shows them.
     pub handles: Vec<String>,
@@ -523,13 +524,17 @@ fn reanalyses_stored_data(analysis: &Analysis) -> bool {
     })
 }
 
-/// Line 11: the author's display name, account ID and linked handles.
+/// Line 11: the author's display name, account ID and linked handles, or "account
+/// deleted" and the account ID once the account is deleted.
 fn byline(context: &CardContext) -> Vec<Part> {
     let Some(person) = &context.author else {
         return vec![server("<author>")];
     };
+    let Some(name) = &person.display_name else {
+        return vec![server(format!("account deleted, {}", person.account_id))];
+    };
     let mut parts = vec![
-        author(person.display_name.as_str()),
+        author(name.as_str()),
         server(format!(", account {}", person.account_id)),
     ];
     if !person.handles.is_empty() {

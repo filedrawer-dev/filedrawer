@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT s.id FROM series s\n         WHERE s.account_id = ?1 AND s.public_at IS NULL\n           AND EXISTS (\n               SELECT 1 FROM entries e\n               WHERE e.series_seq = s.seq AND e.account_id != ?1\n                 AND e.series_removed_at IS NULL\n                 AND e.status NOT IN ('rejected', 'withdrawn', 'removed'))\n         ORDER BY s.seq",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "series",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "8a2e0ca5b24f8723eb42f3664b9fbf3804addeb2c3cd827971cd416cfd5a4e3c"
+}

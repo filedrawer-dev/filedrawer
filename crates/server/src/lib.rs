@@ -6,6 +6,7 @@ pub mod admin;
 mod auth;
 pub mod config;
 pub mod db;
+mod deletion;
 mod embargo;
 mod entries;
 mod error;
@@ -103,6 +104,10 @@ fn build(state: AppState) -> Routes<Router> {
         .route("/account/tokens/{id}/revoke", post(account::revoke_token))
         .route("/account/verify-email", post(account::resend_verification))
         .route(
+            "/account/delete",
+            get(account::delete_page).post(account::delete_account),
+        )
+        .route(
             "/account/series/{id}/publish",
             post(account::publish_series),
         );
@@ -125,6 +130,15 @@ fn build(state: AppState) -> Routes<Router> {
         .route("/series/{id}", get(routes::series::read))
         .route("/series/{id}/join", post(routes::series::join))
         .route("/series/{id}/versions", post(routes::series::new_version))
+        .route("/series/{id}/key", post(routes::series::rotate_key))
+        .route(
+            "/series/{id}/members/{account}/remove",
+            post(routes::series::remove_member),
+        )
+        .route(
+            "/series/{id}/entries/{entry}/remove",
+            post(routes::series::remove_entry),
+        )
         .route("/feedback", post(routes::feedback::feedback))
         .route("/skill.md", get(routes::docs::skill))
         .route("/entry-format.md", get(routes::docs::entry_format))

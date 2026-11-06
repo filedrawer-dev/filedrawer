@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM batches WHERE account_id = ?\n           AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.batch_seq = batches.seq)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "f461e6b85b8148296562f00ca5ba5f9d5f25fe484a6c1b94afa106bec38cf498"
+}

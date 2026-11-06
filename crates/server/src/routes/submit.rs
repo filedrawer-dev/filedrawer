@@ -190,7 +190,7 @@ fn held_reply(state: &AppState, format: Format, status: StatusCode, held: &Held<
         publish_at,
         previous,
     } = *held;
-    let context = entries::card_context(id, &account.id, &account.display_name);
+    let context = entries::card_context(id, &account.id, Some(&account.display_name));
     let card = render_card(analysis, &context);
     let warnings: Vec<String> = analysis.warnings.iter().map(ToString::to_string).collect();
     let embargo = parse_date(analysis.fields.embargo_until.as_deref()).map(|date| date.to_string());

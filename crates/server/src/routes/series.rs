@@ -9,12 +9,21 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use serde_json::json;
 
-use crate::AppState;
 use crate::auth::{TokenAccount, optional_token_account};
 use crate::error::AppError;
 use crate::respond::{DELIMITER, Format, one_line};
 use crate::screening::Verdict;
 use crate::series::{self, Series, Version};
+use crate::{AppState, jobs};
+
+/// Who wrote something, after the account ID on a line: "by <name>", with the name
+/// last so nothing in it can pass for the account, or "account deleted".
+fn byline(display_name: Option<&str>) -> String {
+    match display_name {
+        Some(name) => format!("by {}", one_line(name)),
+        None => "account deleted".into(),
+    }
+}
 
 /// Reads and screens a series document, or refuses it with every reason.
 async fn accept_series(state: &AppState, body: &Bytes) -> Result<SeriesText, AppError> {
@@ -76,12 +85,7 @@ pub async fn new_version(
     format: Format,
     body: Bytes,
 ) -> Result<Response, AppError> {
-    let found = member_series(&state, &id, &account.id).await?;
-    if found.creator != account.id {
-        return Err(AppError::Forbidden(format!(
-            "only the account that made series {id} makes its versions"
-        )));
-    }
+    let found = creator_series(&state, &id, &account.id).await?;
     let text = accept_series(&state, &body).await?;
     let version = series::add_version(&state.pool, found.seq, &text).await?;
     let url = format!("{}/series/{id}@{version}", state.public_url);
@@ -91,6 +95,79 @@ pub async fn new_version(
     );
     let json = json!({"id": id, "version": version, "url": url, "title": text.title});
     Ok(format.reply(StatusCode::CREATED, reply, json))
+}
+
+/// The series `id` if `account_id` made it. Another member is refused; anyone else
+/// gets not found.
+async fn creator_series(state: &AppState, id: &str, account_id: &str) -> Result<Series, AppError> {
+    let found = member_series(state, id, account_id).await?;
+    if found.creator != account_id {
+        return Err(AppError::Forbidden(format!(
+            "only the account that made series {id} can do that"
+        )));
+    }
+    Ok(found)
+}
+
+/// `POST /series/<id>/key`: a new join key, shown once. The old key stops working;
+/// members stay members.
+pub async fn rotate_key(
+    State(state): State<AppState>,
+    account: TokenAccount,
+    Path(id): Path<String>,
+    format: Format,
+) -> Result<Response, AppError> {
+    let found = creator_series(&state, &id, &account.id).await?;
+    let key = series::rotate_key(&state.pool, found.seq).await?;
+    let url = format!("{}/series/{id}", state.public_url);
+    let reply = format!("id: {id}\nkey: {key}\njoin: {url}/join\n");
+    let json = json!({"id": id, "key": key, "join": format!("{url}/join")});
+    Ok(format.reply(StatusCode::OK, reply, json))
+}
+
+/// `POST /series/<id>/members/<account>/remove`: the account can no longer cite the
+/// series. Its entries stay in it. The key rotates too, so the one the removed member
+/// kept doesn't let it join again; the reply shows the new key.
+pub async fn remove_member(
+    State(state): State<AppState>,
+    account: TokenAccount,
+    Path((id, member)): Path<(String, String)>,
+    format: Format,
+) -> Result<Response, AppError> {
+    let found = creator_series(&state, &id, &account.id).await?;
+    if member == account.id {
+        return Err(AppError::Conflict(format!(
+            "the account that made series {id} stays its member"
+        )));
+    }
+    if !series::remove_member(&state.pool, found.seq, &member).await? {
+        return Err(AppError::NotFound);
+    }
+    let key = series::rotate_key(&state.pool, found.seq).await?;
+    let join = format!("{}/series/{id}/join", state.public_url);
+    let reply = format!("id: {id}\nremoved: {member}\nkey: {key}\njoin: {join}\n");
+    Ok(format.reply(
+        StatusCode::OK,
+        reply,
+        json!({"id": id, "removed": member, "key": key, "join": join}),
+    ))
+}
+
+/// `POST /series/<id>/entries/<entry>/remove`: takes an entry out of the series. It
+/// keeps the version it cites, and stops waiting on the series.
+pub async fn remove_entry(
+    State(state): State<AppState>,
+    account: TokenAccount,
+    Path((id, entry)): Path<(String, String)>,
+    format: Format,
+) -> Result<Response, AppError> {
+    let found = creator_series(&state, &id, &account.id).await?;
+    if !series::remove_entry(&state.pool, found.seq, &entry).await? {
+        return Err(AppError::NotFound);
+    }
+    jobs::place_waiting(&state).await?;
+    let reply = format!("id: {id}\nremoved: {entry}\n");
+    Ok(format.reply(StatusCode::OK, reply, json!({"id": id, "removed": entry})))
 }
 
 /// The series `id` if `account_id` is a member; anything else is not found.
@@ -141,10 +218,12 @@ pub async fn read(
     let found = series::find(&state.pool, id)
         .await?
         .ok_or(AppError::NotFound)?;
-    let member = match optional_token_account(&headers, &state).await? {
+    let viewer = optional_token_account(&headers, &state).await?;
+    let member = match &viewer {
         Some(account) => series::is_member(&state.pool, found.seq, &account.id).await?,
         None => false,
     };
+    let is_creator = viewer.is_some_and(|account| account.id == found.creator);
     if !found.public && !member {
         return Err(AppError::NotFound);
     }
@@ -173,11 +252,22 @@ pub async fn read(
     }
     for listed in &entries {
         text.push_str(&format!(
-            // The author's name goes last, so nothing in it can pass for the account.
-            "entry: {}, account {}, by {}\n",
+            "entry: {}, account {}, {}\n",
             listed.id,
             listed.account_id,
-            one_line(&listed.display_name)
+            byline(listed.display_name.as_deref())
+        ));
+    }
+    let members = if is_creator {
+        series::members(&state.pool, found.seq).await?
+    } else {
+        Vec::new()
+    };
+    for member in &members {
+        text.push_str(&format!(
+            "member: {}, {}\n",
+            member.account_id,
+            byline(member.display_name.as_deref())
         ));
     }
     text.push_str(&format!("{DELIMITER}\n"));
@@ -195,6 +285,10 @@ pub async fn read(
             "id": listed.id,
             "author": {"display_name": listed.display_name, "account_id": listed.account_id},
         })).collect::<Vec<_>>(),
+        "members": is_creator.then(|| members.iter().map(|member| json!({
+            "account_id": member.account_id,
+            "display_name": member.display_name,
+        })).collect::<Vec<_>>()),
     });
     Ok(format.reply(StatusCode::OK, text, json))
 }

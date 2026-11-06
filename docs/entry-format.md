@@ -182,7 +182,7 @@ A card is the few lines search and `/cards.txt` return for an entry. Author text
 8. On an `effect` card, the first caveat, up to 300 characters.
 9. The first three items of `## Not tried`, up to 300 characters.
 10. Flags, as they apply, up to 300 characters: the analyzer version and any screening note first, then "no code" or "code attached", "code that ran not committed", "code link dead" or "logs link dead", "pin not verified", "no data" when `## Reproduce` re-analyses stored data that `data` doesn't link, "now part of a paper" with its DOI or arXiv ID, "superseded by <id>", and the replications.
-11. The author: display name, account ID, and any linked GitHub or ORCID handle, up to 100 characters.
+11. The author: display name, account ID, and any linked GitHub or ORCID handle, up to 100 characters. Once the account is deleted, "account deleted" and the account ID, with no name.
 
 On every line, the server's own words come before author text, and author text is cut to fit what remains, so it can never push a server note off the card. A value in a field whose values the server knows, such as `positive_control.outcome`, that it doesn't recognise renders as "unrecognised <field>", never as written.
 

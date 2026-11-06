@@ -5,53 +5,11 @@
 mod common;
 
 use axum::http::StatusCode;
+use common::series::{DESCRIPTION, citing, create, make_public, series_doc, submit_with};
 use common::{DELIMITER, TestApp, browser_account, date_in, entry, field, id_in, test_app};
 use filedrawer_server::jobs::publish_due;
 use serde_json::json;
 use time::Duration;
-
-const DESCRIPTION: &str = "Shared setup for the sweep.
-
-## Models
-
-model-a over the API, 2026-10-20.
-
-### Prompts
-
-520 prompts from the sweep set.
-
-## Judging
-
-judge-b scores each reply.
-";
-
-fn series_doc(title: &str, description: &str) -> String {
-    format!("---\ntitle: {title}\n---\n\n{description}")
-}
-
-/// A series made with `token`: its ID and join key.
-async fn create(app: &TestApp, token: &str) -> (String, String) {
-    let reply = app
-        .post_as(
-            "/series",
-            Some(token),
-            series_doc("Layer sweep", DESCRIPTION),
-        )
-        .await;
-    assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
-    let key = field(&reply.body, "key").expect("the reply shows the key");
-    (id_in(&reply.body), key.to_string())
-}
-
-/// An entry citing `cite` in its `series` field.
-fn citing(title: &str, cite: &str, front: &str) -> String {
-    entry(title, &format!("series: {cite}\n{front}"))
-}
-
-async fn make_public(app: &TestApp, cookie: &str, id: &str) -> common::Reply {
-    app.form(&format!("/account/series/{id}/publish"), &[], Some(cookie))
-        .await
-}
 
 #[tokio::test]
 async fn a_new_series_is_hidden_from_all_but_its_members() {
@@ -598,4 +556,229 @@ async fn a_section_anchor_may_be_longer_than_a_slug() {
         )
         .await;
     assert_eq!(cited.status, StatusCode::CREATED, "{}", cited.body);
+}
+
+/// The account ID the account page shows for a session.
+async fn account_id(app: &TestApp, cookie: &str) -> String {
+    let page = app.page("/account", Some(cookie)).await;
+    let start = page
+        .body
+        .find("<code>a-")
+        .expect("the page shows the account ID")
+        + 6;
+    let end = start + page.body[start..].find('<').unwrap();
+    page.body[start..end].to_string()
+}
+
+#[tokio::test]
+async fn the_creator_rotates_the_key_and_the_old_one_stops_working() {
+    let app = test_app().await;
+    let (series, old) = create(&app, &app.token).await;
+    let other = app.other_token().await;
+    let refused = app
+        .post_as(&format!("/series/{series}/key"), Some(&other), "")
+        .await;
+    assert_eq!(refused.status, StatusCode::NOT_FOUND, "{}", refused.body);
+    app.post_as(&format!("/series/{series}/join"), Some(&other), old.clone())
+        .await;
+    let member = app
+        .post_as(&format!("/series/{series}/key"), Some(&other), "")
+        .await;
+    assert_eq!(member.status, StatusCode::FORBIDDEN, "{}", member.body);
+
+    let rotated = app.post(&format!("/series/{series}/key"), "").await;
+    assert_eq!(rotated.status, StatusCode::OK, "{}", rotated.body);
+    let new = field(&rotated.body, "key").unwrap().to_string();
+    assert!(new.starts_with("fdj_") && new != old, "{}", rotated.body);
+
+    let third = common::series::third_token(&app).await;
+    let with_old = app
+        .post_as(&format!("/series/{series}/join"), Some(&third), old)
+        .await;
+    assert_eq!(with_old.status, StatusCode::NOT_FOUND);
+    let with_new = app
+        .post_as(&format!("/series/{series}/join"), Some(&third), new)
+        .await;
+    assert_eq!(with_new.status, StatusCode::OK, "{}", with_new.body);
+}
+
+#[tokio::test]
+async fn a_removed_member_can_no_longer_cite_but_keeps_its_entries_in_the_series() {
+    let app = test_app().await;
+    let (cookie, token) = browser_account(&app, "grace@example.com").await;
+    let (series, key) = create(&app, &token).await;
+    let (other_cookie, other) = browser_account(&app, "ada@example.com").await;
+    let other_id = account_id(&app, &other_cookie).await;
+    app.post_as(&format!("/series/{series}/join"), Some(&other), key.clone())
+        .await;
+    let listed = app
+        .get_with_token(&format!("/series/{series}"), &token)
+        .await;
+    assert!(
+        listed.body.contains(&format!("member: {other_id}")),
+        "{}",
+        listed.body
+    );
+    let theirs = submit_with(&app, &other, &citing("Theirs", &format!("{series}@1"), "")).await;
+    make_public(&app, &cookie, &series).await;
+
+    let removed = app
+        .post_as(
+            &format!("/series/{series}/members/{other_id}/remove"),
+            Some(&token),
+            "",
+        )
+        .await;
+    assert_eq!(removed.status, StatusCode::OK, "{}", removed.body);
+    // Removing a member rotates the key, so the key it kept doesn't let it back in.
+    let new_key = field(&removed.body, "key").expect("the reply shows the new key");
+    assert_ne!(new_key, key);
+    let rejoin = app
+        .post_as(&format!("/series/{series}/join"), Some(&other), key.clone())
+        .await;
+    assert_eq!(rejoin.status, StatusCode::NOT_FOUND, "{}", rejoin.body);
+    let refused = app
+        .post_as(
+            "/entries",
+            Some(&other),
+            citing("Again", &format!("{series}@1"), ""),
+        )
+        .await;
+    assert_eq!(
+        refused.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        refused.body
+    );
+    let page = app.get(&format!("/series/{series}")).await;
+    assert!(
+        page.body.contains(&format!("entry: {theirs}")),
+        "{}",
+        page.body
+    );
+
+    let own_id = account_id(&app, &cookie).await;
+    let itself = app
+        .post_as(
+            &format!("/series/{series}/members/{own_id}/remove"),
+            Some(&token),
+            "",
+        )
+        .await;
+    assert_eq!(itself.status, StatusCode::CONFLICT, "{}", itself.body);
+    let unknown = app
+        .post_as(
+            &format!("/series/{series}/members/a-0000000000/remove"),
+            Some(&token),
+            "",
+        )
+        .await;
+    assert_eq!(unknown.status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn an_entry_taken_out_of_a_hidden_series_stops_waiting_and_keeps_its_cite() {
+    let app = test_app().await;
+    let (cookie, token) = browser_account(&app, "grace@example.com").await;
+    let (series, key) = create(&app, &token).await;
+    let other = app.other_token().await;
+    app.post_as(&format!("/series/{series}/join"), Some(&other), key)
+        .await;
+    let waiting = submit_with(
+        &app,
+        &other,
+        &citing("Waits", &format!("{series}@1#models"), ""),
+    )
+    .await;
+    let stays = submit_with(&app, &token, &citing("Stays", &format!("{series}@1"), "")).await;
+
+    let by_member = app
+        .post_as(
+            &format!("/series/{series}/entries/{stays}/remove"),
+            Some(&other),
+            "",
+        )
+        .await;
+    assert_eq!(
+        by_member.status,
+        StatusCode::FORBIDDEN,
+        "{}",
+        by_member.body
+    );
+    let removed = app
+        .post_as(
+            &format!("/series/{series}/entries/{waiting}/remove"),
+            Some(&token),
+            "",
+        )
+        .await;
+    assert_eq!(removed.status, StatusCode::OK, "{}", removed.body);
+
+    // It no longer waits, and its page keeps the cite while the series is hidden.
+    let read = app.get(&format!("/e/{waiting}")).await;
+    assert_eq!(read.status, StatusCode::OK, "{}", read.body);
+    assert_eq!(
+        field(&read.body, "series"),
+        Some(format!("{series}@1#models").as_str())
+    );
+    assert_eq!(field(&read.body, "series_description"), Some("not public"));
+    assert!(!read.body.contains("Layer sweep"), "{}", read.body);
+
+    make_public(&app, &cookie, &series).await;
+    let page = app.get(&format!("/series/{series}")).await;
+    assert!(
+        page.body.contains(&format!("entry: {stays}")),
+        "{}",
+        page.body
+    );
+    assert!(
+        !page.body.contains(&format!("entry: {waiting}")),
+        "{}",
+        page.body
+    );
+    let read = app.get(&format!("/e/{waiting}")).await;
+    assert!(read.body.contains("520 prompts"), "{}", read.body);
+
+    let unknown = app
+        .post_as(
+            &format!("/series/{series}/entries/0000000000/remove"),
+            Some(&token),
+            "",
+        )
+        .await;
+    assert_eq!(unknown.status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn an_entry_taken_out_of_a_series_no_longer_holds_its_version_back() {
+    let app = test_app().await;
+    let (cookie, token) = browser_account(&app, "grace@example.com").await;
+    let (series, _) = create(&app, &token).await;
+    make_public(&app, &cookie, &series).await;
+    let embargoed = submit_with(
+        &app,
+        &token,
+        &citing(
+            "Held",
+            &format!("{series}@1"),
+            &format!("embargo_until: {}\n", date_in(30)),
+        ),
+    )
+    .await;
+    submit_with(&app, &token, &citing("Public", &format!("{series}@1"), "")).await;
+    let page = app.get(&format!("/series/{series}@1")).await;
+    assert_eq!(field(&page.body, "description"), Some("not public"));
+
+    app.post_as(
+        &format!("/series/{series}/entries/{embargoed}/remove"),
+        Some(&token),
+        "",
+    )
+    .await;
+    let page = app.get(&format!("/series/{series}@1")).await;
+    assert!(
+        page.body.contains("judge-b scores each reply"),
+        "{}",
+        page.body
+    );
 }

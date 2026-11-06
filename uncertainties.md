@@ -187,3 +187,21 @@ Choices the docs left open, made while building the analyzer. Once the owner set
 - Options: screen a series' title and description inside `POST /series` and each new version, as here with the pass-all stub, or queue them like entries.
 - Chosen: inline, until build step 3 brings the real screen and its queue.
 - Against: step 3 must change these routes' replies, since a real screen can take minutes or send a series to review.
+
+## Account deletion: what else goes
+
+- Options: delete the account's private feedback and its `rejected` entries, as here, or keep them for the owner. (`removed` entries stay: the owner's decision, 2026-11-05.)
+- Chosen: feedback goes, since it is personal data and the triage summaries keep what the owner needs; `rejected` entries go with the other unpublished ones.
+- Against: feedback is the usability signal the owner asked agents for, and a rejected entry is abuse data the owner may want after the account leaves.
+
+## Removing a series member rotates the key
+
+- Options: rotate the key whenever a member is removed, as here, or keep a list of removed accounts that `join` refuses.
+- Chosen: rotate. One rule, no new table, and a removed member who kept the key can't rejoin.
+- Against: the creator must hand the new key to every teammate who hasn't joined yet.
+
+## Account deletion: entries citing a deleted hidden series
+
+- Options: clear the cite, as here, or keep it and show "series description removed", as design.md says for a purged version.
+- Chosen: clear it. Only entries already taken out of the series, or rejected or withdrawn, can still name one when it is deleted.
+- Against: an entry taken out of the series that later goes public loses its "see series" pointer, which design.md's "keeps the series version it cites" was meant to prevent.
