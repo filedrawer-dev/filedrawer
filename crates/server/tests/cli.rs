@@ -65,7 +65,8 @@ async fn admin_commands_make_an_account_and_a_token_the_server_accepts() {
 
     let pool = db::open(database.to_str().unwrap()).await.unwrap();
     let outbox = common::Outbox::default();
-    let state = common::state(pool.clone(), &outbox);
+    let files_dir = common::files_dir();
+    let state = common::state(pool.clone(), &outbox, files_dir.path());
     let router = app(state.clone());
     let test = common::TestApp {
         router,
@@ -74,6 +75,7 @@ async fn admin_commands_make_an_account_and_a_token_the_server_accepts() {
         account,
         token,
         outbox,
+        files_dir,
     };
     let reply = test.post("/entries", common::entry("T", "")).await;
     assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
@@ -84,7 +86,8 @@ async fn admin_grant_lets_the_accounts_browser_session_reach_the_admin_pages() {
     let database = scratch_database("grant");
     let pool = db::open(database.to_str().unwrap()).await.unwrap();
     let outbox = common::Outbox::default();
-    let state = common::state(pool.clone(), &outbox);
+    let files_dir = common::files_dir();
+    let state = common::state(pool.clone(), &outbox, files_dir.path());
     let test = common::TestApp {
         router: app(state.clone()),
         state,
@@ -92,6 +95,7 @@ async fn admin_grant_lets_the_accounts_browser_session_reach_the_admin_pages() {
         account: String::new(),
         token: String::new(),
         outbox,
+        files_dir,
     };
     let (cookie, _) = common::browser_account(&test, "owner@example.com").await;
     assert_eq!(

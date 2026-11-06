@@ -32,7 +32,7 @@ pub async fn files_host(State(state): State<AppState>, request: Request, next: N
         .filter(|sha| sha.len() == 64 && sha.chars().all(|c| c.is_ascii_hexdigit()));
     let served = match sha {
         Some(sha) if request.method() == axum::http::Method::GET => {
-            attachments::public_file(&state.pool, &sha.to_ascii_lowercase()).await
+            public_text(&state, &sha.to_ascii_lowercase()).await
         }
         _ => Ok(None),
     };
@@ -56,6 +56,28 @@ pub async fn files_host(State(state): State<AppState>, request: Request, next: N
             (StatusCode::INTERNAL_SERVER_ERROR, "internal error\n").into_response()
         }
     }
+}
+
+/// The text of file `sha256`, if a public entry's set holds it. A file whose record
+/// is there but whose bytes aren't is an error, not a missing file.
+async fn public_text(state: &AppState, sha256: &str) -> Result<Option<String>, ServeError> {
+    if !attachments::is_public_file(&state.pool, sha256).await? {
+        return Ok(None);
+    }
+    match state.files.read(sha256).await? {
+        Some(text) => Ok(Some(text)),
+        None => Err(ServeError::Missing(sha256.to_string())),
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+enum ServeError {
+    #[error(transparent)]
+    Database(#[from] sqlx::Error),
+    #[error(transparent)]
+    Files(#[from] std::io::Error),
+    #[error("public file {0} has a record but no bytes on disk")]
+    Missing(String),
 }
 
 /// The host, with any port, of a URL such as `https://files.filedrawer.dev`.

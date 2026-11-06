@@ -391,10 +391,13 @@ async fn deleting_drops_the_attachment_sets_no_kept_entry_cites_and_their_lone_f
         .await
         .unwrap();
     assert_eq!(sets, vec![(kept.clone(),)]);
-    let mut files: Vec<String> = sqlx::query_scalar("SELECT text FROM files")
-        .fetch_all(&app.pool)
+    let records: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM files")
+        .fetch_one(&app.pool)
         .await
         .unwrap();
-    files.sort();
-    assert_eq!(files, vec!["print('kept')\n", "print('shared')\n"]);
+    assert_eq!(records, 2);
+    assert_eq!(
+        common::stored_texts(&app),
+        vec!["print('kept')\n", "print('shared')\n"]
+    );
 }

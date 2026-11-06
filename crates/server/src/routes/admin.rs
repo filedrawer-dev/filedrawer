@@ -9,7 +9,7 @@ use axum::http::request::Parts;
 use axum::response::{IntoResponse, Redirect, Response};
 
 use crate::error::AppError;
-use crate::pages::{AdminEntryPage, AdminQueuePage, QueueRow, page};
+use crate::pages::{AdminEntryPage, AdminQueuePage, QueueRow, ShownFile, page};
 use crate::review::{self, Decided, Decision};
 use crate::routes::account::SessionAccount;
 use crate::series::RefusalCall;
@@ -89,7 +89,14 @@ pub async fn entry(
     let runs = entries::run_declarations(&state.pool, entry.seq).await?;
     let batch_failed = entries::batch_failed(&state.pool, entry.seq).await?;
     // Its attached files, which a guarded account's entry reaches here unscreened.
-    let files = attachments::entry_files(&state.pool, entry.seq).await?;
+    let mut files = Vec::new();
+    for file in attachments::entry_files(&state.pool, entry.seq).await? {
+        files.push(ShownFile {
+            text: state.files.read(&file.sha256).await?,
+            path: file.path,
+            verdict: file.verdict,
+        });
+    }
     Ok(page(
         StatusCode::OK,
         &AdminEntryPage {

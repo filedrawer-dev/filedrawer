@@ -211,3 +211,60 @@ async fn migration_11_keeps_only_guards_the_owner_confirmed() {
         vec![("a-held".to_string(),), ("a-rejected".to_string(),)]
     );
 }
+
+#[tokio::test]
+async fn migration_14_drops_stagings_attached_files_and_their_text_column() {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            SqliteConnectOptions::from_str("sqlite::memory:")
+                .unwrap()
+                .foreign_keys(true),
+        )
+        .await
+        .unwrap();
+    let mut first_thirteen = sqlx::migrate!("./migrations");
+    first_thirteen.migrations = Cow::Owned(first_thirteen.migrations[..13].to_vec());
+    first_thirteen.run(&pool).await.unwrap();
+    for statement in [
+        "INSERT INTO accounts (id, display_name, created_at) VALUES ('a-1', 'Ada', 't')",
+        "INSERT INTO files (sha256, text, bytes, created_at, screen_verdict) VALUES
+             ('ab12', 'print(1)', 8, 't', 'pass')",
+        "INSERT INTO attachment_sets (seq, id, account_id, bytes, created_at) VALUES
+             (3, 'as-1', 'a-1', 8, 't')",
+        "INSERT INTO attachment_files (set_seq, path, origin, sha256) VALUES
+             (3, 'run.py', 'author:run.py', 'ab12')",
+        "INSERT INTO entries (seq, id, account_id, status, source, submitted_at, first_submitted_at,
+             analyzer_version, attachment_set_seq) VALUES (7, 'e1', 'a-1', 'public', 'x', 't', 't', 1, 3)",
+    ] {
+        sqlx::query(statement).execute(&pool).await.unwrap();
+    }
+
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+
+    let left: (i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT COUNT(*) FROM files), (SELECT COUNT(*) FROM attachment_sets),
+             (SELECT COUNT(*) FROM attachment_files)",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(left, (0, 0, 0));
+    let (id, set): (String, Option<i64>) =
+        sqlx::query_as("SELECT id, attachment_set_seq FROM entries WHERE seq = 7")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!((id.as_str(), set), ("e1", None));
+    let columns: Vec<(String,)> = sqlx::query_as("SELECT name FROM pragma_table_info('files')")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert!(!columns.iter().any(|(name,)| name == "text"), "{columns:?}");
+    let violations: Vec<(String,)> =
+        sqlx::query_as("SELECT \"table\" FROM pragma_foreign_key_check")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(violations, vec![]);
+}

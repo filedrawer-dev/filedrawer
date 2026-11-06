@@ -1,7 +1,7 @@
 //! The server's settings, from environment variables so systemd units can set them.
 
 use std::net::SocketAddr;
-
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::screening::{AnthropicClient, Screener};
@@ -36,6 +36,8 @@ pub struct Config {
     /// Where attached files are served, on a host of their own with no cookies
     /// (design.md, Attached code), with no trailing slash. `None` turns attachments off.
     pub files_url: Option<String>,
+    /// Attached files' bytes: `files/` beside the database file.
+    pub files_dir: PathBuf,
 }
 
 /// How to reach the SMTP server. Its Debug output leaves the password out.
@@ -217,7 +219,12 @@ impl Config {
         if environment == Environment::Production && screen_test_account.is_some() {
             return Err(ConfigError::ScreenTestAccountInProduction);
         }
+        let files_dir = Path::new(&database)
+            .parent()
+            .unwrap_or(Path::new(""))
+            .join("files");
         Ok(Config {
+            files_dir,
             database,
             listen,
             environment,

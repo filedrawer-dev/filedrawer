@@ -9,6 +9,7 @@ use axum::body::Body;
 use axum::http::{HeaderMap, Request, StatusCode};
 use std::sync::{Arc, Mutex};
 
+use filedrawer_server::file_store::FileStore;
 use filedrawer_server::mail::{Email, Mailer, Sending};
 use filedrawer_server::{AppState, Screener, admin, app, db};
 
@@ -130,10 +131,36 @@ pub struct TestApp {
     pub account: String,
     pub token: String,
     pub outbox: Outbox,
+    /// Where the app keeps attached files' bytes, deleted when the test ends.
+    pub files_dir: Arc<tempfile::TempDir>,
 }
 
-/// The state every test app shares: an in-memory database and mailer.
-pub fn state(pool: sqlx::SqlitePool, outbox: &Outbox) -> AppState {
+/// The text of every attached file the app keeps on disk, sorted: the files under
+/// `<files dir>/<first two hex digits>/` (design.md, Attached code).
+pub fn stored_texts(app: &TestApp) -> Vec<String> {
+    let root = app.files_dir.path().join("files");
+    let mut texts = Vec::new();
+    for dir in std::fs::read_dir(root).unwrap() {
+        let dir = dir.unwrap();
+        if dir.file_name() == "tmp" {
+            continue;
+        }
+        for file in std::fs::read_dir(dir.path()).unwrap() {
+            texts.push(std::fs::read_to_string(file.unwrap().path()).unwrap());
+        }
+    }
+    texts.sort();
+    texts
+}
+
+/// A directory for a test app's attached files, deleted when dropped.
+pub fn files_dir() -> Arc<tempfile::TempDir> {
+    Arc::new(tempfile::tempdir().unwrap())
+}
+
+/// The state every test app shares: an in-memory database and mailer, and the
+/// attached files in `files_dir`.
+pub fn state(pool: sqlx::SqlitePool, outbox: &Outbox, files_dir: &std::path::Path) -> AppState {
     AppState {
         pool,
         screener: Screener::PassAll,
@@ -144,6 +171,7 @@ pub fn state(pool: sqlx::SqlitePool, outbox: &Outbox) -> AppState {
         smoke_account: None,
         screen_test_account: None,
         files_url: Some(FILES_URL.to_string()),
+        files: Arc::new(FileStore::open(files_dir.join("files")).unwrap()),
         attachment_store_cap_bytes: filedrawer_server::ATTACHMENT_STORE_CAP_BYTES,
     }
 }
@@ -161,10 +189,11 @@ pub async fn test_app_with(screener: Screener, daily_nano_usd: i64) -> TestApp {
         .await
         .unwrap();
     let outbox = Outbox::default();
+    let files_dir = files_dir();
     let state = AppState {
         screener,
         screening_daily_nano_usd: daily_nano_usd,
-        ..state(pool.clone(), &outbox)
+        ..state(pool.clone(), &outbox, files_dir.path())
     };
     let router = app(state.clone());
     TestApp {
@@ -174,6 +203,7 @@ pub async fn test_app_with(screener: Screener, daily_nano_usd: i64) -> TestApp {
         account,
         token,
         outbox,
+        files_dir,
     }
 }
 

@@ -295,16 +295,28 @@ async fn screen_files(
 }
 
 /// Screens one file, chunk by chunk, and stores a pass or a rejection. `None` when
-/// it must wait: the caps are spent, a call failed, or a reply couldn't be read
-/// (counted against the entry, which goes to review after too many).
+/// it must wait: its bytes can't be read, the caps are spent, a call failed, or a
+/// reply couldn't be read (counted against the entry, which goes to review after
+/// too many).
 async fn screen_file(
     state: &AppState,
     waiting: &Waiting,
     file: &attachments::EntryFile,
     now: OffsetDateTime,
 ) -> Result<Option<FileCall>, sqlx::Error> {
+    let text = match state.files.read(&file.sha256).await {
+        Ok(Some(text)) => text,
+        Ok(None) => {
+            tracing::error!(sha256 = %file.sha256, "an attached file has a record but no bytes; its entry waits");
+            return Ok(None);
+        }
+        Err(error) => {
+            tracing::error!(sha256 = %file.sha256, %error, "reading an attached file failed; its entry waits");
+            return Ok(None);
+        }
+    };
     let mut doubts = Vec::new();
-    for chunk in attachments::chunks(&file.text) {
+    for chunk in attachments::chunks(&text) {
         if attachments_over_cap(state, &waiting.account_id, now).await? {
             return Ok(None);
         }

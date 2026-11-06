@@ -4,6 +4,7 @@
 use std::process::ExitCode;
 
 use filedrawer_server::config::Config;
+use filedrawer_server::file_store::FileStore;
 use std::sync::Arc;
 
 use filedrawer_server::mail::{LogMailer, Mailer, SmtpMailer};
@@ -20,7 +21,8 @@ serve runs the server. It reads FILEDRAWER_DATABASE (the SQLite file),
 FILEDRAWER_LISTEN (such as 127.0.0.1:8080), FILEDRAWER_ENVIRONMENT (production,
 staging or dev), FILEDRAWER_SCREENER (pass-all; production refuses it) and
 FILEDRAWER_PUBLIC_URL (such as https://staging.filedrawer.dev), which emails link to
-and forms must come from.
+and forms must come from. Attached files' bytes are kept in files/ beside the
+database file.
 
 FILEDRAWER_SCREEN_TEST_ACCOUNT names staging's screen-test account, which
 `ops/smoke-staging eval` submits as: it isn't held to an account's share of the
@@ -118,6 +120,17 @@ async fn serve() -> ExitCode {
         Ok(config) => config,
         Err(error) => return fail(&error.to_string()),
     };
+    // Before the database, whose migrations an older binary can't undo: a rollback
+    // after a directory the store can't make would then still start.
+    let files = match FileStore::open(config.files_dir.clone()) {
+        Ok(files) => Arc::new(files),
+        Err(error) => {
+            return fail(&format!(
+                "can't open the attached files' directory {}: {error}",
+                config.files_dir.display()
+            ));
+        }
+    };
     let pool = match db::open(&config.database).await {
         Ok(pool) => pool,
         Err(error) => {
@@ -152,6 +165,7 @@ async fn serve() -> ExitCode {
         smoke_account: config.smoke_account.clone(),
         screen_test_account: config.screen_test_account.clone(),
         files_url: config.files_url.clone(),
+        files,
         attachment_store_cap_bytes: filedrawer_server::ATTACHMENT_STORE_CAP_BYTES,
     };
     tokio::spawn(filedrawer_server::jobs::run_publisher(state.clone()));

@@ -450,7 +450,9 @@ pub async fn delete_account(
         let error = "The password is wrong.";
         return delete_form(&state, &session.id, StatusCode::UNAUTHORIZED, Some(error)).await;
     }
-    if let deletion::Outcome::Blocked = deletion::delete(&state.pool, &session.id).await? {
+    if let deletion::Outcome::Blocked =
+        deletion::delete(&state.pool, &state.files, &session.id).await?
+    {
         // A series became blocking since the page was shown; it lists them.
         return delete_form(&state, &session.id, StatusCode::CONFLICT, None).await;
     }

@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM files WHERE NOT EXISTS (\n             SELECT 1 FROM attachment_files af WHERE af.sha256 = files.sha256)\n         RETURNING sha256",
+  "describe": {
+    "columns": [
+      {
+        "name": "sha256",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "files",
+            "name": "sha256"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "ed4dedc9752cf90490af5906164b4833333c6c83681bdd45d3020e1daf5a2af7"
+}

@@ -8,7 +8,8 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 
-use crate::{ids, time::now};
+use crate::file_store::Writer;
+use crate::{AppState, ids, time::now};
 
 /// The most bytes one set's files may hold in all (design.md: 1 MiB per entry).
 pub const MAX_SET_BYTES: usize = 1_048_576;
@@ -181,18 +182,29 @@ pub enum Stored {
     StoreFull,
 }
 
+/// Why storing or deleting attached files failed.
+#[derive(Debug, thiserror::Error)]
+pub enum StoreError {
+    #[error(transparent)]
+    Database(#[from] sqlx::Error),
+    #[error("attached files' bytes: {0}")]
+    Files(#[from] std::io::Error),
+}
+
 /// Stores `files` as a new set of `account_id`'s, within the account's day and the
-/// site's storage cap (`store_cap` bytes of unique files).
+/// site's storage cap (bytes of unique files). New files' bytes go into the file
+/// store before the set's records commit.
 pub async fn store(
-    pool: &SqlitePool,
+    state: &AppState,
     account_id: &str,
     files: &[NewFile],
-    store_cap: i64,
-) -> Result<Stored, sqlx::Error> {
+) -> Result<Stored, StoreError> {
+    let pool = &state.pool;
     // A set is at most 1 MiB by `read`, so these sizes fit an i64.
     let size = |file: &NewFile| i64::try_from(file.text.len()).unwrap_or(i64::MAX);
     let bytes: i64 = files.iter().map(size).sum();
     let today = format!("{}%", &now()[..10]);
+    let writer = state.files.write().await;
     let mut transaction = pool.begin().await?;
     let spent = sqlx::query_scalar!(
         r#"SELECT COALESCE(SUM(bytes), 0) AS "spent!: i64" FROM attachment_sets
@@ -219,7 +231,7 @@ pub async fn store(
     let held = sqlx::query_scalar!(r#"SELECT COALESCE(SUM(bytes), 0) AS "held!: i64" FROM files"#)
         .fetch_one(&mut *transaction)
         .await?;
-    if new_bytes > 0 && held + new_bytes > store_cap {
+    if new_bytes > 0 && held + new_bytes > state.attachment_store_cap_bytes {
         return Ok(Stored::StoreFull);
     }
     let at = now();
@@ -235,11 +247,11 @@ pub async fn store(
     .fetch_one(&mut *transaction)
     .await?;
     for file in files {
+        writer.put(&file.sha256, &file.text).await?;
         let file_bytes = size(file);
         sqlx::query!(
-            "INSERT OR IGNORE INTO files (sha256, text, bytes, created_at) VALUES (?, ?, ?, ?)",
+            "INSERT OR IGNORE INTO files (sha256, bytes, created_at) VALUES (?, ?, ?)",
             file.sha256,
-            file.text,
             file_bytes,
             at
         )
@@ -316,28 +328,52 @@ pub async fn entry_set(pool: &SqlitePool, seq: i64) -> Result<Option<EntrySet>, 
     Ok(Some(EntrySet { id: set.id, files }))
 }
 
-/// The text of file `sha256`, if a public entry's set holds it.
-pub async fn public_file(pool: &SqlitePool, sha256: &str) -> Result<Option<String>, sqlx::Error> {
-    sqlx::query_scalar!(
-        "SELECT f.text FROM files f WHERE f.sha256 = ?1 AND EXISTS (
-             SELECT 1 FROM attachment_files af
-             JOIN entries e ON e.attachment_set_seq = af.set_seq
-             WHERE af.sha256 = ?1 AND e.status = 'public')",
+/// Whether a public entry's set holds file `sha256`, so the files host may serve it.
+pub async fn is_public_file(pool: &SqlitePool, sha256: &str) -> Result<bool, sqlx::Error> {
+    let found = sqlx::query_scalar!(
+        "SELECT 1 AS found FROM attachment_files af
+         JOIN entries e ON e.attachment_set_seq = af.set_seq
+         WHERE af.sha256 = ? AND e.status = 'public' LIMIT 1",
         sha256
     )
     .fetch_optional(pool)
+    .await?;
+    Ok(found.is_some())
+}
+
+/// Deletes the record of every file no set holds, and returns their hashes, for
+/// [`remove_bytes`] once the transaction commits.
+pub async fn delete_lone_files(
+    transaction: &mut sqlx::SqliteConnection,
+) -> Result<Vec<String>, sqlx::Error> {
+    sqlx::query_scalar!(
+        "DELETE FROM files WHERE NOT EXISTS (
+             SELECT 1 FROM attachment_files af WHERE af.sha256 = files.sha256)
+         RETURNING sha256"
+    )
+    .fetch_all(transaction)
     .await
+}
+
+/// Removes the bytes of files whose records are deleted and committed. A file that
+/// can't be removed is logged, and stays on disk with no record.
+pub async fn remove_bytes(writer: &Writer<'_>, hashes: &[String]) {
+    for sha256 in hashes {
+        if let Err(error) = writer.remove(sha256).await {
+            tracing::error!(%sha256, %error, "removing an attached file's bytes failed");
+        }
+    }
 }
 
 /// The largest chunk of a file one screening call reads: well under Haiku's
 /// long-prompt price step (design.md, Attached code).
 pub const CHUNK_BYTES: usize = 256 * 1024;
 
-/// A file of an entry's set, with the screen's verdict on it so far.
+/// A file of an entry's set, with the screen's verdict on it so far. Its bytes are
+/// in the [`FileStore`].
 pub struct EntryFile {
     pub sha256: String,
     pub path: String,
-    pub text: String,
     pub verdict: Option<String>,
     pub reason: Option<String>,
 }
@@ -346,7 +382,7 @@ pub struct EntryFile {
 pub async fn entry_files(pool: &SqlitePool, seq: i64) -> Result<Vec<EntryFile>, sqlx::Error> {
     sqlx::query_as!(
         EntryFile,
-        r#"SELECT af.sha256, af.path, f.text, f.screen_verdict AS verdict, f.screen_reason AS reason
+        r#"SELECT af.sha256, af.path, f.screen_verdict AS verdict, f.screen_reason AS reason
            FROM entries e
            JOIN attachment_files af ON af.set_seq = e.attachment_set_seq
            JOIN files f ON f.sha256 = af.sha256

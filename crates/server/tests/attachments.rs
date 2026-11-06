@@ -254,6 +254,35 @@ async fn a_set(app: &TestApp, token: &str) -> String {
         .to_string()
 }
 
+/// Where the app keeps the bytes of file `sha256` (design.md, Attached code).
+fn on_disk(app: &TestApp, sha256: &str) -> std::path::PathBuf {
+    app.files_dir
+        .path()
+        .join("files")
+        .join(&sha256[..2])
+        .join(sha256)
+}
+
+#[tokio::test]
+async fn an_uploaded_files_bytes_are_kept_on_disk_by_hash() {
+    let app = test_app().await;
+    a_set(&app, &app.token).await;
+    let kept = std::fs::read_to_string(on_disk(&app, &sha256(SCRIPT))).unwrap();
+    assert_eq!(kept, SCRIPT);
+}
+
+#[tokio::test]
+async fn a_public_file_whose_bytes_are_missing_answers_500_and_says_nothing_of_why() {
+    let app = test_app().await;
+    let set = a_set(&app, &app.token).await;
+    let held = app.post("/entries", citing(&set)).await;
+    publish_and_place(&app, &common::id_in(&held.body)).await;
+    std::fs::remove_file(on_disk(&app, &sha256(SCRIPT))).unwrap();
+    let reply = get_on(&app, "files.localhost", &format!("/f/{}", sha256(SCRIPT))).await;
+    assert_eq!(reply.status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(reply.body, "internal error\n");
+}
+
 /// An entry citing `set`, with no `code` link.
 fn citing(set: &str) -> String {
     common::entry(
@@ -524,6 +553,27 @@ mod screened {
     }
 
     #[tokio::test]
+    async fn the_review_page_says_when_a_files_bytes_are_missing() {
+        let models = FakeModels::default();
+        let app = app_with(&models, 1_000_000_000).await;
+        let cookie = common::owner(&app).await;
+        let text = "# FAKE-HAZARD FAKE-SONNET-HAZARD\n";
+        let set = set_of(&app, json!([file("author:attack.py", text)])).await;
+        let (id, status) = publish(&app, &set, "a").await;
+        assert_eq!(status, "review");
+        std::fs::remove_file(on_disk(&app, &sha256(text))).unwrap();
+        let page = app.page(&format!("/admin/e/{id}"), Some(&cookie)).await;
+        assert_eq!(page.status, StatusCode::OK, "{}", page.body);
+        assert!(page.body.contains("attack.py"), "{}", page.body);
+        assert!(
+            page.body
+                .contains("Its bytes are missing from the server's disk."),
+            "{}",
+            page.body
+        );
+    }
+
+    #[tokio::test]
     async fn a_guarded_accounts_files_show_on_the_owners_review_page() {
         let models = FakeModels::default();
         let app = app_with(&models, 1_000_000_000).await;
@@ -548,6 +598,33 @@ mod screened {
         let page = app.page(&format!("/admin/e/{id}"), Some(&cookie)).await;
         assert!(page.body.contains("unseen.py"), "{}", page.body);
         assert!(page.body.contains("&#60;b&#62;unseen"), "{}", page.body);
+    }
+
+    #[tokio::test]
+    async fn an_entry_whose_files_bytes_are_missing_waits_and_the_queue_goes_on() {
+        let models = FakeModels::default();
+        let app = app_with(&models, 1_000_000_000).await;
+        let lost = set_of(&app, json!([file("author:lost.py", "print('lost')\n")])).await;
+        let held = app
+            .post(
+                "/entries",
+                common::entry("Lost", &format!("slug: lost\nattachments: {lost}\n")),
+            )
+            .await;
+        let waiting = id_in(&held.body);
+        app.post(&format!("/e/{waiting}/publish"), "").await;
+        std::fs::remove_file(on_disk(&app, &sha256("print('lost')\n"))).unwrap();
+        let fine = set_of(&app, json!([file("author:fine.py", "print('fine')\n")])).await;
+
+        let (_, status) = publish(&app, &fine, "fine").await;
+        assert_eq!(status, "public");
+        let own = app.get_as_author(&format!("/e/{waiting}")).await;
+        assert_eq!(
+            field(&own.body, "status"),
+            Some("screening"),
+            "{}",
+            own.body
+        );
     }
 
     #[tokio::test]

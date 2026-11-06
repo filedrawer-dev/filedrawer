@@ -163,3 +163,16 @@ fn staging_reads_the_screen_test_account_and_production_refuses_it() {
         "{error}"
     );
 }
+
+#[test]
+fn attached_files_are_kept_beside_the_database() {
+    let config = config(&[(
+        "FILEDRAWER_DATABASE",
+        "/srv/filedrawer/staging/data/filedrawer.db",
+    )])
+    .unwrap();
+    assert_eq!(
+        config.files_dir,
+        std::path::Path::new("/srv/filedrawer/staging/data/files")
+    );
+}

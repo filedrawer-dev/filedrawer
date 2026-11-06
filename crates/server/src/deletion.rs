@@ -3,8 +3,9 @@
 
 use sqlx::{SqliteConnection, SqlitePool};
 
-use crate::series;
+use crate::file_store::FileStore;
 use crate::time::now;
+use crate::{attachments, series};
 
 /// What deleting an account would do, for the confirm page.
 pub struct Preview {
@@ -87,10 +88,16 @@ pub async fn password_hash(
 /// and series memberships; every entry of its that isn't public or removed, with what
 /// was read from it; runs and batches nothing left uses; the hidden series it made;
 /// the series the screen refused that the owner hasn't confirmed as a hazard; the
-/// attachment sets no kept entry cites, and the files no remaining set holds.
+/// attachment sets no kept entry cites, and the files no remaining set holds, whose
+/// bytes leave `files` once the rest has committed.
 /// Kept: the account ID, its public entries, the public series it made, refused
 /// series the owner confirmed, and the attachment sets kept entries cite.
-pub async fn delete(pool: &SqlitePool, account_id: &str) -> Result<Outcome, sqlx::Error> {
+pub async fn delete(
+    pool: &SqlitePool,
+    files: &FileStore,
+    account_id: &str,
+) -> Result<Outcome, sqlx::Error> {
+    let writer = files.write().await;
     let mut transaction = pool.begin().await?;
     let blocked = blocking(&mut transaction, account_id).await?;
     if !blocked.is_empty() {
@@ -122,10 +129,6 @@ pub async fn delete(pool: &SqlitePool, account_id: &str) -> Result<Outcome, sqlx
                  SELECT 1 FROM entries e WHERE e.attachment_set_seq = attachment_sets.seq)",
             account_id
         ),
-        sqlx::query!(
-            "DELETE FROM files WHERE NOT EXISTS (
-                 SELECT 1 FROM attachment_files af WHERE af.sha256 = files.sha256)"
-        ),
         // A series the owner confirmed as a hazard stays, like a removed entry.
         sqlx::query!(
             "DELETE FROM refused_series
@@ -135,6 +138,7 @@ pub async fn delete(pool: &SqlitePool, account_id: &str) -> Result<Outcome, sqlx
     ] {
         statement.execute(&mut *transaction).await?;
     }
+    let lone = attachments::delete_lone_files(&mut transaction).await?;
     // The name column can't be empty; this placeholder is never shown, since every
     // read checks `deleted_at` first.
     sqlx::query!(
@@ -149,6 +153,7 @@ pub async fn delete(pool: &SqlitePool, account_id: &str) -> Result<Outcome, sqlx
     // Its entries may have been all that held a version back.
     series::mark_readable(&mut transaction).await?;
     transaction.commit().await?;
+    attachments::remove_bytes(&writer, &lone).await;
     Ok(Outcome::Deleted)
 }
 

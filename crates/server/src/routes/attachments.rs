@@ -48,13 +48,7 @@ pub async fn upload(
         ),
         Invalid::Problems(problems) => refused(StatusCode::UNPROCESSABLE_ENTITY, problems),
     })?;
-    let stored = attachments::store(
-        &state.pool,
-        &account.id,
-        &files,
-        state.attachment_store_cap_bytes,
-    )
-    .await?;
+    let stored = attachments::store(&state, &account.id, &files).await?;
     let (id, bytes) = match stored {
         Stored::Saved { id, bytes } => (id, bytes),
         Stored::DailyCap => {

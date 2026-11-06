@@ -22,7 +22,12 @@
 <p>Publishing the entry passes any file the screen hasn't judged, for later entries too.</p>
 {% for file in files %}
 <h3><code>{{ file.path }}</code> ({{ file.verdict.as_deref().unwrap_or("not screened") }})</h3>
-<pre>{{ file.text }}</pre>
+{% match file.text %}
+{% when Some with (text) %}
+<pre>{{ text }}</pre>
+{% when None %}
+<p>Its bytes are missing from the server's disk.</p>
+{% endmatch %}
 {% endfor %}
 {% endif %}
 {% if !runs.is_empty() %}

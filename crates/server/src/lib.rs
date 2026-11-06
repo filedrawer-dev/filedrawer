@@ -11,6 +11,7 @@ mod deletion;
 mod embargo;
 mod entries;
 mod error;
+pub mod file_store;
 mod ids;
 pub mod jobs;
 mod links;
@@ -59,6 +60,8 @@ pub struct AppState {
     pub screen_test_account: Option<String>,
     /// Where attached files are served (`Config::files_url`).
     pub files_url: Option<String>,
+    /// Attached files' bytes.
+    pub files: std::sync::Arc<file_store::FileStore>,
     /// The most bytes of attached files the site stores in all (design.md: 20 GB).
     pub attachment_store_cap_bytes: i64,
 }
