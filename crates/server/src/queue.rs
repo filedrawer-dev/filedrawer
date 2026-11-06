@@ -201,7 +201,15 @@ async fn over_cap(
 ) -> Result<bool, sqlx::Error> {
     let (total, account) = spent_on(&state.pool, account_id, now).await?;
     let cap = state.screening_daily_nano_usd;
-    Ok(total >= cap || account.saturating_mul(100) >= cap.saturating_mul(ACCOUNT_SHARE_PERCENT))
+    let shared = held_to_share(state, account_id);
+    Ok(total >= cap
+        || (shared && account.saturating_mul(100) >= cap.saturating_mul(ACCOUNT_SHARE_PERCENT)))
+}
+
+/// Whether `account_id` is held to an account's share of the day's cap: every
+/// account but staging's screen-test account, which answers only to the day's total.
+fn held_to_share(state: &AppState, account_id: &str) -> bool {
+    state.screen_test_account.as_deref() != Some(account_id)
 }
 
 /// Whether attached code may not be screened now: the day, or the account's share,
@@ -225,8 +233,9 @@ async fn attachments_over_cap(
     .fetch_one(&state.pool)
     .await?;
     let cap = state.screening_daily_nano_usd;
+    let shared = held_to_share(state, account_id);
     Ok(row.total.saturating_mul(2) >= cap
-        || row.account.saturating_mul(200) >= cap.saturating_mul(ACCOUNT_SHARE_PERCENT))
+        || (shared && row.account.saturating_mul(200) >= cap.saturating_mul(ACCOUNT_SHARE_PERCENT)))
 }
 
 /// What screening the attached files of `waiting` came to.

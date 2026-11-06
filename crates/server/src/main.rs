@@ -22,6 +22,10 @@ staging or dev), FILEDRAWER_SCREENER (pass-all; production refuses it) and
 FILEDRAWER_PUBLIC_URL (such as https://staging.filedrawer.dev), which emails link to
 and forms must come from.
 
+FILEDRAWER_SCREEN_TEST_ACCOUNT names staging's screen-test account, which
+`ops/smoke-staging eval` submits as: it isn't held to an account's share of the
+day's screening cap, only to the cap. Production refuses it.
+
 FILEDRAWER_SMOKE_ACCOUNT names staging's smoke-test account: its entries aren't
 screened, and their cards say so, so CI's smoke test calls no model after each
 deploy. Production refuses it.
@@ -146,6 +150,7 @@ async fn serve() -> ExitCode {
         mailer,
         public_url: config.public_url.clone(),
         smoke_account: config.smoke_account.clone(),
+        screen_test_account: config.screen_test_account.clone(),
         files_url: config.files_url.clone(),
         attachment_store_cap_bytes: filedrawer_server::ATTACHMENT_STORE_CAP_BYTES,
     };

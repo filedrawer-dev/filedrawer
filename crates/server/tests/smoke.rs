@@ -43,6 +43,11 @@ fn free_port() -> u16 {
 }
 
 fn serve(database: PathBuf) -> Server {
+    serve_with(database, &[("FILEDRAWER_SCREENER", "pass-all")])
+}
+
+/// A server with these extra settings.
+fn serve_with(database: PathBuf, settings: &[(&str, &str)]) -> Server {
     let port = free_port();
     let url = format!("http://127.0.0.1:{port}");
     let child = Command::new(env!("CARGO_BIN_EXE_filedrawer"))
@@ -51,9 +56,9 @@ fn serve(database: PathBuf) -> Server {
         .env("FILEDRAWER_DATABASE", &database)
         .env("FILEDRAWER_LISTEN", format!("127.0.0.1:{port}"))
         .env("FILEDRAWER_ENVIRONMENT", "dev")
-        .env("FILEDRAWER_SCREENER", "pass-all")
         .env("FILEDRAWER_PUBLIC_URL", &url)
         .env("RUST_LOG", "error")
+        .envs(settings.iter().copied())
         .spawn()
         .unwrap();
     Server {
@@ -321,4 +326,39 @@ fn every_eval_case_is_an_entry_the_analyzer_accepts() {
         }
     }
     assert!(seen >= 9, "{seen}");
+}
+
+#[test]
+fn eval_stops_at_the_first_undecided_case_when_the_day_is_spent() {
+    // A real screener with no budget: nothing is ever screened, and no model called.
+    let database = scratch_database("eval-spent");
+    let account = admin(&database, &["create-account", "--display-name", "Screen"]);
+    let token = admin(
+        &database,
+        &["create-token", "--account", &account, "--name", "t"],
+    );
+    let server = serve_with(
+        database,
+        &[
+            ("FILEDRAWER_SCREENER", "anthropic"),
+            ("FILEDRAWER_ANTHROPIC_API_KEY", "sk-ant-not-real"),
+            ("FILEDRAWER_SCREENING_DAILY_USD", "0"),
+        ],
+    );
+    let mut command = script(
+        &["eval", "--field-test", "0", "--wait", "30", &server.url],
+        Some("unused"),
+    );
+    let empty = scratch_database("eval-spent-settings");
+    command
+        .env("FILEDRAWER_OPS_DIR", empty.parent().unwrap())
+        .env("FILEDRAWER_STAGING_SCREEN_API_KEY", &token)
+        .env("FILEDRAWER_SCREEN_WAIT_SECONDS", "0");
+    let output = command.output().unwrap();
+    let printed = text(&output);
+    assert_eq!(output.status.code(), Some(1), "{printed}");
+    assert_eq!(printed.matches("WAIT ").count(), 1, "{printed}");
+    assert!(printed.contains("rerun after 00:00 UTC"), "{printed}");
+    assert!(printed.contains("may be spent"), "{printed}");
+    assert!(printed.contains("public: 0 of 1"), "{printed}");
 }

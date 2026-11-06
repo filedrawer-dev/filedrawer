@@ -142,6 +142,7 @@ pub fn state(pool: sqlx::SqlitePool, outbox: &Outbox) -> AppState {
         mailer: Arc::new(outbox.clone()),
         public_url: PUBLIC_URL.to_string(),
         smoke_account: None,
+        screen_test_account: None,
         files_url: Some(FILES_URL.to_string()),
         attachment_store_cap_bytes: filedrawer_server::ATTACHMENT_STORE_CAP_BYTES,
     }

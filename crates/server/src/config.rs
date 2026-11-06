@@ -30,6 +30,9 @@ pub struct Config {
     /// Staging's smoke-test account, whose entries aren't screened, so CI's smoke
     /// test calls no model after each deploy. Production refuses it.
     pub smoke_account: Option<String>,
+    /// Staging's screen-test account, which `ops/smoke-staging eval` submits as: not
+    /// held to an account's share of the day's cap. Production refuses it.
+    pub screen_test_account: Option<String>,
     /// Where attached files are served, on a host of their own with no cookies
     /// (design.md, Attached code), with no trailing slash. `None` turns attachments off.
     pub files_url: Option<String>,
@@ -75,6 +78,10 @@ pub enum ConfigError {
         "FILEDRAWER_SMOKE_ACCOUNT publishes an account's entries unscreened, so production refuses it"
     )]
     SmokeAccountInProduction,
+    #[error(
+        "FILEDRAWER_SCREEN_TEST_ACCOUNT lifts an account's share of the screening cap, so production refuses it"
+    )]
+    ScreenTestAccountInProduction,
     #[error(
         "production sends verification and reset email, so it needs FILEDRAWER_SMTP_HOST, FILEDRAWER_SMTP_USER, FILEDRAWER_SMTP_PASSWORD and FILEDRAWER_MAIL_FROM"
     )]
@@ -206,6 +213,10 @@ impl Config {
         if environment == Environment::Production && smoke_account.is_some() {
             return Err(ConfigError::SmokeAccountInProduction);
         }
+        let screen_test_account = var("FILEDRAWER_SCREEN_TEST_ACCOUNT").filter(|id| !id.is_empty());
+        if environment == Environment::Production && screen_test_account.is_some() {
+            return Err(ConfigError::ScreenTestAccountInProduction);
+        }
         Ok(Config {
             database,
             listen,
@@ -215,6 +226,7 @@ impl Config {
             public_url,
             smtp,
             smoke_account,
+            screen_test_account,
             files_url,
         })
     }

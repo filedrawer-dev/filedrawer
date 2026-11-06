@@ -55,6 +55,8 @@ pub struct AppState {
     pub public_url: String,
     /// Staging's smoke-test account (`Config::smoke_account`).
     pub smoke_account: Option<String>,
+    /// Staging's screen-test account (`Config::screen_test_account`).
+    pub screen_test_account: Option<String>,
     /// Where attached files are served (`Config::files_url`).
     pub files_url: Option<String>,
     /// The most bytes of attached files the site stores in all (design.md: 20 GB).

@@ -145,3 +145,21 @@ fn the_files_url_is_read_without_a_trailing_slash_and_must_be_an_http_address() 
     let bad = config(&[("FILEDRAWER_FILES_URL", "files.staging.filedrawer.dev")]).unwrap_err();
     assert!(bad.to_string().contains("FILEDRAWER_FILES_URL"), "{bad}");
 }
+
+#[test]
+fn staging_reads_the_screen_test_account_and_production_refuses_it() {
+    let staging = config(&[("FILEDRAWER_SCREEN_TEST_ACCOUNT", "a-screen1")]).unwrap();
+    assert_eq!(staging.screen_test_account.as_deref(), Some("a-screen1"));
+    let mut production = vec![
+        ("FILEDRAWER_ENVIRONMENT", "production"),
+        ("FILEDRAWER_SCREENER", "anthropic"),
+        ("FILEDRAWER_ANTHROPIC_API_KEY", "sk-ant-not-real"),
+        ("FILEDRAWER_SCREEN_TEST_ACCOUNT", "a-screen1"),
+    ];
+    production.extend(SMTP);
+    let error = config(&production).unwrap_err();
+    assert!(
+        error.to_string().contains("FILEDRAWER_SCREEN_TEST_ACCOUNT"),
+        "{error}"
+    );
+}

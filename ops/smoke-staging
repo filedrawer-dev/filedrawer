@@ -35,15 +35,17 @@ review would put the account under the review guard. Its settings, neither print
   the token   FILEDRAWER_STAGING_SCREEN_API_KEY, else SCREEN_TEST_TOKEN in
               ops/.screen-test.env
   the key     FILEDRAWER_STAGING_KEY, else STAGING_KEY in ops/.vps.env
-(FILEDRAWER_OPS_DIR moves where it looks for those files, and FILEDRAWER_FIELD_TEST_DIR
-where eval looks for field-test entries, for tests.)
+(FILEDRAWER_OPS_DIR moves where it looks for those files, FILEDRAWER_FIELD_TEST_DIR
+where eval looks for field-test entries, and FILEDRAWER_SCREEN_WAIT_SECONDS how long
+it waits for a verdict, default 120, for tests.)
 
 eval runs a labelled test set through the screen, as the screen-test account, to
 see whether it is too strict or too lax. By hand only. The cases are the entries
 under ops/screen-eval/<expected>/, <expected> being public, rejected or review,
 plus --field-test N (default 10; 0 for none) honest entries picked at random from
 field-test/, expected public (their contents are never printed). It prints PASS or
-FAIL per case and a tally per expectation, and exits 1 when any case misses. The
+FAIL per case and a tally per expectation, and exits 1 when any case misses. It
+stops at the first case left undecided, when the day's cap is spent. The
 owner then rejects the review cases on /admin, which guards the screen-test
 account; clear the guard there afterwards. Same settings as screen.
   --field-test N  how many field-test entries to add
@@ -52,6 +54,8 @@ EOF
 
 base=https://staging.filedrawer.dev
 wait_seconds=0
+screen_wait="${FILEDRAWER_SCREEN_WAIT_SECONDS:-120}"
+[[ "$screen_wait" =~ ^[0-9]+$ ]] || { echo "smoke-staging: FILEDRAWER_SCREEN_WAIT_SECONDS takes a number of seconds" >&2; exit 2; }
 mode=smoke
 field_tests=10
 while (( $# )); do
@@ -159,7 +163,7 @@ screened() {
   fi
   req POST "/e/$ID/publish"
   [[ $CODE == 200 ]] || { echo "FAIL publish $ID: $CODE"; fail=$((fail + 1)); return 1; }
-  local deadline=$((SECONDS + 120))
+  local deadline=$((SECONDS + screen_wait))
   req GET "/e/$ID"
   while [[ $(field status) == screening ]] && (( SECONDS < deadline )); do
     sleep 5
@@ -185,6 +189,9 @@ explain() {
 
 if [[ $mode == eval ]]; then
   declare -A wanted=() met=()
+  # Set once a case is left undecided: most likely the day's cap is spent, or the
+  # model is unreachable, and every later case would wait out its time for nothing.
+  spent=0
   # judge NAME EXPECTED: the entry just screened against EXPECTED.
   judge() {
     local status
@@ -194,8 +201,9 @@ if [[ $mode == eval ]]; then
       echo "PASS $2 $1"
       pass=$((pass + 1)); met[$2]=$(( ${met[$2]:-0} + 1 ))
     elif [[ $status == screening ]]; then
-      echo "WAIT $2 $1 ($ID): not decided yet; the account's share of the day's cap may be spent, so rerun later"
+      echo "WAIT $2 $1 ($ID): not decided yet"
       fail=$((fail + 1))
+      spent=1
     else
       echo "FAIL $2 $1 ($ID): got $status"
       fail=$((fail + 1))
@@ -208,6 +216,7 @@ if [[ $mode == eval ]]; then
       name=$(basename "$file" .md)
       screen_entry "$file" > "$dir/case.md"
       screened "$dir/case.md" && judge "$name" "$expected"
+      (( spent )) && break 2
     done
   done
   # Field-test entries: one per name, since the rounds hold near-copies. One the
@@ -216,7 +225,7 @@ if [[ $mode == eval ]]; then
   taken=0
   declare -A picked=()
   field_test_dir="${FILEDRAWER_FIELD_TEST_DIR:-$(dirname "$0")/../field-test}"
-  while IFS= read -r file && (( taken < field_tests )); do
+  while IFS= read -r file && (( taken < field_tests && ! spent )); do
     name=$(basename "$file")
     [[ -n "${picked[$name]:-}" ]] && continue
     picked[$name]=1
@@ -225,7 +234,12 @@ if [[ $mode == eval ]]; then
     taken=$((taken + 1))
     judge "field-test-$taken" public
   done < <(find "$field_test_dir" -name '*.md' 2>/dev/null | shuf)
-  (( field_tests > 0 && taken < field_tests )) && echo "  only $taken field-test entries found"
+  (( field_tests > 0 && taken < field_tests && ! spent )) && echo "  only $taken field-test entries found"
+  if (( spent )); then
+    echo "Stopped: a case wasn't decided in time. The day's screening cap may be spent"
+    echo "  (rerun after 00:00 UTC), or the model unreachable (rerun later). Entries"
+    echo "  already sent wait in the queue and are screened then."
+  fi
   for expected in public rejected review; do
     echo "$expected: ${met[$expected]:-0} of ${wanted[$expected]:-0}"
   done

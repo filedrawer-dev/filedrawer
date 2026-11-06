@@ -167,6 +167,19 @@ def test_smoke_stores_the_token_and_key_as_staging_secrets_and_shows_neither(smo
     assert sent == (REPO / "ops/remote/smoke-account.sh").read_text()
 
 
+def test_smoke_also_names_the_screen_test_account_it_finds_in_ops(smoke):
+    (smoke.tmp / "ops/.screen-test.env").write_text(
+        "SCREEN_TEST_ACCOUNT='a-screen1'\nSCREEN_TEST_TOKEN='fdt_secret'\n"
+    )
+    result = smoke.run()
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = [c for c in smoke.log.read_text().splitlines() if c.startswith("ssh ")]
+    assert (
+        calls[-1] == "ssh env SMOKE_ACCOUNT=a-new SCREEN_TEST_ACCOUNT=a-screen1 bash -s"
+    )
+    assert "fdt_secret" not in smoke.log.read_text() + result.stdout + result.stderr
+
+
 def test_smoke_names_the_account_to_staging_so_its_entries_arent_rejected(smoke):
     result = smoke.run()
     assert result.returncode == 0, result.stdout + result.stderr

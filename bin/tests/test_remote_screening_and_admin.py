@@ -274,3 +274,16 @@ def test_caddy_without_a_password_or_a_hash_to_keep_fails_naming_the_full_wizard
     assert result.returncode != 0
     assert "ops/provision-vps" in result.stderr
     assert not (caddy_box.root / "etc/caddy/Caddyfile").exists()
+
+
+def test_smoke_env_also_names_the_screen_test_account_when_given(box):
+    result = run(
+        box, SMOKE_ENV, SMOKE_ACCOUNT="a-smoke1", SCREEN_TEST_ACCOUNT="a-screen1"
+    )
+    assert result.returncode == 0, result.stderr
+    env_file = box.root / "etc/filedrawer/staging-smoke.env"
+    assert env_file.read_text() == (
+        "FILEDRAWER_SMOKE_ACCOUNT=a-smoke1\nFILEDRAWER_SCREEN_TEST_ACCOUNT=a-screen1\n"
+    )
+    bad = run(box, SMOKE_ENV, SMOKE_ACCOUNT="a-smoke1", SCREEN_TEST_ACCOUNT="b-x")
+    assert bad.returncode == 2

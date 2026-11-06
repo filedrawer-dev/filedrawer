@@ -793,3 +793,37 @@ async fn a_run_cited_from_a_later_entry_is_screened_again_with_it() {
             .contains("Sweep over layers 10 to 18")
     );
 }
+
+#[tokio::test]
+async fn the_screen_test_account_isnt_held_to_an_accounts_share_but_is_to_the_day() {
+    // Each fake call costs 200,000; a cap of 1,000,000 gives an account 100,000.
+    let models = FakeModels::default();
+    let mut app = test_app_with(models.screener(), 1_000_000).await;
+    app.state.screen_test_account = Some(app.account.clone());
+    app.router = filedrawer_server::app(app.state.clone());
+    let other = app.other_token().await;
+    let other_publishes = async |title: &str| {
+        let held = app
+            .post_as("/entries", Some(&other), entry(title, ""))
+            .await;
+        let id = id_in(&held.body);
+        let placed = app
+            .post_as(&format!("/e/{id}/publish"), Some(&other), "")
+            .await;
+        field(&placed.body, "status").unwrap().to_string()
+    };
+    // Another account spends its 100,000 share on one entry, then waits.
+    assert_eq!(other_publishes("Other one").await, "public");
+    assert_eq!(other_publishes("Other two").await, "screening");
+    // The screen-test account goes on past its share, to the day's 1,000,000.
+    for n in 0..4 {
+        let (_, status) = publish(
+            &app,
+            &entry(&format!("Steering {n}"), &format!("slug: s{n}\n")),
+        )
+        .await;
+        assert_eq!(status, "public", "entry {n}");
+    }
+    let (_, status) = publish(&app, &entry("Steering 4", "slug: s4\n")).await;
+    assert_eq!(status, "screening");
+}

@@ -665,6 +665,28 @@ mod screened {
     }
 
     #[tokio::test]
+    async fn the_screen_test_account_spends_past_its_share_but_not_past_the_days_half() {
+        let models = FakeModels::default();
+        let line = "z = 'SHARE-MARKER padding padding padding padding'\n";
+        let three_chunks = line.repeat(600_000 / line.len());
+        // A cap of 4,000,000: an account's attachment half-share is 200,000, one call;
+        // the day's attachment half is 2,000,000, ten calls.
+        let mut app = app_with(&models, 4_000_000).await;
+        app.state.screen_test_account = Some(app.account.clone());
+        app.router = filedrawer_server::app(app.state.clone());
+        let set = set_of(&app, json!([file("author:big.py", &three_chunks)])).await;
+        assert_eq!(publish(&app, &set, "a").await.1, "public");
+        // A cap of 400,000: the day's attachment half, 200,000, is one call.
+        let models = FakeModels::default();
+        let mut app = app_with(&models, 400_000).await;
+        app.state.screen_test_account = Some(app.account.clone());
+        app.router = filedrawer_server::app(app.state.clone());
+        let set = set_of(&app, json!([file("author:big.py", &three_chunks)])).await;
+        assert_eq!(publish(&app, &set, "a").await.1, "screening");
+        assert_eq!(models.asked(), vec![Model::Haiku]);
+    }
+
+    #[tokio::test]
     async fn entries_with_attachments_wait_behind_entries_without() {
         let models = FakeModels::default();
         let app = app_with(&models, 1_000_000_000).await;

@@ -307,7 +307,11 @@ smoke_stage() {
     # Staging doesn't screen the smoke test's entries, so CI calls no model after
     # each deploy. The unit first, so it reads the file smoke-env.sh writes.
     remote staging-service.sh
-    remote smoke-env.sh "SMOKE_ACCOUNT=$SMOKE_ACCOUNT"
+    # The screen-test account, if ops/.screen-test.env names one, isn't held to an
+    # account's share of the day's screening cap (ops/smoke-staging eval).
+    local screen_test
+    screen_test=$(sed -n "s/^SCREEN_TEST_ACCOUNT='\(a-[0-9a-z]\{1,\}\)'\$/\1/p" ops/.screen-test.env 2>/dev/null || true)
+    remote smoke-env.sh "SMOKE_ACCOUNT=$SMOKE_ACCOUNT" ${screen_test:+"SCREEN_TEST_ACCOUNT=$screen_test"}
   fi
   set_staging_secret STAGING_KEY "$STAGING_KEY"
   note "The next deploy runs the smoke test. To run it from here instead:"
