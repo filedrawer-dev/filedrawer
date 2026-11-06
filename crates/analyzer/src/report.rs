@@ -14,11 +14,25 @@ pub enum Refusal {
     FrontMatterUnreadable(String),
     MissingField(&'static str),
     MissingSection(&'static str),
-    TooLarge { bytes: usize },
-    TooManyLogs { count: usize },
-    UnpinnedCode { url: String },
-    MovingRef { command: String },
+    TooLarge {
+        bytes: usize,
+    },
+    TooManyLogs {
+        count: usize,
+    },
+    UnpinnedCode {
+        url: String,
+    },
+    MovingRef {
+        command: String,
+    },
     EmbargoUnreadable(String),
+    /// A long run of encoded text that hides readable text, such as base64: `kind`
+    /// names the encoding, and `start` is the run's first characters.
+    EncodedText {
+        kind: crate::encoded::Encoding,
+        start: String,
+    },
 }
 
 impl fmt::Display for Refusal {
@@ -47,6 +61,12 @@ impl fmt::Display for Refusal {
                 f,
                 "the `code` link isn't pinned to a commit or version: {url}. Link a \
                  40-character commit hash, or a Zenodo version record"
+            ),
+            Refusal::EncodedText { kind, start } => write!(
+                f,
+                "it holds a long run of {kind} (starting `{start}`) that decodes to text \
+                 or a compressed stream; the archive is read as text, so link to encoded \
+                 or compressed data (on Zenodo or in a repo) rather than pasting it"
             ),
             Refusal::EmbargoUnreadable(value) => write!(
                 f,

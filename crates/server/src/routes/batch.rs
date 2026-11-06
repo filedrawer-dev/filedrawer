@@ -24,6 +24,16 @@ use crate::routes::submit::{Accepted, accept, cited_series};
 use crate::series::Cited;
 use crate::{AppState, time};
 
+/// Every string in `value`, however deeply nested.
+fn strings_in(value: &serde_json::Value) -> Vec<&str> {
+    match value {
+        serde_json::Value::String(text) => vec![text.as_str()],
+        serde_json::Value::Array(items) => items.iter().flat_map(strings_in).collect(),
+        serde_json::Value::Object(fields) => fields.values().flat_map(strings_in).collect(),
+        _ => Vec::new(),
+    }
+}
+
 /// The most members one batch may carry.
 const MAX_MEMBERS: usize = 100;
 
@@ -63,6 +73,13 @@ async fn declared_runs(
             .is_none_or(|text| text.trim().is_empty())
         {
             problems.push(format!("run {position} (`{id}`): it needs a `description`"));
+        }
+        // Every string in the declaration, nested ones too, is shown with the
+        // entries that use it.
+        for text in strings_in(run) {
+            for reason in analyzer::encoded_text(text) {
+                problems.push(format!("run {position} (`{id}`): {reason}"));
+            }
         }
         if declared
             .iter()

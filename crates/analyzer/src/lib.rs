@@ -6,6 +6,7 @@
 mod body;
 mod card;
 mod choice;
+mod encoded;
 mod fields;
 mod front_matter;
 mod links;
@@ -18,6 +19,7 @@ pub use choice::{
     Choice, Claim, CodeState, ControlChecks, ControlOutcome, ControlSource, Direction,
     HypothesisSet, Kind, Outcome, Role, SetWhen, Stage, Vocabulary,
 };
+pub use encoded::Encoding;
 pub use fields::{DataItem, Fields, Model, PositiveControl, SmallestEffect, Writer};
 pub use links::{LISTED_HOSTS, Pin, code_pin};
 pub use report::{MAX_ENTRY_BYTES, MAX_LOGS, Refusal, Warning, WarningKind};
@@ -29,6 +31,16 @@ pub use series::{
     MAX_DESCRIPTION_BYTES, MAX_TITLE_CHARS, SeriesCite, SeriesText, description_section,
     heading_anchor, parse_series_cite, read_series, without_series,
 };
+
+/// The reasons `text` would be refused for long encoded runs that hide text, for
+/// text the server checks outside an entry, such as a run's declaration (design.md,
+/// Submission and screening, step 3).
+pub fn encoded_text(text: &str) -> Vec<String> {
+    encoded::refusals(text)
+        .iter()
+        .map(ToString::to_string)
+        .collect()
+}
 
 /// Everything the analyzer read from one entry.
 #[derive(Debug, Clone, PartialEq)]
@@ -145,6 +157,7 @@ pub fn analyze(text: &str) -> Analysis {
             count: front.fields.logs.len(),
         });
     }
+    refusals.extend(encoded::refusals(&text));
     links::check(
         &front.fields,
         sections.reproduce.as_deref(),

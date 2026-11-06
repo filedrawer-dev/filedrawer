@@ -45,6 +45,7 @@ pub fn read_series(text: &str) -> Result<SeriesText, Vec<String>> {
     if description.is_empty() {
         problems.push("the description, below the front matter, is empty".into());
     }
+    problems.extend(crate::encoded_text(&text));
     if description.len() > MAX_DESCRIPTION_BYTES {
         problems.push(format!(
             "the description is {} bytes; the limit is {MAX_DESCRIPTION_BYTES}",

@@ -76,7 +76,8 @@ The server refuses an entry, with every reason, when:
 - `code` names GitHub or Hugging Face without a 40-character commit;
 - `## Reproduce` fetches code at a branch or tag;
 - `logs` lists more than 10 URLs;
-- `embargo_until` isn't a YYYY-MM-DD date, is more than 3 months away, or has passed.
+- `embargo_until` isn't a YYYY-MM-DD date, is more than 3 months away, or has passed;
+- it holds encoded text that decodes to readable text or a compressed stream (base64, base32, hex, base85, or many URL escapes outside a link). Link to such data on Zenodo or in a repo instead; hashes, keys, commit IDs and links are fine.
 
 Everything else it can't read, it accepts with a warning. Those refusals answer HTTP 422 unless noted.
 
