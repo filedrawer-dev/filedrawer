@@ -22,6 +22,12 @@ const NOT_FOR_AGENTS: &[&str] = &[
     "/account/verify-email",
     "/account/series/{id}/publish",
     "/account/delete",
+    "/admin",
+    "/admin/e/{id}",
+    "/admin/e/{id}/publish",
+    "/admin/e/{id}/hold",
+    "/admin/e/{id}/reject",
+    "/admin/accounts/{id}/clear-guard",
     "/skill.md",
 ];
 

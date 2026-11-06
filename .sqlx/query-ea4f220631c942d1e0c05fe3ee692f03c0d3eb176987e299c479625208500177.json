@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE accounts SET review_guard_at = NULL\n         WHERE id = ? AND review_guard_at IS NOT NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "ea4f220631c942d1e0c05fe3ee692f03c0d3eb176987e299c479625208500177"
+}

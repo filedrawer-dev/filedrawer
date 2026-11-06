@@ -257,6 +257,16 @@ async fn place_passed(state: &AppState, seq: i64, now: OffsetDateTime) -> Result
     Ok(())
 }
 
+/// Places entry `seq`, or decides its batch, once the owner has given it a verdict.
+pub async fn settle_decided(
+    state: &AppState,
+    seq: i64,
+    now: OffsetDateTime,
+) -> Result<(), sqlx::Error> {
+    let _turn = state.screening_lock.lock().await;
+    settle(state, seq, now).await
+}
+
 /// Places every entry left in `screening` with a verdict, as a crash between storing
 /// the verdict and placing it would leave one, or a batch whose member in review
 /// has been decided since.

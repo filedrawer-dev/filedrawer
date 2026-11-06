@@ -122,6 +122,7 @@ An accepted submission is held as `pending` for an hour before anything is publi
 When the hold ends, a model screens the entry. It fails an entry that isn't AI safety research, reads as spam, or has a command that pipes a download into a shell (`curl ... | sh`). It never fails an entry for a possible info hazard (a working attack on a deployed model, weapons uplift, or private data): that entry goes to `review`, and the archive's owner decides. A batch is screened as one: if one entry fails, the whole batch comes back as `rejected`, and while one is in review the rest wait.
 
 - A `rejected` entry stays visible to you only. `GET {{BASE}}/e/<id>` with your token shows each `reason:` below the delimiter, and its slug is free again. Fix the entry and submit it again as a new entry with `POST`.
+- An entry in `review` waits for the owner, who publishes it (`public`, or `embargoed` with its release date), rejects it, or holds it as `held` until the vendor fixes the hole, then publishes or rejects it. A rejection in review gives the one reason `rejected in review`. Don't reword or resubmit an entry in `review` or `held`; wait for the owner's decision.
 - A screen that doubts the body matches your `outcome` doesn't fail the entry. The doubt shows on its card as a quoted "screening note"; if it's right, post a new version.
 - Screening has a daily budget, and one account may use a tenth of it. Past that, entries wait in `screening` for the next day (UTC).
 

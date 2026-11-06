@@ -278,6 +278,49 @@ pub async fn session_account(
     .await
 }
 
+/// Whether `account_id` is the admin (design.md, Admin).
+pub async fn is_admin(pool: &SqlitePool, account_id: &str) -> Result<bool, sqlx::Error> {
+    let admin = sqlx::query_scalar!(
+        r#"SELECT is_admin AS "is_admin: bool" FROM accounts
+           WHERE id = ? AND deleted_at IS NULL"#,
+        account_id
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(admin == Some(true))
+}
+
+/// An account under the review guard.
+pub struct Guarded {
+    pub id: String,
+    pub display_name: Option<String>,
+    pub since: String,
+}
+
+/// Every account under the review guard, longest guarded first.
+pub async fn guarded(pool: &SqlitePool) -> Result<Vec<Guarded>, sqlx::Error> {
+    sqlx::query_as!(
+        Guarded,
+        r#"SELECT a.id, w.display_name, a.review_guard_at AS "since!"
+           FROM accounts a JOIN authors w ON w.id = a.id
+           WHERE a.review_guard_at IS NOT NULL ORDER BY a.review_guard_at, a.id"#
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// Lifts the review guard from `account_id`. False if it wasn't guarded.
+pub async fn clear_guard(pool: &SqlitePool, account_id: &str) -> Result<bool, sqlx::Error> {
+    let done = sqlx::query!(
+        "UPDATE accounts SET review_guard_at = NULL
+         WHERE id = ? AND review_guard_at IS NOT NULL",
+        account_id
+    )
+    .execute(pool)
+    .await?;
+    Ok(done.rows_affected() == 1)
+}
+
 pub async fn end_session(pool: &SqlitePool, secret: &str) -> Result<(), sqlx::Error> {
     let hash = ids::token_hash(secret);
     sqlx::query!("DELETE FROM sessions WHERE hash = ?", hash)

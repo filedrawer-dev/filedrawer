@@ -14,6 +14,7 @@ usage:
   filedrawer serve
   filedrawer admin create-account --display-name NAME
   filedrawer admin create-token --account ID --name NAME
+  filedrawer admin grant --account ID
 
 serve runs the server. It reads FILEDRAWER_DATABASE (the SQLite file),
 FILEDRAWER_LISTEN (such as 127.0.0.1:8080), FILEDRAWER_ENVIRONMENT (production,
@@ -27,7 +28,8 @@ defaults to 465), and to the log otherwise. Production refuses to start without 
 
 The admin commands need only FILEDRAWER_DATABASE. create-account prints the new
 account's ID. create-token prints a new API token for the account; only its hash
-is stored, so this is the only time it is shown.";
+is stored, so this is the only time it is shown. grant makes the account the admin:
+its browser sessions reach the review queue at /admin. It prints the account's ID.";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -56,6 +58,9 @@ fn main() -> ExitCode {
             name,
         ] => runtime.block_on(admin_command(async |pool| {
             admin::create_token(&pool, account, name).await
+        })),
+        ["admin", "grant", "--account", account] => runtime.block_on(admin_command(async |pool| {
+            admin::grant(&pool, account).await
         })),
         _ => {
             eprintln!("{USAGE}");

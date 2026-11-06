@@ -976,14 +976,134 @@ pub async fn reject(pool: &SqlitePool, seq: i64, reasons: Option<&str>) -> Resul
     transaction.commit().await
 }
 
-/// Moves an entry whose verdict is review out of screening, to the owner's queue.
+/// Moves an entry whose verdict is review out of screening, to the owner's queue,
+/// and puts its account under the review guard (design.md, Submission and
+/// screening), if it isn't already.
 pub async fn to_review(pool: &SqlitePool, seq: i64) -> Result<(), sqlx::Error> {
-    sqlx::query!(
+    let mut transaction = pool.begin().await?;
+    let moved = sqlx::query_scalar!(
         "UPDATE entries SET status = 'review'
-         WHERE seq = ? AND status = 'screening' AND screen_verdict = 'review'",
+         WHERE seq = ? AND status = 'screening' AND screen_verdict = 'review'
+         RETURNING account_id",
+        seq
+    )
+    .fetch_optional(&mut *transaction)
+    .await?;
+    if let Some(account_id) = moved {
+        let at = now();
+        sqlx::query!(
+            "UPDATE accounts SET review_guard_at = ? WHERE id = ? AND review_guard_at IS NULL",
+            at,
+            account_id
+        )
+        .execute(&mut *transaction)
+        .await?;
+    }
+    transaction.commit().await
+}
+
+/// Holds an entry in review until a vendor fixes the hole. False if it wasn't in
+/// review.
+pub async fn hold(pool: &SqlitePool, seq: i64) -> Result<bool, sqlx::Error> {
+    let done = sqlx::query!(
+        "UPDATE entries SET status = 'held' WHERE seq = ? AND status = 'review'",
         seq
     )
     .execute(pool)
     .await?;
-    Ok(())
+    Ok(done.rows_affected() == 1)
+}
+
+/// The owner passes an entry in review or held: it goes back to `screening` with a
+/// pass, for the queue to place with its batch. False if it was in neither.
+pub async fn owner_pass(pool: &SqlitePool, seq: i64) -> Result<bool, sqlx::Error> {
+    let done = sqlx::query!(
+        "UPDATE entries SET status = 'screening', screen_verdict = 'pass'
+         WHERE seq = ? AND status IN ('review', 'held')",
+        seq
+    )
+    .execute(pool)
+    .await?;
+    Ok(done.rows_affected() == 1)
+}
+
+/// The owner fails an entry in review or held with `reasons` (a JSON array): it goes
+/// back to `screening` with a rejection, and so does every member of its batch in
+/// review or held, for the queue to send the whole batch back. False if it was in
+/// neither.
+pub async fn owner_reject(pool: &SqlitePool, seq: i64, reasons: &str) -> Result<bool, sqlx::Error> {
+    let mut transaction = pool.begin().await?;
+    let batch_seq = sqlx::query_scalar!(
+        "UPDATE entries SET status = 'screening', screen_verdict = 'reject',
+             rejection_reasons = ?
+         WHERE seq = ? AND status IN ('review', 'held')
+         RETURNING batch_seq",
+        reasons,
+        seq
+    )
+    .fetch_optional(&mut *transaction)
+    .await?;
+    let Some(batch_seq) = batch_seq else {
+        return Ok(false);
+    };
+    sqlx::query!(
+        "UPDATE entries SET status = 'screening'
+         WHERE batch_seq = ? AND status IN ('review', 'held')",
+        batch_seq
+    )
+    .execute(&mut *transaction)
+    .await?;
+    transaction.commit().await?;
+    Ok(true)
+}
+
+/// An entry waiting on the owner, in `review` or `held`.
+pub struct Undecided {
+    pub id: String,
+    pub status: String,
+    pub source: String,
+    pub account_id: String,
+    pub display_name: Option<String>,
+    pub submitted_at: String,
+    pub batch_id: Option<String>,
+}
+
+/// Every entry in `review` or `held`, oldest submission first.
+pub async fn undecided(pool: &SqlitePool) -> Result<Vec<Undecided>, sqlx::Error> {
+    sqlx::query_as!(
+        Undecided,
+        r#"SELECT e.id, e.status, e.source, e.account_id,
+                  a.display_name, e.submitted_at, b.id AS "batch_id?"
+           FROM entries e JOIN authors a ON a.id = e.account_id
+           LEFT JOIN batches b ON b.seq = e.batch_seq
+           WHERE e.status IN ('review', 'held')
+           ORDER BY e.submitted_at, e.seq"#
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// The entry `id` if it is in `review` or `held`.
+pub async fn undecided_entry(
+    pool: &SqlitePool,
+    id: &str,
+) -> Result<Option<Undecided>, sqlx::Error> {
+    sqlx::query_as!(
+        Undecided,
+        r#"SELECT e.id, e.status, e.source, e.account_id,
+                  a.display_name, e.submitted_at, b.id AS "batch_id?"
+           FROM entries e JOIN authors a ON a.id = e.account_id
+           LEFT JOIN batches b ON b.seq = e.batch_seq
+           WHERE e.id = ? AND e.status IN ('review', 'held')"#,
+        id
+    )
+    .fetch_optional(pool)
+    .await
+}
+
+/// The seq of entry `id`, whatever its status.
+pub async fn seq_of(pool: &SqlitePool, id: &str) -> Result<Option<i64>, sqlx::Error> {
+    sqlx::query_scalar!(r#"SELECT seq AS "seq!: i64" FROM entries WHERE id = ?"#, id)
+        .fetch_optional(pool)
+        .await
 }

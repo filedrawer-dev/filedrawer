@@ -5,7 +5,8 @@ use askama::Template;
 use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Response};
 
-use crate::accounts::TokenView;
+use crate::accounts::{Guarded, TokenView};
+use crate::entries::Undecided;
 use crate::series::Owned;
 
 /// A rendered page with its status code.
@@ -82,4 +83,26 @@ pub struct AccountPage<'a> {
     pub series: &'a [Owned],
     /// A token just made, shown this once.
     pub new_token: Option<&'a str>,
+}
+
+/// An entry on the admin queue page, with the title read from its text.
+pub struct QueueRow<'a> {
+    pub entry: &'a Undecided,
+    pub title: String,
+}
+
+#[derive(Template)]
+#[template(path = "admin.html")]
+pub struct AdminQueuePage<'a> {
+    /// Each heading, with its entries: those in review, then those held.
+    pub sections: [(&'a str, Vec<&'a QueueRow<'a>>); 2],
+    pub guarded: &'a [Guarded],
+}
+
+#[derive(Template)]
+#[template(path = "admin_entry.html")]
+pub struct AdminEntryPage<'a> {
+    pub title: &'a str,
+    pub entry: &'a Undecided,
+    pub card: &'a str,
 }

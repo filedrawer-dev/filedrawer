@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE entries SET status = 'review'\n         WHERE seq = ? AND status = 'screening' AND screen_verdict = 'review'\n         RETURNING account_id",
+  "describe": {
+    "columns": [
+      {
+        "name": "account_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "account_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "e6f0ff5dcde771424952150c7c58466a387eda75782a8c96101c797ffbe6a216"
+}

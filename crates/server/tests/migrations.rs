@@ -129,3 +129,44 @@ async fn migration_6_keeps_versions_and_batches_and_allows_waiting_on_series() {
         .unwrap();
     assert_eq!(fk_on, 1, "the migration left foreign keys off");
 }
+
+#[tokio::test]
+async fn migration_9_guards_every_account_with_an_entry_already_in_review() {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            SqliteConnectOptions::from_str("sqlite::memory:")
+                .unwrap()
+                .foreign_keys(true),
+        )
+        .await
+        .unwrap();
+    let mut first_eight = sqlx::migrate!("./migrations");
+    first_eight.migrations = Cow::Owned(first_eight.migrations[..8].to_vec());
+    first_eight.run(&pool).await.unwrap();
+    for statement in [
+        "INSERT INTO accounts (id, display_name, created_at) VALUES ('a-1', 'Ada', 't'), ('a-2', 'Bo', 't')",
+        "INSERT INTO entries (id, account_id, status, source, submitted_at, first_submitted_at,
+             analyzer_version) VALUES
+             ('e1', 'a-1', 'review', 'x', '2026-11-02T00:00:00Z', 't', 1),
+             ('e2', 'a-1', 'held', 'x', '2026-11-01T00:00:00Z', 't', 1),
+             ('e3', 'a-2', 'public', 'x', '2026-11-01T00:00:00Z', 't', 1)",
+    ] {
+        sqlx::query(statement).execute(&pool).await.unwrap();
+    }
+
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+
+    let guards: Vec<(String, Option<String>)> =
+        sqlx::query_as("SELECT id, review_guard_at FROM accounts ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        guards,
+        vec![
+            ("a-1".to_string(), Some("2026-11-01T00:00:00Z".to_string())),
+            ("a-2".to_string(), None),
+        ]
+    );
+}

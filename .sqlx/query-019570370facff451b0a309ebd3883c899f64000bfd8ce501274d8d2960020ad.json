@@ -1,0 +1,45 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT a.id, w.display_name, a.review_guard_at AS \"since!\"\n           FROM accounts a JOIN authors w ON w.id = a.id\n           WHERE a.review_guard_at IS NOT NULL ORDER BY a.review_guard_at, a.id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "accounts",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "display_name",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "name": "since!",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "accounts",
+            "name": "review_guard_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "019570370facff451b0a309ebd3883c899f64000bfd8ce501274d8d2960020ad"
+}

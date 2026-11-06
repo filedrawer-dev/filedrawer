@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Review queue{% endblock %}
+{% block content %}
+<h1>Review queue</h1>
+<p>Entries a screen flagged as a possible info hazard, oldest first. Open one to publish, hold or reject it.</p>
+{% for (heading, rows) in sections %}
+<h2>{{ heading }}</h2>
+{% if rows.is_empty() %}<p>None.</p>{% else %}
+<table>
+<tr><th>Entry</th><th>Account</th><th>Submitted</th><th>Batch</th></tr>
+{% for row in rows %}
+<tr><td><a href="/admin/e/{{ row.entry.id }}">{{ row.title }}</a> <code>{{ row.entry.id }}</code></td><td>{{ row.entry.display_name.as_deref().unwrap_or("account deleted") }} <code>{{ row.entry.account_id }}</code></td><td>{{ row.entry.submitted_at }}</td><td>{% if let Some(batch) = row.entry.batch_id %}<code>{{ batch }}</code>{% endif %}</td></tr>
+{% endfor %}
+</table>
+{% endif %}
+{% endfor %}
+<h2>Accounts under the review guard</h2>
+<p>An account is guarded from when one of its entries first reached review. Rejecting the entry doesn't lift it; only clearing does.</p>
+{% if guarded.is_empty() %}<p>None.</p>{% else %}
+<table>
+<tr><th>Account</th><th>Since</th><th></th></tr>
+{% for account in guarded %}
+<tr><td>{{ account.display_name.as_deref().unwrap_or("account deleted") }} <code>{{ account.id }}</code></td><td>{{ account.since }}</td><td><form method="post" action="/admin/accounts/{{ account.id }}/clear-guard"><button type="submit">Clear</button></form></td></tr>
+{% endfor %}
+</table>
+{% endif %}
+{% endblock %}

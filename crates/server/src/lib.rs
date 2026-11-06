@@ -18,6 +18,7 @@ mod pages;
 mod passwords;
 mod queue;
 mod respond;
+mod review;
 mod routes;
 pub mod screening;
 mod series;
@@ -93,7 +94,7 @@ impl<R> Routes<R> {
 
 /// The router with every route, and their paths.
 fn build(state: AppState) -> Routes<Router> {
-    use routes::account;
+    use routes::{account, admin};
     let accounts = Routes::new()
         .route("/signup", get(account::signup_page).post(account::signup))
         .route("/verify", get(account::verify_page).post(account::verify))
@@ -115,7 +116,13 @@ fn build(state: AppState) -> Routes<Router> {
         .route(
             "/account/series/{id}/publish",
             post(account::publish_series),
-        );
+        )
+        .route("/admin", get(admin::queue))
+        .route("/admin/e/{id}", get(admin::entry))
+        .route("/admin/e/{id}/publish", post(admin::publish))
+        .route("/admin/e/{id}/hold", post(admin::hold))
+        .route("/admin/e/{id}/reject", post(admin::reject))
+        .route("/admin/accounts/{id}/clear-guard", post(admin::clear_guard));
     let same_origin = axum::middleware::from_fn_with_state(state.clone(), account::same_origin);
     accounts
         .map_router(|router| Router::new().merge(router.layer(same_origin)))

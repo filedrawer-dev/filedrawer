@@ -38,6 +38,21 @@ pub async fn create_account(pool: &SqlitePool, display_name: &str) -> Result<Str
     Ok(id)
 }
 
+/// Makes `account_id` the admin: its browser sessions reach the admin pages. Returns
+/// the account's ID.
+pub async fn grant(pool: &SqlitePool, account_id: &str) -> Result<String, AdminError> {
+    let done = sqlx::query!(
+        "UPDATE accounts SET is_admin = 1 WHERE id = ? AND deleted_at IS NULL",
+        account_id
+    )
+    .execute(pool)
+    .await?;
+    if done.rows_affected() == 0 {
+        return Err(AdminError::NoAccount(account_id.to_string()));
+    }
+    Ok(account_id.to_string())
+}
+
 /// Creates a token for `account_id` and returns it. Only its hash is stored, so this
 /// is the one time anyone sees it.
 pub async fn create_token(

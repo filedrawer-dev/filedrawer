@@ -79,6 +79,45 @@ async fn admin_commands_make_an_account_and_a_token_the_server_accepts() {
     assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
 }
 
+#[tokio::test]
+async fn admin_grant_lets_the_accounts_browser_session_reach_the_admin_pages() {
+    let database = scratch_database("grant");
+    let pool = db::open(database.to_str().unwrap()).await.unwrap();
+    let outbox = common::Outbox::default();
+    let state = common::state(pool.clone(), &outbox);
+    let test = common::TestApp {
+        router: app(state.clone()),
+        state,
+        pool,
+        account: String::new(),
+        token: String::new(),
+        outbox,
+    };
+    let (cookie, _) = common::browser_account(&test, "owner@example.com").await;
+    assert_eq!(
+        test.page("/admin", Some(&cookie)).await.status,
+        StatusCode::NOT_FOUND
+    );
+    let page = test.page("/account", Some(&cookie)).await;
+    let start = page.body.find("<code>a-").unwrap() + 6;
+    let account = &page.body[start..start + 12];
+    assert_eq!(
+        printed(&filedrawer(
+            &database,
+            &["admin", "grant", "--account", account],
+            &[]
+        )),
+        account
+    );
+    assert_eq!(
+        test.page("/admin", Some(&cookie)).await.status,
+        StatusCode::OK
+    );
+    let unknown = filedrawer(&database, &["admin", "grant", "--account", "a-nobody"], &[]);
+    assert!(!unknown.status.success());
+    assert!(String::from_utf8_lossy(&unknown.stderr).contains("no account a-nobody"));
+}
+
 #[test]
 fn a_token_for_an_unknown_account_is_refused() {
     let database = scratch_database("unknown");

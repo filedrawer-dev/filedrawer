@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE entries SET status = 'held' WHERE seq = ? AND status = 'review'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "7e206e6adcc9049285610b97106b1b7bc3fc1fa9a7128c80ad306a48c4d2b890"
+}

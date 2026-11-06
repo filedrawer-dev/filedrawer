@@ -1,6 +1,7 @@
 //! The HTTP routes.
 
 pub mod account;
+pub mod admin;
 pub mod batch;
 pub mod docs;
 pub mod feedback;

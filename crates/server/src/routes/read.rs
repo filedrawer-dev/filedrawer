@@ -184,7 +184,13 @@ async fn own_entry(
         .filter(|entry| {
             matches!(
                 entry.status.as_str(),
-                "pending" | "screening" | "review" | "rejected" | "embargoed" | "waiting_on_series"
+                "pending"
+                    | "screening"
+                    | "review"
+                    | "held"
+                    | "rejected"
+                    | "embargoed"
+                    | "waiting_on_series"
             )
         })
         .ok_or(AppError::NotFound)?;

@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Review {{ entry.id }}{% endblock %}
+{% block content %}
+<p><a href="/admin">Review queue</a></p>
+<h1>{{ title }}</h1>
+<p><code>{{ entry.id }}</code>, {{ entry.status }}, from {{ entry.display_name.as_deref().unwrap_or("account deleted") }} <code>{{ entry.account_id }}</code>, submitted {{ entry.submitted_at }}{% if let Some(batch) = entry.batch_id %}, in batch <code>{{ batch }}</code>, which publishes as one{% endif %}.</p>
+<form method="post" action="/admin/e/{{ entry.id }}/publish"><button type="submit">Publish</button></form>
+{% if entry.status == "review" %}
+<form method="post" action="/admin/e/{{ entry.id }}/hold"><button type="submit">Hold until the vendor fixes it</button></form>
+{% endif %}
+<form method="post" action="/admin/e/{{ entry.id }}/reject"><button type="submit">Reject</button></form>
+<p>The author reads only "rejected in review". Rejecting one member sends its whole batch back.</p>
+<h2>Card</h2>
+<pre>{{ card }}</pre>
+<h2>Text</h2>
+<pre>{{ entry.source }}</pre>
+{% endblock %}
