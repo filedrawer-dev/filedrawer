@@ -42,6 +42,12 @@ pub async fn entry(
         one_line(&entry.display_name),
         entry.account_id
     );
+    if let Some(previous) = &entry.previous_id {
+        text.push_str(&format!("previous: {previous}\n"));
+    }
+    if let Some(newer) = &entry.superseded_by {
+        text.push_str(&format!("superseded_by: {newer}\n"));
+    }
     if notes.is_empty() {
         text.push_str("rows: Results table not read\n");
     }
@@ -61,6 +67,8 @@ pub async fn entry(
         "analyzer_version": ANALYZER_VERSION,
         "submitted": entry.submitted_at,
         "published": entry.published_at,
+        "previous": entry.previous_id,
+        "superseded_by": entry.superseded_by,
         "author": {"display_name": entry.display_name, "account_id": entry.account_id},
         "row_notes": notes,
         "card": card,
@@ -105,6 +113,9 @@ async fn own_entry(
         "id: {}\nstatus: {}\n{when}analyzer: v{ANALYZER_VERSION}\nurl: {}/e/{}\n",
         entry.id, entry.status, state.public_url, entry.id
     );
+    if let Some(previous) = &entry.previous_id {
+        text.push_str(&format!("previous: {previous}\n"));
+    }
     for (number, note) in (1..).zip(&notes) {
         text.push_str(&format!("row {number}: {note}\n"));
     }

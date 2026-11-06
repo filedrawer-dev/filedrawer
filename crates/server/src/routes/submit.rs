@@ -28,9 +28,29 @@ struct Accepted {
     analysis: Analysis,
 }
 
-/// Runs every check a submission must pass, or for a resubmission of `held`, and
-/// lists every reason it fails.
-fn accept(body: &Bytes, held: Option<&OwnEntry>) -> Result<Accepted, AppError> {
+/// What an earlier submission fixes for a resubmission or a new version: the first
+/// submission date the embargo cap counts from, and the embargo in force, which a
+/// token may not drop or bring within 7 days.
+struct Prior<'a> {
+    first_submitted_at: &'a str,
+    embargo_in_force: Option<&'a str>,
+}
+
+impl<'a> Prior<'a> {
+    /// For `entry`. Its embargo is in force while it is pending or embargoed; a public
+    /// entry's old date no longer holds anything back.
+    fn of(entry: &'a OwnEntry) -> Prior<'a> {
+        let in_force = matches!(entry.status.as_str(), "pending" | "embargoed");
+        Prior {
+            first_submitted_at: &entry.first_submitted_at,
+            embargo_in_force: entry.embargo_until.as_deref().filter(|_| in_force),
+        }
+    }
+}
+
+/// Runs every check a submission must pass, given what an earlier submission fixes,
+/// and lists every reason it fails.
+fn accept(body: &Bytes, prior: Option<Prior<'_>>) -> Result<Accepted, AppError> {
     if body.len() > MAX_ENTRY_BYTES {
         return Err(AppError::Refused {
             status: StatusCode::PAYLOAD_TOO_LARGE,
@@ -60,15 +80,16 @@ fn accept(body: &Bytes, held: Option<&OwnEntry>) -> Result<Accepted, AppError> {
     );
     let now = time::now_utc();
     // A resubmission keeps its first submission date, which the embargo cap counts from.
-    let first_submitted = held
-        .and_then(|entry| OffsetDateTime::parse(&entry.first_submitted_at, &Rfc3339).ok())
+    let first_submitted = prior
+        .as_ref()
+        .and_then(|prior| OffsetDateTime::parse(prior.first_submitted_at, &Rfc3339).ok())
         .unwrap_or(now);
     let embargo = analysis.fields.embargo_until.as_deref();
     if let Err(why) = release(embargo, now, first_submitted) {
         reasons.push(why.to_string());
     }
-    if let Some(held) = held
-        && let Err(why) = token_may_change(held.embargo_until.as_deref(), embargo, now)
+    if let Some(prior) = &prior
+        && let Err(why) = token_may_change(prior.embargo_in_force, embargo, now)
     {
         reasons.push(why.to_string());
     }
@@ -81,26 +102,36 @@ fn accept(body: &Bytes, held: Option<&OwnEntry>) -> Result<Accepted, AppError> {
     Ok(Accepted { source, analysis })
 }
 
+/// A held entry, as a reply describes it.
+struct Held<'a> {
+    id: &'a str,
+    account: &'a TokenAccount,
+    analysis: &'a Analysis,
+    publish_at: &'a str,
+    /// The entry this one is a new version of.
+    previous: Option<&'a str>,
+}
+
 /// The reply to a submission or resubmission: the server's fields, then below the
 /// delimiter the headline row as read, the card and the warnings.
-fn held_reply(
-    state: &AppState,
-    format: Format,
-    status: StatusCode,
-    id: &str,
-    account: &TokenAccount,
-    analysis: &Analysis,
-    publish_at: &str,
-) -> Response {
+fn held_reply(state: &AppState, format: Format, status: StatusCode, held: &Held<'_>) -> Response {
+    let Held {
+        id,
+        account,
+        analysis,
+        publish_at,
+        previous,
+    } = *held;
     let context = entries::card_context(id, &account.id, &account.display_name);
     let card = render_card(analysis, &context);
     let warnings: Vec<String> = analysis.warnings.iter().map(ToString::to_string).collect();
     let embargo = parse_date(analysis.fields.embargo_until.as_deref()).map(|date| date.to_string());
+    let previous_line = previous.map_or(String::new(), |id| format!("previous: {id}\n"));
     let embargo_line = embargo
         .as_deref()
         .map_or(String::new(), |date| format!("embargo_until: {date}\n"));
     let text = format!(
-        "id: {id}\nstatus: pending\npublish_at: {publish_at}\n{embargo_line}url: {}/e/{id}\n\
+        "id: {id}\nstatus: pending\npublish_at: {publish_at}\n{embargo_line}{previous_line}url: {}/e/{id}\n\
          Fix it before then by sending the whole entry again with PUT to the url, or publish it now with a POST to the url plus /publish.\n\
          {DELIMITER}\nprimary row: {}\n{}",
         state.public_url,
@@ -112,6 +143,7 @@ fn held_reply(
         "status": "pending",
         "publish_at": publish_at,
         "embargo_until": embargo,
+        "previous": previous,
         "url": format!("{}/e/{id}", state.public_url),
         "primary_row": analysis.primary_row_summary(),
         "card": card,
@@ -134,17 +166,101 @@ pub async fn submit(
         &accepted.source,
         &accepted.analysis,
         &publish_at,
+        None,
     )
     .await?;
-    Ok(held_reply(
-        &state,
-        format,
-        StatusCode::CREATED,
-        &id,
-        &account,
+    let held = Held {
+        id: &id,
+        account: &account,
+        analysis: &accepted.analysis,
+        publish_at: &publish_at,
+        previous: None,
+    };
+    Ok(held_reply(&state, format, StatusCode::CREATED, &held))
+}
+
+/// `POST /e/<id>/versions`: a correction of a public or embargoed entry, as a new
+/// entry held like any submission (design.md, Entry lifecycle). Only on the latest
+/// version in the chain, and only by its author.
+pub async fn new_version(
+    State(state): State<AppState>,
+    account: TokenAccount,
+    Path(id): Path<String>,
+    format: Format,
+    body: Bytes,
+) -> Result<Response, AppError> {
+    let entry = entries::own_entry(&state.pool, &id, &account.id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    match entry.status.as_str() {
+        "public" | "embargoed" => {}
+        "pending" => {
+            return Err(AppError::Conflict(format!(
+                "entry {id} is still pending: change it with PUT to its url instead"
+            )));
+        }
+        other => {
+            return Err(AppError::Conflict(format!(
+                "entry {id} is {other}; a new version needs a public or embargoed entry"
+            )));
+        }
+    }
+    if let Some(conflict) = newer_version(&state, &id, entry.seq).await? {
+        return Err(conflict);
+    }
+    let accepted = accept(&body, Some(Prior::of(&entry)))?;
+    let publish_at = hold_until(time::now_utc());
+    let previous = entries::Previous {
+        seq: entry.seq,
+        first_submitted_at: &entry.first_submitted_at,
+    };
+    let inserted = entries::insert(
+        &state.pool,
+        &account.id,
+        &accepted.source,
         &accepted.analysis,
         &publish_at,
-    ))
+        Some(&previous),
+    )
+    .await;
+    let (_, new_id) = match inserted {
+        Ok(inserted) => inserted,
+        // Another version won the race between the check above and this insert; the
+        // index allows one live successor.
+        Err(sqlx::Error::Database(error)) if error.is_unique_violation() => {
+            return Err(newer_version(&state, &id, entry.seq)
+                .await?
+                .unwrap_or_else(|| {
+                    AppError::Conflict(format!(
+                        "entry {id} took another version at the same moment; try again"
+                    ))
+                }));
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let held = Held {
+        id: &new_id,
+        account: &account,
+        analysis: &accepted.analysis,
+        publish_at: &publish_at,
+        previous: Some(&id),
+    };
+    Ok(held_reply(&state, format, StatusCode::CREATED, &held))
+}
+
+/// The conflict to answer when entry `seq` already has a live newer version, naming it.
+async fn newer_version(state: &AppState, id: &str, seq: i64) -> Result<Option<AppError>, AppError> {
+    let Some((latest, status)) = entries::successor(&state.pool, seq).await? else {
+        return Ok(None);
+    };
+    let advice = if status == "pending" {
+        format!("change the pending version {latest} with PUT instead")
+    } else {
+        format!("post the new version against {latest}, the latest")
+    };
+    Ok(Some(AppError::Conflict(format!(
+        "entry {id} already has a newer version: {advice}"
+    ))))
 }
 
 /// The author's own entry, which must still be pending. Another account's entry is
@@ -174,7 +290,7 @@ pub async fn resubmit(
     body: Bytes,
 ) -> Result<Response, AppError> {
     let entry = own_pending(&state, &id, &account).await?;
-    let accepted = accept(&body, Some(&entry))?;
+    let accepted = accept(&body, Some(Prior::of(&entry)))?;
     let publish_at = hold_until(time::now_utc());
     let replaced = entries::replace(
         &state.pool,
@@ -189,15 +305,14 @@ pub async fn resubmit(
             "entry {id}'s hold ended while it was being replaced"
         )));
     }
-    Ok(held_reply(
-        &state,
-        format,
-        StatusCode::OK,
-        &id,
-        &account,
-        &accepted.analysis,
-        &publish_at,
-    ))
+    let held = Held {
+        id: &id,
+        account: &account,
+        analysis: &accepted.analysis,
+        publish_at: &publish_at,
+        previous: entry.previous_id.as_deref(),
+    };
+    Ok(held_reply(&state, format, StatusCode::OK, &held))
 }
 
 pub async fn publish(

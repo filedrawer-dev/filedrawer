@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT seq AS \"seq!: i64\", id, status, source, hold_until, embargo_until,\n                  first_submitted_at\n           FROM entries WHERE id = ? AND account_id = ?",
+  "query": "SELECT seq AS \"seq!: i64\", id, status, source, hold_until, embargo_until,\n                  first_submitted_at,\n                  (SELECT p.id FROM entries p WHERE p.seq = entries.previous_seq) AS \"previous_id?\"\n           FROM entries WHERE id = ? AND account_id = ?",
   "describe": {
     "columns": [
       {
@@ -79,6 +79,17 @@
             "name": "first_submitted_at"
           }
         }
+      },
+      {
+        "name": "previous_id?",
+        "ordinal": 7,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "id"
+          }
+        }
       }
     ],
     "parameters": {
@@ -91,8 +102,9 @@
       false,
       true,
       true,
-      false
+      false,
+      true
     ]
   },
-  "hash": "7f23cedadf1067560313d52b8b6025f9df468922c86665cc5a55209c66bd8d19"
+  "hash": "a8d4064e60cf96696f56176926cdf12ffa2822a74c718de8caaa61fca9931220"
 }

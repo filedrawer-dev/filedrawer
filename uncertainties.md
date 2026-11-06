@@ -127,3 +127,21 @@ Choices the docs left open, made while building the analyzer. Once the owner set
 - Options: show the same page and log the error, as here, or tell the person the email didn't go.
 - Chosen: the same page, so the signup and reset pages never reveal whether an account exists. The account page can resend the verification email.
 - Against: a person whose email never arrives has no hint why.
+
+## Versions form one line
+
+- Options: each entry has at most one live successor, so a chain is a line, as here; or versions may branch, with several successors of one entry.
+- Chosen: a line. "The latest version in each chain", which search and cards show, then has one meaning.
+- Against: two people correcting different parts of one entry at once must go one after the other.
+
+## A version goes on the latest version only
+
+- Options: refuse a version of an older version, naming the latest, as here; or accept it and attach it to the latest.
+- Chosen: refuse, with a 409 that names the latest version, or says to PUT a pending one. The agent then reads what the latest says before correcting it.
+- Against: an agent that holds an old ID must make one more request.
+
+## Versions of an embargoed entry release one by one
+
+- Options: release every version of a chain together on the embargo date, as design.md says, or let each version keep its own date.
+- Chosen: for now, each version is placed by its own date, and nothing releases an embargo until build step 4 adds the release job. "Both release together" is unbuilt.
+- Against: until then, a version with a shorter embargo than its predecessor's could become public first, though `previous:` names only public versions, so it doesn't reveal the embargoed one.

@@ -16,6 +16,10 @@ pub struct PublicEntry {
     pub display_name: String,
     pub submitted_at: String,
     pub published_at: Option<String>,
+    /// The version this one replaced.
+    pub previous_id: Option<String>,
+    /// The public version that replaced this one.
+    pub superseded_by: Option<String>,
 }
 
 /// The card context only the server knows: the entry's ID and its author.
@@ -51,7 +55,10 @@ impl Placed {
 impl PublicEntry {
     /// The card, rendered from the stored text by the current analyzer.
     pub fn card(&self) -> String {
-        let context = card_context(&self.id, &self.account_id, &self.display_name);
+        let context = CardContext {
+            superseded_by_version: self.superseded_by.clone(),
+            ..card_context(&self.id, &self.account_id, &self.display_name)
+        };
         render_card(&analyze(&self.source), &context)
     }
 }
@@ -77,39 +84,51 @@ fn columns(analysis: &Analysis) -> Columns {
     }
 }
 
+/// The entry a new version replaces: its row, and the first submission date of its
+/// chain, which the version keeps (design.md, Entry lifecycle).
+pub struct Previous<'a> {
+    pub seq: i64,
+    pub first_submitted_at: &'a str,
+}
+
 /// Stores an accepted submission as `pending` until `hold_until`, with the columns
-/// search filters on, and returns its row number and ID.
+/// search filters on, and returns its row number and ID. With `previous`, it is a
+/// new version of that entry.
 pub async fn insert(
     pool: &SqlitePool,
     account_id: &str,
     source: &str,
     analysis: &Analysis,
     hold_until: &str,
+    previous: Option<&Previous<'_>>,
 ) -> Result<(i64, String), sqlx::Error> {
     let id = ids::new_id();
     let submitted_at = now();
+    let first_submitted_at = previous.map_or(submitted_at.as_str(), |p| p.first_submitted_at);
+    let previous_seq = previous.map(|p| p.seq);
     let columns = columns(analysis);
     let mut transaction = pool.begin().await?;
     let seq = sqlx::query_scalar!(
         r#"INSERT INTO entries (id, account_id, status, source, submitted_at, first_submitted_at,
-               embargo_until, analyzer_version, outcome, kind, stage, hold_until)
-           VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               embargo_until, analyzer_version, outcome, kind, stage, hold_until, previous_seq)
+           VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            RETURNING seq AS "seq!: i64""#,
         id,
         account_id,
         source,
         submitted_at,
-        submitted_at,
+        first_submitted_at,
         analysis.fields.embargo_until,
         columns.version,
         columns.outcome,
         columns.kind,
         columns.stage,
-        hold_until
+        hold_until,
+        previous_seq
     )
     .fetch_one(&mut *transaction)
     .await?;
-    write_derived(&mut transaction, seq, analysis).await?;
+    write_derived(&mut transaction, seq, analysis, previous_seq).await?;
     transaction.commit().await?;
     Ok((seq, id))
 }
@@ -158,16 +177,23 @@ pub async fn replace(
     sqlx::query!("DELETE FROM entry_unknown_fields WHERE entry_seq = ?", seq)
         .execute(&mut *transaction)
         .await?;
-    write_derived(&mut transaction, seq, analysis).await?;
+    let previous_seq = sqlx::query_scalar!("SELECT previous_seq FROM entries WHERE seq = ?", seq)
+        .fetch_one(&mut *transaction)
+        .await?;
+    write_derived(&mut transaction, seq, analysis, previous_seq).await?;
     transaction.commit().await?;
     Ok(true)
 }
 
 /// Stores the models, tags, rows and unknown field names read from an entry.
+/// A version that points to a paper and has no Results table of its own carries the
+/// rows of the version before it, which carried its own predecessor's, so search
+/// still finds the chain's newest numbers (design.md, Entry lifecycle).
 async fn write_derived(
     transaction: &mut sqlx::SqliteConnection,
     seq: i64,
     analysis: &Analysis,
+    previous_seq: Option<i64>,
 ) -> Result<(), sqlx::Error> {
     let fields = &analysis.fields;
     for model in &fields.models {
@@ -208,6 +234,21 @@ async fn write_derived(
             .execute(&mut *transaction)
             .await?;
         }
+    } else if let (Some(previous), Some(_), None) = (
+        previous_seq,
+        &analysis.fields.published_in,
+        &analysis.sections.results,
+    ) {
+        // Only with no `## Results` section at all: one the analyzer can't read is
+        // still the version's own, and may retract the numbers.
+        sqlx::query!(
+            "INSERT INTO entry_rows (entry_seq, position, model, claim)
+             SELECT ?, position, model, claim FROM entry_rows WHERE entry_seq = ?",
+            seq,
+            previous
+        )
+        .execute(&mut *transaction)
+        .await?;
     }
     for name in &analysis.unrecognised_fields {
         sqlx::query!(
@@ -231,6 +272,8 @@ pub struct OwnEntry {
     pub embargo_until: Option<String>,
     /// The embargo cap counts from here (design.md, Entry lifecycle).
     pub first_submitted_at: String,
+    /// The version this one replaced.
+    pub previous_id: Option<String>,
 }
 
 /// The entry `id` if `account_id` wrote it.
@@ -242,7 +285,8 @@ pub async fn own_entry(
     sqlx::query_as!(
         OwnEntry,
         r#"SELECT seq AS "seq!: i64", id, status, source, hold_until, embargo_until,
-                  first_submitted_at
+                  first_submitted_at,
+                  (SELECT p.id FROM entries p WHERE p.seq = entries.previous_seq) AS "previous_id?"
            FROM entries WHERE id = ? AND account_id = ?"#,
         id,
         account_id
@@ -343,9 +387,11 @@ pub async fn publish(
 pub async fn public_entry(pool: &SqlitePool, id: &str) -> Result<Option<PublicEntry>, sqlx::Error> {
     sqlx::query_as!(
         PublicEntry,
-        "SELECT e.id, e.source, e.account_id, a.display_name, e.submitted_at, e.published_at
+        r#"SELECT e.id, e.source, e.account_id, a.display_name, e.submitted_at, e.published_at,
+                  (SELECT p.id FROM entries p WHERE p.seq = e.previous_seq AND p.status = 'public') AS "previous_id?",
+                  (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS "superseded_by?"
          FROM entries e JOIN accounts a ON a.id = e.account_id
-         WHERE e.id = ? AND e.status = 'public'",
+         WHERE e.id = ? AND e.status = 'public'"#,
         id
     )
     .fetch_optional(pool)
@@ -381,9 +427,13 @@ pub async fn search(
     let row_claim = filters.row_claim.map(Claim::name);
     sqlx::query_as!(
         PublicEntry,
-        r#"SELECT e.id, e.source, e.account_id, a.display_name, e.submitted_at, e.published_at
+        r#"SELECT e.id, e.source, e.account_id, a.display_name, e.submitted_at, e.published_at,
+                  (SELECT p.id FROM entries p WHERE p.seq = e.previous_seq AND p.status = 'public') AS "previous_id?",
+                  (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS "superseded_by?"
            FROM entries e JOIN accounts a ON a.id = e.account_id
            WHERE e.status = 'public'
+             -- Only the latest version in each chain (design.md, Entry lifecycle).
+             AND NOT EXISTS (SELECT 1 FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public')
              AND (?1 IS NULL OR e.seq IN (SELECT rowid FROM entries_fts WHERE entries_fts MATCH ?1))
              AND (?2 IS NULL OR e.outcome = ?2)
              AND (?3 IS NULL OR e.kind = ?3)
@@ -420,9 +470,13 @@ pub async fn search(
 pub async fn all_public(pool: &SqlitePool) -> Result<Vec<PublicEntry>, sqlx::Error> {
     sqlx::query_as!(
         PublicEntry,
-        "SELECT e.id, e.source, e.account_id, a.display_name, e.submitted_at, e.published_at
+        r#"SELECT e.id, e.source, e.account_id, a.display_name, e.submitted_at, e.published_at,
+                  (SELECT p.id FROM entries p WHERE p.seq = e.previous_seq AND p.status = 'public') AS "previous_id?",
+                  (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS "superseded_by?"
          FROM entries e JOIN accounts a ON a.id = e.account_id
-         WHERE e.status = 'public' ORDER BY e.seq"
+         WHERE e.status = 'public'
+           AND NOT EXISTS (SELECT 1 FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public')
+         ORDER BY e.seq"#
     )
     .fetch_all(pool)
     .await
@@ -434,6 +488,7 @@ pub async fn tags(pool: &SqlitePool) -> Result<Vec<(String, i64)>, sqlx::Error> 
         r#"SELECT t.tag, COUNT(*) AS "count!: i64" FROM entry_tags t
            JOIN entries e ON e.seq = t.entry_seq
            WHERE e.status = 'public'
+             AND NOT EXISTS (SELECT 1 FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public')
            GROUP BY t.tag ORDER BY 2 DESC, t.tag"#
     )
     .fetch_all(pool)
@@ -452,4 +507,20 @@ pub fn fts_query(text: &str) -> Option<String> {
         .map(|word| format!("\"{word}\""))
         .collect();
     (!words.is_empty()).then(|| words.join(" OR "))
+}
+
+/// The live version that replaced entry `seq`, if any: its ID and status. A rejected,
+/// withdrawn or removed version doesn't count.
+pub async fn successor(
+    pool: &SqlitePool,
+    seq: i64,
+) -> Result<Option<(String, String)>, sqlx::Error> {
+    let row = sqlx::query!(
+        "SELECT id, status FROM entries
+         WHERE previous_seq = ? AND status NOT IN ('rejected', 'withdrawn', 'removed')",
+        seq
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|row| (row.id, row.status)))
 }

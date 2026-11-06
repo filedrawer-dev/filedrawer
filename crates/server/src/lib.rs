@@ -70,6 +70,7 @@ pub fn app(state: AppState) -> Router {
             get(routes::read::entry).put(routes::submit::resubmit),
         )
         .route("/e/{id}/publish", post(routes::submit::publish))
+        .route("/e/{id}/versions", post(routes::submit::new_version))
         .route("/search", get(routes::read::search))
         .route("/cards.txt", get(routes::read::cards))
         .route("/tags", get(routes::read::tags))

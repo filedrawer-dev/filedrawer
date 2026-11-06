@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT t.tag, COUNT(*) AS \"count!: i64\" FROM entry_tags t\n           JOIN entries e ON e.seq = t.entry_seq\n           WHERE e.status = 'public'\n           GROUP BY t.tag ORDER BY 2 DESC, t.tag",
+  "query": "SELECT t.tag, COUNT(*) AS \"count!: i64\" FROM entry_tags t\n           JOIN entries e ON e.seq = t.entry_seq\n           WHERE e.status = 'public'\n             AND NOT EXISTS (SELECT 1 FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public')\n           GROUP BY t.tag ORDER BY 2 DESC, t.tag",
   "describe": {
     "columns": [
       {
@@ -29,5 +29,5 @@
       false
     ]
   },
-  "hash": "cb97a3e1aa72086f639ec6b6f945c9f34cef4b2d8a80a9435b2b47986598102a"
+  "hash": "c807f56b9683aa34d9174a2058c36bab538062aeb6fdc4d40c95d773adbcaae9"
 }

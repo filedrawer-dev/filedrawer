@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT e.id, e.source, e.account_id, a.display_name, e.submitted_at, e.published_at\n         FROM entries e JOIN accounts a ON a.id = e.account_id\n         WHERE e.status = 'public' ORDER BY e.seq",
+  "query": "SELECT e.id, e.source, e.account_id, a.display_name, e.submitted_at, e.published_at,\n                  (SELECT p.id FROM entries p WHERE p.seq = e.previous_seq AND p.status = 'public') AS \"previous_id?\",\n                  (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS \"superseded_by?\"\n         FROM entries e JOIN accounts a ON a.id = e.account_id\n         WHERE e.status = 'public'\n           AND NOT EXISTS (SELECT 1 FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public')\n         ORDER BY e.seq",
   "describe": {
     "columns": [
       {
@@ -68,6 +68,28 @@
             "name": "published_at"
           }
         }
+      },
+      {
+        "name": "previous_id?",
+        "ordinal": 6,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "superseded_by?",
+        "ordinal": 7,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "id"
+          }
+        }
       }
     ],
     "parameters": {
@@ -79,8 +101,10 @@
       false,
       false,
       false,
+      true,
+      true,
       true
     ]
   },
-  "hash": "9f8c7100fe69d729dd9d862ce247bbc58cf2183340335a244be81667459dafe6"
+  "hash": "cfaa6286f1d148342260c27bf6a15f283297e3f3eeb85cfd581bd728b904c4d2"
 }

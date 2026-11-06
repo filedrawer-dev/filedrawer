@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT previous_seq FROM entries WHERE seq = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "previous_seq",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "previous_seq"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "43772b3c657b50926e1ea59a2b8a36935e68bb3696f432f32dd1e2ebac3452bd"
+}
