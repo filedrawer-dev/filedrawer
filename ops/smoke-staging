@@ -41,13 +41,10 @@ EOF
 base=https://staging.filedrawer.dev
 wait_seconds=0
 mode=smoke
-if [[ "${1:-}" == screen ]]; then
-  mode=screen
-  shift
-fi
 while (( $# )); do
   case "$1" in
     -h | --help) usage; exit 0 ;;
+    screen) mode=screen; shift ;;
     --wait)
       [[ "${2:-}" =~ ^[0-9]+$ ]] || { echo "smoke-staging: --wait takes a number of seconds" >&2; exit 2; }
       wait_seconds=$2; shift 2 ;;
@@ -157,22 +154,30 @@ screen_entry() {
   sed "s/^tags: .*/tags: [screen-test, $tag]/" "$1"
 }
 
+# explain STATUS EXPECTED: why an entry screened to STATUS when EXPECTED was wanted.
+explain() {
+  [[ $1 == "$2" ]] && return
+  case "$1" in
+    review) echo "  it went to review, which puts the account under the review guard: clear it on $base/admin" ;;
+    screening) echo "  still screening after 2 minutes: an outage, or the day's cap is spent" ;;
+    public) echo "  published unscreened: is staging still on FILEDRAWER_SCREENER=pass-all? (issue #7)" ;;
+  esac
+}
+
 if [[ $mode == screen ]]; then
   screen_entry "$fixture" > "$dir/on.md"
   if screened "$dir/on.md"; then
     status=$(field status)
     check "on-topic entry: public" '[[ $status == public ]]'
     check "on-topic entry: screened, not passed unscreened" '[[ $BODY != *"not screened"* ]]'
-    [[ $status == review ]] && echo "  it went to review, which puts the account under the review guard: clear it on $base/admin"
-    [[ $status == screening ]] && echo "  still screening after 2 minutes: an outage, or the day's cap is spent"
+    explain "$status" public
   fi
   screen_entry "$(dirname "$0")/screen-offtopic.md" > "$dir/off.md"
   if screened "$dir/off.md"; then
     status=$(field status)
     check "off-topic entry: rejected" '[[ $status == rejected ]]'
     check "off-topic entry: gives its reasons" '[[ $BODY == *"reason: "* ]]'
-    [[ $status == public ]] && echo "  published unscreened: is staging still on FILEDRAWER_SCREENER=pass-all? (issue #7)"
-    [[ $status == review ]] && echo "  it went to review, which puts the account under the review guard: clear it on $base/admin"
+    explain "$status" rejected
   fi
   echo "screen $tag: $pass passed, $fail failed"
   (( fail == 0 ))

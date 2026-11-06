@@ -92,9 +92,10 @@ fn server_and_token(name: &str) -> (Server, String) {
     (serve(database), token)
 }
 
-fn smoke(args: &[&str], key: Option<&str>, token: Option<&str>) -> Output {
+/// The script with `args`, none of its settings inherited, and the staging key if
+/// given. A BASH_ENV file, as in the sandbox, could set the settings again.
+fn script(args: &[&str], key: Option<&str>) -> Command {
     let mut command = Command::new(SCRIPT);
-    // A BASH_ENV file, as in the sandbox, could set the two settings again.
     command
         .args(args)
         .env_remove("BASH_ENV")
@@ -104,6 +105,11 @@ fn smoke(args: &[&str], key: Option<&str>, token: Option<&str>) -> Output {
     if let Some(key) = key {
         command.env("FILEDRAWER_STAGING_KEY", key);
     }
+    command
+}
+
+fn smoke(args: &[&str], key: Option<&str>, token: Option<&str>) -> Output {
+    let mut command = script(args, key);
     if let Some(token) = token {
         command.env("FILEDRAWER_STAGING_API_KEY", token);
     }
@@ -180,24 +186,16 @@ fn h_says_what_it_does() {
 /// Runs `ops/smoke-staging screen`, with its settings files looked for in an empty
 /// folder so a real token on this machine can't be read.
 fn screen(args: &[&str], key: Option<&str>, token: Option<&str>) -> Output {
-    let empty = std::env::temp_dir().join(format!("filedrawer-screen-{}", std::process::id()));
-    std::fs::create_dir_all(&empty).unwrap();
-    let mut command = Command::new(SCRIPT);
-    command
-        .arg("screen")
-        .args(args)
-        .env_remove("BASH_ENV")
-        .env_remove("FILEDRAWER_STAGING_KEY")
-        .env_remove("FILEDRAWER_STAGING_API_KEY")
-        .env_remove("FILEDRAWER_STAGING_SCREEN_API_KEY")
-        .env("FILEDRAWER_OPS_DIR", &empty);
-    if let Some(key) = key {
-        command.env("FILEDRAWER_STAGING_KEY", key);
-    }
+    let empty = scratch_database("screen-settings");
+    let empty = empty.parent().unwrap();
+    let mut command = script(&[&["screen"], args].concat(), key);
+    command.env("FILEDRAWER_OPS_DIR", empty);
     if let Some(token) = token {
         command.env("FILEDRAWER_STAGING_SCREEN_API_KEY", token);
     }
-    command.output().unwrap()
+    let output = command.output().unwrap();
+    let _ = std::fs::remove_dir_all(empty);
+    output
 }
 
 #[test]
