@@ -77,7 +77,7 @@ async fn screen_waiting(
             why: format!("screening replies couldn't be read {MAX_ATTEMPTS} times"),
         },
     };
-    store_verdict(&state.pool, waiting.seq, &verdict).await?;
+    entries::store_verdict(&state.pool, waiting.seq, &verdict).await?;
     settle(state, waiting.seq, now).await
 }
 
@@ -174,30 +174,6 @@ pub async fn log_calls(
     Ok(())
 }
 
-async fn store_verdict(pool: &SqlitePool, seq: i64, verdict: &Verdict) -> Result<(), sqlx::Error> {
-    let (name, note, reasons) = match verdict {
-        Verdict::Pass { note } => ("pass", note.clone(), None),
-        Verdict::Reject { reasons } => {
-            ("reject", None, Some(serde_json::json!(reasons).to_string()))
-        }
-        Verdict::Review { why } => {
-            tracing::info!(seq, why, "an entry goes to review");
-            ("review", None, None)
-        }
-    };
-    sqlx::query!(
-        "UPDATE entries SET screen_verdict = ?, screening_note = ?, rejection_reasons = ?
-         WHERE seq = ? AND status = 'screening' AND screen_verdict IS NULL",
-        name,
-        note,
-        reasons,
-        seq
-    )
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
 /// A screened entry, or a member of its batch, as `settle` sees it.
 struct Member {
     seq: i64,
@@ -235,18 +211,13 @@ async fn settle(state: &AppState, seq: i64, now: OffsetDateTime) -> Result<(), s
                 )])
                 .to_string()
             });
-            reject(&state.pool, member.seq, reasons.as_deref()).await?;
+            entries::reject(&state.pool, member.seq, reasons.as_deref()).await?;
         }
         return Ok(());
     }
     for member in members.iter().filter(in_screening) {
         if member.screen_verdict.as_deref() == Some("review") {
-            sqlx::query!(
-                "UPDATE entries SET status = 'review' WHERE seq = ? AND status = 'screening'",
-                member.seq
-            )
-            .execute(&state.pool)
-            .await?;
+            entries::to_review(&state.pool, member.seq).await?;
         }
     }
     // Placed only when every member passed; one in review, or not yet screened,
@@ -284,25 +255,6 @@ async fn place_passed(state: &AppState, seq: i64, now: OffsetDateTime) -> Result
         entries::publish(&state.pool, seq, &analysis).await?;
     }
     Ok(())
-}
-
-/// Rejects an entry in screening, with `reasons` (a JSON array) when it has none of
-/// its own, and gives back the slug it took, so its author can submit again with it.
-async fn reject(pool: &SqlitePool, seq: i64, reasons: Option<&str>) -> Result<(), sqlx::Error> {
-    let mut transaction = pool.begin().await?;
-    sqlx::query!(
-        "UPDATE entries SET status = 'rejected', screen_verdict = 'reject',
-             rejection_reasons = COALESCE(?, rejection_reasons)
-         WHERE seq = ? AND status = 'screening'",
-        reasons,
-        seq
-    )
-    .execute(&mut *transaction)
-    .await?;
-    sqlx::query!("DELETE FROM slugs WHERE entry_seq = ?", seq)
-        .execute(&mut *transaction)
-        .await?;
-    transaction.commit().await
 }
 
 /// Places every entry left in `screening` with a verdict, as a crash between storing

@@ -6,6 +6,7 @@ use analyzer::{
 };
 use sqlx::SqlitePool;
 
+use crate::screening::Verdict;
 use crate::series::Cited;
 use crate::{ids, time::now};
 
@@ -925,4 +926,64 @@ pub async fn run_entries(
     )
     .fetch_all(pool)
     .await
+}
+
+/// Stores the verdict screening reached on an entry still in `screening` that has none.
+pub async fn store_verdict(
+    pool: &SqlitePool,
+    seq: i64,
+    verdict: &Verdict,
+) -> Result<(), sqlx::Error> {
+    let (name, note, reasons) = match verdict {
+        Verdict::Pass { note } => ("pass", note.clone(), None),
+        Verdict::Reject { reasons } => {
+            ("reject", None, Some(serde_json::json!(reasons).to_string()))
+        }
+        Verdict::Review { why } => {
+            tracing::info!(seq, why, "an entry goes to review");
+            ("review", None, None)
+        }
+    };
+    sqlx::query!(
+        "UPDATE entries SET screen_verdict = ?, screening_note = ?, rejection_reasons = ?
+         WHERE seq = ? AND status = 'screening' AND screen_verdict IS NULL",
+        name,
+        note,
+        reasons,
+        seq
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Rejects an entry in screening, with `reasons` (a JSON array) when it has none of
+/// its own, and gives back the slug it took, so its author can submit again with it.
+pub async fn reject(pool: &SqlitePool, seq: i64, reasons: Option<&str>) -> Result<(), sqlx::Error> {
+    let mut transaction = pool.begin().await?;
+    sqlx::query!(
+        "UPDATE entries SET status = 'rejected', screen_verdict = 'reject',
+             rejection_reasons = COALESCE(?, rejection_reasons)
+         WHERE seq = ? AND status = 'screening'",
+        reasons,
+        seq
+    )
+    .execute(&mut *transaction)
+    .await?;
+    sqlx::query!("DELETE FROM slugs WHERE entry_seq = ?", seq)
+        .execute(&mut *transaction)
+        .await?;
+    transaction.commit().await
+}
+
+/// Moves an entry whose verdict is review out of screening, to the owner's queue.
+pub async fn to_review(pool: &SqlitePool, seq: i64) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        "UPDATE entries SET status = 'review'
+         WHERE seq = ? AND status = 'screening' AND screen_verdict = 'review'",
+        seq
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
 }
