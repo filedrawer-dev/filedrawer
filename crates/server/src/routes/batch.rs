@@ -16,8 +16,9 @@ use serde_json::{Value, json};
 use crate::auth::TokenAccount;
 use crate::entries::{self, NewEntry};
 use crate::error::AppError;
-use crate::jobs::{end_hold, hold_until};
+use crate::jobs::hold_until;
 use crate::links::{self, Linked, SlugRule};
+use crate::queue;
 use crate::respond::{DELIMITER, Format, card_and_warnings};
 use crate::routes::submit::{Accepted, accept, cited_series};
 use crate::series::Cited;
@@ -274,16 +275,21 @@ pub async fn publish_batch(
         )));
     }
     let now = time::now_utc();
-    let mut placed = Vec::new();
-    for seq in members {
-        if let Some(status) = end_hold(&state, seq, now).await? {
-            placed.push(status.status());
-        }
+    // Every hold ends first, so the batch is decided once its last member is screened.
+    for seq in &members {
+        entries::start_screening(&state.pool, *seq, None).await?;
     }
-    let text = format!("id: {id}\nplaced: {}\n", placed.len());
-    Ok(format.reply(
-        StatusCode::OK,
-        text,
-        json!({"id": id, "placed": placed.len()}),
-    ))
+    for seq in &members {
+        queue::screen_entry(&state, *seq, now).await?;
+    }
+    let statuses = entries::batch_statuses(&state.pool, &id).await?;
+    let mut text = format!("id: {id}\n");
+    for (member, status) in &statuses {
+        text.push_str(&format!("entry: {member} {status}\n"));
+    }
+    let json = json!({
+        "id": id,
+        "entries": statuses.iter().map(|(member, status)| json!({"id": member, "status": status})).collect::<Vec<_>>(),
+    });
+    Ok(format.reply(StatusCode::OK, text, json))
 }

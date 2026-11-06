@@ -71,3 +71,44 @@ fn the_public_url_must_be_an_http_address() {
         })
     ));
 }
+
+#[test]
+fn the_anthropic_screener_needs_its_key() {
+    let missing = config(&[("FILEDRAWER_SCREENER", "anthropic")]).unwrap_err();
+    assert_eq!(
+        missing,
+        ConfigError::Missing("FILEDRAWER_ANTHROPIC_API_KEY")
+    );
+    let ready = config(&[
+        ("FILEDRAWER_SCREENER", "anthropic"),
+        ("FILEDRAWER_ANTHROPIC_API_KEY", "sk-not-a-real-key"),
+    ])
+    .unwrap();
+    assert!(matches!(
+        ready.screener,
+        filedrawer_server::Screener::Models(_)
+    ));
+    // The key never shows in the settings' Debug output.
+    assert!(!format!("{ready:?}").contains("sk-not-a-real-key"));
+    let production = config(&[
+        ("FILEDRAWER_ENVIRONMENT", "production"),
+        ("FILEDRAWER_SCREENER", "anthropic"),
+        ("FILEDRAWER_ANTHROPIC_API_KEY", "sk-not-a-real-key"),
+        SMTP[0],
+        SMTP[1],
+        SMTP[2],
+        SMTP[3],
+    ]);
+    assert!(production.is_ok(), "{production:?}");
+}
+
+#[test]
+fn the_daily_screening_cap_defaults_to_a_dollar() {
+    assert_eq!(config(&[]).unwrap().screening_daily_nano_usd, 1_000_000_000);
+    let set = config(&[("FILEDRAWER_SCREENING_DAILY_USD", "0.25")]).unwrap();
+    assert_eq!(set.screening_daily_nano_usd, 250_000_000);
+    for bad in ["-1", "lots", "NaN", "5000"] {
+        let refused = config(&[("FILEDRAWER_SCREENING_DAILY_USD", bad)]).unwrap_err();
+        assert!(matches!(refused, ConfigError::Invalid { .. }), "{bad}");
+    }
+}

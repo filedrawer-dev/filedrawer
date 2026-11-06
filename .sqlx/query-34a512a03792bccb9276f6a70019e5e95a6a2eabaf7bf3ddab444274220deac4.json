@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT source FROM entries WHERE seq = ? AND status = 'screening'",
+  "describe": {
+    "columns": [
+      {
+        "name": "source",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "source"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "34a512a03792bccb9276f6a70019e5e95a6a2eabaf7bf3ddab444274220deac4"
+}

@@ -184,7 +184,7 @@ async fn own_entry(
         .filter(|entry| {
             matches!(
                 entry.status.as_str(),
-                "pending" | "embargoed" | "waiting_on_series"
+                "pending" | "screening" | "review" | "rejected" | "embargoed" | "waiting_on_series"
             )
         })
         .ok_or(AppError::NotFound)?;
@@ -222,8 +222,18 @@ async fn own_entry(
     let context = entries::card_context(&entry.id, &account.id, Some(&account.display_name));
     let card = render_card(&analysis, &context);
     let warnings: Vec<String> = analysis.warnings.iter().map(ToString::to_string).collect();
+    // A model wrote the reasons from the entry, so they are author text.
+    let reasons: Vec<String> = entry
+        .rejection_reasons
+        .as_deref()
+        .and_then(|json| serde_json::from_str(json).ok())
+        .unwrap_or_default();
+    let reason_lines: String = reasons
+        .iter()
+        .map(|reason| format!("reason: {}\n", one_line(reason)))
+        .collect();
     text.push_str(&format!(
-        "{DELIMITER}\n{}\n{}",
+        "{DELIMITER}\n{reason_lines}{}\n{}",
         card_and_warnings(&card, &warnings),
         entry.source
     ));
@@ -236,6 +246,7 @@ async fn own_entry(
         "row_notes": notes,
         "card": card,
         "warnings": warnings,
+        "reasons": reasons,
         "text": entry.source,
         "series": cite.as_ref().map(series::EntryCite::text),
     });

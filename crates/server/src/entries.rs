@@ -23,6 +23,8 @@ pub struct PublicEntry {
     pub previous_id: Option<String>,
     /// The public version that replaced this one.
     pub superseded_by: Option<String>,
+    /// The screen's doubt that the body matches `outcome`, for the card.
+    pub screening_note: Option<String>,
 }
 
 /// The card context only the server knows: the entry's ID and its author, whose
@@ -48,17 +50,6 @@ pub enum Placed {
     WaitingOnSeries,
 }
 
-impl Placed {
-    /// The status as the database and responses write it (design.md, Entry status).
-    pub fn status(self) -> &'static str {
-        match self {
-            Placed::Public => "public",
-            Placed::Embargoed => "embargoed",
-            Placed::WaitingOnSeries => "waiting_on_series",
-        }
-    }
-}
-
 impl PublicEntry {
     /// The card, rendered from the stored text by the current analyzer.
     pub fn card(&self) -> String {
@@ -69,6 +60,7 @@ impl PublicEntry {
     pub fn card_with(&self, superseded_by: Option<String>) -> String {
         let context = CardContext {
             superseded_by_version: superseded_by,
+            screening_note: self.screening_note.clone(),
             ..card_context(&self.id, &self.account_id, self.display_name.as_deref())
         };
         render_card(&analyze(&self.source), &context)
@@ -393,6 +385,8 @@ pub struct OwnEntry {
     pub previous_id: Option<String>,
     /// The batch it came in, which publishes as one.
     pub batch_seq: Option<i64>,
+    /// Why screening rejected it, a JSON array of strings.
+    pub rejection_reasons: Option<String>,
 }
 
 /// The entry `id` if `account_id` wrote it.
@@ -406,7 +400,7 @@ pub async fn own_entry(
         r#"SELECT seq AS "seq!: i64", id, status, source, hold_until, embargo_until,
                   first_submitted_at,
                   (SELECT p.id FROM entries p WHERE p.seq = entries.previous_seq) AS "previous_id?",
-                  batch_seq
+                  batch_seq, rejection_reasons
            FROM entries WHERE id = ? AND account_id = ?"#,
         id,
         account_id
@@ -451,7 +445,8 @@ pub async fn in_status(pool: &SqlitePool, status: &str) -> Result<Vec<(i64, Stri
 /// `None` if the entry was no longer in `screening`: something else placed it.
 pub async fn wait_on_series(pool: &SqlitePool, seq: i64) -> Result<Option<Placed>, sqlx::Error> {
     let done = sqlx::query!(
-        "UPDATE entries SET status = 'waiting_on_series' WHERE seq = ? AND status = 'screening'",
+        "UPDATE entries SET status = 'waiting_on_series'
+         WHERE seq = ? AND status = 'screening' AND screen_verdict = 'pass'",
         seq
     )
     .execute(pool)
@@ -473,7 +468,8 @@ pub async fn due(pool: &SqlitePool, now: &str) -> Result<Vec<i64>, sqlx::Error> 
 /// `None` if the entry was no longer in `screening`: something else placed it.
 pub async fn embargo(pool: &SqlitePool, seq: i64) -> Result<Option<Placed>, sqlx::Error> {
     let done = sqlx::query!(
-        "UPDATE entries SET status = 'embargoed' WHERE seq = ? AND status = 'screening'",
+        "UPDATE entries SET status = 'embargoed'
+         WHERE seq = ? AND status = 'screening' AND screen_verdict = 'pass'",
         seq
     )
     .execute(pool)
@@ -495,7 +491,8 @@ pub async fn publish(
     // indexed once.
     let Some(source) = sqlx::query_scalar!(
         "UPDATE entries SET status = 'public', published_at = ?
-         WHERE seq = ? AND status IN ('screening', 'waiting_on_series') RETURNING source",
+         WHERE seq = ? AND screen_verdict = 'pass' AND status IN ('screening', 'waiting_on_series')
+         RETURNING source",
         published_at,
         seq
     )
@@ -527,7 +524,8 @@ pub async fn public_entry(pool: &SqlitePool, id: &str) -> Result<Option<PublicEn
         r#"SELECT e.seq AS "seq!: i64", e.id, e.source, e.account_id,
                   a.display_name AS "display_name?: String", e.submitted_at, e.published_at,
                   (SELECT p.id FROM entries p WHERE p.seq = e.previous_seq AND p.status = 'public') AS "previous_id?",
-                  (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS "superseded_by?"
+                  (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS "superseded_by?",
+                  e.screening_note
          FROM entries e JOIN authors a ON a.id = e.account_id
          WHERE e.id = ? AND e.status = 'public'"#,
         id
@@ -568,7 +566,8 @@ pub async fn search(
         r#"SELECT e.seq AS "seq!: i64", e.id, e.source, e.account_id,
                   a.display_name AS "display_name?: String", e.submitted_at, e.published_at,
                   (SELECT p.id FROM entries p WHERE p.seq = e.previous_seq AND p.status = 'public') AS "previous_id?",
-                  (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS "superseded_by?"
+                  (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS "superseded_by?",
+                  e.screening_note
            FROM entries e JOIN authors a ON a.id = e.account_id
            WHERE e.status = 'public'
              -- Only the latest version in each chain (design.md, Entry lifecycle).
@@ -612,7 +611,8 @@ pub async fn all_public(pool: &SqlitePool) -> Result<Vec<PublicEntry>, sqlx::Err
         r#"SELECT e.seq AS "seq!: i64", e.id, e.source, e.account_id,
                   a.display_name AS "display_name?: String", e.submitted_at, e.published_at,
                   (SELECT p.id FROM entries p WHERE p.seq = e.previous_seq AND p.status = 'public') AS "previous_id?",
-                  (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS "superseded_by?"
+                  (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS "superseded_by?",
+                  e.screening_note
          FROM entries e JOIN authors a ON a.id = e.account_id
          WHERE e.status = 'public'
            AND NOT EXISTS (SELECT 1 FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public')
@@ -836,6 +836,40 @@ pub async fn batch_members(
     .fetch_all(pool)
     .await?;
     Ok(Some(members))
+}
+
+/// Counts one unusable screening reply against an entry still being screened.
+pub async fn count_screen_attempt(pool: &SqlitePool, seq: i64) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        "UPDATE entries SET screen_attempts = screen_attempts + 1
+         WHERE seq = ? AND status = 'screening'",
+        seq
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Entry `seq`'s status.
+pub async fn status(pool: &SqlitePool, seq: i64) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar!("SELECT status FROM entries WHERE seq = ?", seq)
+        .fetch_optional(pool)
+        .await
+}
+
+/// Each member of batch `batch_id` and its status, in order.
+pub async fn batch_statuses(
+    pool: &SqlitePool,
+    batch_id: &str,
+) -> Result<Vec<(String, String)>, sqlx::Error> {
+    let rows = sqlx::query!(
+        "SELECT e.id, e.status FROM entries e JOIN batches b ON b.seq = e.batch_seq
+         WHERE b.id = ? ORDER BY e.seq",
+        batch_id
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(|row| (row.id, row.status)).collect())
 }
 
 /// The slug a chain of versions has: the slug given to its first entry, if any.

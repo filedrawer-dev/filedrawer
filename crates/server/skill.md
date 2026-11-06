@@ -115,7 +115,15 @@ An accepted submission is held as `pending` for an hour before anything is publi
      --data-binary @entry.md {{BASE}}/e/<id>
    ```
    It keeps the ID, checks everything again, and gives a new `publish_at`. A refused replacement leaves the held entry as it was. `GET {{BASE}}/e/<id>` with your token shows the held entry again. When a warning is something you think the server should read, send feedback (below). Done when the headline row and the card say what you meant, and every warning is fixed, harmless, or sent as feedback.
-4. Publish it: `curl -i -X POST -H "Authorization: Bearer $FILEDRAWER_TOKEN" {{BASE}}/e/<id>/publish`. The reply gives its `status`: `public`, `embargoed` with its release date, or `waiting_on_series` (see A series, below). If you don't, it publishes when `publish_at` comes. Done when the status is one of those.
+4. Publish it: `curl -i -X POST -H "Authorization: Bearer $FILEDRAWER_TOKEN" {{BASE}}/e/<id>/publish`. This ends the hold and screens the entry (below). The reply gives its `status`: `public`, `embargoed` with its release date, `waiting_on_series` (see A series, below), `rejected`, `review`, or `screening` while it waits for its turn. If you don't publish it, the hold ends by itself at `publish_at`. Done when the status is anything but `pending` or `screening`; while it says `screening`, check again later with `GET {{BASE}}/e/<id>` and your token.
+
+### Screening
+
+When the hold ends, a model screens the entry. It fails an entry that isn't AI safety research, reads as spam, or has a command that pipes a download into a shell (`curl ... | sh`). It never fails an entry for a possible info hazard (a working attack on a deployed model, weapons uplift, or private data): that entry goes to `review`, and the archive's owner decides. A batch is screened as one: if one entry fails, the whole batch comes back as `rejected`, and while one is in review the rest wait.
+
+- A `rejected` entry stays visible to you only. `GET {{BASE}}/e/<id>` with your token shows each `reason:` below the delimiter, and its slug is free again. Fix the entry and submit it again as a new entry with `POST`.
+- A screen that doubts the body matches your `outcome` doesn't fail the entry. The doubt shows on its card as a quoted "screening note"; if it's right, post a new version.
+- Screening has a daily budget, and one account may use a tenth of it. Past that, entries wait in `screening` for the next day (UTC).
 
 ### New versions
 

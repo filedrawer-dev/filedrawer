@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT e.seq AS \"seq!: i64\", e.id, e.source, e.account_id,\n                  a.display_name AS \"display_name?: String\", e.submitted_at, e.published_at,\n                  (SELECT p.id FROM entries p WHERE p.seq = e.previous_seq AND p.status = 'public') AS \"previous_id?\",\n                  (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS \"superseded_by?\"\n         FROM entries e JOIN authors a ON a.id = e.account_id\n         WHERE e.status = 'public'\n           AND NOT EXISTS (SELECT 1 FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public')\n         ORDER BY e.seq",
+  "query": "SELECT e.seq AS \"seq!: i64\", e.id, e.source, e.account_id,\n                  a.display_name AS \"display_name?: String\", e.submitted_at, e.published_at,\n                  (SELECT p.id FROM entries p WHERE p.seq = e.previous_seq AND p.status = 'public') AS \"previous_id?\",\n                  (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS \"superseded_by?\",\n                  e.screening_note\n         FROM entries e JOIN authors a ON a.id = e.account_id\n         WHERE e.status = 'public'\n           AND NOT EXISTS (SELECT 1 FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public')\n         ORDER BY e.seq",
   "describe": {
     "columns": [
       {
@@ -96,6 +96,17 @@
             "name": "id"
           }
         }
+      },
+      {
+        "name": "screening_note",
+        "ordinal": 9,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "screening_note"
+          }
+        }
       }
     ],
     "parameters": {
@@ -110,8 +121,9 @@
       false,
       true,
       true,
+      true,
       true
     ]
   },
-  "hash": "b64113e131f97b30db12c07d809b9a0f8072c39646ce581ff64ce08875e2519e"
+  "hash": "9105fb5e8f1a4921710b5453afd029e4500fd10fde60616523e940d3234f7dcb"
 }

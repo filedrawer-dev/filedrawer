@@ -243,3 +243,23 @@ async fn a_deleted_account_gets_no_new_token() {
     let made = filedrawer_server::admin::create_token(&app.pool, &id, "late").await;
     assert!(made.is_err(), "a token was made for a deleted account");
 }
+
+#[tokio::test]
+async fn deleting_keeps_the_cost_log_of_its_screened_entries() {
+    let models = common::fake_models::FakeModels::default();
+    let app = common::test_app_with(models.screener(), 1_000_000_000).await;
+    let (cookie, token) = browser_account(&app, EMAIL).await;
+    let rejected = app
+        .post_as("/entries", Some(&token), entry("FAKE-OFFTOPIC cake", ""))
+        .await;
+    let id = common::id_in(&rejected.body);
+    app.post_as(&format!("/e/{id}/publish"), Some(&token), "")
+        .await;
+    let done = delete(&app, &cookie, PASSWORD).await;
+    assert_eq!(done.status, StatusCode::OK, "{}", done.body);
+    let logged: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM screenings")
+        .fetch_one(&app.pool)
+        .await
+        .unwrap();
+    assert_eq!(logged, 1, "the spend still counts against the day");
+}

@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT e.id, e.status FROM entries e JOIN batches b ON b.seq = e.batch_seq\n         WHERE b.id = ? ORDER BY e.seq",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "status",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "status"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "d5c40b127fd340a156c6ed5394cf2e9ee8d1bb160235ebe48734a95a705bf80c"
+}

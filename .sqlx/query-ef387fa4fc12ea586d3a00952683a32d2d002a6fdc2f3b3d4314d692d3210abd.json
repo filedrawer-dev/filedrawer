@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE entries SET screen_attempts = screen_attempts + 1\n         WHERE seq = ? AND status = 'screening'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "ef387fa4fc12ea586d3a00952683a32d2d002a6fdc2f3b3d4314d692d3210abd"
+}

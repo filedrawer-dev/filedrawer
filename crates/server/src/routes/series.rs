@@ -11,10 +11,11 @@ use serde_json::json;
 
 use crate::auth::{TokenAccount, optional_token_account};
 use crate::error::AppError;
+use crate::queue::Screened;
 use crate::respond::{DELIMITER, Format, author_name, one_line};
 use crate::screening::Verdict;
 use crate::series::{self, Series, Version};
-use crate::{AppState, jobs};
+use crate::{AppState, jobs, queue, time};
 
 /// Who wrote something, after the account ID on a line: "by <name>", with the name
 /// last so nothing in it can pass for the account, or "account deleted".
@@ -25,8 +26,14 @@ fn byline(display_name: Option<&str>) -> String {
     }
 }
 
-/// Reads and screens a series document, or refuses it with every reason.
-async fn accept_series(state: &AppState, body: &Bytes) -> Result<SeriesText, AppError> {
+/// Reads and screens a series document, or refuses it with every reason. Until it
+/// joins the screening queue (build step 3, slice 1b), it is screened inline, within
+/// the day's caps, and its cost logged against `account`.
+async fn accept_series(
+    state: &AppState,
+    account: &TokenAccount,
+    body: &Bytes,
+) -> Result<SeriesText, AppError> {
     let refused = |reasons| AppError::Refused {
         status: StatusCode::UNPROCESSABLE_ENTITY,
         reasons,
@@ -36,8 +43,26 @@ async fn accept_series(state: &AppState, body: &Bytes) -> Result<SeriesText, App
     let series = read_series(text).map_err(refused)?;
     // Screening checks the title and description like an entry (design.md, Series).
     let screened = format!("{}\n\n{}", series.title, series.description);
-    match state.screener.screen(&screened).await {
-        Verdict::Pass => Ok(series),
+    let now = time::now_utc();
+    let _turn = state.screening_lock.lock().await;
+    match queue::screen_text(state, &account.id, None, &screened, now).await? {
+        Screened::Verdict(Verdict::Pass { .. }) => Ok(series),
+        // A model wrote these from the series, so they go below the delimiter.
+        Screened::Verdict(Verdict::Reject { reasons }) => Err(AppError::ScreenRejected(reasons)),
+        Screened::Verdict(Verdict::Review { .. }) => Err(refused(vec![
+            "the screen saw a possible info hazard, so the series can't be stored as written"
+                .into(),
+        ])),
+        Screened::OverCap => Err(AppError::Refused {
+            status: StatusCode::TOO_MANY_REQUESTS,
+            reasons: vec![
+                "the day's screening budget is spent; send it again tomorrow (UTC)".into(),
+            ],
+        }),
+        Screened::Failed(_) => Err(AppError::Refused {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            reasons: vec!["screening is unavailable just now; send it again later".into()],
+        }),
     }
 }
 
@@ -57,7 +82,7 @@ pub async fn create(
     format: Format,
     body: Bytes,
 ) -> Result<Response, AppError> {
-    let text = accept_series(&state, &body).await?;
+    let text = accept_series(&state, &account, &body).await?;
     let (id, key) = series::create(&state.pool, &account.id, &text).await?;
     let url = format!("{}/series/{id}", state.public_url);
     let reply = format!(
@@ -86,7 +111,7 @@ pub async fn new_version(
     body: Bytes,
 ) -> Result<Response, AppError> {
     let found = creator_series(&state, &id, &account.id).await?;
-    let text = accept_series(&state, &body).await?;
+    let text = accept_series(&state, &account, &body).await?;
     let version = series::add_version(&state.pool, found.seq, &text).await?;
     let url = format!("{}/series/{id}@{version}", state.public_url);
     let reply = format!(

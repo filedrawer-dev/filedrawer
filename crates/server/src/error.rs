@@ -21,6 +21,14 @@ pub enum AppError {
         status: StatusCode,
         reasons: Vec<String>,
     },
+    /// Screening failed what was sent. The reasons, which a model wrote from the
+    /// sender's text, follow the author-text delimiter, one line each.
+    #[error(
+        "error: the screen failed it\n{}\n{}",
+        crate::respond::DELIMITER,
+        .0.iter().map(|reason| format!("reason: {}", crate::respond::one_line(reason))).collect::<Vec<_>>().join("\n")
+    )]
+    ScreenRejected(Vec<String>),
     #[error("internal error")]
     Database(#[from] sqlx::Error),
 }
@@ -34,6 +42,7 @@ impl IntoResponse for AppError {
             AppError::Conflict(_) => StatusCode::CONFLICT,
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
             AppError::Refused { status, .. } => *status,
+            AppError::ScreenRejected(_) => StatusCode::UNPROCESSABLE_ENTITY,
             AppError::Database(error) => {
                 tracing::error!(%error, "database error");
                 StatusCode::INTERNAL_SERVER_ERROR

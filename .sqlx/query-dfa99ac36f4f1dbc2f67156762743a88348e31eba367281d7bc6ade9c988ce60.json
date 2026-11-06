@@ -1,0 +1,129 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT e.seq AS \"seq!: i64\", e.id, e.source, e.account_id,\n                  a.display_name AS \"display_name?: String\", e.submitted_at, e.published_at,\n                  (SELECT p.id FROM entries p WHERE p.seq = e.previous_seq AND p.status = 'public') AS \"previous_id?\",\n                  (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS \"superseded_by?\",\n                  e.screening_note\n           FROM entries e JOIN authors a ON a.id = e.account_id\n           WHERE e.status = 'public'\n             -- Only the latest version in each chain (design.md, Entry lifecycle).\n             AND NOT EXISTS (SELECT 1 FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public')\n             AND (?1 IS NULL OR e.seq IN (SELECT rowid FROM entries_fts WHERE entries_fts MATCH ?1))\n             AND (?2 IS NULL OR e.outcome = ?2)\n             AND (?3 IS NULL OR e.kind = ?3)\n             AND (?4 IS NULL OR e.stage = ?4)\n             AND (?5 IS NULL OR e.seq IN (SELECT entry_seq FROM entry_tags WHERE tag = ?5))\n             AND (?6 IS NULL OR e.seq IN (SELECT entry_seq FROM entry_models\n                                          WHERE name = ?6 AND (role IS NULL OR role = 'subject')))\n             AND ((?7 IS NULL AND ?8 IS NULL) OR e.seq IN (\n                    SELECT entry_seq FROM entry_rows\n                    WHERE (?7 IS NULL OR model = ?7) AND (?8 IS NULL OR claim = ?8)))\n           ORDER BY\n             -- CASE runs the MATCH only when there are words; MATCH NULL is an error.\n             CASE WHEN ?1 IS NULL THEN NULL ELSE (\n               SELECT bm25(entries_fts, 10.0, 5.0, 2.0, 1.0) FROM entries_fts\n               WHERE entries_fts MATCH ?1 AND rowid = e.seq) END,\n             e.published_at DESC, e.seq DESC\n           LIMIT ?9 OFFSET ?10",
+  "describe": {
+    "columns": [
+      {
+        "name": "seq!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "id",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "source",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "source"
+          }
+        }
+      },
+      {
+        "name": "account_id",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "account_id"
+          }
+        }
+      },
+      {
+        "name": "display_name?: String",
+        "ordinal": 4,
+        "type_info": "Null",
+        "origin": "Expression"
+      },
+      {
+        "name": "submitted_at",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "submitted_at"
+          }
+        }
+      },
+      {
+        "name": "published_at",
+        "ordinal": 6,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "published_at"
+          }
+        }
+      },
+      {
+        "name": "previous_id?",
+        "ordinal": 7,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "superseded_by?",
+        "ordinal": 8,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "screening_note",
+        "ordinal": 9,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "screening_note"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 10
+    },
+    "nullable": [
+      null,
+      false,
+      false,
+      false,
+      null,
+      false,
+      true,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "dfa99ac36f4f1dbc2f67156762743a88348e31eba367281d7bc6ade9c988ce60"
+}

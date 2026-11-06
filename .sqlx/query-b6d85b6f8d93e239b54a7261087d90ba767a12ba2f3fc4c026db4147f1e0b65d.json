@@ -1,0 +1,62 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT m.seq AS \"seq!: i64\", m.id, m.status, m.screen_verdict\n           FROM entries e JOIN entries m\n             ON m.seq = e.seq OR (e.batch_seq IS NOT NULL AND m.batch_seq = e.batch_seq)\n           WHERE e.seq = ? AND m.status NOT IN ('withdrawn', 'removed')\n           ORDER BY m.seq",
+  "describe": {
+    "columns": [
+      {
+        "name": "seq!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "id",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "status",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "status"
+          }
+        }
+      },
+      {
+        "name": "screen_verdict",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "screen_verdict"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      null,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "b6d85b6f8d93e239b54a7261087d90ba767a12ba2f3fc4c026db4147f1e0b65d"
+}

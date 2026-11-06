@@ -16,6 +16,7 @@ mod links;
 pub mod mail;
 mod pages;
 mod passwords;
+mod queue;
 mod respond;
 mod routes;
 pub mod screening;
@@ -39,6 +40,10 @@ const MAX_BODY_BYTES: usize = 1024 * 1024;
 pub struct AppState {
     pub pool: SqlitePool,
     pub screener: Screener,
+    /// The most screening may spend in a UTC day, in billionths of a dollar.
+    pub screening_daily_nano_usd: i64,
+    /// Held while one item is screened, so no two screenings run at once.
+    pub screening_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
     pub mailer: std::sync::Arc<dyn mail::Mailer>,
     /// The site's address, with no trailing slash (`Config::public_url`).
     pub public_url: String,

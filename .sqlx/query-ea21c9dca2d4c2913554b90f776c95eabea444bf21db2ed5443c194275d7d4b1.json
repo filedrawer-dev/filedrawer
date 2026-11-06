@@ -1,0 +1,62 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT seq AS \"seq!: i64\", account_id, source, screen_attempts\n           FROM entries WHERE seq = ? AND status = 'screening' AND screen_verdict IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "seq!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "account_id",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "account_id"
+          }
+        }
+      },
+      {
+        "name": "source",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "source"
+          }
+        }
+      },
+      {
+        "name": "screen_attempts",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "screen_attempts"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "ea21c9dca2d4c2913554b90f776c95eabea444bf21db2ed5443c194275d7d4b1"
+}

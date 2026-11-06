@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE screenings SET entry_seq = NULL WHERE entry_seq IN (SELECT seq\n                 FROM entries WHERE account_id = ? AND status NOT IN ('public', 'removed'))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "6f7b498be249415333c67c9648bed4d2315e9b319c6190fc6ab15002f86513e2"
+}

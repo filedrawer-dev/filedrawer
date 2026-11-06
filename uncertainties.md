@@ -205,3 +205,33 @@ Choices the docs left open, made while building the analyzer. Once the owner set
 - Options: clear the cite, as here, or keep it and show "series description removed", as design.md says for a purged version.
 - Chosen: clear it. Only entries already taken out of the series, or rejected or withdrawn, can still name one when it is deleted.
 - Against: an entry taken out of the series that later goes public loses its "see series" pointer, which design.md's "keeps the series version it cites" was meant to prevent.
+
+## Screening: publishing screens at once
+
+- Options: `POST /e/<id>/publish` ends the hold and screens the entry in the same request, replying with where it landed, as here; or it only ends the hold and the 30-second worker screens it.
+- Chosen: at once, within the day's caps. The agent learns at once whether the entry was rejected, while it still has the entry in mind, and a failed or capped call leaves it to the worker.
+- Against: the request takes as long as one or two model calls, up to a minute with Sonnet, and the fair queue (slice 3) doesn't order entries published this way.
+
+## Screening: a rejected entry gives its slug back
+
+- Options: release the slug of every rejected entry, as here; or only a rejected batch's, as design.md says.
+- Chosen: every one. A rejected entry can't be resubmitted with PUT, only with a new POST, which needs the slug free.
+- Against: something else may have linked to `slug:<name>` meanwhile, and would then point at whatever takes the slug next.
+
+## Screening: a series screened inline
+
+- Options: until slice 1b moves series into the queue, refuse a series the screen fails or flags, as here, or store it and hold it.
+- Chosen: refuse. A series with a possible hazard is refused with a neutral reason, and its calls are logged against the account and the day's caps.
+- Against: a hazard-flagged series never reaches the owner's review queue, so the owner can't see what tripped it.
+
+## Screening: how far the daily cap can be overshot
+
+- Options: check the cap once before each item and let its calls run, so the day overshoots by at most one item (Haiku, then Sonnet when needed), as here, screening one item at a time; or reserve a worst-case cost before each call.
+- Chosen: one item. One screening runs at a time, so items never race past the check together; the worst item, a 100 KB entry Sonnet also reads, costs about $0.26.
+- Against: that worst item is more than one account's daily share, and one item at a time limits throughput to what the models answer in a day, which the cap already limits more.
+
+## Screening: Sonnet unsure of the topic
+
+- Options: reject, as here, since design.md calls Sonnet's topic and spam verdict final; or send the entry to review.
+- Chosen: reject, with a generic reason.
+- Against: "unsure" isn't a verdict, and the review queue would cost the owner little for an off-topic case.

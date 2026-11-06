@@ -132,6 +132,8 @@ async fn serve() -> ExitCode {
     let state = AppState {
         pool,
         screener: config.screener,
+        screening_daily_nano_usd: config.screening_daily_nano_usd,
+        screening_lock: Default::default(),
         mailer,
         public_url: config.public_url.clone(),
     };

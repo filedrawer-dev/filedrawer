@@ -453,16 +453,15 @@ pub async fn publish(
             "entry {id} came in a batch, which publishes as one: POST to its batch's publish url"
         )));
     }
-    let Some(placed) = end_hold(&state, entry.seq, time::now_utc()).await? else {
+    let Some(status) = end_hold(&state, entry.seq, time::now_utc()).await? else {
         return Err(AppError::Conflict(format!(
             "entry {id}'s hold has already ended"
         )));
     };
-    let status = placed.status();
-    let release = match placed {
-        entries::Placed::Embargoed => entry.embargo_until.clone(),
-        entries::Placed::Public | entries::Placed::WaitingOnSeries => None,
-    };
+    let release = entry
+        .embargo_until
+        .clone()
+        .filter(|_| status == "embargoed");
     let release_line = release
         .as_deref()
         .map_or(String::new(), |date| format!("release: {date}\n"));

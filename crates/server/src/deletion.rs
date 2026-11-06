@@ -173,6 +173,12 @@ async fn delete_entries(
                  FROM entries WHERE account_id = ? AND status NOT IN ('public', 'removed'))",
             account_id
         ),
+        // The cost log keeps the spend, which still counts against the day's cap.
+        sqlx::query!(
+            "UPDATE screenings SET entry_seq = NULL WHERE entry_seq IN (SELECT seq
+                 FROM entries WHERE account_id = ? AND status NOT IN ('public', 'removed'))",
+            account_id
+        ),
         sqlx::query!(
             "DELETE FROM entries WHERE account_id = ? AND status NOT IN ('public', 'removed')",
             account_id

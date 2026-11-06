@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT e.seq AS \"seq!: i64\", e.id, e.source, e.account_id,\n                  a.display_name AS \"display_name?: String\", e.submitted_at, e.published_at,\n                  (SELECT p.id FROM entries p WHERE p.seq = e.previous_seq AND p.status = 'public') AS \"previous_id?\",\n                  (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS \"superseded_by?\"\n         FROM entries e JOIN authors a ON a.id = e.account_id\n         WHERE e.id = ? AND e.status = 'public'",
+  "query": "SELECT seq AS \"seq!: i64\", id, status, source, hold_until, embargo_until,\n                  first_submitted_at,\n                  (SELECT p.id FROM entries p WHERE p.seq = entries.previous_seq) AS \"previous_id?\",\n                  batch_seq, rejection_reasons\n           FROM entries WHERE id = ? AND account_id = ?",
   "describe": {
     "columns": [
       {
@@ -26,8 +26,19 @@
         }
       },
       {
-        "name": "source",
+        "name": "status",
         "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "status"
+          }
+        }
+      },
+      {
+        "name": "source",
+        "ordinal": 3,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -37,41 +48,35 @@
         }
       },
       {
-        "name": "account_id",
-        "ordinal": 3,
+        "name": "hold_until",
+        "ordinal": 4,
         "type_info": "Text",
         "origin": {
           "Table": {
             "table": "entries",
-            "name": "account_id"
+            "name": "hold_until"
           }
         }
       },
       {
-        "name": "display_name?: String",
-        "ordinal": 4,
-        "type_info": "Text",
-        "origin": "Expression"
-      },
-      {
-        "name": "submitted_at",
+        "name": "embargo_until",
         "ordinal": 5,
         "type_info": "Text",
         "origin": {
           "Table": {
             "table": "entries",
-            "name": "submitted_at"
+            "name": "embargo_until"
           }
         }
       },
       {
-        "name": "published_at",
+        "name": "first_submitted_at",
         "ordinal": 6,
         "type_info": "Text",
         "origin": {
           "Table": {
             "table": "entries",
-            "name": "published_at"
+            "name": "first_submitted_at"
           }
         }
       },
@@ -87,19 +92,30 @@
         }
       },
       {
-        "name": "superseded_by?",
+        "name": "batch_seq",
         "ordinal": 8,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "batch_seq"
+          }
+        }
+      },
+      {
+        "name": "rejection_reasons",
+        "ordinal": 9,
         "type_info": "Text",
         "origin": {
           "Table": {
             "table": "entries",
-            "name": "id"
+            "name": "rejection_reasons"
           }
         }
       }
     ],
     "parameters": {
-      "Right": 1
+      "Right": 2
     },
     "nullable": [
       false,
@@ -107,11 +123,12 @@
       false,
       false,
       true,
+      true,
       false,
       true,
       true,
       true
     ]
   },
-  "hash": "7fd927dd775a90c4bdb412c5b9e6ec6ba71f60e15e8d75f3de2749711f222423"
+  "hash": "c95eb0b889e2bdc01cb49b04746adf839b211cd111c53b03a11618594193b988"
 }

@@ -1,6 +1,7 @@
 //! A fresh server on an in-memory database, with one account and its token.
 #![allow(dead_code)]
 
+pub mod fake_models;
 pub mod series;
 
 use axum::Router;
@@ -62,6 +63,7 @@ const SINGLE_KEYS: &[&str] = &[
     "description",
     "removed",
     "series_description",
+    "error",
 ];
 
 /// Keys a reply may repeat, one line per item: slug links, runs and batch members.
@@ -128,19 +130,31 @@ pub fn state(pool: sqlx::SqlitePool, outbox: &Outbox) -> AppState {
     AppState {
         pool,
         screener: Screener::PassAll,
+        screening_daily_nano_usd: 1_000_000_000,
+        screening_lock: Default::default(),
         mailer: Arc::new(outbox.clone()),
         public_url: PUBLIC_URL.to_string(),
     }
 }
 
 pub async fn test_app() -> TestApp {
+    test_app_with(Screener::PassAll, 1_000_000_000).await
+}
+
+/// A test app with its own screener and daily screening cap, in billionths of a
+/// dollar.
+pub async fn test_app_with(screener: Screener, daily_nano_usd: i64) -> TestApp {
     let pool = db::open(":memory:").await.unwrap();
     let account = admin::create_account(&pool, "Ada").await.unwrap();
     let token = admin::create_token(&pool, &account, "laptop")
         .await
         .unwrap();
     let outbox = Outbox::default();
-    let state = state(pool.clone(), &outbox);
+    let state = AppState {
+        screener,
+        screening_daily_nano_usd: daily_nano_usd,
+        ..state(pool.clone(), &outbox)
+    };
     let router = app(state.clone());
     TestApp {
         router,

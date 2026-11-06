@@ -2,7 +2,9 @@
 
 use std::net::SocketAddr;
 
-use crate::screening::Screener;
+use std::sync::Arc;
+
+use crate::screening::{AnthropicClient, Screener};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Environment {
@@ -17,6 +19,9 @@ pub struct Config {
     pub listen: SocketAddr,
     pub environment: Environment,
     pub screener: Screener,
+    /// The most screening may spend in a UTC day, in billionths of a dollar
+    /// (design.md: $1, with at most 10% for one account).
+    pub screening_daily_nano_usd: i64,
     /// The site's address as browsers reach it, with no trailing slash. Emails link
     /// to it, and form posts must come from it.
     pub public_url: String,
@@ -130,13 +135,33 @@ impl Config {
         };
         let screener = match get("FILEDRAWER_SCREENER")?.as_str() {
             "pass-all" => Screener::PassAll,
+            "anthropic" => {
+                let key = var("FILEDRAWER_ANTHROPIC_API_KEY")
+                    .filter(|key| !key.trim().is_empty())
+                    .ok_or(ConfigError::Missing("FILEDRAWER_ANTHROPIC_API_KEY"))?;
+                Screener::Models(Arc::new(AnthropicClient::new(key.trim().to_string())))
+            }
             other => {
                 return Err(ConfigError::Invalid {
                     name: "FILEDRAWER_SCREENER",
                     value: other.to_string(),
-                    expected: "pass-all",
+                    expected: "anthropic or pass-all",
                 });
             }
+        };
+        let screening_daily_nano_usd = match var("FILEDRAWER_SCREENING_DAILY_USD") {
+            None => 1_000_000_000,
+            Some(text) => text
+                .parse::<f64>()
+                .ok()
+                .filter(|usd| usd.is_finite() && *usd >= 0.0 && *usd <= 1000.0)
+                // In range by the filter, so the cast can't truncate.
+                .map(|usd| (usd * 1e9).round() as i64)
+                .ok_or(ConfigError::Invalid {
+                    name: "FILEDRAWER_SCREENING_DAILY_USD",
+                    value: text,
+                    expected: "dollars a day, such as 1.00",
+                })?,
         };
         let public_url_text = get("FILEDRAWER_PUBLIC_URL")?;
         let public_url = public_url_text.trim_end_matches('/').to_string();
@@ -151,7 +176,7 @@ impl Config {
         if environment == Environment::Production && smtp.is_none() {
             return Err(ConfigError::NoMailInProduction);
         }
-        if environment == Environment::Production && screener == Screener::PassAll {
+        if environment == Environment::Production && matches!(screener, Screener::PassAll) {
             return Err(ConfigError::UnscreenedProduction);
         }
         Ok(Config {
@@ -159,6 +184,7 @@ impl Config {
             listen,
             environment,
             screener,
+            screening_daily_nano_usd,
             public_url,
             smtp,
         })
