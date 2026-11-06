@@ -1,19 +1,43 @@
-"""Tests for bin/git-pre-commit's formatting of an agent's staged Rust. Each runs the
-hook in a scratch repo holding a one-file crate, with bin/pre-commit-run stubbed to
-pass, so only the formatting step acts. It needs cargo and rustfmt, which every
-machine that builds this repo has.
+"""Tests for the commit hook's formatting: this repo's formatter hooks write, and
+bin/pre-commit-run (a copy of llm-toolbox's) restages an agent's files they rewrote
+when each was fully staged. Each runs the real bin/git-pre-commit, bin/pre-commit-run
+and pre-commit 4.7.0, offline from uv's cache, in a scratch repo whose config holds
+this repo's ruff-format and cargo-fmt hooks. Skipped when uv's cache lacks pre-commit
+or ruff, or cargo is missing.
 """
 
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 
-HOOK = Path(__file__).resolve().parents[1] / "git-pre-commit"
-UGLY = "pub fn a( ){}\n"
-TIDY = "pub fn a() {}\n"
+REPO = Path(__file__).resolve().parents[2]
+UGLY_PY = "x = {'a':1}\n"
+TIDY_PY = 'x = {"a": 1}\n'
+UGLY_RS = "pub fn a( ){}\n"
+TIDY_RS = "pub fn a() {}\n"
+
+
+def cached(*argv: str) -> bool:
+    if shutil.which("uvx") is None:
+        return False
+    done = subprocess.run(
+        ["uvx", "--offline", "-q", *argv], capture_output=True, check=False
+    )
+    return done.returncode == 0
+
+
+def formatter_hooks() -> str:
+    """This repo's ruff-format and cargo-fmt hooks, as a config of their own."""
+    config = (REPO / ".pre-commit-config.yaml").read_text()
+    blocks = [
+        re.search(rf"^      - id: {hook}\n(?:        .*\n)+", config, re.M).group(0)
+        for hook in ("ruff-format", "cargo-fmt")
+    ]
+    return "repos:\n  - repo: local\n    hooks:\n" + "".join(blocks)
 
 
 def git(repo: Path, *args: str) -> str:
@@ -25,6 +49,10 @@ def git(repo: Path, *args: str) -> str:
 
 @pytest.fixture
 def repo(tmp_path):
+    if not (
+        cached("pre-commit@4.7.0", "--version") and cached("ruff@0.14.4", "--version")
+    ):
+        pytest.skip("needs pre-commit 4.7.0 and ruff 0.14.4 in uv's cache")
     if shutil.which("cargo") is None:
         pytest.skip("needs cargo")
     root = tmp_path / "repo"
@@ -33,11 +61,11 @@ def repo(tmp_path):
     (root / "Cargo.toml").write_text(
         '[package]\nname = "x"\nversion = "0.1.0"\nedition = "2024"\n'
     )
-    (root / "src/lib.rs").write_text(TIDY)
-    shutil.copy(HOOK, root / "bin/git-pre-commit")
-    stub = root / "bin/pre-commit-run"
-    stub.write_text("#!/bin/sh\nexit 0\n")
-    stub.chmod(0o755)
+    (root / "src/lib.rs").write_text(TIDY_RS)
+    (root / "tool.py").write_text(TIDY_PY)
+    (root / ".pre-commit-config.yaml").write_text(formatter_hooks())
+    for script in ("git-pre-commit", "pre-commit-run"):
+        shutil.copy(REPO / "bin" / script, root / "bin" / script)
     git(root, "init", "-q")
     git(root, "-c", "user.name=t", "-c", "user.email=t@t", "add", ".")
     git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
@@ -47,7 +75,9 @@ def repo(tmp_path):
 def hook(repo: Path, agent: bool) -> subprocess.CompletedProcess:
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     env.pop("AI_AGENT", None)
-    env["AGENT_PRE_COMMIT"] = "1"
+    env["AGENT_PRE_COMMIT"] = "1"  # the slow agent check isn't under test
+    env["PRE_COMMIT_HOME"] = str(repo.parent / "pre-commit-home")
+    env["UV_OFFLINE"] = "1"
     if agent:
         env["AI_AGENT"] = "test"
     return subprocess.run(
@@ -56,112 +86,63 @@ def hook(repo: Path, agent: bool) -> subprocess.CompletedProcess:
         env=env,
         capture_output=True,
         text=True,
-    )
-
-
-def test_an_agents_staged_rust_is_formatted_and_staged(repo):
-    (repo / "src/lib.rs").write_text(UGLY)
-    git(repo, "add", "src/lib.rs")
-    done = hook(repo, agent=True)
-    assert done.returncode == 0, done.stderr
-    assert (repo / "src/lib.rs").read_text() == TIDY
-    assert git(repo, "show", ":src/lib.rs") == TIDY, "the formatted file is staged"
-
-
-def test_a_file_with_unstaged_changes_is_left_alone(repo):
-    (repo / "src/lib.rs").write_text(UGLY)
-    git(repo, "add", "src/lib.rs")
-    (repo / "src/lib.rs").write_text(UGLY + "// not for this commit\n")
-    assert hook(repo, agent=True).returncode == 0
-    assert (repo / "src/lib.rs").read_text() == UGLY + "// not for this commit\n"
-    assert git(repo, "show", ":src/lib.rs") == UGLY
-
-
-def test_a_persons_commit_is_only_checked(repo):
-    (repo / "src/lib.rs").write_text(UGLY)
-    git(repo, "add", "src/lib.rs")
-    assert hook(repo, agent=False).returncode == 0
-    assert git(repo, "show", ":src/lib.rs") == UGLY
-
-
-def test_nothing_is_formatted_when_an_unstaged_file_needs_it(repo):
-    (repo / "src/lib.rs").write_text(UGLY + "mod other;\n")
-    (repo / "src/other.rs").write_text(UGLY)
-    git(repo, "add", "src/lib.rs")
-    assert hook(repo, agent=True).returncode == 0
-    assert (repo / "src/other.rs").read_text() == UGLY
-    assert git(repo, "show", ":src/lib.rs") == UGLY + "mod other;\n"
-
-
-# An agent's staged Python, which ruff formats as cargo fmt formats Rust.
-
-UGLY_PY = "x = {'a':1}\n"
-TIDY_PY = 'x = {"a": 1}\n'
-
-
-def ruff_is_cached() -> bool:
-    """Whether uvx can run the pinned ruff without the network."""
-    if shutil.which("uvx") is None:
-        return False
-    done = subprocess.run(
-        ["uvx", "--offline", "-q", "ruff@0.14.4", "--version"],
-        capture_output=True,
         check=False,
+        timeout=120,
     )
-    return done.returncode == 0
 
 
-@pytest.fixture
-def pyrepo(tmp_path):
-    if not ruff_is_cached():
-        pytest.skip("needs ruff 0.14.4 in uv's cache")
-    root = tmp_path / "pyrepo"
-    (root / "bin").mkdir(parents=True)
-    (root / "tool.py").write_text(TIDY_PY)
-    shutil.copy(HOOK, root / "bin/git-pre-commit")
-    stub = root / "bin/pre-commit-run"
-    stub.write_text("#!/bin/sh\nexit 0\n")
-    stub.chmod(0o755)
-    git(root, "init", "-q")
-    git(root, "-c", "user.name=t", "-c", "user.email=t@t", "add", ".")
-    git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
-    return root
+def stage(repo: Path, name: str, text: str) -> None:
+    (repo / name).write_text(text)
+    git(repo, "add", name)
 
 
-def test_an_agents_staged_python_is_formatted_and_staged(pyrepo):
-    (pyrepo / "tool.py").write_text(UGLY_PY)
-    git(pyrepo, "add", "tool.py")
-    done = hook(pyrepo, agent=True)
-    assert done.returncode == 0, done.stderr
-    assert (pyrepo / "tool.py").read_text() == TIDY_PY
-    assert git(pyrepo, "show", ":tool.py") == TIDY_PY, "the formatted file is staged"
-    assert "ruff format" in done.stderr
+def test_an_agents_staged_python_and_rust_are_formatted_and_staged(repo):
+    stage(repo, "tool.py", UGLY_PY)
+    stage(repo, "src/lib.rs", UGLY_RS)
+    done = hook(repo, agent=True)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert git(repo, "show", ":tool.py") == TIDY_PY
+    assert git(repo, "show", ":src/lib.rs") == TIDY_RS
+    assert "staged the result" in done.stderr
 
 
-def test_staged_python_with_unstaged_changes_is_left_alone(pyrepo):
-    (pyrepo / "tool.py").write_text(UGLY_PY)
-    git(pyrepo, "add", "tool.py")
-    (pyrepo / "tool.py").write_text(UGLY_PY + "# not for this commit\n")
-    assert hook(pyrepo, agent=True).returncode == 0
-    assert git(pyrepo, "show", ":tool.py") == UGLY_PY
+def test_a_persons_commit_is_refused_with_the_files_rewritten(repo):
+    stage(repo, "tool.py", UGLY_PY)
+    stage(repo, "src/lib.rs", UGLY_RS)
+    done = hook(repo, agent=False)
+    assert done.returncode == 1
+    assert (repo / "tool.py").read_text() == TIDY_PY
+    assert (repo / "src/lib.rs").read_text() == TIDY_RS
+    assert git(repo, "show", ":tool.py") == UGLY_PY, "the person stages it"
+    assert git(repo, "show", ":src/lib.rs") == UGLY_RS
 
 
-def test_a_python_script_known_by_its_shebang_is_formatted_too(pyrepo):
-    (pyrepo / "bin/tool").write_text("#!/usr/bin/env python3\n" + UGLY_PY)
-    git(pyrepo, "add", "bin/tool")
-    assert hook(pyrepo, agent=True).returncode == 0
-    assert git(pyrepo, "show", ":bin/tool") == "#!/usr/bin/env python3\n" + TIDY_PY
+def test_an_untracked_file_cargo_fmt_rewrites_refuses_an_agents_commit(repo):
+    (repo / "tests").mkdir()
+    (repo / "tests/new.rs").write_text("fn t( ){}\n")
+    stage(repo, "src/lib.rs", UGLY_RS)
+    done = hook(repo, agent=True)
+    assert done.returncode == 1
+    assert git(repo, "show", ":src/lib.rs") == UGLY_RS
 
 
-def test_the_copies_from_llm_toolbox_are_left_alone(pyrepo):
-    (pyrepo / "bin/slop-lint").write_text("#!/usr/bin/env python3\n" + UGLY_PY)
-    git(pyrepo, "add", "bin/slop-lint")
-    assert hook(pyrepo, agent=True).returncode == 0
-    assert git(pyrepo, "show", ":bin/slop-lint") == "#!/usr/bin/env python3\n" + UGLY_PY
+def test_the_copies_from_llm_toolbox_are_left_unformatted(repo):
+    copy = repo / "bin/slop-lint"
+    copy.write_text("#!/usr/bin/env python3\n" + UGLY_PY)
+    copy.chmod(0o755)  # pre-commit reads the shebang of an executable only
+    git(repo, "add", "bin/slop-lint")
+    done = hook(repo, agent=True)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert git(repo, "show", ":bin/slop-lint") == "#!/usr/bin/env python3\n" + UGLY_PY
 
 
-def test_a_persons_staged_python_is_left_unformatted(pyrepo):
-    (pyrepo / "tool.py").write_text(UGLY_PY)
-    git(pyrepo, "add", "tool.py")
-    assert hook(pyrepo, agent=False).returncode == 0
-    assert git(pyrepo, "show", ":tool.py") == UGLY_PY
+def test_an_agents_file_with_unstaged_changes_is_refused_and_left_staged_as_it_was(
+    repo,
+):
+    stage(repo, "tool.py", UGLY_PY)
+    unstaged = UGLY_PY + "y = {'b':2}  # not for this commit\n"
+    (repo / "tool.py").write_text(unstaged)
+    done = hook(repo, agent=True)
+    assert done.returncode == 1
+    assert git(repo, "show", ":tool.py") == UGLY_PY
+    assert "not for this commit" in (repo / "tool.py").read_text()

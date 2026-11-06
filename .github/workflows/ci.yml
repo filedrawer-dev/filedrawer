@@ -1,5 +1,5 @@
 # Every check the commit hooks run, over every file, on each push to main and each pull
-# request: the pre-commit hooks (slop-lint, lychee through bin/lychee, cargo fmt), then
+# request: the pre-commit hooks (slop-lint, ruff, lychee through bin/lychee, cargo fmt), then
 # the tests and clippy through bin/agent-pre-commit.
 name: CI
 
@@ -27,7 +27,8 @@ jobs:
       - if: hashFiles('Cargo.toml') != ''
         uses: taiki-e/install-action@nextest
       - uses: astral-sh/setup-uv@v10.3.3
-      - run: uvx pre-commit@4.7.0 run --all-files
+      # The formatters write; the diff shows what was unformatted.
+      - run: uvx pre-commit@4.7.0 run --all-files --show-diff-on-failure
       - run: bin/agent-pre-commit
 
   # A push to main that passes the checks deploys to staging (design.md, Hosting and

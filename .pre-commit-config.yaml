@@ -16,15 +16,18 @@ repos:
         entry: uvx ruff@0.14.4 check
         language: system
         types: [python]
+      # The formatters write; bin/pre-commit-run restages an agent's rewritten files.
       - id: ruff-format
-        name: ruff format --check
-        entry: uvx ruff@0.14.4 format --check
+        name: ruff format
+        entry: uvx ruff@0.14.4 format
         language: system
         types: [python]
+        # Copies from llm-toolbox change there and are copied back (CODING_STANDARDS.md).
+        exclude: ^bin/(pre-commit-run|slop-lint)$
       # Only when a .rs file is staged, so a docs commit needs no cargo.
       - id: cargo-fmt
-        name: cargo fmt --check
-        entry: cargo fmt --check
+        name: cargo fmt
+        entry: cargo fmt
         language: system
         types: [rust]
         pass_filenames: false

@@ -139,34 +139,51 @@ def digest(path: Path) -> str | None:
         return None
 
 
+def untracked(repo: Path) -> set[str]:
+    """The files git doesn't track and doesn't ignore, which pre-commit doesn't stash."""
+    listed = git("ls-files", "-z", "--others", "--exclude-standard", cwd=repo).stdout
+    return {name for name in listed.split("\0") if name}
+
+
 class Worktree:
-    """The staged files, the files with unstaged changes, and the content of each
-    staged file in the worktree, as they were before pre-commit ran."""
+    """The staged files, the files with unstaged changes, the untracked files, and
+    the content of each staged and untracked file, as they were before pre-commit ran."""
 
     def __init__(
-        self, staged: set[str], unstaged: set[str], content: dict[str, str | None]
+        self,
+        staged: set[str],
+        unstaged: set[str],
+        content: dict[str, str | None],
+        loose: dict[str, str | None],
     ):
         self.staged = staged
         self.unstaged = unstaged
         self.content = content
+        self.loose = loose
 
     @classmethod
     def read(cls, repo: Path) -> "Worktree":
         staged = names(repo, "--cached")
         content = {name: digest(repo / name) for name in staged}
-        return cls(staged, names(repo), content)
+        loose = {name: digest(repo / name) for name in untracked(repo)}
+        return cls(staged, names(repo), content, loose)
 
 
 def restage_rewrites(repo: Path, before: Worktree) -> list[str]:
     """Stages the files a hook rewrote, when each is staged and had no unstaged
     changes before the run, so nothing the agent left out goes in. A rewrite is a
-    staged file whose content changed, or any other file that changed; one that
-    doesn't qualify means nothing is staged. Returns the files staged."""
+    staged file whose content changed, or any other file that changed, untracked ones
+    included; one that doesn't qualify means nothing is staged. Returns the files
+    staged."""
     rewritten = {
         name for name in before.staged if digest(repo / name) != before.content[name]
     }
     others = names(repo) - before.unstaged - before.staged
-    if not rewritten or others or rewritten & before.unstaged:
+    # A formatter over the whole tree, as cargo fmt is, can rewrite an untracked file.
+    loose_changed = any(
+        digest(repo / name) != was for name, was in before.loose.items()
+    )
+    if not rewritten or others or loose_changed or rewritten & before.unstaged:
         return []
     listed = sorted(rewritten)
     if git("add", "--", *listed, cwd=repo).returncode != 0:

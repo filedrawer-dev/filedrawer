@@ -2,12 +2,12 @@
 # Git's pre-commit hook. Link both hooks in once per clone:
 #   ln -sf ../../bin/git-pre-commit .git/hooks/pre-commit
 #   ln -sf ../../bin/agent-pre-commit .git/hooks/agent-pre-commit
-# A commit runs the quick checks in .pre-commit-config.yaml (slop-lint, lychee, and
-# cargo fmt when a .rs file is staged) through bin/pre-commit-run.
-# For an agent's commit, cargo fmt first fixes the staged Rust, and ruff format the
-# staged Python, and each stages the result, but only when every file it would change
-# is staged with no unstaged changes, so it can't stage work the agent left out;
-# otherwise the check refuses as usual.
+# A commit runs the quick checks in .pre-commit-config.yaml (slop-lint, lychee, ruff,
+# and cargo fmt when a .rs file is staged) through bin/pre-commit-run. The formatters
+# write: a person's commit that needs formatting is refused with the files rewritten,
+# to stage; for an agent's commit, bin/pre-commit-run stages what they rewrote and
+# runs the checks again, when every rewritten file was staged with no unstaged changes,
+# so it can't stage work the agent left out.
 # Agents' commits ($AI_AGENT set) also run the slower agent-pre-commit, which adds
 # clippy and the tests; those take too long for a person's commit.
 # bin/pre-commit-run and bin/slop-lint are copies from llm-toolbox, so the hooks work
@@ -22,62 +22,6 @@ refuse() {
 root=$(git rev-parse --show-toplevel)
 command -v python3 >/dev/null || refuse "the hooks need python3 (and uv)"
 [ -x "$root/bin/pre-commit-run" ] || refuse "no bin/pre-commit-run in $root; this checkout predates the hooks"
-
-format_staged_rust() {
-  [ -f "$root/Cargo.toml" ] && command -v cargo >/dev/null || return 0
-  local listed staged file
-  local -a needs=()
-  listed=$(cd "$root" && cargo fmt --check -- -l 2>/dev/null) && return 0
-  [ -n "$listed" ] || return 0
-  staged=$(git -C "$root" diff --cached --name-only --diff-filter=ACMR -- '*.rs')
-  while IFS= read -r file; do
-    file=${file#"$root/"}
-    printf '%s\n' "$staged" | grep -qxF -- "$file" || return 0
-    git -C "$root" diff --quiet -- "$file" || return 0
-    needs+=("$file")
-  done <<< "$listed"
-  (cd "$root" && cargo fmt) || return 0
-  git -C "$root" add -- "${needs[@]}"
-  echo "git-pre-commit: ran cargo fmt on the staged Rust and staged the result" >&2
-}
-
-# The staged files pre-commit's `types: [python]` would pick: a .py name, or a python
-# shebang. Not the copies from llm-toolbox, which change there and are copied back.
-staged_python() {
-  local file
-  git -C "$root" diff --cached --name-only --diff-filter=ACMR | while IFS= read -r file; do
-    case "$file" in
-      bin/pre-commit-run | bin/slop-lint) ;;
-      *.py) printf '%s\n' "$file" ;;
-      *) head -n1 "$root/$file" 2>/dev/null | grep -q '^#!.*python' && printf '%s\n' "$file" ;;
-    esac
-  done
-}
-
-# Like format_staged_rust, with ruff at the version .pre-commit-config.yaml pins:
-# only when every staged Python file ruff would change has no unstaged changes.
-format_staged_python() {
-  command -v uvx >/dev/null || return 0
-  local file listed
-  local -a staged=() needs=()
-  while IFS= read -r file; do [ -n "$file" ] && staged+=("$file"); done < <(staged_python)
-  [ "${#staged[@]}" -gt 0 ] || return 0
-  listed=$(cd "$root" && uvx -q ruff@0.14.4 format --check -- "${staged[@]}" 2>/dev/null \
-    | sed -n 's/^Would reformat: //p')
-  [ -n "$listed" ] || return 0
-  while IFS= read -r file; do
-    git -C "$root" diff --quiet -- "$file" || return 0
-    needs+=("$file")
-  done <<< "$listed"
-  (cd "$root" && uvx -q ruff@0.14.4 format -- "${needs[@]}" >/dev/null 2>&1) || return 0
-  git -C "$root" add -- "${needs[@]}"
-  echo "git-pre-commit: ran ruff format on the staged Python and staged the result" >&2
-}
-
-if [ -n "${AI_AGENT:-}" ]; then
-  format_staged_rust
-  format_staged_python
-fi
 
 "$root/bin/pre-commit-run" || exit 1
 
