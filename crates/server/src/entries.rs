@@ -55,8 +55,13 @@ impl Placed {
 impl PublicEntry {
     /// The card, rendered from the stored text by the current analyzer.
     pub fn card(&self) -> String {
+        self.card_with(self.superseded_by.clone())
+    }
+
+    /// The card, with `superseded_by` as the server's record of what replaced it.
+    pub fn card_with(&self, superseded_by: Option<String>) -> String {
         let context = CardContext {
-            superseded_by_version: self.superseded_by.clone(),
+            superseded_by_version: superseded_by,
             ..card_context(&self.id, &self.account_id, &self.display_name)
         };
         render_card(&analyze(&self.source), &context)
@@ -91,27 +96,59 @@ pub struct Previous<'a> {
     pub first_submitted_at: &'a str,
 }
 
-/// Stores an accepted submission as `pending` until `hold_until`, with the columns
-/// search filters on, and returns its row number and ID. With `previous`, it is a
-/// new version of that entry.
-pub async fn insert(
-    pool: &SqlitePool,
-    account_id: &str,
-    source: &str,
-    analysis: &Analysis,
-    hold_until: &str,
-    previous: Option<&Previous<'_>>,
+/// An accepted submission, as `insert` stores it.
+pub struct NewEntry<'a> {
+    pub account_id: &'a str,
+    pub source: &'a str,
+    pub analysis: &'a Analysis,
+    /// When its hold ends.
+    pub hold_until: &'a str,
+    /// The entry it is a new version of.
+    pub previous: Option<Previous<'a>>,
+    /// The batch it came in.
+    pub batch_seq: Option<i64>,
+    /// Whether its `slug` is new for the account: a first submission's, or one a new
+    /// version gives a chain that had none. Checked as free beforehand.
+    pub register_slug: bool,
+}
+
+/// Stores an accepted submission as `pending` until its hold ends, with the columns
+/// search filters on, and returns its row number and ID.
+pub async fn insert(pool: &SqlitePool, entry: &NewEntry<'_>) -> Result<(i64, String), sqlx::Error> {
+    let mut transaction = pool.begin().await?;
+    let inserted = insert_on(&mut transaction, entry).await?;
+    transaction.commit().await?;
+    Ok(inserted)
+}
+
+/// `insert` inside a caller's transaction, as a batch stores all its members in one.
+/// A first version with a `slug` registers it for the account, and the entry's
+/// `uses_runs` are recorded; both were checked beforehand.
+pub async fn insert_on(
+    transaction: &mut sqlx::SqliteConnection,
+    entry: &NewEntry<'_>,
 ) -> Result<(i64, String), sqlx::Error> {
+    let NewEntry {
+        account_id,
+        source,
+        analysis,
+        hold_until,
+        ref previous,
+        batch_seq,
+        register_slug,
+    } = *entry;
     let id = ids::new_id();
     let submitted_at = now();
-    let first_submitted_at = previous.map_or(submitted_at.as_str(), |p| p.first_submitted_at);
-    let previous_seq = previous.map(|p| p.seq);
+    let first_submitted_at = previous
+        .as_ref()
+        .map_or(submitted_at.as_str(), |p| p.first_submitted_at);
+    let previous_seq = previous.as_ref().map(|p| p.seq);
     let columns = columns(analysis);
-    let mut transaction = pool.begin().await?;
     let seq = sqlx::query_scalar!(
         r#"INSERT INTO entries (id, account_id, status, source, submitted_at, first_submitted_at,
-               embargo_until, analyzer_version, outcome, kind, stage, hold_until, previous_seq)
-           VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               embargo_until, analyzer_version, outcome, kind, stage, hold_until, previous_seq,
+               batch_seq)
+           VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            RETURNING seq AS "seq!: i64""#,
         id,
         account_id,
@@ -124,13 +161,44 @@ pub async fn insert(
         columns.kind,
         columns.stage,
         hold_until,
-        previous_seq
+        previous_seq,
+        batch_seq
     )
     .fetch_one(&mut *transaction)
     .await?;
-    write_derived(&mut transaction, seq, analysis, previous_seq).await?;
-    transaction.commit().await?;
+    write_derived(&mut *transaction, seq, analysis, previous_seq).await?;
+    if let (Some(slug), true) = (&analysis.fields.slug, register_slug) {
+        sqlx::query!(
+            "INSERT INTO slugs (account_id, slug, entry_seq) VALUES (?, ?, ?)",
+            account_id,
+            slug,
+            seq
+        )
+        .execute(&mut *transaction)
+        .await?;
+    }
+    write_runs(&mut *transaction, seq, account_id, analysis).await?;
     Ok((seq, id))
+}
+
+/// Records which declared runs an entry uses.
+async fn write_runs(
+    transaction: &mut sqlx::SqliteConnection,
+    seq: i64,
+    account_id: &str,
+    analysis: &Analysis,
+) -> Result<(), sqlx::Error> {
+    for run in &analysis.fields.uses_runs {
+        sqlx::query!(
+            "INSERT INTO entry_runs (entry_seq, account_id, run_id) VALUES (?, ?, ?)",
+            seq,
+            account_id,
+            run
+        )
+        .execute(&mut *transaction)
+        .await?;
+    }
+    Ok(())
 }
 
 /// Replaces a pending entry's text and everything read from it, and restarts its
@@ -177,10 +245,27 @@ pub async fn replace(
     sqlx::query!("DELETE FROM entry_unknown_fields WHERE entry_seq = ?", seq)
         .execute(&mut *transaction)
         .await?;
-    let previous_seq = sqlx::query_scalar!("SELECT previous_seq FROM entries WHERE seq = ?", seq)
-        .fetch_one(&mut *transaction)
+    sqlx::query!("DELETE FROM entry_runs WHERE entry_seq = ?", seq)
+        .execute(&mut *transaction)
         .await?;
-    write_derived(&mut transaction, seq, analysis, previous_seq).await?;
+    let kept = sqlx::query!(
+        "SELECT previous_seq, batch_seq, account_id FROM entries WHERE seq = ?",
+        seq
+    )
+    .fetch_one(&mut *transaction)
+    .await?;
+    write_derived(&mut transaction, seq, analysis, kept.previous_seq).await?;
+    write_runs(&mut transaction, seq, &kept.account_id, analysis).await?;
+    // A batch is held as one: a PUT on any member restarts every member's hold.
+    if let Some(batch_seq) = kept.batch_seq {
+        sqlx::query!(
+            "UPDATE entries SET hold_until = ? WHERE batch_seq = ? AND status = 'pending'",
+            hold_until,
+            batch_seq
+        )
+        .execute(&mut *transaction)
+        .await?;
+    }
     transaction.commit().await?;
     Ok(true)
 }
@@ -274,6 +359,8 @@ pub struct OwnEntry {
     pub first_submitted_at: String,
     /// The version this one replaced.
     pub previous_id: Option<String>,
+    /// The batch it came in, which publishes as one.
+    pub batch_seq: Option<i64>,
 }
 
 /// The entry `id` if `account_id` wrote it.
@@ -286,7 +373,8 @@ pub async fn own_entry(
         OwnEntry,
         r#"SELECT seq AS "seq!: i64", id, status, source, hold_until, embargo_until,
                   first_submitted_at,
-                  (SELECT p.id FROM entries p WHERE p.seq = entries.previous_seq) AS "previous_id?"
+                  (SELECT p.id FROM entries p WHERE p.seq = entries.previous_seq) AS "previous_id?",
+                  batch_seq
            FROM entries WHERE id = ? AND account_id = ?"#,
         id,
         account_id
@@ -523,4 +611,232 @@ pub async fn successor(
     .fetch_optional(pool)
     .await?;
     Ok(row.map(|row| (row.id, row.status)))
+}
+
+/// The entry a slug names for `account_id`: the latest public version of the chain
+/// it was given to, if one is public.
+pub async fn public_by_slug(
+    pool: &SqlitePool,
+    account_id: &str,
+    slug: &str,
+) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar!(
+        r#"WITH RECURSIVE chain(seq) AS (
+               SELECT entry_seq FROM slugs WHERE account_id = ?1 AND slug = ?2
+               UNION ALL
+               SELECT e.seq FROM entries e JOIN chain c ON e.previous_seq = c.seq
+           )
+           SELECT e.id AS "id!" FROM entries e JOIN chain c ON c.seq = e.seq
+           WHERE e.status = 'public' ORDER BY e.seq DESC LIMIT 1"#,
+        account_id,
+        slug
+    )
+    .fetch_optional(pool)
+    .await
+}
+
+/// Whether `account_id` has given out `slug`.
+pub async fn slug_taken(
+    pool: &SqlitePool,
+    account_id: &str,
+    slug: &str,
+) -> Result<bool, sqlx::Error> {
+    let found = sqlx::query_scalar!(
+        "SELECT 1 AS found FROM slugs WHERE account_id = ? AND slug = ?",
+        account_id,
+        slug
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(found.is_some())
+}
+
+/// The embargo date of the chain a slug names, if its latest version is held back:
+/// for the rule that a public entry may not refer to an embargoed one.
+pub async fn slug_embargo(
+    pool: &SqlitePool,
+    account_id: &str,
+    slug: &str,
+) -> Result<Option<String>, sqlx::Error> {
+    let row = sqlx::query!(
+        r#"WITH RECURSIVE chain(seq) AS (
+               SELECT entry_seq FROM slugs WHERE account_id = ?1 AND slug = ?2
+               UNION ALL
+               SELECT e.seq FROM entries e JOIN chain c ON e.previous_seq = c.seq
+           )
+           SELECT e.embargo_until FROM entries e JOIN chain c ON c.seq = e.seq
+           WHERE e.status IN ('pending', 'screening', 'embargoed')
+           ORDER BY e.seq DESC LIMIT 1"#,
+        account_id,
+        slug
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.and_then(|row| row.embargo_until))
+}
+
+/// Whether `account_id` has declared run `run_id`.
+pub async fn run_declared(
+    pool: &SqlitePool,
+    account_id: &str,
+    run_id: &str,
+) -> Result<bool, sqlx::Error> {
+    let found = sqlx::query_scalar!(
+        "SELECT 1 AS found FROM runs WHERE account_id = ? AND id = ?",
+        account_id,
+        run_id
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(found.is_some())
+}
+
+/// The runs an entry uses, each with its description once every entry using it is
+/// public (design.md, Agent interface), or `None` before then.
+pub async fn entry_runs(
+    pool: &SqlitePool,
+    id: &str,
+) -> Result<Vec<(String, Option<String>)>, sqlx::Error> {
+    let rows = sqlx::query!(
+        r#"SELECT r.id, r.declaration,
+                  NOT EXISTS (
+                      SELECT 1 FROM entry_runs other JOIN entries x ON x.seq = other.entry_seq
+                      WHERE other.account_id = r.account_id AND other.run_id = r.id
+                        AND x.status != 'public'
+                  ) AS "all_public!: bool"
+           FROM entry_runs er JOIN runs r ON r.account_id = er.account_id AND r.id = er.run_id
+           WHERE er.entry_seq = (SELECT seq FROM entries WHERE id = ?) ORDER BY r.id"#,
+        id
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            let description = row.all_public.then(|| {
+                serde_json::from_str::<serde_json::Value>(&row.declaration)
+                    .ok()
+                    .and_then(|run| run["description"].as_str().map(str::to_string))
+                    .unwrap_or_default()
+            });
+            (row.id, description)
+        })
+        .collect())
+}
+
+/// Stores a batch and returns its row number and ID.
+pub async fn insert_batch(
+    transaction: &mut sqlx::SqliteConnection,
+    account_id: &str,
+) -> Result<(i64, String), sqlx::Error> {
+    let id = ids::new_id();
+    let created_at = now();
+    let seq = sqlx::query_scalar!(
+        r#"INSERT INTO batches (id, account_id, created_at) VALUES (?, ?, ?)
+           RETURNING seq AS "seq!: i64""#,
+        id,
+        account_id,
+        created_at
+    )
+    .fetch_one(&mut *transaction)
+    .await?;
+    Ok((seq, id))
+}
+
+/// Stores a run a batch declares, as the batch sent it.
+pub async fn insert_run(
+    transaction: &mut sqlx::SqliteConnection,
+    account_id: &str,
+    run_id: &str,
+    declaration: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        "INSERT INTO runs (account_id, id, declaration) VALUES (?, ?, ?)",
+        account_id,
+        run_id,
+        declaration
+    )
+    .execute(&mut *transaction)
+    .await?;
+    Ok(())
+}
+
+/// A batch's pending members, if `account_id` made it.
+pub async fn batch_members(
+    pool: &SqlitePool,
+    batch_id: &str,
+    account_id: &str,
+) -> Result<Option<Vec<i64>>, sqlx::Error> {
+    let batch = sqlx::query_scalar!(
+        r#"SELECT seq AS "seq!: i64" FROM batches WHERE id = ? AND account_id = ?"#,
+        batch_id,
+        account_id
+    )
+    .fetch_optional(pool)
+    .await?;
+    let Some(batch_seq) = batch else {
+        return Ok(None);
+    };
+    let members = sqlx::query_scalar!(
+        r#"SELECT seq AS "seq!: i64" FROM entries WHERE batch_seq = ? AND status = 'pending'"#,
+        batch_seq
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(Some(members))
+}
+
+/// The slug a chain of versions has: the slug given to its first entry, if any.
+pub async fn chain_slug(pool: &SqlitePool, seq: i64) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar!(
+        r#"WITH RECURSIVE chain(seq, previous) AS (
+               SELECT seq, previous_seq FROM entries WHERE seq = ?
+               UNION ALL
+               SELECT e.seq, e.previous_seq FROM entries e JOIN chain c ON e.seq = c.previous
+           )
+           SELECT s.slug AS "slug!" FROM slugs s JOIN chain c ON s.entry_seq = c.seq LIMIT 1"#,
+        seq
+    )
+    .fetch_optional(pool)
+    .await
+}
+
+/// The account's entries, not yet withdrawn, whose text refers to `slug:<slug>`, with
+/// their embargo dates.
+pub async fn referrers(
+    pool: &SqlitePool,
+    account_id: &str,
+    slug: &str,
+) -> Result<Vec<(i64, String, Option<String>)>, sqlx::Error> {
+    let pattern = format!("%slug:{slug}%");
+    let rows = sqlx::query!(
+        r#"SELECT seq AS "seq!: i64", id, embargo_until, source FROM entries
+           WHERE account_id = ? AND source LIKE ?
+             AND status IN ('pending', 'screening', 'embargoed', 'public')"#,
+        account_id,
+        pattern
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .filter(|row| analyzer::slug_references(&row.source).contains(slug))
+        .map(|row| (row.seq, row.id, row.embargo_until))
+        .collect())
+}
+
+/// The IDs of the entries that use a run, in order.
+pub async fn run_entries(
+    pool: &SqlitePool,
+    account_id: &str,
+    run_id: &str,
+) -> Result<Vec<String>, sqlx::Error> {
+    sqlx::query_scalar!(
+        "SELECT e.id FROM entry_runs er JOIN entries e ON e.seq = er.entry_seq
+         WHERE er.account_id = ? AND er.run_id = ? ORDER BY e.seq",
+        account_id,
+        run_id
+    )
+    .fetch_all(pool)
+    .await
 }

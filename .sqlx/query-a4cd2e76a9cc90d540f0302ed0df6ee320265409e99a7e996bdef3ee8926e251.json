@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT e.id FROM entry_runs er JOIN entries e ON e.seq = er.entry_seq\n         WHERE er.account_id = ? AND er.run_id = ? ORDER BY e.seq",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "a4cd2e76a9cc90d540f0302ed0df6ee320265409e99a7e996bdef3ee8926e251"
+}

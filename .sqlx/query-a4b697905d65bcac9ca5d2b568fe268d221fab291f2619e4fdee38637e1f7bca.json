@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT seq AS \"seq!: i64\", id, status, source, hold_until, embargo_until,\n                  first_submitted_at,\n                  (SELECT p.id FROM entries p WHERE p.seq = entries.previous_seq) AS \"previous_id?\"\n           FROM entries WHERE id = ? AND account_id = ?",
+  "query": "SELECT seq AS \"seq!: i64\", id, status, source, hold_until, embargo_until,\n                  first_submitted_at,\n                  (SELECT p.id FROM entries p WHERE p.seq = entries.previous_seq) AS \"previous_id?\",\n                  batch_seq\n           FROM entries WHERE id = ? AND account_id = ?",
   "describe": {
     "columns": [
       {
@@ -90,6 +90,17 @@
             "name": "id"
           }
         }
+      },
+      {
+        "name": "batch_seq",
+        "ordinal": 8,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "batch_seq"
+          }
+        }
       }
     ],
     "parameters": {
@@ -103,8 +114,9 @@
       true,
       true,
       false,
+      true,
       true
     ]
   },
-  "hash": "a8d4064e60cf96696f56176926cdf12ffa2822a74c718de8caaa61fca9931220"
+  "hash": "a4b697905d65bcac9ca5d2b568fe268d221fab291f2619e4fdee38637e1f7bca"
 }

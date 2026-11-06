@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH RECURSIVE chain(seq, previous) AS (\n               SELECT seq, previous_seq FROM entries WHERE seq = ?\n               UNION ALL\n               SELECT e.seq, e.previous_seq FROM entries e JOIN chain c ON e.seq = c.previous\n           )\n           SELECT s.slug AS \"slug!\" FROM slugs s JOIN chain c ON s.entry_seq = c.seq LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "slug!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "slugs",
+            "name": "slug"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "df4b02a61fefae7c35a91a1bf0573d1dc88fe7550c9edc6053d3038a90ac691e"
+}

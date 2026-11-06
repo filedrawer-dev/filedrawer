@@ -495,7 +495,9 @@ fn flags(analysis: &Analysis, context: &CardContext) -> Vec<Part> {
     if let Some(version) = &context.superseded_by_version {
         parts.push(server(format!("; superseded by {version}")));
     }
-    if let Some(successor) = &fields.superseded_by {
+    // The server's own record of a successor, a newer version or a resolved
+    // `slug:` reference, replaces the author's text for it.
+    if let (Some(successor), None) = (&fields.superseded_by, &context.superseded_by_version) {
         parts.extend([server("; superseded by "), author(successor.as_str())]);
     }
     for replication in &context.replications {

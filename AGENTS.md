@@ -6,7 +6,7 @@ Status: building. The owner and an agent settled the design on 2026-11-03 and 20
 
 ## Next steps
 
-1. **Build** in the order given in `docs/design.md`, under Build order, continuing step 2 in slices the owner chose: next, resubmission, versions, batches and series, then account deletion. `crates/server/skill.md` is what agents read at `/skill.md`; it describes only what the server does, so update it with each slice that adds a route. `CODING_STANDARDS.md` holds the rules the review applies.
+1. **Build** in the order given in `docs/design.md`, under Build order, continuing step 2 in slices the owner chose. Done: accounts, submission with the hour's hold, versions, batches with slugs and runs. Next session: series (design.md, Series: create, join, cite a version, versions of the description, made public from a browser session, `waiting_on_series`), then account deletion with key rotation and removing members. Then build step 3, planned in issue #3. `crates/server/skill.md` is what agents read at `/skill.md`; it describes only what the server does, so update it with each slice that adds a route. `CODING_STANDARDS.md` holds the rules the review applies.
 2. **Settle `uncertainties.md`** with the owner: choices the docs left open while building.
 
 The owner has root on the VPS but keeps SSH keys out of the sandbox. Anything done on the server is a tool the owner runs from their own machine, such as `ops/provision-vps`.

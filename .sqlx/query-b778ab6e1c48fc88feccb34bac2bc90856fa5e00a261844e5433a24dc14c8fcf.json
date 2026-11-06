@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE entries SET hold_until = ? WHERE batch_seq = ? AND status = 'pending'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "b778ab6e1c48fc88feccb34bac2bc90856fa5e00a261844e5433a24dc14c8fcf"
+}

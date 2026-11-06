@@ -13,9 +13,10 @@ use serde_json::json;
 
 use crate::auth::TokenAccount;
 use crate::embargo::{parse_date, release, token_may_change};
-use crate::entries::{self, OwnEntry};
+use crate::entries::{self, NewEntry, OwnEntry};
 use crate::error::AppError;
 use crate::jobs::{end_hold, hold_until};
+use crate::links::{self, Linked, SlugRule};
 use crate::respond::{DELIMITER, Format, card_and_warnings};
 use crate::{AppState, time};
 use ::time::OffsetDateTime;
@@ -23,34 +24,46 @@ use ::time::format_description::well_known::Rfc3339;
 
 /// A submission that passed every check: the text to store and what the analyzer
 /// read from it.
-struct Accepted {
-    source: String,
-    analysis: Analysis,
+pub(crate) struct Accepted {
+    pub source: String,
+    pub analysis: Analysis,
 }
 
 /// What an earlier submission fixes for a resubmission or a new version: the first
 /// submission date the embargo cap counts from, and the embargo in force, which a
 /// token may not drop or bring within 7 days.
-struct Prior<'a> {
+pub(crate) struct Prior<'a> {
     first_submitted_at: &'a str,
     embargo_in_force: Option<&'a str>,
 }
 
 impl<'a> Prior<'a> {
-    /// For `entry`. Its embargo is in force while it is pending or embargoed; a public
-    /// entry's old date no longer holds anything back.
+    /// For a new version of `entry`. Its embargo is in force only while it is
+    /// embargoed; a public entry's old date no longer holds anything back.
     fn of(entry: &'a OwnEntry) -> Prior<'a> {
-        let in_force = matches!(entry.status.as_str(), "pending" | "embargoed");
         Prior {
             first_submitted_at: &entry.first_submitted_at,
-            embargo_in_force: entry.embargo_until.as_deref().filter(|_| in_force),
+            embargo_in_force: entry
+                .embargo_until
+                .as_deref()
+                .filter(|_| entry.status == "embargoed"),
+        }
+    }
+
+    /// For a PUT on the pending `entry`. A draft's own embargo holds nothing back yet,
+    /// so its author may drop or shorten it (the owner's decision, 2026-11-05). A
+    /// pending new version of an embargoed entry is bound by that entry's embargo.
+    fn for_put(entry: &'a OwnEntry, previous: Option<&'a OwnEntry>) -> Prior<'a> {
+        Prior {
+            first_submitted_at: &entry.first_submitted_at,
+            embargo_in_force: previous.and_then(|previous| Prior::of(previous).embargo_in_force),
         }
     }
 }
 
 /// Runs every check a submission must pass, given what an earlier submission fixes,
 /// and lists every reason it fails.
-fn accept(body: &Bytes, prior: Option<Prior<'_>>) -> Result<Accepted, AppError> {
+pub(crate) fn accept(body: &Bytes, prior: Option<Prior<'_>>) -> Result<Accepted, AppError> {
     if body.len() > MAX_ENTRY_BYTES {
         return Err(AppError::Refused {
             status: StatusCode::PAYLOAD_TOO_LARGE,
@@ -159,16 +172,18 @@ pub async fn submit(
     body: Bytes,
 ) -> Result<Response, AppError> {
     let accepted = accept(&body, None)?;
+    check_links(&state, &account, &accepted, SlugRule::New, None).await?;
     let publish_at = hold_until(time::now_utc());
-    let (_, id) = entries::insert(
-        &state.pool,
-        &account.id,
-        &accepted.source,
-        &accepted.analysis,
-        &publish_at,
-        None,
-    )
-    .await?;
+    let new = NewEntry {
+        account_id: &account.id,
+        source: &accepted.source,
+        analysis: &accepted.analysis,
+        hold_until: &publish_at,
+        previous: None,
+        batch_seq: None,
+        register_slug: true,
+    };
+    let (_, id) = entries::insert(&state.pool, &new).await?;
     let held = Held {
         id: &id,
         account: &account,
@@ -209,20 +224,30 @@ pub async fn new_version(
         return Err(conflict);
     }
     let accepted = accept(&body, Some(Prior::of(&entry)))?;
-    let publish_at = hold_until(time::now_utc());
-    let previous = entries::Previous {
-        seq: entry.seq,
-        first_submitted_at: &entry.first_submitted_at,
-    };
-    let inserted = entries::insert(
-        &state.pool,
-        &account.id,
-        &accepted.source,
-        &accepted.analysis,
-        &publish_at,
-        Some(&previous),
+    let chain_slug = entries::chain_slug(&state.pool, entry.seq).await?;
+    let register_slug = chain_slug.is_none() && accepted.analysis.fields.slug.is_some();
+    check_links(
+        &state,
+        &account,
+        &accepted,
+        SlugRule::Version(chain_slug),
+        None,
     )
-    .await;
+    .await?;
+    let publish_at = hold_until(time::now_utc());
+    let new = NewEntry {
+        account_id: &account.id,
+        source: &accepted.source,
+        analysis: &accepted.analysis,
+        hold_until: &publish_at,
+        previous: Some(entries::Previous {
+            seq: entry.seq,
+            first_submitted_at: &entry.first_submitted_at,
+        }),
+        batch_seq: None,
+        register_slug,
+    };
+    let inserted = entries::insert(&state.pool, &new).await;
     let (_, new_id) = match inserted {
         Ok(inserted) => inserted,
         // Another version won the race between the check above and this insert; the
@@ -246,6 +271,32 @@ pub async fn new_version(
         previous: Some(&id),
     };
     Ok(held_reply(&state, format, StatusCode::CREATED, &held))
+}
+
+/// Refuses one entry whose slug, runs or references don't check out. `seq` is the
+/// stored entry a PUT replaces.
+async fn check_links(
+    state: &AppState,
+    account: &TokenAccount,
+    accepted: &Accepted,
+    slug_rule: SlugRule,
+    seq: Option<i64>,
+) -> Result<(), AppError> {
+    let linked = [Linked {
+        label: "the entry".into(),
+        analysis: &accepted.analysis,
+        source: &accepted.source,
+        slug_rule,
+        seq,
+    }];
+    let problems = links::problems(state, account, &linked, &Default::default()).await?;
+    if problems.is_empty() {
+        return Ok(());
+    }
+    Err(AppError::Refused {
+        status: StatusCode::UNPROCESSABLE_ENTITY,
+        reasons: problems,
+    })
 }
 
 /// The conflict to answer when entry `seq` already has a live newer version, naming it.
@@ -290,7 +341,21 @@ pub async fn resubmit(
     body: Bytes,
 ) -> Result<Response, AppError> {
     let entry = own_pending(&state, &id, &account).await?;
-    let accepted = accept(&body, Some(Prior::of(&entry)))?;
+    let previous = match &entry.previous_id {
+        Some(previous) => entries::own_entry(&state.pool, previous, &account.id).await?,
+        None => None,
+    };
+    let accepted = accept(&body, Some(Prior::for_put(&entry, previous.as_ref())))?;
+    // A slug names the entry for good, and other entries may already refer to it.
+    let kept = analyzer::analyze(&entry.source).fields.slug;
+    check_links(
+        &state,
+        &account,
+        &accepted,
+        SlugRule::Put(kept),
+        Some(entry.seq),
+    )
+    .await?;
     let publish_at = hold_until(time::now_utc());
     let replaced = entries::replace(
         &state.pool,
@@ -322,6 +387,11 @@ pub async fn publish(
     format: Format,
 ) -> Result<Response, AppError> {
     let entry = own_pending(&state, &id, &account).await?;
+    if entry.batch_seq.is_some() {
+        return Err(AppError::Conflict(format!(
+            "entry {id} came in a batch, which publishes as one: POST to its batch's publish url"
+        )));
+    }
     let Some(placed) = end_hold(&state, entry.seq, time::now_utc()).await? else {
         return Err(AppError::Conflict(format!(
             "entry {id}'s hold has already ended"

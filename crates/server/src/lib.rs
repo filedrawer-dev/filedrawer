@@ -11,6 +11,7 @@ mod entries;
 mod error;
 mod ids;
 pub mod jobs;
+mod links;
 pub mod mail;
 mod pages;
 mod passwords;
@@ -71,6 +72,8 @@ pub fn app(state: AppState) -> Router {
         )
         .route("/e/{id}/publish", post(routes::submit::publish))
         .route("/e/{id}/versions", post(routes::submit::new_version))
+        .route("/entries/batch", post(routes::batch::submit_batch))
+        .route("/batches/{id}/publish", post(routes::batch::publish_batch))
         .route("/search", get(routes::read::search))
         .route("/cards.txt", get(routes::read::cards))
         .route("/tags", get(routes::read::tags))

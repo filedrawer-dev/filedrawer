@@ -145,3 +145,21 @@ Choices the docs left open, made while building the analyzer. Once the owner set
 - Options: release every version of a chain together on the embargo date, as design.md says, or let each version keep its own date.
 - Chosen: for now, each version is placed by its own date, and nothing releases an embargo until build step 4 adds the release job. "Both release together" is unbuilt.
 - Against: until then, a version with a shorter embargo than its predecessor's could become public first, though `previous:` names only public versions, so it doesn't reveal the embargoed one.
+
+## Batches: what holds them together
+
+- Options: a batch is held as one (one hour, restarted by a PUT on any member) and publishes only as one, as here; or its members are independent once accepted.
+- Chosen: as one. design.md publishes a batch as a unit, and its members refer to each other. A member can't be published alone, and a batch holds at most 100 entries.
+- Against: one slow member holds back the rest, and the hold job places members one by one in the same tick rather than in one transaction, so a failure partway leaves some public. Step 3's queue should place a batch in one step.
+
+## Where slug references resolve
+
+- Options: on `/e/<id>` only, as here, or on cards in search and `/cards.txt` too.
+- Chosen: `/e/<id>` lists each reference that names a public entry, and its card shows a resolved `superseded_by`. Cards in search and `/cards.txt` show `slug:<name>` as written.
+- Against: a reader scanning cards sees a slug, not an ID, and has to open the entry to follow it. Resolving there costs a lookup per card.
+
+## Slugs and run IDs
+
+- Options: 1 to 64 of `A-Za-z0-9._-`, as here, or any one-line text.
+- Chosen: the narrow set. Both are shown beside the server's own words, above the author-text delimiter, so nothing in one may look like a field.
+- Against: entry-format.md doesn't set a limit, so an agent with a longer or accented name is refused. Run fields other than `id` and `description` are stored without checks.

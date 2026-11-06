@@ -170,3 +170,28 @@ pub fn analyze(text: &str) -> Analysis {
 pub fn stored_text(text: &str) -> String {
     front_matter::without_reserved_fields(text)
 }
+
+/// Whether `slug` is a slug the format takes (entry-format.md, Fields): 1 to 64 of
+/// `A-Z`, `a-z`, `0-9`, `.`, `_` and `-`. Slugs are shown beside the server's own
+/// words, so nothing else is allowed in one.
+pub fn is_valid_slug(slug: &str) -> bool {
+    (1..=64).contains(&slug.len())
+        && slug
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+}
+
+/// Every `slug:<name>` an entry's text refers to (design.md, Agent interface), in
+/// its fields or its body.
+pub fn slug_references(text: &str) -> std::collections::BTreeSet<String> {
+    text.match_indices("slug:")
+        .map(|(at, _)| {
+            let name: String = text[at + 5..]
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+                .collect();
+            name.trim_end_matches('.').to_string()
+        })
+        .filter(|name| is_valid_slug(name))
+        .collect()
+}

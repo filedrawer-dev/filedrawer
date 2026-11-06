@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT previous_seq, batch_seq, account_id FROM entries WHERE seq = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "previous_seq",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "previous_seq"
+          }
+        }
+      },
+      {
+        "name": "batch_seq",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "batch_seq"
+          }
+        }
+      },
+      {
+        "name": "account_id",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "account_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "6c4575fad923a385a80c08a1054e153ae0e3ce5999653066d0ef86b73dbd9633"
+}

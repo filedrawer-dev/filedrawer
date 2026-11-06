@@ -1,16 +1,16 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT previous_seq FROM entries WHERE seq = ?",
+  "query": "SELECT seq AS \"seq!: i64\" FROM entries WHERE batch_seq = ? AND status = 'pending'",
   "describe": {
     "columns": [
       {
-        "name": "previous_seq",
+        "name": "seq!: i64",
         "ordinal": 0,
         "type_info": "Integer",
         "origin": {
           "Table": {
             "table": "entries",
-            "name": "previous_seq"
+            "name": "seq"
           }
         }
       }
@@ -19,8 +19,8 @@
       "Right": 1
     },
     "nullable": [
-      true
+      false
     ]
   },
-  "hash": "43772b3c657b50926e1ea59a2b8a36935e68bb3696f432f32dd1e2ebac3452bd"
+  "hash": "c0ea157271e7c2efd31297ca68b61bb942b90b7147a6f38a361cb896accae560"
 }

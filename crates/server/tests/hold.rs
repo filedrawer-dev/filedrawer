@@ -200,27 +200,55 @@ async fn the_hour_running_out_publishes_the_entry_by_itself() {
 }
 
 #[tokio::test]
-async fn a_put_over_a_token_can_neither_drop_an_embargo_nor_bring_it_within_7_days() {
-    // design.md, Agent interface: "resubmit without the embargo" would otherwise be
-    // an early release by token.
+async fn a_draft_may_drop_or_shorten_its_own_embargo() {
+    // Nothing has been held back yet, so the 7-day rule doesn't bind a draft (the
+    // owner's decision, 2026-11-05).
     let app = test_app().await;
     let id = app
         .submit_held(&entry("T", &format!("embargo_until: {}\n", date_in(30))))
         .await;
     let url = format!("/e/{id}");
-    let dropped = app.put_as(&url, &app.token, entry("T", "")).await;
-    assert_eq!(
-        dropped.status,
-        StatusCode::UNPROCESSABLE_ENTITY,
-        "{}",
-        dropped.body
-    );
-    assert!(dropped.body.contains("embargo"), "{}", dropped.body);
     let sooner = app
         .put_as(
             &url,
             &app.token,
-            entry("T", &format!("embargo_until: {}\n", date_in(3))),
+            entry("T", &format!("embargo_until: {}\n", date_in(2))),
+        )
+        .await;
+    assert_eq!(sooner.status, StatusCode::OK, "{}", sooner.body);
+    let dropped = app.put_as(&url, &app.token, entry("T", "")).await;
+    assert_eq!(dropped.status, StatusCode::OK, "{}", dropped.body);
+    let published = app.post(&format!("{url}/publish"), "").await;
+    assert_eq!(
+        field(&published.body, "status"),
+        Some("public"),
+        "{}",
+        published.body
+    );
+}
+
+#[tokio::test]
+async fn a_pending_version_of_an_embargoed_entry_keeps_its_embargo_and_lists_every_reason() {
+    // design.md, Agent interface: "resubmit without the embargo" would otherwise be
+    // an early release by token.
+    let app = test_app().await;
+    let embargoed = app
+        .submit(&entry("T", &format!("embargo_until: {}\n", date_in(30))))
+        .await;
+    let version = id_in(
+        &app.post(
+            &format!("/e/{embargoed}/versions"),
+            entry("U", &format!("embargo_until: {}\n", date_in(30))),
+        )
+        .await
+        .body,
+    );
+    let url = format!("/e/{version}");
+    let sooner = app
+        .put_as(
+            &url,
+            &app.token,
+            entry("U", &format!("embargo_until: {}\n", date_in(3))),
         )
         .await;
     assert_eq!(
@@ -229,31 +257,23 @@ async fn a_put_over_a_token_can_neither_drop_an_embargo_nor_bring_it_within_7_da
         "{}",
         sooner.body
     );
+    let text = entry("U", "").replace("title: U\n", "");
+    let both = app.put_as(&url, &app.token, text).await;
+    assert_eq!(both.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(both.body.contains("`title` is missing"), "{}", both.body);
+    assert!(
+        both.body.contains("remove an entry's embargo"),
+        "{}",
+        both.body
+    );
     for allowed in [date_in(10), date_in(60)] {
         let reply = app
             .put_as(
                 &url,
                 &app.token,
-                entry("T", &format!("embargo_until: {allowed}\n")),
+                entry("U", &format!("embargo_until: {allowed}\n")),
             )
             .await;
         assert_eq!(reply.status, StatusCode::OK, "{allowed}: {}", reply.body);
     }
-}
-
-#[tokio::test]
-async fn a_refused_put_lists_the_embargo_reason_with_every_other() {
-    let app = test_app().await;
-    let id = app
-        .submit_held(&entry("T", &format!("embargo_until: {}\n", date_in(30))))
-        .await;
-    let text = entry("T", "").replace("title: T\n", "");
-    let reply = app.put_as(&format!("/e/{id}"), &app.token, text).await;
-    assert_eq!(reply.status, StatusCode::UNPROCESSABLE_ENTITY);
-    assert!(reply.body.contains("`title` is missing"), "{}", reply.body);
-    assert!(
-        reply.body.contains("remove an entry's embargo"),
-        "{}",
-        reply.body
-    );
 }

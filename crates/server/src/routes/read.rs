@@ -18,6 +18,7 @@ use crate::embargo::parse_date;
 use crate::entries::{self, Filters};
 use crate::error::AppError;
 use crate::respond::{DELIMITER, Format, card_and_warnings};
+use analyzer::slug_references;
 
 pub async fn entry(
     State(state): State<AppState>,
@@ -33,7 +34,24 @@ pub async fn entry(
         Results::Read(table) => table.rows.iter().map(row_note).collect(),
         Results::NotRead(_) => Vec::new(),
     };
-    let card = entry.card();
+    // `slug:<name>` references resolve here, at read time (design.md, Agent
+    // interface), to the latest public entry with that slug in the author's account.
+    let mut links = Vec::new();
+    for name in slug_references(&entry.source) {
+        if let Some(id) = entries::public_by_slug(&state.pool, &entry.account_id, &name).await? {
+            links.push((name, id));
+        }
+    }
+    let successor_slug = analysis
+        .fields
+        .superseded_by
+        .as_deref()
+        .and_then(|value| value.strip_prefix("slug:"));
+    let resolved_successor = successor_slug
+        .and_then(|name| links.iter().find(|(slug, _)| slug == name))
+        .map(|(_, id)| id.clone());
+    let card = entry.card_with(entry.superseded_by.clone().or(resolved_successor));
+    let runs = entries::entry_runs(&state.pool, &entry.id).await?;
     let mut text = format!(
         "id: {}\nstatus: public\nanalyzer: v{ANALYZER_VERSION}\nsubmitted: {}\npublished: {}\nauthor: {}, account {}\n",
         entry.id,
@@ -48,6 +66,25 @@ pub async fn entry(
     if let Some(newer) = &entry.superseded_by {
         text.push_str(&format!("superseded_by: {newer}\n"));
     }
+    // Slug names are author text, but only ones made of [A-Za-z0-9._-] are read, so
+    // they can't forge a line.
+    for (name, id) in &links {
+        text.push_str(&format!("link: slug:{name} = {id}\n"));
+    }
+    // A run's description and its list of entries become public together, once every
+    // entry using it is. The description is author text, so it goes below the
+    // delimiter; run IDs follow the slug rule, so they can't forge a line.
+    let mut descriptions = String::new();
+    for (run, description) in &runs {
+        match description {
+            Some(description) => {
+                let users = entries::run_entries(&state.pool, &entry.account_id, run).await?;
+                text.push_str(&format!("run: {run}: entries {}\n", users.join(" ")));
+                descriptions.push_str(&format!("run: {run}: {}\n", one_line(description)));
+            }
+            None => text.push_str(&format!("run: {run}: description not public yet\n")),
+        }
+    }
     if notes.is_empty() {
         text.push_str("rows: Results table not read\n");
     }
@@ -57,7 +94,7 @@ pub async fn entry(
     // The card holds author text (the title, hypothesis, tags and more), so it goes
     // below the delimiter with the entry itself.
     text.push_str(&format!(
-        "{DELIMITER}\n{}\n{}",
+        "{DELIMITER}\n{descriptions}{}\n{}",
         card_and_warnings(&card, &[]),
         entry.source
     ));

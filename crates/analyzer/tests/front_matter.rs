@@ -459,3 +459,13 @@ proptest::proptest! {
         proptest::prop_assert_eq!(analysis.refusals.clone(), vec![]);
     }
 }
+
+#[test]
+fn slug_references_are_found_in_fields_and_body_and_end_at_punctuation() {
+    let text = "replicates: slug:main-run\n\nSee slug:pilot_2. And slug:x.y, then slug: alone.";
+    let found: Vec<String> = analyzer::slug_references(text).into_iter().collect();
+    assert_eq!(found, vec!["main-run", "pilot_2", "x.y"]);
+    assert!(analyzer::is_valid_slug("a.b-c_1"));
+    assert!(!analyzer::is_valid_slug("x\nstatus: public"));
+    assert!(!analyzer::is_valid_slug(&"a".repeat(65)));
+}

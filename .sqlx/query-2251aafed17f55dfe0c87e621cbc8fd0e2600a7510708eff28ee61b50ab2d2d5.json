@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH RECURSIVE chain(seq) AS (\n               SELECT entry_seq FROM slugs WHERE account_id = ?1 AND slug = ?2\n               UNION ALL\n               SELECT e.seq FROM entries e JOIN chain c ON e.previous_seq = c.seq\n           )\n           SELECT e.embargo_until FROM entries e JOIN chain c ON c.seq = e.seq\n           WHERE e.status IN ('pending', 'screening', 'embargoed')\n           ORDER BY e.seq DESC LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "embargo_until",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "embargo_until"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "2251aafed17f55dfe0c87e621cbc8fd0e2600a7510708eff28ee61b50ab2d2d5"
+}
