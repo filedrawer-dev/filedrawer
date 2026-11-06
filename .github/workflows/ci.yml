@@ -24,6 +24,8 @@ jobs:
           components: rustfmt, clippy
       - if: hashFiles('Cargo.toml') != ''
         uses: Swatinem/rust-cache@v2
+      - if: hashFiles('Cargo.toml') != ''
+        uses: taiki-e/install-action@nextest
       - uses: astral-sh/setup-uv@v10.3.3
       - run: uvx pre-commit@4.7.0 run --all-files
       - run: bin/agent-pre-commit

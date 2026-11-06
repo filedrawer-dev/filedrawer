@@ -7,7 +7,9 @@
 # only when it fails. They run one after the other, since cargo locks target/ anyway.
 # bin/tests, the tests of the hook scripts, run through uvx with a pinned pytest, so the
 # host needs no venv. The Rust checks wait for Cargo.toml, and share the repo's target/
-# so dependencies build once.
+# so dependencies build once. The tests run under cargo-nextest, which prints only the
+# failures and a summary (.config/nextest.toml); it skips doctests, so cargo test --doc
+# runs those.
 set -e
 repo=$(git rev-parse --show-toplevel)
 tree=$(mktemp -d)
@@ -22,7 +24,12 @@ failed=0
 uvx --quiet pytest@9.2.0 -q -p no:cacheprovider bin/tests >"$logs/pytest" 2>&1 || { cat "$logs/pytest"; failed=1; }
 if [ -f Cargo.toml ]; then
   export CARGO_TARGET_DIR="$repo/target"
-  cargo test --quiet >"$logs/test" 2>&1 || { cat "$logs/test"; failed=1; }
+  if ! cargo nextest --version >/dev/null 2>&1; then
+    echo "COMMIT REFUSED: cargo-nextest is missing; install it with: cargo install cargo-nextest --locked" >&2
+    exit 1
+  fi
+  cargo nextest run --cargo-quiet >"$logs/test" 2>&1 || { cat "$logs/test"; failed=1; }
+  cargo test --doc --quiet >"$logs/doc" 2>&1 || { cat "$logs/doc"; failed=1; }
   cargo clippy --quiet --all-targets -- -D warnings >"$logs/clippy" 2>&1 || { cat "$logs/clippy"; failed=1; }
 fi
 exit $failed

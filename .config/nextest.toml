@@ -1,0 +1,5 @@
+# cargo-nextest's settings: a run prints only the tests that fail, with their output,
+# and one summary line (AGENTS.md, Checks).
+[profile.default]
+status-level = "fail"
+final-status-level = "fail"
