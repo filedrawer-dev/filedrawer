@@ -196,3 +196,81 @@ def test_smoke_env_refuses_an_id_that_isnt_one(box, account):
 def test_the_staging_unit_reads_the_smoke_account_setting():
     unit = (REPO / "ops/remote/staging-service.sh").read_text()
     assert "EnvironmentFile=-/etc/filedrawer/staging-smoke.env" in unit
+
+
+# caddy.sh
+
+CADDY = REPO / "ops/remote/caddy.sh"
+STAGING_KEY = "ab" * 32
+OLD_HASH = "$2a$14$abcdefghijklmnopqrstuuABCDEFGHIJKLMNOPQRSTUVWXYZ01234"
+
+
+@pytest.fixture
+def caddy_box(box):
+    (box.root / "etc/caddy").mkdir(parents=True)
+    executable(
+        box.tmp / "fakes" / "caddy",
+        f'#!/bin/sh\necho "caddy $*" >> {box.log}\n'
+        "[ \"$1\" = hash-password ] && echo '$2a$14$NEWNEWNEWNEWNEWNEWNEWNuNEWNEWNEWNEWNEWNEWNEWNEWNEWNEWNE'\n"
+        "exit 0\n",
+    )
+    return box
+
+
+def caddyfile(box) -> str:
+    return (box.root / "etc/caddy/Caddyfile").read_text()
+
+
+def test_caddy_without_a_password_keeps_the_hash_already_on_the_server(caddy_box):
+    (caddy_box.root / "etc/caddy/Caddyfile").write_text(
+        f"staging.filedrawer.dev {{\n\tbasic_auth {{\n\t\towner {OLD_HASH}\n\t}}\n}}\n"
+    )
+    result = run(
+        caddy_box,
+        CADDY,
+        STAGING_USER="owner",
+        STAGING_SECRETS=f"\t{STAGING_KEY}",
+    )
+    assert result.returncode == 0, result.stderr
+    assert f"owner {OLD_HASH}" in caddyfile(caddy_box)
+    assert "files.staging.filedrawer.dev" in caddyfile(caddy_box)
+    assert "hash-password" not in caddy_box.log.read_text()
+
+
+def test_caddy_keeps_a_hash_only_for_the_same_user(caddy_box):
+    (caddy_box.root / "etc/caddy/Caddyfile").write_text(
+        f"staging.filedrawer.dev {{\n\tbasic_auth {{\n\t\tsomeone {OLD_HASH}\n\t}}\n}}\n"
+    )
+    result = run(
+        caddy_box,
+        CADDY,
+        STAGING_USER="owner",
+        STAGING_SECRETS=f"\t{STAGING_KEY}",
+    )
+    assert result.returncode != 0
+    assert "someone" in caddyfile(caddy_box), "the old file is left as it was"
+
+
+def test_caddy_with_a_password_hashes_it_anew(caddy_box):
+    result = run(
+        caddy_box,
+        CADDY,
+        STAGING_USER="owner",
+        STAGING_SECRETS=f"s3cret\t{STAGING_KEY}",
+    )
+    assert result.returncode == 0, result.stderr
+    assert "owner $2a$14$NEWNEW" in caddyfile(caddy_box)
+
+
+def test_caddy_without_a_password_or_a_hash_to_keep_fails_naming_the_full_wizard(
+    caddy_box,
+):
+    result = run(
+        caddy_box,
+        CADDY,
+        STAGING_USER="owner",
+        STAGING_SECRETS=f"\t{STAGING_KEY}",
+    )
+    assert result.returncode != 0
+    assert "ops/provision-vps" in result.stderr
+    assert not (caddy_box.root / "etc/caddy/Caddyfile").exists()

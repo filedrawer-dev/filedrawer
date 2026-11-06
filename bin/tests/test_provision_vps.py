@@ -312,3 +312,128 @@ def test_admin_before_the_first_deploy_asks_nothing_and_says_to_rerun(stage):
     assert "ops/provision-vps admin" in result.stdout
     assert "account ID" not in result.stdout
     assert stage.log.read_text().count("ssh ") == 1
+
+
+# The whole wizard, rerun with --only-new on a server it has set up
+
+
+@pytest.fixture
+def rerun(tmp_path):
+    """Runs `ops/provision-vps --only-new` with empty stdin, so any prompt fails it,
+    against fakes for ssh, gh, getent, curl, ssh-keygen and the browser openers, and
+    an ops/.vps.env holding every saved value."""
+    fakes = tmp_path / "fakes"
+    fakes.mkdir()
+    log = tmp_path / "log"
+    log.touch()
+    present = tmp_path / "present"
+    present.write_text(
+        "/etc/filedrawer/staging-mail.env\n/etc/filedrawer/staging-screening.env\n"
+    )
+
+    def fake(name, body):
+        path = fakes / name
+        path.write_text("#!/bin/bash\n" + body)
+        path.chmod(path.stat().st_mode | stat.S_IXUSR)
+
+    fake(
+        "ssh",
+        'for last in "$@"; do :; done\n'
+        f'echo "ssh $last" >> {log}\n'
+        f'n=$(grep -c "^ssh " {log})\n'
+        f"cat > {tmp_path}/sent-$n\n"
+        'case "$last" in\n'
+        f'  "test -f "*) grep -qx "${{last#test -f }}" {present} ;;\n'
+        "  *os-release*) echo ID=debian ;;\n"
+        "  *ssh_host_ed25519_key.pub*) echo 'ssh-ed25519 AAAAhost root@vps' ;;\n"
+        "  *) exit 0 ;;\n"
+        "esac\n",
+    )
+    fake(
+        "gh",
+        f'echo "gh $*" >> {log}\n'
+        'case "$1 $2" in\n'
+        '  "secret list") printf "DEPLOY_SSH_KEY\\nSMOKE_TEST_TOKEN\\nSTAGING_KEY\\n" ;;\n'
+        "esac\n"
+        "cat > /dev/null\n",
+    )
+    fake("getent", 'echo "203.0.113.7 STREAM $2"\n')
+    fake(
+        "curl",
+        f'echo "curl $*" >> {log}\n'
+        'case "$*" in *robots.txt*) echo 200 ;; *X-Staging-Key*) echo 200 ;; *) echo 401 ;; esac\n',
+    )
+    fake("ssh-keygen", f'echo "ssh-keygen $*" >> {log}\n')
+    opened = tmp_path / "opened"
+    for opener in ("wslview", "explorer.exe", "xdg-open", "open"):
+        fake(opener, f'echo "$1" >> {opened}\n')
+    ops = tmp_path / "ops"
+    ops.mkdir()
+    env_file = ops / ".vps.env"
+    env_file.write_text(
+        "VPS_HOST='203.0.113.7'\nSTAGING_USER='owner'\n"
+        f"STAGING_KEY='{STAGING_KEY}'\nSMTP_USER='noreply@filedrawer.dev'\n"
+        "MAIL_FROM='File Drawer <noreply@filedrawer.dev>'\nSMOKE_ACCOUNT='a-smoke1'\n"
+        "SCREENING_DAILY_USD='1'\nADMIN_ACCOUNT='a-owner1'\n"
+    )
+
+    def run() -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["bash", WIZARD, "--only-new"],
+            cwd=tmp_path,
+            input="",
+            env={**os.environ, "PATH": f"{fakes}:{os.environ['PATH']}"},
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+
+    def sent_scripts() -> list[str]:
+        return [
+            path.read_text()
+            for path in sorted(tmp_path.glob("sent-*"), key=lambda p: int(p.name[5:]))
+        ]
+
+    return SimpleNamespace(
+        run=run, log=log, present=present, sent=sent_scripts, opened=opened
+    )
+
+
+def script(name: str) -> str:
+    return (REPO / "ops/remote" / name).read_text()
+
+
+def test_only_new_reruns_every_stage_without_asking_for_anything_saved(rerun):
+    result = rerun.run()
+    assert result.returncode == 0, result.stdout + result.stderr
+    sent = rerun.sent()
+    assert script("staging-service.sh") in sent
+    assert script("base.sh") in sent
+    # Caddy keeps the password hash on the server: no password, only the key.
+    assert f"\t{STAGING_KEY}\n" + script("caddy.sh") in sent
+    # Mail and screening are in place already.
+    assert script("mail.sh") not in sent
+    assert not any(s.endswith(script("screening.sh")) for s in sent)
+    # The deploy key stays; its scripts are reinstalled.
+    log = rerun.log.read_text()
+    assert "ssh-keygen" not in log
+    assert "gh secret set DEPLOY_SSH_KEY" not in log
+    assert script("filedrawer-receive") in sent
+    # The admin account is granted again, and the smoke token kept.
+    assert "ADMIN_ACCOUNT=a-owner1 bash -s" in log
+    assert "gh secret set SMOKE_TEST_TOKEN" not in log
+    assert "SMOKE_ACCOUNT=a-smoke1 bash -s" in log
+    assert script("smoke-env.sh") in sent
+    for question in ("Press Enter", "Make a new token anyway", "Run it on"):
+        assert question not in result.stdout, question
+    # Everything resolves, so nothing opens a browser.
+    assert not rerun.opened.exists(), rerun.opened.read_text()
+
+
+def test_only_new_runs_a_stage_whose_settings_the_server_lacks(rerun):
+    rerun.present.write_text("/etc/filedrawer/staging-mail.env\n")
+    result = rerun.run()
+    # Screening isn't set up yet, so it asks for the API key, and stdin is empty.
+    assert result.returncode != 0
+    assert "API key" in result.stdout

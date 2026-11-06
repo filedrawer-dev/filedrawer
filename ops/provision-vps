@@ -239,7 +239,9 @@ run_wizard() {
 # `ops/provision-vps smoke` runs only the last stage, the smoke test's account and
 # secrets, on a server the full wizard has set up; `ops/provision-vps screening`
 # only staging's API key and cap, and `ops/provision-vps admin` only making your
-# staging account the admin.
+# staging account the admin. `ops/provision-vps --only-new` reruns every stage, for
+# new stages and new logic, without asking for anything ops/.vps.env, the server or
+# GitHub already holds: no passwords or keys again, and no pauses.
 
 TOTAL_STAGES=12
 ENV_FILE="ops/.vps.env"
@@ -252,6 +254,11 @@ need_gh() {
     warn "gh isn't logged in here. Run 'gh auth login', then rerun the wizard."
     exit 1
   fi
+}
+
+# staging_has_secret NAME: whether the `staging` environment holds secret NAME.
+staging_has_secret() {
+  gh secret list --env staging --json name --jq '.[].name' 2>/dev/null | grep -qx "$1"
 }
 
 # set_staging_secret NAME VALUE: sets NAME as a secret of the `staging` environment,
@@ -277,10 +284,9 @@ smoke_stage() {
     exit 1
   fi
   SMOKE_ACCOUNT=$(_existing SMOKE_ACCOUNT || true)
-  local reply status=0 secrets
-  secrets=$(gh secret list --env staging --json name --jq '.[].name' 2>/dev/null || true)
-  if [[ -n "$SMOKE_ACCOUNT" ]] && grep -qx SMOKE_TEST_TOKEN <<< "$secrets" \
-    && ! confirm "SMOKE_TEST_TOKEN is set already. Make a new token anyway?"; then
+  local reply status=0
+  if [[ -n "$SMOKE_ACCOUNT" ]] && staging_has_secret SMOKE_TEST_TOKEN \
+    && { (( ONLY_NEW )) || ! confirm "SMOKE_TEST_TOKEN is set already. Make a new token anyway?"; }; then
     note "Kept the token in SMOKE_TEST_TOKEN."
   else
     step "Making the account and a token on $VPS_HOST..."
@@ -313,6 +319,9 @@ smoke_stage() {
 # and screening). Until it runs, staging publishes everything unscreened.
 screening_stage() {
   stage "Screening with the Anthropic API"
+  if keep_existing "Screening" /etc/filedrawer/staging-screening.env; then
+    return 0
+  fi
   say "Staging screens entries with Haiku and Sonnet on an API key of its own, billed to"
   say "you, within a daily cap. Until this runs, staging publishes everything unscreened."
   open_url "https://console.anthropic.com/settings/keys"
@@ -350,9 +359,12 @@ admin_stage() {
     pause
     return 0
   fi
-  say "Sign up and verify on staging first if you haven't."
-  open_url "https://staging.filedrawer.dev/account"
-  step "Copy the account ID the page shows (a-...)."
+  # Under --only-new a saved ID needs no page to copy it from.
+  if ! (( ONLY_NEW )) || [[ -z "$(_existing ADMIN_ACCOUNT || true)" ]]; then
+    say "Sign up and verify on staging first if you haven't."
+    open_url "https://staging.filedrawer.dev/account"
+    step "Copy the account ID the page shows (a-...)."
+  fi
   ask ADMIN_ACCOUNT "Your account ID:"
   if [[ ! "$ADMIN_ACCOUNT" =~ ^a-[0-9a-z]+$ ]]; then
     warn "That isn't an account ID (a- then lowercase letters and digits). Rerun to try again."
@@ -385,6 +397,41 @@ ask_new_secret() {
   fi
 }
 
+# --only-new reruns the wizard for new stages and new logic without asking for what
+# it already has: a prompt whose value ops/.vps.env holds takes it, nothing pauses,
+# and the stages below skip secrets the server or GitHub already holds.
+ONLY_NEW=0
+if [[ "${1:-}" == --only-new ]]; then
+  ONLY_NEW=1
+  shift
+  # The library above the STAGES marker isn't hand-edited, so its ask is copied as
+  # library_ask and wrapped here.
+  eval "library_$(declare -f ask)"
+  ask() {
+    local saved
+    saved=$(_existing "$1" || true)
+    if [[ -z "$saved" ]]; then
+      library_ask "$@"
+      return
+    fi
+    printf -v "$1" '%s' "$saved"
+    note "$2 $saved (saved)"
+  }
+  pause() { :; }
+fi
+
+# remote_has PATH: whether PATH exists on the server.
+remote_has() {
+  ssh -o BatchMode=yes "root@$VPS_HOST" "test -f $1" < /dev/null
+}
+
+# keep_existing WHAT PATH: under --only-new, true (and says so) when PATH exists on
+# the server, so the stage that would write it, and ask for its secret, is skipped.
+keep_existing() {
+  (( ONLY_NEW )) && remote_has "$2" || return 1
+  say "$1 is set up on the server already; --only-new keeps it. ✓"
+}
+
 case "${1:-}" in
   smoke | screening | admin)
     TOTAL_STAGES=1
@@ -413,40 +460,61 @@ note "IPv6: ${VPS_IPV6:-none found}"
 pause
 
 stage "DNS: point the names at the server"
-say "In Cloudflare's DNS for filedrawer.dev, add these records, each set to"
-say "'DNS only' (the grey cloud), not 'Proxied' (design.md, Hosting and operations):"
-open_url "https://dash.cloudflare.com/"
-for name in "filedrawer.dev" "www.filedrawer.dev" "staging.filedrawer.dev" "files.filedrawer.dev" "files.staging.filedrawer.dev"; do
-  step "$name  A     $VPS_HOST"
-  [[ -n "$VPS_IPV6" ]] && step "$name  AAAA  $VPS_IPV6"
+# resolves NAME: whether NAME resolves to the server.
+resolves() { getent ahostsv4 "$1" | awk '{print $1}' | grep -qx "$VPS_HOST"; }
+records=("filedrawer.dev" "www.filedrawer.dev" "staging.filedrawer.dev" "files.filedrawer.dev" "files.staging.filedrawer.dev")
+if (( ONLY_NEW )); then
+  # Only the served names that don't resolve yet; nothing to do when all do.
+  waiting=()
+  for name in "staging.filedrawer.dev" "files.staging.filedrawer.dev"; do
+    resolves "$name" || waiting+=("$name")
+  done
+  records=("${waiting[@]}")
+else
+  waiting=("staging.filedrawer.dev")
+fi
+if (( ${#records[@]} > 0 )); then
+  say "In Cloudflare's DNS for filedrawer.dev, add these records, each set to"
+  say "'DNS only' (the grey cloud), not 'Proxied' (design.md, Hosting and operations):"
+  open_url "https://dash.cloudflare.com/"
+  for name in "${records[@]}"; do
+    step "$name  A     $VPS_HOST"
+    [[ -n "$VPS_IPV6" ]] && step "$name  AAAA  $VPS_IPV6"
+  done
+  note "Only staging and its files host are served for now. Caddy asks for certificates only for the"
+  note "sites it serves, so the other names can sit idle until launch, when www"
+  note "redirects to filedrawer.dev."
+  pause "Press Enter once the records are saved"
+fi
+for name in "${waiting[@]}"; do
+  step "Waiting for $name to resolve to $VPS_HOST (Ctrl-C to stop)..."
+  hinted=""
+  until resolves "$name"; do
+    elsewhere=$(getent ahostsv4 "$name" | awk 'NR == 1 {print $1}')
+    if [[ -n "$elsewhere" && -z "$hinted" ]]; then
+      printf '\n'
+      warn "$name resolves to $elsewhere, not $VPS_HOST. If that is a"
+      warn "Cloudflare address, the record is proxied: click its orange cloud to make it"
+      warn "grey ('DNS only'). Still waiting..."
+      hinted=yes
+    fi
+    sleep 15
+    printf '.'
+  done
+  printf '\n'
 done
-note "Only staging and its files host are served for now. Caddy asks for certificates only for the"
-note "sites it serves, so the other names can sit idle until launch, when www"
-note "redirects to filedrawer.dev."
-pause "Press Enter once the records are saved"
-step "Waiting for staging.filedrawer.dev to resolve to $VPS_HOST (Ctrl-C to stop)..."
-hinted=""
-until getent ahostsv4 staging.filedrawer.dev | awk '{print $1}' | grep -qx "$VPS_HOST"; do
-  elsewhere=$(getent ahostsv4 staging.filedrawer.dev | awk 'NR == 1 {print $1}')
-  if [[ -n "$elsewhere" && -z "$hinted" ]]; then
-    printf '\n'
-    warn "staging.filedrawer.dev resolves to $elsewhere, not $VPS_HOST. If that is a"
-    warn "Cloudflare address, the record is proxied: click its orange cloud to make it"
-    warn "grey ('DNS only'). Still waiting..."
-    hinted=yes
-  fi
-  sleep 15
-  printf '.'
-done
-printf '\n'
-say "staging.filedrawer.dev resolves. ✓"
+if (( ${#waiting[@]} > 0 )); then
+  say "${waiting[*]} resolve. ✓"
+else
+  say "Every served name resolves. ✓"
+fi
 pause
 
 stage "Base system"
 say "Updates, automatic security updates, the firewall (SSH, HTTP, HTTPS), a 1 GB"
 say "swapfile, journald capped at 200 MB and 14 days, and SSH logins by key only."
 warn "This turns off password logins over SSH. The preflight showed your key works."
-if confirm "Run it on $VPS_HOST?"; then
+if (( ONLY_NEW )) || confirm "Run it on $VPS_HOST?"; then
   remote base.sh
 else
   SKIPPED+=("base system (ops/remote/base.sh)")
@@ -473,7 +541,13 @@ say "Agents get in with a staging key instead, sent as an X-Staging-Key header, 
 say "their API token needs the Authorization header that basic auth uses."
 ask STAGING_USER "Basic-auth user name:"
 write_env STAGING_USER "$STAGING_USER"
-ask_new_secret STAGING_PASSWORD "Basic-auth password:"
+if (( ONLY_NEW )); then
+  # The server keeps the hash it has; caddy.sh fails if it has none.
+  STAGING_PASSWORD=""
+  note "--only-new keeps the basic-auth password the server has."
+else
+  ask_new_secret STAGING_PASSWORD "Basic-auth password:"
+fi
 if [[ "$STAGING_PASSWORD" == *$'\t'* ]]; then
   warn "The password holds a tab, which the wizard can't send. Rerun with another."
   exit 1
@@ -490,6 +564,7 @@ note "The staging key is in $ENV_FILE. Give it to agents with their API token."
 pause
 
 stage "Mail through Purelymail"
+if ! keep_existing "Mail" /etc/filedrawer/staging-mail.env; then
 say "Staging sends verification and password-reset email through Purelymail SMTP."
 say "Purelymail must know filedrawer.dev, and the registrar needs the DNS records it"
 say "asks for, or mail lands in spam."
@@ -510,6 +585,7 @@ remote_with_secret mail.sh SMTP_PASSWORD "$SMTP_PASSWORD" "SMTP_USER=$SMTP_USER"
 unset SMTP_PASSWORD
 note "To test it later: sign up at https://staging.filedrawer.dev/signup and watch"
 note "for the verification email."
+fi
 pause
 
 stage "Deploy key for GitHub Actions"
@@ -532,13 +608,17 @@ gh api -X PUT "repos/{owner}/{repo}/environments/staging" --input - > /dev/null 
 JSON
 gh api -X POST "repos/{owner}/{repo}/environments/staging/deployment-branch-policies" \
   -f name=main -f type=branch > /dev/null 2>&1 || true   # already there on a rerun
-key_dir=$(mktemp -d)
-trap 'rm -rf "$key_dir"' EXIT
-ssh-keygen -q -t ed25519 -N '' -C "filedrawer-deploy@github-actions" -f "$key_dir/key"
-remote deploy-user.sh "DEPLOY_PUBLIC_KEY=$(cat "$key_dir/key.pub")"
-gh secret set DEPLOY_SSH_KEY --env staging < "$key_dir/key"
-WRITTEN_SECRET+=("DEPLOY_SSH_KEY (environment staging)")
-rm -rf "$key_dir"
+if (( ONLY_NEW )) && staging_has_secret DEPLOY_SSH_KEY; then
+  say "DEPLOY_SSH_KEY is set already; --only-new keeps the key. ✓"
+else
+  key_dir=$(mktemp -d)
+  trap 'rm -rf "$key_dir"' EXIT
+  ssh-keygen -q -t ed25519 -N '' -C "filedrawer-deploy@github-actions" -f "$key_dir/key"
+  remote deploy-user.sh "DEPLOY_PUBLIC_KEY=$(cat "$key_dir/key.pub")"
+  gh secret set DEPLOY_SSH_KEY --env staging < "$key_dir/key"
+  WRITTEN_SECRET+=("DEPLOY_SSH_KEY (environment staging)")
+  rm -rf "$key_dir"
+fi
 set_var VPS_HOST "$VPS_HOST"
 # The host key comes over the root login the preflight already trusts, never from a
 # scan that would trust whoever answers first.
