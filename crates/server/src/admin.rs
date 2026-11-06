@@ -1,5 +1,5 @@
-//! What the owner does from a shell on the server until accounts arrive in slice 2:
-//! create an account and give it a token.
+//! What the owner does from a shell on the server: create an account, give it a
+//! token, and make it the admin.
 
 use sqlx::SqlitePool;
 
