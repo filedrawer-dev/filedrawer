@@ -37,6 +37,12 @@ impl FileStore {
         }
     }
 
+    /// The bytes free on the store's filesystem for an unprivileged writer.
+    pub fn free_bytes(&self) -> io::Result<u64> {
+        let stats = rustix::fs::statvfs(&self.root)?;
+        Ok(stats.f_bavail.saturating_mul(stats.f_frsize))
+    }
+
     /// The right to change the store, held while a change and its records commit.
     pub async fn write(&self) -> Writer<'_> {
         Writer {

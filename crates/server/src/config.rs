@@ -38,6 +38,9 @@ pub struct Config {
     pub files_url: Option<String>,
     /// Attached files' bytes: `files/` beside the database file.
     pub files_dir: PathBuf,
+    /// The most bytes of attached files the site stores in all (design.md,
+    /// Attached code: 20 GB in production, 2 GB elsewhere).
+    pub attachment_store_cap_bytes: i64,
 }
 
 /// How to reach the SMTP server. Its Debug output leaves the password out.
@@ -223,8 +226,13 @@ impl Config {
             .parent()
             .unwrap_or(Path::new(""))
             .join("files");
+        let attachment_store_cap_bytes = match environment {
+            Environment::Production => 20_000_000_000,
+            Environment::Staging | Environment::Dev => 2_000_000_000,
+        };
         Ok(Config {
             files_dir,
+            attachment_store_cap_bytes,
             database,
             listen,
             environment,

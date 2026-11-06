@@ -61,11 +61,30 @@ pub async fn upload(
             ));
         }
         Stored::StoreFull => {
-            tell_owner_storage_is_full(&state).await?;
-            return Err(refused(
-                StatusCode::INSUFFICIENT_STORAGE,
-                vec!["the site's storage for attachments is full; publish the code on GitHub or Zenodo instead".into()],
-            ));
+            tell_owner(
+                &state,
+                "attachment storage full",
+                "attachment storage is full",
+                format!(
+                    "the files it stores have reached the cap of {} bytes",
+                    state.attachment_store_cap_bytes
+                ),
+            )
+            .await?;
+            return Err(storage_full());
+        }
+        Stored::DiskLow => {
+            tell_owner(
+                &state,
+                "attachment disk low",
+                "the disk for attachments is nearly full",
+                format!(
+                    "storing more would leave under {} bytes free on the disk that holds them",
+                    state.attachment_disk_floor_bytes
+                ),
+            )
+            .await?;
+            return Err(storage_full());
         }
     };
     // Each path is the sender's own text, so the file lines go below the delimiter.
@@ -86,22 +105,29 @@ pub async fn upload(
     Ok(format.reply(StatusCode::CREATED, text, json))
 }
 
-/// Emails the admins, once a day, that attachment storage is full.
-async fn tell_owner_storage_is_full(state: &AppState) -> Result<(), AppError> {
-    if !attachments::first_notice_today(&state.pool, "attachment storage full").await? {
+/// The refusal when the site can't store more attachments, at its cap or its disk's
+/// floor.
+fn storage_full() -> AppError {
+    refused(
+        StatusCode::INSUFFICIENT_STORAGE,
+        vec!["the site's storage for attachments is full; publish the code on GitHub or Zenodo instead".into()],
+    )
+}
+
+/// Emails the admins, once a day for each `kind`, that uploads are refused: the
+/// subject says `what`, and the body `why`.
+async fn tell_owner(state: &AppState, kind: &str, what: &str, why: String) -> Result<(), AppError> {
+    if !attachments::first_notice_today(&state.pool, kind).await? {
         return Ok(());
     }
-    tracing::error!("attachment storage is full; uploads are refused");
+    tracing::error!(%why, "{what}; uploads are refused");
     for to in accounts::admin_emails(&state.pool).await? {
         send_later(
             &state.mailer,
             Email {
                 to,
-                subject: "File Drawer: attachment storage is full".into(),
-                body: format!(
-                    "{} refuses new attachments: the files it stores have reached the cap of {} bytes.\n",
-                    state.public_url, state.attachment_store_cap_bytes
-                ),
+                subject: format!("File Drawer: {what}"),
+                body: format!("{} refuses new attachments: {why}.\n", state.public_url),
             },
         );
     }

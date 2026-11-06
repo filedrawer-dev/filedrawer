@@ -159,7 +159,8 @@ pub fn files_dir() -> Arc<tempfile::TempDir> {
 }
 
 /// The state every test app shares: an in-memory database and mailer, and the
-/// attached files in `files_dir`.
+/// attached files in `files_dir`. No disk floor, since the test machine's disk may
+/// be nearly full.
 pub fn state(pool: sqlx::SqlitePool, outbox: &Outbox, files_dir: &std::path::Path) -> AppState {
     AppState {
         pool,
@@ -172,7 +173,8 @@ pub fn state(pool: sqlx::SqlitePool, outbox: &Outbox, files_dir: &std::path::Pat
         screen_test_account: None,
         files_url: Some(FILES_URL.to_string()),
         files: Arc::new(FileStore::open(files_dir.join("files")).unwrap()),
-        attachment_store_cap_bytes: filedrawer_server::ATTACHMENT_STORE_CAP_BYTES,
+        attachment_store_cap_bytes: 20_000_000_000,
+        attachment_disk_floor_bytes: 0,
     }
 }
 

@@ -62,12 +62,15 @@ pub struct AppState {
     pub files_url: Option<String>,
     /// Attached files' bytes.
     pub files: std::sync::Arc<file_store::FileStore>,
-    /// The most bytes of attached files the site stores in all (design.md: 20 GB).
+    /// The most bytes of attached files the site stores in all
+    /// (`Config::attachment_store_cap_bytes`).
     pub attachment_store_cap_bytes: i64,
+    /// Uploads are refused when they would leave the disk with fewer bytes free.
+    pub attachment_disk_floor_bytes: u64,
 }
 
-/// The site's cap on stored attachments (design.md, Attached code: 20 GB).
-pub const ATTACHMENT_STORE_CAP_BYTES: i64 = 20_000_000_000;
+/// The free disk an upload must leave (design.md, Attached code: 5 GB).
+pub const ATTACHMENT_DISK_FLOOR_BYTES: u64 = 5_000_000_000;
 
 /// The router with every route.
 pub fn app(state: AppState) -> Router {

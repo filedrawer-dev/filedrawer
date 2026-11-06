@@ -176,3 +176,27 @@ fn attached_files_are_kept_beside_the_database() {
         std::path::Path::new("/srv/filedrawer/staging/data/files")
     );
 }
+
+#[test]
+fn the_attachment_cap_is_20_gb_in_production_and_2_gb_elsewhere() {
+    let production = config(
+        &[
+            &SMTP[..],
+            &[
+                ("FILEDRAWER_ENVIRONMENT", "production"),
+                ("FILEDRAWER_SCREENER", "anthropic"),
+                ("FILEDRAWER_ANTHROPIC_API_KEY", "sk-not-real"),
+            ],
+        ]
+        .concat(),
+    )
+    .unwrap();
+    assert_eq!(production.attachment_store_cap_bytes, 20_000_000_000);
+    for environment in ["staging", "dev"] {
+        let other = config(&[("FILEDRAWER_ENVIRONMENT", environment)]).unwrap();
+        assert_eq!(
+            other.attachment_store_cap_bytes, 2_000_000_000,
+            "{environment}"
+        );
+    }
+}

@@ -180,6 +180,8 @@ pub enum Stored {
     DailyCap,
     /// The site's storage cap is reached.
     StoreFull,
+    /// Storing the files would leave the disk under its floor.
+    DiskLow,
 }
 
 /// Why storing or deleting attached files failed.
@@ -191,9 +193,9 @@ pub enum StoreError {
     Files(#[from] std::io::Error),
 }
 
-/// Stores `files` as a new set of `account_id`'s, within the account's day and the
-/// site's storage cap (bytes of unique files). New files' bytes go into the file
-/// store before the set's records commit.
+/// Stores `files` as a new set of `account_id`'s, within the account's day, the
+/// site's storage cap (bytes of unique files) and the disk's floor. New files' bytes
+/// go into the file store before the set's records commit.
 pub async fn store(
     state: &AppState,
     account_id: &str,
@@ -233,6 +235,13 @@ pub async fn store(
         .await?;
     if new_bytes > 0 && held + new_bytes > state.attachment_store_cap_bytes {
         return Ok(Stored::StoreFull);
+    }
+    // Non-negative, as a sum of sizes.
+    let new_bytes = u64::try_from(new_bytes).unwrap_or(u64::MAX);
+    if new_bytes > 0
+        && state.files.free_bytes()?.saturating_sub(new_bytes) < state.attachment_disk_floor_bytes
+    {
+        return Ok(Stored::DiskLow);
     }
     let at = now();
     let id = format!("as-{}", ids::new_id());

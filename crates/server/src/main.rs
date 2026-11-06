@@ -166,7 +166,8 @@ async fn serve() -> ExitCode {
         screen_test_account: config.screen_test_account.clone(),
         files_url: config.files_url.clone(),
         files,
-        attachment_store_cap_bytes: filedrawer_server::ATTACHMENT_STORE_CAP_BYTES,
+        attachment_store_cap_bytes: config.attachment_store_cap_bytes,
+        attachment_disk_floor_bytes: filedrawer_server::ATTACHMENT_DISK_FLOOR_BYTES,
     };
     tokio::spawn(filedrawer_server::jobs::run_publisher(state.clone()));
     let router = app(state);

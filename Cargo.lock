@@ -582,6 +582,7 @@ dependencies = [
  "lettre",
  "rand",
  "reqwest",
+ "rustix",
  "serde",
  "serde_json",
  "sha2 0.11.1",

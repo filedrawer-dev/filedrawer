@@ -210,6 +210,37 @@ async fn past_the_sites_storage_cap_uploads_are_refused_and_the_owner_told_once(
 }
 
 #[tokio::test]
+async fn uploads_that_would_leave_the_disk_under_its_floor_are_refused_and_the_owner_told_once() {
+    let mut app = test_app().await;
+    app.state.attachment_disk_floor_bytes = u64::MAX;
+    app.router = filedrawer_server::app(app.state.clone());
+    let owner = common::owner(&app).await;
+    for _ in 0..2 {
+        let over = upload(
+            &app,
+            &app.token,
+            json!({"files": [file("author:c.txt", "x")]}),
+        )
+        .await;
+        assert_eq!(
+            over.status,
+            StatusCode::INSUFFICIENT_STORAGE,
+            "{}",
+            over.body
+        );
+    }
+    drop(owner);
+    let told: Vec<_> = app
+        .sent()
+        .await
+        .into_iter()
+        .filter(|email| email.to == "owner@example.com" && email.subject.contains("disk"))
+        .collect();
+    assert_eq!(told.len(), 1, "{told:?}");
+    assert_eq!(common::stored_texts(&app), Vec::<String>::new());
+}
+
+#[tokio::test]
 async fn without_a_files_host_attachments_are_off() {
     let mut app = test_app().await;
     app.state.files_url = None;
