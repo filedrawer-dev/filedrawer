@@ -268,13 +268,24 @@ async fn one_accounts_share_of_the_cap_doesnt_hold_back_another() {
 }
 
 async fn batch(app: &TestApp, entries: &[String]) -> serde_json::Value {
+    batch_with(app, json!([]), entries).await
+}
+
+/// Sends a batch declaring `runs`, which must be accepted, and returns the reply.
+async fn batch_with(
+    app: &TestApp,
+    runs: serde_json::Value,
+    entries: &[String],
+) -> serde_json::Value {
     let reply = app
         .send(
             Request::post("/entries/batch")
                 .header("authorization", format!("Bearer {}", app.token))
                 .header("content-type", "application/json")
                 .header("accept", "application/json")
-                .body(Body::from(json!({"entries": entries}).to_string()))
+                .body(Body::from(
+                    json!({"runs": runs, "entries": entries}).to_string(),
+                ))
                 .unwrap(),
         )
         .await;
@@ -636,22 +647,12 @@ fn run(description: &str) -> serde_json::Value {
            "route": "weights", "dates": ["2026-10-20", "2026-10-21"]})
 }
 
+/// Sends a batch declaring `runs` and returns its ID.
 async fn batch_with_runs(app: &TestApp, runs: serde_json::Value, entries: &[String]) -> String {
-    let reply = app
-        .send(
-            Request::post("/entries/batch")
-                .header("authorization", format!("Bearer {}", app.token))
-                .header("content-type", "application/json")
-                .header("accept", "application/json")
-                .body(Body::from(
-                    json!({"runs": runs, "entries": entries}).to_string(),
-                ))
-                .unwrap(),
-        )
-        .await;
-    assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
-    let reply: serde_json::Value = serde_json::from_str(&reply.body).unwrap();
-    reply["id"].as_str().unwrap().to_string()
+    batch_with(app, runs, entries).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string()
 }
 
 #[tokio::test]
