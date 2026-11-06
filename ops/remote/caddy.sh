@@ -30,14 +30,15 @@ unset STAGING_PASSWORD
 cat > /etc/caddy/Caddyfile <<CONF
 # Written by ops/remote/caddy.sh; edits here are lost on the next run.
 
-staging.filedrawer.dev {
-	# Staging is the owner's alone, and no crawler should index it.
+# Staging is the owner's alone: every request but robots.txt needs the staging key,
+# for agents, whose API token needs the Authorization header that basic auth uses,
+# or the password, for the owner's browser. No crawler should index it.
+(staging_gate) {
 	handle /robots.txt {
 		respond "User-agent: *
 Disallow: /
 "
 	}
-	# Agents send the staging key, leaving Authorization for their API token.
 	@agent header X-Staging-Key "${STAGING_KEY}"
 	handle @agent {
 		request_header -X-Staging-Key
@@ -51,25 +52,14 @@ Disallow: /
 	}
 }
 
+staging.filedrawer.dev {
+	import staging_gate
+}
+
 # Staging's attached files (design.md, Attached code): the same process, which
-# answers only /f/<sha256> on this host. Behind the same key and password.
+# answers only /f/<sha256> on this host.
 files.staging.filedrawer.dev {
-	handle /robots.txt {
-		respond "User-agent: *
-Disallow: /
-"
-	}
-	@agent header X-Staging-Key "${STAGING_KEY}"
-	handle @agent {
-		request_header -X-Staging-Key
-		reverse_proxy 127.0.0.1:8081
-	}
-	handle {
-		basic_auth {
-			${STAGING_USER} ${hash}
-		}
-		reverse_proxy 127.0.0.1:8081
-	}
+	import staging_gate
 }
 CONF
 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile

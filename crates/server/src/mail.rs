@@ -37,7 +37,6 @@ pub enum MailError {
     Build(#[from] lettre::error::Error),
 }
 
-/// Sends through an SMTP server, over implicit TLS.
 /// Sends `email` without waiting for it; a failure is logged.
 pub fn send_later(mailer: &std::sync::Arc<dyn Mailer>, email: Email) {
     let mailer = mailer.clone();
@@ -48,6 +47,7 @@ pub fn send_later(mailer: &std::sync::Arc<dyn Mailer>, email: Email) {
     });
 }
 
+/// Sends through an SMTP server, over implicit TLS.
 pub struct SmtpMailer {
     transport: AsyncSmtpTransport<Tokio1Executor>,
     from: Mailbox,

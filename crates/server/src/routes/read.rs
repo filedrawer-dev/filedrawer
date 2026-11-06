@@ -98,9 +98,13 @@ pub async fn entry(
     // The set's files: each path is author text, so the lines go below the delimiter.
     let set = attachments::entry_set(&state.pool, entry.seq).await?;
     let files_url = state.files_url.as_deref().unwrap_or("");
-    if let Some((set_id, files)) = &set {
-        text.push_str(&format!("attachments: {set_id}, {} files\n", files.len()));
-        for file in files {
+    if let Some(set) = &set {
+        text.push_str(&format!(
+            "attachments: {}, {} files\n",
+            set.id,
+            set.files.len()
+        ));
+        for file in &set.files {
             descriptions.push_str(&format!(
                 "file: {files_url}/f/{} {}\n",
                 file.sha256,
@@ -151,9 +155,9 @@ pub async fn entry(
             "title": cited.shown.as_ref().map(|(title, _)| title),
             "description": cited.shown.as_ref().map(|(_, description)| description),
         })),
-        "attachments": set.as_ref().map(|(set_id, files)| json!({
-            "id": set_id,
-            "files": files.iter().map(|file| json!({
+        "attachments": set.as_ref().map(|set| json!({
+            "id": set.id,
+            "files": set.files.iter().map(|file| json!({
                 "path": file.path,
                 "origin": file.origin,
                 "repo_url": file.repo_url,

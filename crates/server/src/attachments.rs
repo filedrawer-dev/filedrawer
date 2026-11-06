@@ -189,7 +189,9 @@ pub async fn store(
     files: &[NewFile],
     store_cap: i64,
 ) -> Result<Stored, sqlx::Error> {
-    let bytes: i64 = files.iter().map(|file| file.text.len() as i64).sum();
+    // A set is at most 1 MiB by `read`, so these sizes fit an i64.
+    let size = |file: &NewFile| i64::try_from(file.text.len()).unwrap_or(i64::MAX);
+    let bytes: i64 = files.iter().map(size).sum();
     let today = format!("{}%", &now()[..10]);
     let mut transaction = pool.begin().await?;
     let spent = sqlx::query_scalar!(
@@ -211,7 +213,7 @@ pub async fn store(
                 .fetch_optional(&mut *transaction)
                 .await?;
         if stored.is_none() && seen.insert(file.sha256.clone()) {
-            new_bytes += file.text.len() as i64;
+            new_bytes += size(file);
         }
     }
     let held = sqlx::query_scalar!(r#"SELECT COALESCE(SUM(bytes), 0) AS "held!: i64" FROM files"#)
@@ -233,7 +235,7 @@ pub async fn store(
     .fetch_one(&mut *transaction)
     .await?;
     for file in files {
-        let file_bytes = file.text.len() as i64;
+        let file_bytes = size(file);
         sqlx::query!(
             "INSERT OR IGNORE INTO files (sha256, text, bytes, created_at) VALUES (?, ?, ?, ?)",
             file.sha256,
@@ -283,11 +285,15 @@ pub struct SetFile {
     pub bytes: i64,
 }
 
-/// The ID and files of the set entry `seq` cites, if any, by path.
-pub async fn entry_set(
-    pool: &SqlitePool,
-    seq: i64,
-) -> Result<Option<(String, Vec<SetFile>)>, sqlx::Error> {
+/// The set an entry cites, as its page lists it.
+pub struct EntrySet {
+    pub id: String,
+    /// By path.
+    pub files: Vec<SetFile>,
+}
+
+/// The set entry `seq` cites, if any.
+pub async fn entry_set(pool: &SqlitePool, seq: i64) -> Result<Option<EntrySet>, sqlx::Error> {
     let Some(set) = sqlx::query!(
         r#"SELECT s.seq AS "seq!: i64", s.id FROM entries e
            JOIN attachment_sets s ON s.seq = e.attachment_set_seq WHERE e.seq = ?"#,
@@ -307,7 +313,7 @@ pub async fn entry_set(
     )
     .fetch_all(pool)
     .await?;
-    Ok(Some((set.id, files)))
+    Ok(Some(EntrySet { id: set.id, files }))
 }
 
 /// The text of file `sha256`, if a public entry's set holds it.
