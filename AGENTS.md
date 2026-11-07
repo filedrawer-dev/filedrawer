@@ -42,6 +42,8 @@ The macros can't describe table-valued functions such as `json_each`: the build 
 
 When the owner settles a question, move it from Open questions into its section of `docs/design.md`.
 
+Date a decision by the owner's local date, as `date +%F` prints it in the sandbox (America/Los_Angeles), not UTC: git, GitHub and the server's stored times are UTC and run a day ahead each evening.
+
 ## Checks
 
 Committing runs the checks, so commit and read the hook's output instead of running them first. Every commit runs `bin/slop-lint` on staged markdown, lychee (links and anchors, offline) over every markdown file, and ruff and `cargo fmt` (when a `.rs` file is staged), which write: a person's commit that needs formatting is refused with the files rewritten, to stage, and `bin/pre-commit-run` stages an agent's and checks again. Agents' commits add the tests in `bin/tests`, clippy and the Rust tests (`bin/agent-pre-commit`). CI runs all of them. Run `cargo fmt` after each batch of edits to `.rs` files: otherwise the hook reformats them at commit, and edits you make after that no longer match the text you hold. `python3 install.py` links the hooks once per clone and installs cargo-nextest and sqlx-cli; sandbox-setup runs it after a recreate.
