@@ -272,8 +272,15 @@ async fn screen_files(
 ) -> Result<Files, sqlx::Error> {
     let mut doubts = Vec::new();
     let files = attachments::entry_files(&state.pool, waiting.seq).await?;
-    let bytes = files.iter().map(|file| file.bytes).sum::<i64>();
-    let mut budget = unpack::TextBudget::for_files(usize::try_from(bytes).unwrap_or(0));
+    // Only the files still to screen fund the budget, so a passed file cited again
+    // doesn't pay for what a new one hides.
+    let unscreened: i64 = files
+        .iter()
+        .filter(|file| file.verdict.is_none())
+        .map(|file| file.bytes)
+        .sum();
+    let unscreened = usize::try_from(unscreened).expect("file sizes are stored from usize lengths");
+    let mut budget = unpack::TextBudget::for_files(unscreened);
     for file in files {
         let call = match file.verdict.as_deref() {
             Some("pass") => FileCall::Pass(file.reason.clone()),

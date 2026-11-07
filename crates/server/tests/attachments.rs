@@ -898,6 +898,25 @@ mod screened {
     }
 
     #[tokio::test]
+    async fn a_file_passed_already_doesnt_fund_the_next_entrys_budget() {
+        let models = FakeModels::default();
+        let app = app_with(&models, 1_000_000_000).await;
+        let line = "plain = 'padding padding padding padding padding'\n";
+        let plain = file("author:plain.py", &line.repeat(600_000 / line.len()));
+        let first = set_of(&app, json!([plain.clone()])).await;
+        assert_eq!(publish(&app, &first, "a").await.1, "public");
+        // 300 KiB hidden in a small file: over the floor, and only the passed file's
+        // size would cover it.
+        let text = "fixture\n".repeat(300 * 1024 / 8);
+        let hidden = file(
+            "author:hidden.py",
+            &format!("DATA = '{}'\n", gzip_base64(text.as_bytes())),
+        );
+        let second = set_of(&app, json!([plain, hidden])).await;
+        assert_eq!(publish(&app, &second, "b").await.1, "review");
+    }
+
+    #[tokio::test]
     async fn a_lock_file_with_hashes_passes_with_nothing_decoded() {
         let models = FakeModels::default();
         let app = app_with(&models, 1_000_000_000).await;

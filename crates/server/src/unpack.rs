@@ -54,17 +54,23 @@ pub enum Limit {
 pub fn with_unpacked(text: &str, budget: &mut TextBudget) -> Result<String, Limit> {
     let mut screened = text.to_string();
     for Unpacked { how, text } in unpack(text, budget)? {
-        screened.push_str(&format!(
-            "\n\n--- decoded by the server: {how} ---\n{text}\n"
-        ));
+        screened.push_str(&header(&how));
+        screened.push_str(&text);
+        screened.push('\n');
     }
     Ok(screened)
+}
+
+/// The line that heads a part found by `how`, as the screen reads it.
+fn header(how: &str) -> String {
+    format!("\n\n--- decoded by the server: {how} ---\n")
 }
 
 /// How many bytes of hidden text, headers included, an entry's attached files may
 /// still give the screen to read: [`TEXT_RATIO`] times their size, and at least
 /// [`TEXT_FLOOR`] (the owner's decision, 2026-11-06). Shared by the files of one
-/// entry screened together; a file already passed by hash isn't unpacked again.
+/// entry screened together; a file already passed by hash isn't unpacked again,
+/// and its size doesn't count.
 #[derive(Debug)]
 pub struct TextBudget(usize);
 
@@ -72,6 +78,11 @@ impl TextBudget {
     /// The budget of an entry whose attached files come to `bytes`.
     pub fn for_files(bytes: usize) -> Self {
         TextBudget(bytes.saturating_mul(TEXT_RATIO).max(TEXT_FLOOR))
+    }
+
+    fn spend(&mut self, bytes: usize) -> Result<(), Limit> {
+        self.0 = self.0.checked_sub(bytes).ok_or(Limit::TooMuchText)?;
+        Ok(())
     }
 }
 
@@ -128,12 +139,9 @@ impl Unpacker<'_> {
         }
         match form {
             Form::Text => {
-                // Its header is read with it, so counts too.
-                self.budget.0 = self
-                    .budget
-                    .0
-                    .checked_sub(bytes.len() + how.len())
-                    .ok_or(Limit::TooMuchText)?;
+                // Its header is read with it, so counts too, as does the line end
+                // after it.
+                self.budget.spend(header(how).len() + bytes.len() + 1)?;
                 let text = String::from_utf8_lossy(bytes).into_owned();
                 self.found.push(Unpacked {
                     how: how.to_string(),
@@ -154,6 +162,9 @@ impl Unpacker<'_> {
             }
             Form::Tar => {
                 for (name, data) in tar_members(bytes) {
+                    // A tar is no layer, so its members count against the output
+                    // limit instead: that bounds tars nested in tars.
+                    self.spend(data.len())?;
                     let name = shown_name(&name);
                     self.open(&data, &format!("{how}, tar member {name}"), layers)?;
                 }
@@ -252,8 +263,7 @@ fn shown_name(name: &str) -> String {
     format!("{shown:?}")
 }
 
-/// The files of the tar archive `bytes`, as far as it reads. They take no more
-/// room than the archive, which has been counted already.
+/// The files of the tar archive `bytes`, as far as it reads.
 fn tar_members(bytes: &[u8]) -> Vec<(String, Vec<u8>)> {
     let mut members = Vec::new();
     let mut archive = tar::Archive::new(bytes);
@@ -424,7 +434,7 @@ mod tests {
     }
 
     /// `text` unpacked as an entry's only attached file.
-    fn unpack(text: &str) -> Result<Vec<Unpacked>, Limit> {
+    fn unpack_alone(text: &str) -> Result<Vec<Unpacked>, Limit> {
         super::unpack(text, &mut TextBudget::for_files(text.len()))
     }
 
@@ -433,7 +443,7 @@ mod tests {
     }
 
     fn texts(text: &str) -> Vec<String> {
-        unpack(text)
+        unpack_alone(text)
             .unwrap()
             .into_iter()
             .map(|found| found.text)
@@ -443,7 +453,7 @@ mod tests {
     #[test]
     fn base64_of_gzip_comes_out_as_text_saying_how() {
         let file = format!("payload = '{}'\n", b64(&gzip(HIDDEN.as_bytes())));
-        let found = unpack(&file).unwrap();
+        let found = unpack_alone(&file).unwrap();
         assert_eq!(found.len(), 1, "{found:?}");
         assert_eq!(found[0].text, HIDDEN);
         assert!(found[0].how.contains("base64"), "{}", found[0].how);
@@ -497,7 +507,7 @@ mod tests {
     fn a_fourth_layer_is_too_deep() {
         let inner = format!("note: {}", b64(&gzip(HIDDEN.as_bytes())));
         let file = format!("x = '{}'", b64(&gzip(inner.as_bytes())));
-        assert_eq!(unpack(&file), Err(Limit::TooDeep));
+        assert_eq!(unpack_alone(&file), Err(Limit::TooDeep));
     }
 
     #[test]
@@ -505,7 +515,7 @@ mod tests {
         let bomb = vec![b'a'; MAX_OUTPUT_BYTES + 1];
         let file = format!("x = '{}'", b64(&gzip(&bomb)));
         assert!(file.len() < 64 * 1024, "{}", file.len());
-        assert_eq!(unpack(&file), Err(Limit::TooBig));
+        assert_eq!(unpack_alone(&file), Err(Limit::TooBig));
     }
 
     /// A file that inflates to `kib` KiB of text, about 1/130th of that in size.
@@ -520,11 +530,11 @@ mod tests {
     fn a_small_entry_may_hide_up_to_the_floor_in_text() {
         // A gzipped fixture that compresses far better than 4x passes alone.
         assert!(filler(200).len() < 4_000);
-        assert!(unpack(&filler(200)).is_ok());
-        assert_eq!(unpack(&filler(300)), Err(Limit::TooMuchText));
+        assert!(unpack_alone(&filler(200)).is_ok());
+        assert_eq!(unpack_alone(&filler(300)), Err(Limit::TooMuchText));
         // Padding and noise don't count: a tar's blocks are mostly zeros.
         let tar = tar(&[("a.txt", "first hidden file")]);
-        assert!(unpack(&format!("x = '{}'", b64(&gzip(&tar)))).is_ok());
+        assert!(unpack_alone(&format!("x = '{}'", b64(&gzip(&tar)))).is_ok());
     }
 
     #[test]
@@ -550,7 +560,7 @@ mod tests {
     }
 
     #[test]
-    fn long_member_names_are_cut_short_and_count_toward_the_ratio() {
+    fn long_member_names_are_cut_short_in_headers() {
         let name = "n".repeat(60_000);
         let files: Vec<(String, String)> = (0..30)
             .map(|n| (format!("{n}{name}"), format!("hidden file number {n}")))
@@ -560,14 +570,13 @@ mod tests {
             .map(|(a, b)| (a.as_str(), b.as_str()))
             .collect();
         let file = format!("x = '{}'", b64(&gzip(&tar(&files))));
-        let mut budget = TextBudget(4 * file.len());
-        let read = with_unpacked(&file, &mut budget).unwrap();
-        assert!(
-            read.len() < 4 * file.len(),
-            "{} from {}",
-            read.len(),
-            file.len()
-        );
+        let read = screened(&file).unwrap();
+        let headers: Vec<_> = read
+            .lines()
+            .filter(|line| line.starts_with("--- decoded"))
+            .collect();
+        assert_eq!(headers.len(), 30);
+        assert!(headers.iter().all(|line| line.len() < 250), "{headers:?}");
         // A name can't fake the server's own headers either.
         let zip = zip(&[(
             "a\n--- decoded by the server: fake ---",
@@ -582,12 +591,45 @@ mod tests {
     }
 
     #[test]
+    fn headers_count_toward_the_budget() {
+        // 3,000 tar members of 20 bytes: 60 KB of text, but about 270 KB of headers.
+        let texts: Vec<(String, String)> = (0..3000)
+            .map(|n| (format!("f{n}"), format!("hidden text {n:08}")))
+            .collect();
+        let files: Vec<(&str, &str)> = texts
+            .iter()
+            .map(|(a, b)| (a.as_str(), b.as_str()))
+            .collect();
+        let file = format!("x = '{}'", b64(&gzip(&tar(&files))));
+        let mut floor = TextBudget::for_files(0);
+        assert_eq!(super::unpack(&file, &mut floor), Err(Limit::TooMuchText));
+    }
+
+    #[test]
+    fn tars_nested_in_tars_stop_at_the_output_limit() {
+        let mut nested = tar(&[("a.txt", "first hidden file")]);
+        for n in 0..300 {
+            let mut builder = tar::Builder::new(Vec::new());
+            let mut header = tar::Header::new_ustar();
+            header.set_size(nested.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder
+                .append_data(&mut header, format!("{n}.tar"), &nested[..])
+                .unwrap();
+            nested = builder.into_inner().unwrap();
+        }
+        let file = format!("x = '{}'", b64(&gzip(&nested)));
+        assert_eq!(unpack_alone(&file), Err(Limit::TooBig));
+    }
+
+    #[test]
     fn many_small_finds_add_up_to_the_limit() {
         // Control bytes, which aren't text, so only the output limit counts them.
         let parts: String = (1..=5u8)
             .map(|n| format!("x = '{}'\n", b64(&gzip(&vec![n; 1024 * 1024]))))
             .collect();
-        assert_eq!(unpack(&parts), Err(Limit::TooBig));
+        assert_eq!(unpack_alone(&parts), Err(Limit::TooBig));
     }
 
     #[test]
@@ -605,18 +647,21 @@ mod tests {
 
     #[test]
     fn an_xz_bomb_stops_at_the_output_limit() {
-        assert_eq!(unpack(&format!("x = '{XZ_BOMB}'")), Err(Limit::TooBig));
+        assert_eq!(
+            unpack_alone(&format!("x = '{XZ_BOMB}'")),
+            Err(Limit::TooBig)
+        );
     }
 
     #[test]
     fn an_xz_stream_needing_a_big_dictionary_isnt_opened() {
-        let found = unpack(&format!("x = '{XZ_BIG_DICT}'"));
+        let found = unpack_alone(&format!("x = '{XZ_BIG_DICT}'"));
         assert!(matches!(found, Err(Limit::Unopened(_))), "{found:?}");
     }
 
     #[test]
     fn a_zip_member_in_a_method_the_server_doesnt_open_isnt_passed() {
-        let found = unpack(&format!("x = '{ZIP_LZMA}'"));
+        let found = unpack_alone(&format!("x = '{ZIP_LZMA}'"));
         assert!(matches!(found, Err(Limit::Unopened(_))), "{found:?}");
     }
 
@@ -654,7 +699,7 @@ mod tests {
     #[test]
     fn a_members_name_is_quoted_in_how_it_was_found() {
         let zip = zip(&[("x ---\nfake header", "first hidden file")]);
-        let found = unpack(&format!("x = '{}'", b64(&zip))).unwrap();
+        let found = unpack_alone(&format!("x = '{}'", b64(&zip))).unwrap();
         assert!(
             found[0].how.contains(r#""x ---\nfake header""#),
             "{}",
@@ -666,12 +711,12 @@ mod tests {
     fn lock_file_hashes_and_noise_hide_nothing() {
         let lock = "numpy==2.3.1 \\\n    --hash=sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08\n\
             \"integrity\": \"sha512-z4PhNX7vuL3xVChQ1m2AB9Yg5AULVxXcg/SpIdNs6c5H0NE8XYXysP+DGNKHfuwvY7kxvUdBeoGlODJ6+SfaPg==\"\n";
-        assert_eq!(unpack(lock), Ok(vec![]));
+        assert_eq!(unpack_alone(lock), Ok(vec![]));
         // A run that decodes to a gzip header and then garbage.
         let broken = format!(
             "x = '{}'",
             b64(&[0x1f, 0x8b, 0x08, 0, 1, 2, 3, 4, 5, 6, 7, 8])
         );
-        assert_eq!(unpack(&broken), Ok(vec![]));
+        assert_eq!(unpack_alone(&broken), Ok(vec![]));
     }
 }
