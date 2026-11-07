@@ -20,20 +20,31 @@ check, then a tally, and exits 1 when any check fails.
                   after a deploy (default: try once)
   -h, --help      print this
 
+CI runs it after each deploy as the smoke-test account, which ops/provision-vps smoke
+sets up and names to staging as FILEDRAWER_SMOKE_ACCOUNT: its entries aren't
+screened, so the smoke test calls no model. crates/server/tests/smoke.rs runs it
+against a local server, so a reply it relies on can't change unnoticed.
+
 It reads two settings from the environment and prints neither:
-  FILEDRAWER_STAGING_KEY      the staging key, sent as X-Staging-Key
+  FILEDRAWER_STAGING_KEY      the staging key, sent as X-Staging-Key (STAGING_KEY in
+                              ops/.vps.env)
   FILEDRAWER_STAGING_API_KEY  an API token for the account that submits
 Exit status: 0 every check passed, 1 a check failed, 2 a usage or setting error,
 3 (screen only) the day's screening cap is spent, so nothing more was checked.
 
 screen checks that the server screens with the real model, which the plain smoke
 test can't: staging doesn't screen CI's smoke account. CI runs it after each deploy
-to staging (the screen-staging job), as CI's own screen account, whose token
-ops/provision-vps smoke stores as the staging secret CI_SCREEN_TOKEN; by hand it runs
-as the screen-test account (robocarver's mailbox), which eval uses too. Each run
-spends a few Haiku calls. It submits a bland on-topic entry and
-expects it public with no "not screened" note, and an off-topic one (sourdough) and
-expects it rejected with its reasons. It never submits anything like a hazard: an
+to staging (the screen-staging job), as CI's own screen account, which ops/provision-vps
+smoke makes on the server and names to staging as FILEDRAWER_CI_SCREEN_ACCOUNT, with no
+daily allowance, and whose token it stores as the staging secret CI_SCREEN_TOKEN.
+Without the secret, or on a day whose screening cap is spent, the job passes with a
+warning. By hand it runs as the screen-test account a-dmkmsy91w3 (robocarver's
+mailbox), which eval uses too; CI doesn't, since eval's review cases put that account
+under the review guard. Staging doesn't hold the screen-test account to an account's
+share of the screening cap (FILEDRAWER_SCREEN_TEST_ACCOUNT, which ops/provision-vps
+smoke sets from ops/.screen-test.env). Each run spends a few Haiku calls. It submits
+a bland on-topic entry and expects it public with no "not screened" note, and an
+off-topic one (sourdough) and expects it rejected with its reasons. It never submits anything like a hazard: an
 entry in review would put the account under the review guard. When an entry is still
 being screened after the wait, it sends a bland series with POST /series, which the
 server screens at once, to learn why: a 429 means the day's cap is spent, and it
