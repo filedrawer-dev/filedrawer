@@ -296,3 +296,172 @@ async fn account_emails_are_limited_per_ip() {
         limited.body
     );
 }
+
+#[tokio::test]
+async fn a_429_speaks_json_when_asked() {
+    let app = test_app().await.with_limits(Limits {
+        per_ip: per_minute(1),
+        ..wide()
+    });
+    read_as(&app, "203.0.113.5").await;
+    let request = Request::get("/tags")
+        .header("x-forwarded-for", "203.0.113.5")
+        .header("accept", "application/json")
+        .body(Body::empty())
+        .unwrap();
+    let refused = app.send_from(CADDY, request).await;
+    assert_eq!(refused.status, StatusCode::TOO_MANY_REQUESTS);
+    let body: serde_json::Value = serde_json::from_str(&refused.body).unwrap();
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap()
+            .contains("too many requests"),
+        "{body}"
+    );
+    assert!(retry_after(&refused) >= 1);
+}
+
+#[tokio::test]
+async fn a_signup_the_email_limit_stops_says_so() {
+    let app = test_app().await.with_limits(Limits {
+        emails_per_address: hourly(1),
+        ..wide()
+    });
+    assert_eq!(
+        reset_as(&app, "203.0.113.5", "ada%40example.com")
+            .await
+            .status,
+        StatusCode::OK
+    );
+    let limited = sign_up_as(&app, "203.0.113.6", "ada%40example.com").await;
+    assert_eq!(
+        limited.status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "{}",
+        limited.body
+    );
+    assert!(
+        limited.body.contains("emails to this email address"),
+        "{}",
+        limited.body
+    );
+}
+
+#[tokio::test]
+async fn resending_a_verification_counts_as_an_email() {
+    let app = test_app().await.with_limits(Limits {
+        emails_per_address: hourly(2),
+        ..wide()
+    });
+    // The signup sent one; one resend fits, a second doesn't.
+    let signup = app
+        .form(
+            "/signup",
+            &[
+                ("email", "grace@example.com"),
+                ("password", common::PASSWORD),
+                ("display_name", "Grace"),
+            ],
+            None,
+        )
+        .await;
+    assert_eq!(signup.status, StatusCode::OK, "{}", signup.body);
+    let cookie = common::logged_in(&app, "grace@example.com", common::PASSWORD).await;
+    let resent = app.form("/account/verify-email", &[], Some(&cookie)).await;
+    assert_eq!(resent.status, StatusCode::SEE_OTHER, "{}", resent.body);
+    let limited = app.form("/account/verify-email", &[], Some(&cookie)).await;
+    assert_eq!(
+        limited.status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "{}",
+        limited.body
+    );
+}
+
+mod windows {
+    //! `count_event` with times of the test's choosing.
+
+    use filedrawer_server::limits::{Counted, Limits, count_event, tidy};
+    use time::macros::datetime;
+
+    use super::*;
+
+    fn one_an_hour() -> Limits {
+        Limits {
+            emails_per_address: hourly(1),
+            ..wide()
+        }
+    }
+
+    #[tokio::test]
+    async fn a_full_window_refuses_even_in_its_last_second() {
+        let app = test_app().await;
+        let limits = one_an_hour();
+        let counted = [Counted::emails_to(&limits, "ada@example.com")];
+        count_event(&app.pool, &counted, datetime!(2026-11-06 11:00:01 UTC))
+            .await
+            .unwrap();
+        // Half a second before the first leaves the window, it is still full.
+        let edge = count_event(&app.pool, &counted, datetime!(2026-11-06 12:00:00.5 UTC)).await;
+        let error = edge.expect_err("the window is still full");
+        assert!(error.to_string().contains("try again in 1 s"), "{error}");
+        count_event(&app.pool, &counted, datetime!(2026-11-06 12:00:02 UTC))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn counts_keep_no_address_in_plain_and_go_after_a_day() {
+        let app = test_app().await;
+        let limits = one_an_hour();
+        let counted = [Counted::emails_to(&limits, "ada@example.com")];
+        count_event(&app.pool, &counted, datetime!(2026-11-06 11:00:00 UTC))
+            .await
+            .unwrap();
+        let keys: Vec<String> = sqlx::query_scalar("SELECT key FROM rate_events")
+            .fetch_all(&app.pool)
+            .await
+            .unwrap();
+        assert_eq!(keys.len(), 1);
+        assert!(!keys[0].contains("ada"), "{keys:?}");
+        tidy(&app.pool, datetime!(2026-11-07 10:59:59 UTC))
+            .await
+            .unwrap();
+        let kept: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM rate_events")
+            .fetch_one(&app.pool)
+            .await
+            .unwrap();
+        assert_eq!(kept, 1, "a day hasn't passed");
+        tidy(&app.pool, datetime!(2026-11-07 11:00:00 UTC))
+            .await
+            .unwrap();
+        let kept: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM rate_events")
+            .fetch_one(&app.pool)
+            .await
+            .unwrap();
+        assert_eq!(kept, 0);
+    }
+
+    #[test]
+    fn a_bucket_lends_its_count_then_refills_one_every_share_of_the_period() {
+        use filedrawer_server::limits::RateLimits;
+        use std::time::Instant;
+        let rate = per_minute(3);
+        let limits = RateLimits::new(wide());
+        let start = Instant::now();
+        for _ in 0..3 {
+            assert_eq!(limits.take("k", rate, start), Ok(()));
+        }
+        assert_eq!(limits.take("k", rate, start).unwrap_err().as_secs(), 20);
+        let later = start + Duration::from_secs(20);
+        assert_eq!(limits.take("k", rate, later), Ok(()));
+        assert!(limits.take("k", rate, later).is_err());
+        // A long rest refills it to its count, no more.
+        let rested = later + Duration::from_secs(3600);
+        for _ in 0..3 {
+            assert_eq!(limits.take("k", rate, rested), Ok(()));
+        }
+        assert!(limits.take("k", rate, rested).is_err());
+    }
+}

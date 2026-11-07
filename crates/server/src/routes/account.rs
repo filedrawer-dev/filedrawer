@@ -13,7 +13,7 @@ use serde::Deserialize;
 
 use crate::accounts::{self, EMAIL_LINK_HOURS, Login, Purpose, SESSION_DAYS, Signup};
 use crate::error::AppError;
-use crate::limits::{self, ClientIp};
+use crate::limits::{self, ClientIp, Counted};
 use crate::mail::Email;
 use crate::pages::{
     AccountPage, DeletePage, LoginPage, Message, ResetConfirmPage, ResetPage, SignupPage,
@@ -135,9 +135,12 @@ pub async fn signup(
     // A signup sends an email either way, a verification or a note that the address
     // has an account, so it counts as one too.
     let limits = &state.rate_limits.limits;
-    let mut keys = vec![(format!("signup-ip:{}", ip.0), &limits.signups_per_ip[..])];
-    keys.extend(limits::email_keys(limits, &ip, &email));
-    limits::count_event(&state.pool, "signups from this address", &keys, now_utc()).await?;
+    let counts = [
+        Counted::signups_from(limits, &ip),
+        Counted::emails_to(limits, &email),
+        Counted::emails_from(limits, &ip),
+    ];
+    limits::count_event(&state.pool, &counts, now_utc()).await?;
     let hash = hash_password(form.password).await;
     match accounts::sign_up(&state.pool, &email, &hash, display_name).await? {
         Signup::Created(id) => send_verification(&state, &id, &email).await?,
@@ -281,14 +284,7 @@ pub async fn reset(
 ) -> Result<Response, AppError> {
     let email = accounts::normalise_email(&form.email);
     // Counted whether or not the address has an account, so a limit never says.
-    let keys = limits::email_keys(&state.rate_limits.limits, &ip, &email);
-    limits::count_event(
-        &state.pool,
-        "emails to this address or from this one",
-        &keys,
-        now_utc(),
-    )
-    .await?;
+    limits::count_email(&state, &ip, &email).await?;
     if let Some(Login { account_id, .. }) = accounts::login_for_email(&state.pool, &email).await? {
         let secret = accounts::new_email_link(&state.pool, &account_id, Purpose::Reset).await?;
         let body = format!(
@@ -506,14 +502,7 @@ pub async fn resend_verification(
 ) -> Result<Response, AppError> {
     let view = accounts::view(&state.pool, &session.id).await?;
     if let (Some(email), false) = (view.email, view.verified) {
-        let keys = limits::email_keys(&state.rate_limits.limits, &ip, &email);
-        limits::count_event(
-            &state.pool,
-            "emails to this address or from this one",
-            &keys,
-            now_utc(),
-        )
-        .await?;
+        limits::count_email(&state, &ip, &email).await?;
         send_verification(&state, &session.id, &email).await?;
     }
     Ok(Redirect::to("/account").into_response())

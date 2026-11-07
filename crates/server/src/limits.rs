@@ -20,6 +20,7 @@ use time::OffsetDateTime;
 use crate::AppState;
 use crate::error::AppError;
 use crate::time::stamp;
+use sha2::{Digest, Sha256};
 
 /// So many requests in so long, refilled evenly.
 #[derive(Debug, Clone, Copy)]
@@ -50,7 +51,7 @@ pub struct Limits {
 }
 
 impl Limits {
-    /// The numbers the site runs with (the owner's decision, 2026-11-07).
+    /// The numbers the site runs with (the owner's decision, 2026-11-06).
     pub fn site() -> Self {
         Limits {
             per_ip: per_minute(300),
@@ -87,7 +88,9 @@ fn daily(count: i64) -> Window {
 const LONGEST_WINDOW_SECONDS: i64 = 86_400;
 
 /// How many per-minute buckets are kept before the full ones are dropped. A full
-/// bucket is what a new one would be, so dropping it changes nothing.
+/// bucket is what a new one would be, so dropping it changes nothing; if none is
+/// full, all go, which forgives at most a minute's requests and only happens to a
+/// server that 100,000 clients reach within a minute.
 const MAX_BUCKETS: usize = 100_000;
 
 /// The limits and the per-minute counts.
@@ -107,16 +110,20 @@ impl RateLimits {
 
     /// Takes one request from `key`'s bucket at `rate`, or says how long until one
     /// is free.
-    fn take(&self, key: &str, rate: Rate, now: Instant) -> Result<(), Duration> {
+    pub fn take(&self, key: &str, rate: Rate, now: Instant) -> Result<(), Duration> {
         let mut buckets = self.buckets.lock().expect("no thread panics holding it");
         if buckets.len() >= MAX_BUCKETS {
-            buckets.retain(|_, bucket| bucket.refilled(rate, now) < f64::from(rate.count));
+            buckets.retain(|_, bucket| !bucket.is_full(now));
+            if buckets.len() >= MAX_BUCKETS {
+                buckets.clear();
+            }
         }
         let bucket = buckets.entry(key.to_string()).or_insert(Bucket {
+            rate,
             tokens: f64::from(rate.count),
             at: now,
         });
-        bucket.take(rate, now)
+        bucket.take(now)
     }
 
     /// Counts a token-authenticated write by `account_id`.
@@ -130,26 +137,35 @@ impl RateLimits {
 /// A token bucket: up to `rate.count` requests at once, refilled at `rate`.
 #[derive(Debug, Clone, Copy)]
 struct Bucket {
+    rate: Rate,
     tokens: f64,
     at: Instant,
 }
 
 impl Bucket {
-    fn refilled(&self, rate: Rate, now: Instant) -> f64 {
-        let per_second = f64::from(rate.count) / rate.per.as_secs_f64();
-        let elapsed = now.saturating_duration_since(self.at).as_secs_f64();
-        (self.tokens + elapsed * per_second).min(f64::from(rate.count))
+    fn per_second(&self) -> f64 {
+        f64::from(self.rate.count) / self.rate.per.as_secs_f64()
     }
 
-    fn take(&mut self, rate: Rate, now: Instant) -> Result<(), Duration> {
-        self.tokens = self.refilled(rate, now);
+    fn refilled(&self, now: Instant) -> f64 {
+        let elapsed = now.saturating_duration_since(self.at).as_secs_f64();
+        (self.tokens + elapsed * self.per_second()).min(f64::from(self.rate.count))
+    }
+
+    fn is_full(&self, now: Instant) -> bool {
+        self.refilled(now) >= f64::from(self.rate.count)
+    }
+
+    fn take(&mut self, now: Instant) -> Result<(), Duration> {
+        self.tokens = self.refilled(now);
         self.at = now;
         if self.tokens >= 1.0 {
             self.tokens -= 1.0;
             return Ok(());
         }
-        let per_second = f64::from(rate.count) / rate.per.as_secs_f64();
-        Err(Duration::from_secs_f64((1.0 - self.tokens) / per_second))
+        Err(Duration::from_secs_f64(
+            (1.0 - self.tokens) / self.per_second(),
+        ))
     }
 }
 
@@ -228,70 +244,121 @@ pub async fn per_ip(
         Ok(()) => next.run(request).await,
         Err(wait) => {
             let json = crate::respond::wants_json(request.headers());
-            let refusal = too_many("requests from this address", wait).into_response();
+            let refusal = too_many("requests from this IP address", wait).into_response();
             crate::respond::as_json_if(json, refusal).await
         }
     }
 }
 
-/// Counts one event under each of `keys` (such as `signup-ip:203.0.113.5`), each
-/// with its windows. When any window is full, refuses it and records nothing.
+/// One hourly or daily count an event goes under: its key, its windows, and what
+/// a refusal calls it. The key is stored as a SHA-256, so the counts keep no email
+/// address or IP in plain.
+#[derive(Debug, Clone)]
+pub struct Counted<'a> {
+    key: String,
+    windows: &'a [Window],
+    what: &'static str,
+}
+
+impl<'a> Counted<'a> {
+    fn new(kind: &str, value: &str, windows: &'a [Window], what: &'static str) -> Self {
+        let digest = Sha256::digest(format!("{kind}:{value}").as_bytes());
+        let key = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+        Counted { key, windows, what }
+    }
+
+    pub fn signups_from(limits: &'a Limits, ip: &ClientIp) -> Self {
+        Counted::new(
+            "signup-ip",
+            &ip.0,
+            &limits.signups_per_ip,
+            "signups from this IP address",
+        )
+    }
+
+    pub fn emails_to(limits: &'a Limits, address: &str) -> Self {
+        Counted::new(
+            "email-address",
+            address,
+            &limits.emails_per_address,
+            "account emails to this email address",
+        )
+    }
+
+    pub fn emails_from(limits: &'a Limits, ip: &ClientIp) -> Self {
+        Counted::new(
+            "email-ip",
+            &ip.0,
+            &limits.emails_per_ip,
+            "account emails asked for from this IP address",
+        )
+    }
+}
+
+/// Counts one event under each of `counts`. When any window is full, refuses it,
+/// naming the fullest, and records nothing.
 pub async fn count_event(
     pool: &SqlitePool,
-    what: &str,
-    keys: &[(String, &[Window])],
+    counts: &[Counted<'_>],
     now: OffsetDateTime,
 ) -> Result<(), AppError> {
-    let mut tx = pool.begin().await?;
-    let mut wait = 0i64;
-    for (key, windows) in keys {
-        for window in *windows {
+    // IMMEDIATE takes the write lock first, so two requests can't both read a
+    // window with one place left, and the second doesn't fail on upgrading.
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let mut refusal: Option<(&str, i64)> = None;
+    for counted in counts {
+        for window in counted.windows {
             let since = stamp(now - time::Duration::seconds(window.seconds));
             let row = sqlx::query!(
                 r#"SELECT COUNT(*) AS "count!: i64", MIN(at) AS "oldest?: String"
                    FROM rate_events WHERE key = ? AND at > ?"#,
-                key,
+                counted.key,
                 since
             )
             .fetch_one(&mut *tx)
             .await?;
-            if row.count >= window.count {
-                // Room comes back when the oldest event in the window leaves it.
-                let oldest = row
-                    .oldest
-                    .and_then(|at| crate::time::parse(&at))
-                    .unwrap_or(now);
-                let back = (oldest + time::Duration::seconds(window.seconds) - now).whole_seconds();
-                wait = wait.max(back);
+            if row.count < window.count {
+                continue;
+            }
+            // Room comes back when the oldest event in the window leaves it; at
+            // the window's edge that is under a second, which still waits one.
+            let oldest = row
+                .oldest
+                .and_then(|at| crate::time::parse(&at))
+                .unwrap_or(now);
+            let back = (oldest + time::Duration::seconds(window.seconds) - now)
+                .whole_seconds()
+                .max(1);
+            if refusal.is_none_or(|(_, wait)| back > wait) {
+                refusal = Some((counted.what, back));
             }
         }
     }
-    if wait > 0 {
+    if let Some((what, wait)) = refusal {
         return Err(too_many(what, Duration::from_secs(wait.unsigned_abs())));
     }
     let at = stamp(now);
-    for (key, _) in keys {
-        sqlx::query!("INSERT INTO rate_events (key, at) VALUES (?, ?)", key, at)
-            .execute(&mut *tx)
-            .await?;
+    for counted in counts {
+        sqlx::query!(
+            "INSERT INTO rate_events (key, at) VALUES (?, ?)",
+            counted.key,
+            at
+        )
+        .execute(&mut *tx)
+        .await?;
     }
     tx.commit().await?;
     Ok(())
 }
 
-/// The keys a verification or password-reset email to `address` counts under.
-pub fn email_keys<'a>(
-    limits: &'a Limits,
-    ip: &ClientIp,
-    address: &str,
-) -> Vec<(String, &'a [Window])> {
-    vec![
-        (format!("email-ip:{}", ip.0), &limits.emails_per_ip[..]),
-        (
-            format!("email-address:{address}"),
-            &limits.emails_per_address[..],
-        ),
-    ]
+/// Counts a verification or password-reset email to `address` asked for from `ip`.
+pub async fn count_email(state: &AppState, ip: &ClientIp, address: &str) -> Result<(), AppError> {
+    let limits = &state.rate_limits.limits;
+    let counts = [
+        Counted::emails_to(limits, address),
+        Counted::emails_from(limits, ip),
+    ];
+    count_event(&state.pool, &counts, OffsetDateTime::now_utc()).await
 }
 
 /// Deletes counted events older than the longest window.
@@ -301,34 +368,4 @@ pub async fn tidy(pool: &SqlitePool, now: OffsetDateTime) -> Result<(), sqlx::Er
         .execute(pool)
         .await?;
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const RATE: Rate = Rate {
-        count: 3,
-        per: Duration::from_secs(60),
-    };
-
-    #[test]
-    fn a_bucket_lends_its_count_then_refills_one_every_share_of_the_period() {
-        let limits = RateLimits::new(Limits::site());
-        let start = Instant::now();
-        for _ in 0..3 {
-            assert_eq!(limits.take("k", RATE, start), Ok(()));
-        }
-        let wait = limits.take("k", RATE, start).unwrap_err();
-        assert_eq!(wait.as_secs(), 20);
-        let later = start + Duration::from_secs(20);
-        assert_eq!(limits.take("k", RATE, later), Ok(()));
-        assert!(limits.take("k", RATE, later).is_err());
-        // A long rest refills it to its count, no more.
-        let rested = later + Duration::from_secs(3600);
-        for _ in 0..3 {
-            assert_eq!(limits.take("k", RATE, rested), Ok(()));
-        }
-        assert!(limits.take("k", RATE, rested).is_err());
-    }
 }

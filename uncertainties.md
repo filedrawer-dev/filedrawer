@@ -289,3 +289,9 @@ Choices the docs left open, made while building the analyzer. Once the owner set
 - Options: no restore for a removed file, and its bytes may be attached again unserved, as here; a restore action like the one design.md gives entries; or refusing a plainly removed file's bytes at upload, as a banned one is.
 - Chosen: no restore and no refusal. design.md gives restore for entries only, and bans only files removed as a hazard.
 - Against: an owner who removes the wrong file can't undo it, and an entry attaching a plainly removed file again publishes with that file unserved, without being told at submission.
+
+## Login attempts
+
+- Options: only the per-IP limit of 300 requests a minute, as now; a limit on failed logins per account, such as 10 an hour; or both per account and per IP, with failed logins counted in SQLite like signups.
+- Chosen: per-IP only, since design.md names no login limit and the owner's numbers covered signups and emails.
+- Against: 300 password guesses a minute from each /64 is a weak bound, and a client with many addresses isn't bounded at all. A per-account limit on failures stops guessing at one account from anywhere, at the cost of letting someone lock an owner out for an hour by guessing wrong on purpose.
