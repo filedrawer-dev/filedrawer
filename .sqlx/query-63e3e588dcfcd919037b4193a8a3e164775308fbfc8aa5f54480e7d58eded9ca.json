@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE invite_codes SET revoked_at = ? WHERE code = ? AND revoked_at IS NULL\n           RETURNING seq AS \"seq!: i64\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "seq!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "invite_codes",
+            "name": "seq"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "63e3e588dcfcd919037b4193a8a3e164775308fbfc8aa5f54480e7d58eded9ca"
+}

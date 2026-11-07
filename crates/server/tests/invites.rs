@@ -305,3 +305,346 @@ async fn wrong_codes_count_against_the_ips_signups() {
     .await;
     assert_eq!(more.status, StatusCode::TOO_MANY_REQUESTS, "{}", more.body);
 }
+
+// Revoking a code.
+
+/// An invited, verified account: its session and a token.
+async fn invited_account(app: &TestApp, code: &str, email: &str) -> (String, String) {
+    let signup = sign_up_as(app, "203.0.113.5", &email.replace('@', "%40"), Some(code)).await;
+    assert_eq!(signup.status, StatusCode::OK, "{}", signup.body);
+    let link = app.link_in_last_email_to(email).await;
+    let token = link.strip_prefix("/verify?token=").unwrap();
+    app.form("/verify", &[("token", token)], None).await;
+    let session = common::logged_in(app, email, "correct-horse-battery-9").await;
+    let token = common::new_token(app, &session).await;
+    (session, token)
+}
+
+async fn revoke(app: &TestApp, cookie: &str, code: &str) -> Reply {
+    app.form(&format!("/admin/invites/{code}/revoke"), &[], Some(cookie))
+        .await
+}
+
+async fn status_of(app: &TestApp, token: &str, id: &str) -> String {
+    let own = app
+        .send(
+            Request::get(format!("/e/{id}"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    field(&own.body, "status").unwrap().to_string()
+}
+
+#[tokio::test]
+async fn revoking_freezes_the_codes_unscreened_entries_and_nothing_else() {
+    let app = test_app().await;
+    let cookie = owner(&app).await;
+    let code = create_code(&app, &cookie, "Leaked", "10", "7").await;
+    let (_, token) = invited_account(&app, &code, "grace@example.com").await;
+    let post = async |title: &str| {
+        let reply = app
+            .post_as("/entries", Some(&token), entry(title, ""))
+            .await;
+        assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
+        id_in(&reply.body)
+    };
+    let public = post("Steering public").await;
+    app.post_as(&format!("/e/{public}/publish"), Some(&token), "")
+        .await;
+    assert_eq!(
+        app.get(&format!("/e/{public}")).await.status,
+        StatusCode::OK
+    );
+    let pending = post("Steering pending").await;
+    // Another account's entry isn't touched.
+    let theirs = app.post("/entries", entry("Steering theirs", "")).await;
+    let theirs = id_in(&theirs.body);
+
+    let revoked = revoke(&app, &cookie, &code).await;
+    assert_eq!(revoked.status, StatusCode::SEE_OTHER, "{}", revoked.body);
+    assert_eq!(status_of(&app, &token, &pending).await, "frozen");
+    assert_eq!(
+        app.get(&format!("/e/{public}")).await.status,
+        StatusCode::OK
+    );
+    assert_eq!(status_of(&app, &app.token, &theirs).await, "pending");
+    // The worker leaves it alone, and the code takes no more signups.
+    filedrawer_server::jobs::publish_due(
+        &app.state,
+        time::OffsetDateTime::now_utc() + time::Duration::hours(2),
+    )
+    .await
+    .unwrap();
+    assert_eq!(status_of(&app, &token, &pending).await, "frozen");
+    let late = sign_up_as(&app, "203.0.113.5", "late%40example.com", Some(&code)).await;
+    assert_eq!(
+        late.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        late.body
+    );
+    let page = app.page("/admin/invites", Some(&cookie)).await;
+    assert!(page.body.contains(", revoked 2"), "{}", page.body);
+    let queue = app.page("/admin", Some(&cookie)).await;
+    assert!(queue.body.contains("Steering pending"), "{}", queue.body);
+}
+
+#[tokio::test]
+async fn a_revoked_codes_accounts_fall_back_to_the_new_account_limit() {
+    let app = test_app().await;
+    let cookie = owner(&app).await;
+    let code = create_code(&app, &cookie, "Leaked", "10", "7").await;
+    let (_, token) = invited_account(&app, &code, "grace@example.com").await;
+    revoke(&app, &cookie, &code).await;
+    for n in 0..20 {
+        let reply = app
+            .post_as(
+                "/entries",
+                Some(&token),
+                entry(&format!("Steering {n}"), ""),
+            )
+            .await;
+        assert_eq!(
+            field(&reply.body, "screen_from"),
+            None,
+            "entry {n}: {}",
+            reply.body
+        );
+    }
+    let reply = app
+        .post_as("/entries", Some(&token), entry("Steering 21", ""))
+        .await;
+    assert_eq!(
+        field(&reply.body, "screen_from"),
+        Some(date_in(1).as_str()),
+        "{}",
+        reply.body
+    );
+}
+
+#[tokio::test]
+async fn the_owner_releases_a_frozen_entry_to_screening_or_rejects_it_without_a_guard() {
+    let app = test_app().await;
+    let cookie = owner(&app).await;
+    let code = create_code(&app, &cookie, "Leaked", "10", "7").await;
+    let (_, token) = invited_account(&app, &code, "grace@example.com").await;
+    let mut ids = Vec::new();
+    for title in ["Steering one", "Steering two"] {
+        let reply = app
+            .post_as("/entries", Some(&token), entry(title, ""))
+            .await;
+        ids.push(id_in(&reply.body));
+    }
+    revoke(&app, &cookie, &code).await;
+    let page = app
+        .page(&format!("/admin/e/{}", ids[0]), Some(&cookie))
+        .await;
+    assert!(page.body.contains("/release"), "{}", page.body);
+
+    let released = app
+        .form(&format!("/admin/e/{}/release", ids[0]), &[], Some(&cookie))
+        .await;
+    assert_eq!(released.status, StatusCode::SEE_OTHER, "{}", released.body);
+    filedrawer_server::jobs::publish_due(&app.state, time::OffsetDateTime::now_utc())
+        .await
+        .unwrap();
+    assert_eq!(status_of(&app, &token, &ids[0]).await, "public");
+
+    let rejected = app
+        .form(&format!("/admin/e/{}/reject", ids[1]), &[], Some(&cookie))
+        .await;
+    assert_eq!(rejected.status, StatusCode::SEE_OTHER, "{}", rejected.body);
+    filedrawer_server::jobs::publish_due(&app.state, time::OffsetDateTime::now_utc())
+        .await
+        .unwrap();
+    assert_eq!(status_of(&app, &token, &ids[1]).await, "rejected");
+    // No guard: the account's next entry is screened as usual.
+    let queue = app.page("/admin", Some(&cookie)).await;
+    assert!(!queue.body.contains("clear-guard"), "{}", queue.body);
+    // Only a frozen entry is released.
+    let again = app
+        .form(&format!("/admin/e/{}/release", ids[0]), &[], Some(&cookie))
+        .await;
+    assert_eq!(again.status, StatusCode::CONFLICT, "{}", again.body);
+}
+
+#[tokio::test]
+async fn only_the_owner_revokes_and_releases() {
+    let app = test_app().await;
+    let cookie = owner(&app).await;
+    let code = create_code(&app, &cookie, "Sprint", "10", "7").await;
+    let (other, _) = common::browser_account(&app, "mallory@example.com").await;
+    assert_eq!(
+        revoke(&app, &other, &code).await.status,
+        StatusCode::NOT_FOUND
+    );
+    let page = app.page("/admin/invites", Some(&cookie)).await;
+    assert!(!page.body.contains(", revoked 2"), "{}", page.body);
+    let (_, token) = invited_account(&app, &code, "grace@example.com").await;
+    let reply = app
+        .post_as("/entries", Some(&token), entry("Steering one", ""))
+        .await;
+    let id = id_in(&reply.body);
+    revoke(&app, &cookie, &code).await;
+    let released = app
+        .form(&format!("/admin/e/{id}/release"), &[], Some(&other))
+        .await;
+    assert_eq!(released.status, StatusCode::NOT_FOUND);
+    assert_eq!(status_of(&app, &token, &id).await, "frozen");
+}
+
+#[tokio::test]
+async fn revoking_an_unknown_or_revoked_code_is_not_found() {
+    let app = test_app().await;
+    let cookie = owner(&app).await;
+    assert_eq!(
+        revoke(&app, &cookie, "inv-nosuchcode00000").await.status,
+        StatusCode::NOT_FOUND
+    );
+    let code = create_code(&app, &cookie, "Sprint", "10", "7").await;
+    assert_eq!(
+        revoke(&app, &cookie, &code).await.status,
+        StatusCode::SEE_OTHER
+    );
+    assert_eq!(
+        revoke(&app, &cookie, &code).await.status,
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn an_entry_waiting_in_screening_freezes_and_keeps_its_day_when_released() {
+    let app = test_app().await;
+    let cookie = owner(&app).await;
+    let code = create_code(&app, &cookie, "Leaked", "10", "7").await;
+    let (_, token) = invited_account(&app, &code, "grace@example.com").await;
+    // The 51st entry of an invited account's day waits in screening for tomorrow.
+    for n in 0..50 {
+        app.post_as(
+            "/entries",
+            Some(&token),
+            entry(&format!("Steering {n}"), ""),
+        )
+        .await;
+    }
+    let late = app
+        .post_as("/entries", Some(&token), entry("Steering late", ""))
+        .await;
+    let late = id_in(&late.body);
+    app.post_as(&format!("/e/{late}/publish"), Some(&token), "")
+        .await;
+    assert_eq!(status_of(&app, &token, &late).await, "screening");
+    revoke(&app, &cookie, &code).await;
+    assert_eq!(status_of(&app, &token, &late).await, "frozen");
+    app.form(&format!("/admin/e/{late}/release"), &[], Some(&cookie))
+        .await;
+    let own = app
+        .send(
+            Request::get(format!("/e/{late}"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(
+        field(&own.body, "status"),
+        Some("screening"),
+        "{}",
+        own.body
+    );
+    assert_eq!(
+        field(&own.body, "screen_from"),
+        Some(date_in(1).as_str()),
+        "{}",
+        own.body
+    );
+}
+
+#[tokio::test]
+async fn a_released_pending_entry_is_no_longer_held() {
+    let app = test_app().await;
+    let cookie = owner(&app).await;
+    let code = create_code(&app, &cookie, "Leaked", "10", "7").await;
+    let (_, token) = invited_account(&app, &code, "grace@example.com").await;
+    let held = app
+        .post_as("/entries", Some(&token), entry("Steering held", ""))
+        .await;
+    let held = id_in(&held.body);
+    revoke(&app, &cookie, &code).await;
+    app.form(&format!("/admin/e/{held}/release"), &[], Some(&cookie))
+        .await;
+    let own = app
+        .send(
+            Request::get(format!("/e/{held}"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(field(&own.body, "publish_at"), None, "{}", own.body);
+}
+
+#[tokio::test]
+async fn rejecting_a_frozen_batch_member_rejects_its_frozen_siblings_and_gives_back_units() {
+    let app = test_app().await;
+    let cookie = owner(&app).await;
+    let code = create_code(&app, &cookie, "Leaked", "10", "7").await;
+    let (_, token) = invited_account(&app, &code, "grace@example.com").await;
+    let batch = serde_json::json!({
+        "entries": [entry("Steering one", "slug: one\n"), entry("Steering two", "slug: two\n")]
+    });
+    let made = app
+        .send(
+            Request::post("/entries/batch")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .header("accept", "application/json")
+                .body(Body::from(batch.to_string()))
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+    let made: serde_json::Value = serde_json::from_str(&made.body).unwrap();
+    let ids: Vec<String> = made["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|member| member["id"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(ids.len(), 2);
+    // 18 more fill the 20 a day the account has once its code is revoked.
+    for n in 0..18 {
+        app.post_as(
+            "/entries",
+            Some(&token),
+            entry(&format!("Steering {n}"), ""),
+        )
+        .await;
+    }
+    revoke(&app, &cookie, &code).await;
+    let rejected = app
+        .form(&format!("/admin/e/{}/reject", ids[0]), &[], Some(&cookie))
+        .await;
+    assert_eq!(rejected.status, StatusCode::SEE_OTHER, "{}", rejected.body);
+    for id in &ids {
+        assert_eq!(status_of(&app, &token, id).await, "rejected", "{id}");
+    }
+    // Both were rejected unscreened, so both units came back: two more fit today.
+    for n in 0..2 {
+        let reply = app
+            .post_as("/entries", Some(&token), entry(&format!("Again {n}"), ""))
+            .await;
+        assert_eq!(field(&reply.body, "screen_from"), None, "{}", reply.body);
+    }
+    // No guard: the next entry waits in the screening queue for its day, where a
+    // guarded account's would go to review.
+    let next = app
+        .post_as("/entries", Some(&token), entry("Steering next", ""))
+        .await;
+    let next = id_in(&next.body);
+    app.post_as(&format!("/e/{next}/publish"), Some(&token), "")
+        .await;
+    assert_eq!(status_of(&app, &token, &next).await, "screening");
+}

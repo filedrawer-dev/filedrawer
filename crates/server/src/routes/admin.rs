@@ -54,7 +54,12 @@ pub async fn queue(_: AdminSession, State(state): State<AppState>) -> Result<Res
             entry,
         })
         .collect();
-    let (review, held) = rows.iter().partition(|row| row.entry.status == "review");
+    let of = |status: &str| {
+        rows.iter()
+            .filter(|row| row.entry.status == status)
+            .collect()
+    };
+    let (review, held, frozen) = (of("review"), of("held"), of("frozen"));
     let guarded = accounts::guarded(&state.pool).await?;
     let refusals = series::refusals(&state.pool).await?;
     let doubted = entries::doubted(&state.pool).await?;
@@ -68,6 +73,7 @@ pub async fn queue(_: AdminSession, State(state): State<AppState>) -> Result<Res
             sections: [
                 ("In review", review),
                 ("Held until a vendor fixes the hole", held),
+                ("Frozen by a revoked invite code", frozen),
             ],
             doubted: &doubted,
             refusals: &refusals,
@@ -76,7 +82,7 @@ pub async fn queue(_: AdminSession, State(state): State<AppState>) -> Result<Res
     ))
 }
 
-/// One entry in review or held: its card, its text, and the owner's choices.
+/// One entry in review, held or frozen: its card, its text, and the owner's choices.
 pub async fn entry(
     _: AdminSession,
     State(state): State<AppState>,
@@ -150,6 +156,27 @@ pub async fn reject(
     Path(id): Path<String>,
 ) -> Result<Response, AppError> {
     decide(&state, &id, Decision::Reject).await
+}
+
+/// Releases a frozen entry back to screening.
+pub async fn release(
+    _: AdminSession,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Response, AppError> {
+    decide(&state, &id, Decision::Release).await
+}
+
+/// Revokes an invite code, freezing its accounts' unscreened entries.
+pub async fn revoke_invite(
+    _: AdminSession,
+    State(state): State<AppState>,
+    Path(code): Path<String>,
+) -> Result<Response, AppError> {
+    match invites::revoke(&state.pool, &code, now_utc()).await? {
+        Some(_) => Ok(Redirect::to("/admin/invites").into_response()),
+        None => Err(AppError::NotFound),
+    }
 }
 
 async fn decide_refusal(

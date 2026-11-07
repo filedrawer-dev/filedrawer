@@ -96,8 +96,9 @@ pub struct QueueRow<'a> {
 #[derive(Template)]
 #[template(path = "admin.html")]
 pub struct AdminQueuePage<'a> {
-    /// Each heading, with its entries: those in review, then those held.
-    pub sections: [(&'a str, Vec<&'a QueueRow<'a>>); 2],
+    /// Each heading, with its entries: those in review, those held, then those
+    /// frozen by a revoked invite code.
+    pub sections: [(&'a str, Vec<&'a QueueRow<'a>>); 3],
     /// Entries that passed although the screen doubted they hold a hazard: the
     /// entry, its title, and the doubt.
     pub doubted: &'a [(&'a Doubted, String)],

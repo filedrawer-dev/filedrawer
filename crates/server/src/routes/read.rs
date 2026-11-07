@@ -218,6 +218,7 @@ async fn own_entry(
                     | "screening"
                     | "review"
                     | "held"
+                    | "frozen"
                     | "rejected"
                     | "embargoed"
                     | "waiting_on_series"

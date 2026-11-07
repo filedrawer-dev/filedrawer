@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE entries SET status = 'frozen'\n         WHERE account_id IN (SELECT id FROM accounts WHERE invite_seq = ?)\n           AND (status = 'pending' OR (status = 'screening' AND screen_verdict IS NULL))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "4a5e7013f26b1de61e75ad414f090354ad3ac60cc697076eae34b7e9dd53b5c2"
+}

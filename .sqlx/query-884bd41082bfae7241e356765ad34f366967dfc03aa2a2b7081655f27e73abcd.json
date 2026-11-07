@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT e.seq AS \"seq!: i64\", e.id, e.status, e.source, e.account_id,\n                  a.display_name, e.submitted_at, b.id AS \"batch_id?\", e.review_reason\n           FROM entries e JOIN authors a ON a.id = e.account_id\n           LEFT JOIN batches b ON b.seq = e.batch_seq\n           WHERE e.status IN ('review', 'held') AND (?1 IS NULL OR e.id = ?1)\n           ORDER BY e.queue_position, e.submitted_at, e.seq",
+  "query": "SELECT e.seq AS \"seq!: i64\", e.id, e.status, e.source, e.account_id,\n                  a.display_name, e.submitted_at, b.id AS \"batch_id?\", e.review_reason\n           FROM entries e JOIN authors a ON a.id = e.account_id\n           LEFT JOIN batches b ON b.seq = e.batch_seq\n           WHERE e.status IN ('review', 'held', 'frozen') AND (?1 IS NULL OR e.id = ?1)\n           ORDER BY e.queue_position, e.submitted_at, e.seq",
   "describe": {
     "columns": [
       {
@@ -113,5 +113,5 @@
       true
     ]
   },
-  "hash": "e383af311f76f9b99e1db1f92eeb75c24f2eb501f59bc3dcfe0b2e0943714701"
+  "hash": "884bd41082bfae7241e356765ad34f366967dfc03aa2a2b7081655f27e73abcd"
 }

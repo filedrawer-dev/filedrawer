@@ -473,8 +473,11 @@ async fn settle(state: &AppState, seq: i64, now: OffsetDateTime) -> Result<(), s
         .find(|member| member.screen_verdict.as_deref() == Some("reject"))
     {
         // A member in review or held stays for the owner to see (the owner's decision,
-        // 2026-11-06); publishing it later sends it back here, with its batch.
-        for member in members.iter().filter(in_screening) {
+        // 2026-11-06); publishing it later sends it back here, with its batch. A
+        // frozen member goes back with it, unscreened.
+        let going_back =
+            |member: &&Member| member.status == "screening" || member.status == "frozen";
+        for member in members.iter().filter(going_back) {
             let reasons = (member.screen_verdict.as_deref() != Some("reject")).then(|| {
                 serde_json::json!([format!(
                     "another entry in its batch, {}, was rejected, and a batch is screened as one",

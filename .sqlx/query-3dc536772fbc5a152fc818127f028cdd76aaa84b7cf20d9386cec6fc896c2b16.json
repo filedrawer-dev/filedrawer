@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT 1 AS \"one!: i64\" FROM entries\n           WHERE seq = ? AND status = 'screening' AND screen_verdict IS NULL",
+  "query": "SELECT 1 AS \"one!: i64\" FROM entries\n           WHERE seq = ? AND (status = 'frozen'\n               OR (status = 'screening' AND screen_verdict IS NULL))",
   "describe": {
     "columns": [
       {
@@ -17,5 +17,5 @@
       false
     ]
   },
-  "hash": "9dce0a0bf89a0ca39349aba775485c45f85778fb23385cbc047e501d5a05c934"
+  "hash": "3dc536772fbc5a152fc818127f028cdd76aaa84b7cf20d9386cec6fc896c2b16"
 }

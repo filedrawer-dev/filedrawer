@@ -433,18 +433,30 @@ pub async fn start_screening(
     seq: i64,
     due_by: Option<&str>,
 ) -> Result<Option<String>, sqlx::Error> {
-    // It joins the screening queue one place behind its account's last waiting entry
-    // (design.md: the fair queue); `to_review` places it in the review queue alike.
+    to_screening(pool, seq, "pending", due_by).await
+}
+
+/// Moves entry `seq` from `from` to `screening`, as a hold's end does: it joins the
+/// screening queue one place behind its account's last waiting entry (design.md: the
+/// fair queue; `to_review` places it in the review queue alike), and its hold is
+/// over. With `due_by`, only if its hold ends by then.
+async fn to_screening(
+    pool: &SqlitePool,
+    seq: i64,
+    from: &str,
+    due_by: Option<&str>,
+) -> Result<Option<String>, sqlx::Error> {
     sqlx::query_scalar!(
-        "UPDATE entries SET status = 'screening', hold_until = NULL,
+        "UPDATE entries SET status = 'screening', hold_until = NULL, screen_verdict = NULL,
              queue_position = 1 + COALESCE((
                  SELECT MAX(w.queue_position) FROM entries w
                  WHERE w.account_id = entries.account_id AND w.status = 'screening'
                    AND w.screen_verdict IS NULL), 0)
-         WHERE seq = ?1 AND status = 'pending' AND (?2 IS NULL OR hold_until <= ?2)
+         WHERE seq = ?1 AND status = ?3 AND (?2 IS NULL OR hold_until <= ?2)
          RETURNING source",
         seq,
-        due_by
+        due_by,
+        from
     )
     .fetch_optional(pool)
     .await
@@ -1014,15 +1026,17 @@ pub async fn store_verdict(
     Ok(())
 }
 
-/// Rejects an entry in screening, review or held, with `reasons` (a JSON array) when
-/// it has none of its own, and gives back the slug it took, so its author can submit
-/// again with it. An entry rejected before it was screened, as its batch's other
-/// members are, also gives back its allowance (design.md, Agent interface).
+/// Rejects an entry in screening, review, held or frozen, with `reasons` (a JSON
+/// array) when it has none of its own, and gives back the slug it took, so its
+/// author can submit again with it. An entry rejected before it was screened, as its
+/// batch's other members are, frozen ones included, also gives back its allowance
+/// (design.md, Agent interface).
 pub async fn reject(pool: &SqlitePool, seq: i64, reasons: Option<&str>) -> Result<(), sqlx::Error> {
     let mut transaction = pool.begin().await?;
     let unscreened = sqlx::query_scalar!(
         r#"SELECT 1 AS "one!: i64" FROM entries
-           WHERE seq = ? AND status = 'screening' AND screen_verdict IS NULL"#,
+           WHERE seq = ? AND (status = 'frozen'
+               OR (status = 'screening' AND screen_verdict IS NULL))"#,
         seq
     )
     .fetch_optional(&mut *transaction)
@@ -1033,7 +1047,7 @@ pub async fn reject(pool: &SqlitePool, seq: i64, reasons: Option<&str>) -> Resul
     sqlx::query!(
         "UPDATE entries SET status = 'rejected', screen_verdict = 'reject',
              rejection_reasons = COALESCE(?, rejection_reasons)
-         WHERE seq = ? AND status IN ('screening', 'review', 'held')",
+         WHERE seq = ? AND status IN ('screening', 'review', 'held', 'frozen')",
         reasons,
         seq
     )
@@ -1073,6 +1087,39 @@ async fn guard_author(
         .fetch_one(&mut *transaction)
         .await?;
     crate::accounts::guard(transaction, &account).await
+}
+
+/// The owner releases a frozen entry back to screening, as if its hold had just
+/// ended; it keeps its allowance day. False if it wasn't frozen.
+pub async fn release_frozen(pool: &SqlitePool, seq: i64) -> Result<bool, sqlx::Error> {
+    Ok(to_screening(pool, seq, "frozen", None).await?.is_some())
+}
+
+/// The owner fails a frozen entry with `reasons` (a JSON array), as a review
+/// rejection does, but without guarding its account: it was frozen for its invite
+/// code, not its text (the owner's decision, 2026-11-06). It was never screened, so
+/// it gives back its allowance. False if it wasn't frozen.
+pub async fn reject_frozen(
+    pool: &SqlitePool,
+    seq: i64,
+    reasons: &str,
+) -> Result<bool, sqlx::Error> {
+    let mut transaction = pool.begin().await?;
+    let done = sqlx::query!(
+        "UPDATE entries SET status = 'screening', screen_verdict = 'reject',
+             rejection_reasons = ?
+         WHERE seq = ? AND status = 'frozen'",
+        reasons,
+        seq
+    )
+    .execute(&mut *transaction)
+    .await?;
+    if done.rows_affected() != 1 {
+        return Ok(false);
+    }
+    allowance::give_back(&mut transaction, seq).await?;
+    transaction.commit().await?;
+    Ok(true)
 }
 
 /// Holds an entry in review until a vendor fixes the hole, and guards its account.
@@ -1165,7 +1212,7 @@ pub async fn mark_doubt_seen(pool: &SqlitePool, id: &str) -> Result<bool, sqlx::
     Ok(done.rows_affected() == 1)
 }
 
-/// An entry waiting on the owner, in `review` or `held`.
+/// An entry waiting on the owner, in `review`, `held` or `frozen`.
 pub struct Undecided {
     pub seq: i64,
     pub id: String,
@@ -1180,7 +1227,8 @@ pub struct Undecided {
     pub review_reason: Option<String>,
 }
 
-/// Every entry in `review` or `held`, oldest submission first, or only entry `id`.
+/// Every entry in `review`, `held` or `frozen`, oldest submission first, or only
+/// entry `id`.
 pub async fn undecided(pool: &SqlitePool, id: Option<&str>) -> Result<Vec<Undecided>, sqlx::Error> {
     sqlx::query_as!(
         Undecided,
@@ -1188,7 +1236,7 @@ pub async fn undecided(pool: &SqlitePool, id: Option<&str>) -> Result<Vec<Undeci
                   a.display_name, e.submitted_at, b.id AS "batch_id?", e.review_reason
            FROM entries e JOIN authors a ON a.id = e.account_id
            LEFT JOIN batches b ON b.seq = e.batch_seq
-           WHERE e.status IN ('review', 'held') AND (?1 IS NULL OR e.id = ?1)
+           WHERE e.status IN ('review', 'held', 'frozen') AND (?1 IS NULL OR e.id = ?1)
            ORDER BY e.queue_position, e.submitted_at, e.seq"#,
         id
     )

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE entries SET status = 'rejected', screen_verdict = 'reject',\n             rejection_reasons = COALESCE(?, rejection_reasons)\n         WHERE seq = ? AND status IN ('screening', 'review', 'held', 'frozen')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "1dfcf69947477f046c0157c3be24ed5231364c9d5ad2e5f8f99ad7c9aa4a4bc6"
+}

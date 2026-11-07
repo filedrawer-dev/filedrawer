@@ -5,12 +5,17 @@
 <h1>{{ title }}</h1>
 <p><code>{{ entry.id }}</code>, {{ entry.status }}, from {{ entry.display_name.as_deref().unwrap_or("account deleted") }} <code>{{ entry.account_id }}</code>, submitted {{ entry.submitted_at }}{% if let Some(batch) = entry.batch_id %}, in batch <code>{{ batch }}</code>, which publishes as one{% endif %}.</p>
 <p>Why it's here: {{ entry.review_reason.as_deref().unwrap_or("not kept; it went to review before reasons were stored") }}.</p>
-{% if batch_failed %}
+{% if batch_failed && entry.status != "frozen" %}
 <p class="error">Its batch has already failed: another member was rejected, so publishing it sends it back with its batch. Rejecting or holding it puts its account under the review guard.</p>
 {% endif %}
+{% if entry.status == "frozen" %}
+<p>Frozen because the invite code its account signed up with was revoked. Release sends it to the screen, as if its hold had just ended; Reject rejects it without guarding the account.</p>
+<form method="post" action="/admin/e/{{ entry.id }}/release"><button type="submit">Release to screening</button></form>
+{% else %}
 <form method="post" action="/admin/e/{{ entry.id }}/publish"><button type="submit">Publish</button></form>
 {% if entry.status == "review" %}
 <form method="post" action="/admin/e/{{ entry.id }}/hold"><button type="submit">Hold until the vendor fixes it</button></form>
+{% endif %}
 {% endif %}
 <form method="post" action="/admin/e/{{ entry.id }}/reject"><button type="submit">Reject</button></form>
 <p>The author reads only "rejected in review". Rejecting one member sends its whole batch back.</p>

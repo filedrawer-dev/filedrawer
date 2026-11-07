@@ -154,6 +154,8 @@ fn build(state: AppState) -> Routes<Router> {
             "/admin/invites",
             get(admin::invites).post(admin::create_invite),
         )
+        .route("/admin/invites/{code}/revoke", post(admin::revoke_invite))
+        .route("/admin/e/{id}/release", post(admin::release))
         .route("/admin/e/{id}", get(admin::entry))
         .route("/admin/e/{id}/publish", post(admin::publish))
         .route("/admin/e/{id}/hold", post(admin::hold))

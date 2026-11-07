@@ -15,14 +15,16 @@ pub enum Decision {
     Publish,
     Hold,
     Reject,
+    /// A frozen entry goes back to screening.
+    Release,
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Decided {
     Done,
     NoEntry,
-    /// The entry isn't waiting on this decision: publish and reject need `review` or
-    /// `held`, and hold needs `review`.
+    /// The entry isn't waiting on this decision: publish needs `review` or `held`,
+    /// reject those or `frozen`, hold needs `review`, and release `frozen`.
     NotWaiting,
 }
 
@@ -49,15 +51,17 @@ pub async fn decide(
         Decision::Reject => {
             let reasons = serde_json::json!([REJECTED_IN_REVIEW]).to_string();
             entries::owner_reject(&state.pool, seq, &reasons).await?
+                || entries::reject_frozen(&state.pool, seq, &reasons).await?
         }
+        Decision::Release => entries::release_frozen(&state.pool, seq).await?,
     };
     if !changed {
         return Ok(Decided::NotWaiting);
     }
     // The decision is stored before it is placed. Should placing fail, the entry sits
     // in `screening` with a verdict, which the worker's `settle_screened` places on its
-    // next run.
-    if !matches!(decision, Decision::Hold) {
+    // next run. A held or released entry has nothing to place yet.
+    if !matches!(decision, Decision::Hold | Decision::Release) {
         queue::settle_decided(state, seq, now).await?;
     }
     Ok(Decided::Done)

@@ -13,9 +13,9 @@
 </form>
 {% if codes.is_empty() %}<p>No codes yet.</p>{% else %}
 <table>
-<tr><th>Label</th><th>Code and link</th><th>Used</th><th>Expires</th></tr>
+<tr><th>Label</th><th>Code and link</th><th>Used</th><th>Expires, or revoked</th></tr>
 {% for code in codes %}
-<tr><td>{{ code.label }}</td><td><code>{{ code.code }}</code><br><code>{{ public_url }}/signup?invite={{ code.code }}</code></td><td>{{ code.used }} of {{ code.max_uses }}</td><td>{{ code.expires_at }}{% if let Some(revoked) = code.revoked_at %}, revoked {{ revoked }}{% endif %}</td></tr>
+<tr><td>{{ code.label }}</td><td><code>{{ code.code }}</code><br><code>{{ public_url }}/signup?invite={{ code.code }}</code></td><td>{{ code.used }} of {{ code.max_uses }}</td><td>{{ code.expires_at }}{% if let Some(revoked) = code.revoked_at %}, revoked {{ revoked }}{% else %}<form method="post" action="/admin/invites/{{ code.code }}/revoke"><button type="submit">Revoke: freeze its accounts' unscreened entries</button></form>{% endif %}</td></tr>
 {% endfor %}
 </table>
 {% endif %}

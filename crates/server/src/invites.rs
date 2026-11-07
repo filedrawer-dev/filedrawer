@@ -61,6 +61,41 @@ pub async fn list(pool: &SqlitePool) -> Result<Vec<Listed>, sqlx::Error> {
     .await
 }
 
+/// Revokes `code` at `now`, and freezes every unscreened entry of the accounts made
+/// with it: those in their hold (`pending`) and those in `screening` with no verdict.
+/// Their accounts lose the code's exemptions with it. Returns how many entries froze,
+/// or `None` if there is no such code or it was revoked already.
+pub async fn revoke(
+    pool: &SqlitePool,
+    code: &str,
+    now: OffsetDateTime,
+) -> Result<Option<u64>, sqlx::Error> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let at = stamp(now);
+    let revoked = sqlx::query_scalar!(
+        r#"UPDATE invite_codes SET revoked_at = ? WHERE code = ? AND revoked_at IS NULL
+           RETURNING seq AS "seq!: i64""#,
+        at,
+        code
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(seq) = revoked else {
+        return Ok(None);
+    };
+    let frozen = sqlx::query!(
+        "UPDATE entries SET status = 'frozen'
+         WHERE account_id IN (SELECT id FROM accounts WHERE invite_seq = ?)
+           AND (status = 'pending' OR (status = 'screening' AND screen_verdict IS NULL))",
+        seq
+    )
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    tx.commit().await?;
+    Ok(Some(frozen))
+}
+
 /// The code `code` names, if it can take a signup at `now`: not expired, not
 /// revoked, with a use left.
 pub async fn usable(
