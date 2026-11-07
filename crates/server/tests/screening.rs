@@ -529,35 +529,164 @@ async fn a_series_the_screen_fails_is_refused() {
     assert_eq!(logged, 1);
 }
 
-/// Where `schema` breaks the API's rule for `enum` (the API's 400 of 2026-11-06:
-/// "Enum value 'working_attack' does not match declared type '['string', 'null']'"):
-/// each `enum` needs one declared `type`, and every value must be of that type.
-fn enum_mismatches(schema: &serde_json::Value, path: &str) -> Vec<String> {
-    let mut found = Vec::new();
-    if let Some(values) = schema.get("enum").and_then(|values| values.as_array()) {
-        let fits = |value: &serde_json::Value| match schema["type"].as_str() {
-            Some("string") => value.is_string(),
-            Some("boolean") => value.is_boolean(),
-            Some("integer") => value.is_i64() || value.is_u64(),
-            Some("number") => value.is_number(),
-            Some("null") => value.is_null(),
-            _ => false,
-        };
-        for value in values.iter().filter(|value| !fits(value)) {
-            found.push(format!("{path}: {value} under type {}", schema["type"]));
+/// Keywords the API refuses in a structured-output schema (structured-outputs.md,
+/// "JSON Schema limitations": numeric and string constraints, and array constraints
+/// beyond `minItems`, which is allowed only as 0 or 1).
+const UNSUPPORTED: &[&str] = &[
+    "minimum",
+    "maximum",
+    "exclusiveMinimum",
+    "exclusiveMaximum",
+    "multipleOf",
+    "minLength",
+    "maxLength",
+    "maxItems",
+    "uniqueItems",
+    "contains",
+    "prefixItems",
+];
+/// The string formats it supports.
+const FORMATS: &[&str] = &[
+    "date-time",
+    "time",
+    "date",
+    "duration",
+    "email",
+    "hostname",
+    "uri",
+    "ipv4",
+    "ipv6",
+    "uuid",
+];
+/// Its complexity limits, across a request's schemas ("Schema complexity limits").
+const MAX_OPTIONAL: usize = 24;
+const MAX_UNION: usize = 16;
+
+/// Where `schema` breaks a limit the Messages API documents for structured outputs
+/// (https://platform.claude.com/docs/en/build-with-claude/structured-outputs.md),
+/// such as the enum rule behind staging's 400 of 2026-11-06: "Enum value
+/// 'working_attack' does not match declared type '['string', 'null']'". It doesn't
+/// check recursion or `pattern`'s regex limits; our schema uses neither.
+fn schema_problems(schema: &serde_json::Value) -> Vec<String> {
+    let mut tally = Tally::default();
+    tally.walk(schema, "schema");
+    if tally.optional > MAX_OPTIONAL {
+        let optional = tally.optional;
+        tally.problems.push(format!(
+            "{optional} optional properties; the limit is {MAX_OPTIONAL}"
+        ));
+    }
+    if tally.union > MAX_UNION {
+        let union = tally.union;
+        tally.problems.push(format!(
+            "{union} union-typed properties; the limit is {MAX_UNION}"
+        ));
+    }
+    tally.problems
+}
+
+/// What a walk over a schema found: its problems, and the counts the limits cap.
+#[derive(Default)]
+struct Tally {
+    problems: Vec<String>,
+    optional: usize,
+    union: usize,
+}
+
+impl Tally {
+    fn walk(&mut self, schema: &serde_json::Value, path: &str) {
+        // Each enum needs one declared type, and every value must be of that type.
+        if let Some(values) = schema.get("enum").and_then(|values| values.as_array()) {
+            let fits = |value: &serde_json::Value| match schema["type"].as_str() {
+                Some("string") => value.is_string(),
+                Some("boolean") => value.is_boolean(),
+                Some("integer") => value.is_i64() || value.is_u64(),
+                Some("number") => value.is_number(),
+                Some("null") => value.is_null(),
+                _ => false,
+            };
+            for value in values.iter().filter(|value| !fits(value)) {
+                let declared = &schema["type"];
+                self.problems
+                    .push(format!("{path}: {value} under type {declared}"));
+            }
+        }
+        for keyword in UNSUPPORTED
+            .iter()
+            .filter(|keyword| schema.get(**keyword).is_some())
+        {
+            self.problems
+                .push(format!("{path}: {keyword} isn't supported"));
+        }
+        if let Some(min) = schema.get("minItems")
+            && *min != 0
+            && *min != 1
+        {
+            self.problems
+                .push(format!("{path}: minItems {min}; only 0 or 1 is supported"));
+        }
+        if let Some(format) = schema.get("format").and_then(|format| format.as_str())
+            && !FORMATS.contains(&format)
+        {
+            self.problems
+                .push(format!("{path}: format {format} isn't supported"));
+        }
+        if let Some(reference) = schema.get("$ref").and_then(|r| r.as_str())
+            && !reference.starts_with('#')
+        {
+            self.problems
+                .push(format!("{path}: external $ref {reference}"));
+        }
+        for (n, branch) in schema["allOf"].as_array().into_iter().flatten().enumerate() {
+            if branch.get("$ref").is_some() {
+                self.problems.push(format!(
+                    "{path}.allOf[{n}]: allOf with $ref isn't supported"
+                ));
+            }
+        }
+        if schema["type"].is_array() || schema.get("anyOf").is_some() {
+            self.union += 1;
+        }
+        // An object, by its type or by having properties, must refuse others.
+        let object = schema["type"] == "object"
+            || schema["type"]
+                .as_array()
+                .is_some_and(|types| types.contains(&json!("object")))
+            || schema.get("properties").is_some();
+        if object && schema.get("additionalProperties") != Some(&json!(false)) {
+            self.problems
+                .push(format!("{path}: additionalProperties must be false"));
+        }
+        let required: Vec<&str> = schema["required"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|name| name.as_str())
+            .collect();
+        for (name, property) in schema["properties"].as_object().into_iter().flatten() {
+            if !required.contains(&name.as_str()) {
+                self.optional += 1;
+            }
+            self.walk(property, &format!("{path}.{name}"));
+        }
+        if schema.get("items").is_some() {
+            self.walk(&schema["items"], &format!("{path}[]"));
+        }
+        for key in ["anyOf", "allOf"] {
+            for (n, branch) in schema[key].as_array().into_iter().flatten().enumerate() {
+                self.walk(branch, &format!("{path}.{key}[{n}]"));
+            }
+        }
+        for key in ["$defs", "definitions"] {
+            for (name, defined) in schema[key].as_object().into_iter().flatten() {
+                self.walk(defined, &format!("{path}.{key}.{name}"));
+            }
         }
     }
-    for (name, property) in schema["properties"].as_object().into_iter().flatten() {
-        found.extend(enum_mismatches(property, &format!("{path}.{name}")));
-    }
-    if schema.get("items").is_some() {
-        found.extend(enum_mismatches(&schema["items"], &format!("{path}[]")));
-    }
-    found
 }
 
 #[tokio::test]
-async fn every_enum_in_the_schemas_sent_matches_its_declared_type() {
+async fn every_schema_sent_keeps_to_the_apis_documented_limits() {
     let models = FakeModels::default();
     let screener = models.screener();
     screener.screen_as("an entry", Subject::Submission).await;
@@ -565,8 +694,141 @@ async fn every_enum_in_the_schemas_sent_matches_its_declared_type() {
     let schemas = models.schemas();
     assert_eq!(schemas.len(), 2);
     for schema in &schemas {
-        assert_eq!(enum_mismatches(schema, "schema"), Vec::<String>::new());
+        assert_eq!(schema_problems(schema), Vec::<String>::new());
     }
+}
+
+/// A one-property object schema around `property`.
+fn with_property(property: serde_json::Value) -> serde_json::Value {
+    json!({
+        "type": "object", "additionalProperties": false, "required": ["a"],
+        "properties": {"a": property},
+    })
+}
+
+/// An object schema with `count` string properties typed as `property`, `required`
+/// listing the first `required` of them.
+fn with_properties(
+    count: usize,
+    required: usize,
+    property: serde_json::Value,
+) -> serde_json::Value {
+    let names: Vec<String> = (0..count).map(|n| format!("p{n}")).collect();
+    let properties: serde_json::Map<String, serde_json::Value> = names
+        .iter()
+        .map(|name| (name.clone(), property.clone()))
+        .collect();
+    json!({
+        "type": "object", "additionalProperties": false,
+        "required": names[..required], "properties": properties,
+    })
+}
+
+#[test]
+fn the_schema_checker_catches_each_documented_limit() {
+    let string = json!({"type": "string"});
+    let nullable = json!({"type": ["string", "null"]});
+    let cases = [
+        (
+            with_property(json!({"type": ["string", "null"], "enum": ["x", null]})),
+            "under type",
+        ),
+        (
+            json!({"type": "object", "required": [], "properties": {}}),
+            "additionalProperties",
+        ),
+        (
+            with_property(json!({"type": "integer", "minimum": 0})),
+            "minimum",
+        ),
+        (
+            with_property(json!({"type": "string", "maxLength": 9})),
+            "maxLength",
+        ),
+        (
+            with_property(json!({"type": "array", "items": string, "minItems": 2})),
+            "minItems",
+        ),
+        (
+            with_property(json!({"$ref": "https://example.com/schema.json"})),
+            "external $ref",
+        ),
+        (with_properties(25, 0, string.clone()), "optional"),
+        (with_properties(17, 17, nullable.clone()), "union"),
+        (
+            with_property(
+                json!({"type": "object", "properties": {"b": {"type": "integer", "multipleOf": 2}}}),
+            ),
+            "multipleOf",
+        ),
+        (
+            with_property(json!({"type": "array", "items": string, "uniqueItems": true})),
+            "uniqueItems",
+        ),
+        (
+            with_property(json!({"type": "string", "format": "phone"})),
+            "format phone",
+        ),
+        (
+            with_property(json!({"allOf": [{"$ref": "#/$defs/x"}]})),
+            "allOf with $ref",
+        ),
+        // An object by its properties, or by a type list holding "object".
+        (
+            with_property(json!({"properties": {"b": string}})),
+            "schema.a: additionalProperties",
+        ),
+        (
+            with_property(json!({"type": ["object", "null"], "properties": {}})),
+            "schema.a: additionalProperties",
+        ),
+        // Inside anyOf, allOf and $defs.
+        (
+            with_property(json!({"anyOf": [{"type": "integer", "minimum": 1}, {"type": "null"}]})),
+            "schema.a.anyOf[0]: minimum",
+        ),
+        (
+            with_property(json!({"allOf": [{"type": "integer", "multipleOf": 3}]})),
+            "schema.a.allOf[0]: multipleOf",
+        ),
+        (
+            json!({
+                "type": "object", "additionalProperties": false, "required": [],
+                "properties": {}, "$defs": {"d": {"type": "string", "maxLength": 3}},
+            }),
+            "schema.$defs.d: maxLength",
+        ),
+        (
+            with_properties(
+                17,
+                17,
+                json!({"anyOf": [{"type": "string"}, {"type": "null"}]}),
+            ),
+            "union",
+        ),
+    ];
+    for (schema, named) in cases {
+        let problems = schema_problems(&schema);
+        assert!(
+            problems.iter().any(|problem| problem.contains(named)),
+            "{named}: {problems:?} for {schema}"
+        );
+    }
+    // Within the limits: 24 optional, 16 union-typed, an enum of its own type.
+    assert_eq!(
+        schema_problems(&with_properties(24, 0, string)),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        schema_problems(&with_properties(16, 16, nullable)),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        schema_problems(&with_property(
+            json!({"type": "string", "enum": ["x", "y"]})
+        )),
+        Vec::<String>::new()
+    );
 }
 
 #[test]
