@@ -289,3 +289,9 @@ Choices the docs left open, made while building the analyzer. Once the owner set
 - Options: no restore for a removed file, and its bytes may be attached again unserved, as here; a restore action like the one design.md gives entries; or refusing a plainly removed file's bytes at upload, as a banned one is.
 - Chosen: no restore and no refusal. design.md gives restore for entries only, and bans only files removed as a hazard.
 - Against: an owner who removes the wrong file can't undo it, and an entry attaching a plainly removed file again publishes with that file unserved, without being told at submission.
+
+## Notes to taken addresses, sent with an invite code
+
+- Options: as now, an invited signup counts against its address's email limit only, so a holder of a valid code can have the server send "this address already has an account" notes to any number of addresses from one IP, each up to its own address limit; count the IP for such signups too, which would tell a code holder which addresses have accounts, since only those would trip it; or send no note at all when a signup with a code meets a taken address.
+- Chosen: as now. design.md lifts the per-IP email limit for invited signups so a sprint behind one IP can verify, and both alternatives either leak or change what an honest person who signs up twice is told.
+- Against: a leaked sprint code is a mail-sending tool until it expires or the owner revokes it (the next build), at up to 5 notes an hour to each address. Sending no note for invited signups costs only that rare honest case.

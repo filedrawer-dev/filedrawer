@@ -36,6 +36,7 @@ pub struct SignupPage<'a> {
     pub error: Option<&'a str>,
     pub email: &'a str,
     pub display_name: &'a str,
+    pub invite: &'a str,
 }
 
 #[derive(Template, Default)]
@@ -103,6 +104,16 @@ pub struct AdminQueuePage<'a> {
     /// Series the screen refused as a likely hazard, waiting for the owner's call.
     pub refusals: &'a [Refused],
     pub guarded: &'a [Guarded],
+}
+
+#[derive(Template)]
+#[template(path = "admin_invites.html")]
+pub struct AdminInvitesPage<'a> {
+    pub codes: &'a [crate::invites::Listed],
+    pub error: Option<&'a str>,
+    pub public_url: &'a str,
+    pub max_uses: i64,
+    pub max_days: i64,
 }
 
 #[derive(Template)]

@@ -90,7 +90,8 @@ pub async fn password_hash(
 /// attachment sets no kept entry cites, and the files no remaining set holds, whose
 /// bytes leave `files` once the rest has committed.
 /// Kept: the account ID, its public entries, the public series it made, refused
-/// series the owner confirmed, and the attachment sets kept entries cite.
+/// series the owner confirmed, the attachment sets kept entries cite, and the
+/// invite code it signed up with, so it still counts as one of the code's uses.
 pub async fn delete(state: &AppState, account_id: &str) -> Result<Outcome, sqlx::Error> {
     let writer = state.files.write().await;
     let mut transaction = state.pool.begin().await?;

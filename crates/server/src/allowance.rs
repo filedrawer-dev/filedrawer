@@ -12,8 +12,8 @@ use time::format_description::well_known::Rfc3339;
 use time::macros::format_description;
 use time::{Date, Duration, OffsetDateTime};
 
-use crate::AppState;
 use crate::error::AppError;
+use crate::{AppState, invites};
 
 /// The units an account gets each day in its first [`NEW_ACCOUNT_DAYS`] days.
 const NEW_ACCOUNT_UNITS: i64 = 20;
@@ -45,27 +45,41 @@ fn exempt(state: &AppState, account_id: &str) -> bool {
     .any(|exempt| exempt.as_deref() == Some(account_id))
 }
 
-/// The units an account made on `created` gets on `day`.
-fn units_on(created: Date, day: Date) -> i64 {
-    if day < created + Duration::days(NEW_ACCOUNT_DAYS) {
-        NEW_ACCOUNT_UNITS
-    } else {
-        UNITS
+/// How an account started, as its allowance sees it.
+#[derive(Debug, Clone, Copy)]
+struct Start {
+    /// The UTC day it was made.
+    created: Date,
+    /// Whether it signed up with an invite code that isn't revoked, which skips the
+    /// new-account limit (design.md, Limits and abuse).
+    invited: bool,
+}
+
+impl Start {
+    /// The units the account gets on `day`.
+    fn units_on(self, day: Date) -> i64 {
+        if !self.invited && day < self.created + Duration::days(NEW_ACCOUNT_DAYS) {
+            NEW_ACCOUNT_UNITS
+        } else {
+            UNITS
+        }
     }
 }
 
-/// The UTC day `account_id` was made. The server writes `created_at`; were it
-/// unreadable, the account counts as made `today`, so as new.
-async fn created_on(
+/// How `account_id` started. The server writes `created_at`; were it unreadable,
+/// the account counts as made `today`, so as new.
+async fn start_of(
     conn: &mut SqliteConnection,
     account_id: &str,
     today: Date,
-) -> Result<Date, sqlx::Error> {
+) -> Result<Start, sqlx::Error> {
     let created_at =
         sqlx::query_scalar!("SELECT created_at FROM accounts WHERE id = ?", account_id)
-            .fetch_one(conn)
+            .fetch_one(&mut *conn)
             .await?;
-    Ok(OffsetDateTime::parse(&created_at, &Rfc3339).map_or(today, |at| at.date()))
+    let created = OffsetDateTime::parse(&created_at, &Rfc3339).map_or(today, |at| at.date());
+    let invited = invites::invited(conn, account_id).await?;
+    Ok(Start { created, invited })
 }
 
 /// Takes a unit for each of `entries`, which `account_id` submitted, dated to the
@@ -83,7 +97,7 @@ pub async fn take(
     if exempt(state, account_id) {
         return Ok(true);
     }
-    let created = created_on(conn, account_id, today).await?;
+    let start = start_of(conn, account_id, today).await?;
     let from = day_text(today);
     let used = sqlx::query!(
         r#"SELECT day, COUNT(*) AS "units!: i64" FROM allowance_units
@@ -101,7 +115,7 @@ pub async fn take(
             .iter()
             .find(|row| row.day == text)
             .map_or(0, |row| row.units);
-        let room = usize::try_from(units_on(created, day) - taken).unwrap_or(0);
+        let room = usize::try_from(start.units_on(day) - taken).unwrap_or(0);
         let wanted = entries.len() - days.len();
         days.extend(std::iter::repeat_n(text, room.min(wanted)));
     }
@@ -154,7 +168,9 @@ pub async fn take_for_series(
         return Ok(Some(SeriesUnit(None)));
     }
     let mut conn = state.pool.acquire().await?;
-    let most = units_on(created_on(&mut conn, account_id, today).await?, today);
+    let most = start_of(&mut conn, account_id, today)
+        .await?
+        .units_on(today);
     let day = day_text(today);
     let taken = sqlx::query_scalar!(
         r#"INSERT INTO allowance_units (account_id, day)

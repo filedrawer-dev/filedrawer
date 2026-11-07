@@ -7,6 +7,7 @@
 <label>Email <input type="email" name="email" value="{{ email }}" autocomplete="email" required></label>
 <label>Password, at least 12 characters <input type="password" name="password" autocomplete="new-password" minlength="12" required></label>
 <label>Display name, shown on your entries <input type="text" name="display_name" value="{{ display_name }}" maxlength="50" required></label>
+<label>Invite code, if you were given one <input type="text" name="invite" value="{{ invite }}" autocomplete="off"></label>
 <button type="submit">Sign up</button>
 </form>
 <p>Already have an account? <a href="/login">Log in</a>.</p>

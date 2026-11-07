@@ -56,6 +56,8 @@ pub enum Signup {
     Created(String),
     /// Another account has the email already.
     Taken,
+    /// The invite code given can't take a signup: unknown, expired, revoked or used up.
+    BadInvite,
 }
 
 /// Creates an unverified account, or names the account that has the email.
@@ -64,9 +66,21 @@ pub async fn sign_up(
     email: &str,
     password_hash: &str,
     display_name: &str,
+    invite: Option<&str>,
 ) -> Result<Signup, sqlx::Error> {
+    // IMMEDIATE, so two signups can't both take a code's last use.
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    // The code first, so a bad one answers the same whether or not the address has
+    // an account.
+    let invite_seq = match invite {
+        None => None,
+        Some(code) => match crate::invites::usable(&mut *tx, code, now_utc()).await? {
+            Some(seq) => Some(seq),
+            None => return Ok(Signup::BadInvite),
+        },
+    };
     let taken = sqlx::query_scalar!("SELECT 1 AS found FROM accounts WHERE email = ?", email)
-        .fetch_optional(pool)
+        .fetch_optional(&mut *tx)
         .await?;
     if taken.is_some() {
         return Ok(Signup::Taken);
@@ -74,16 +88,18 @@ pub async fn sign_up(
     let id = ids::new_account_id();
     let created_at = now();
     sqlx::query!(
-        "INSERT INTO accounts (id, display_name, created_at, email, password_hash)
-         VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO accounts (id, display_name, created_at, email, password_hash, invite_seq)
+         VALUES (?, ?, ?, ?, ?, ?)",
         id,
         display_name,
         created_at,
         email,
-        password_hash
+        password_hash,
+        invite_seq
     )
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(Signup::Created(id))
 }
 

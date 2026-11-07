@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Invite codes{% endblock %}
+{% block content %}
+<p><a href="/admin">Review queue</a></p>
+<h1>Invite codes</h1>
+<p>An account that signs up with a code skips the per-IP signup and email limits and the new-account limit, so gets 50 entries a day from its first day. Share the link, or the code for the signup form.</p>
+{% if let Some(error) = error %}<p class="error">{{ error }}</p>{% endif %}
+<form method="post" action="/admin/invites">
+<label>Label, such as the event <input type="text" name="label" maxlength="100" required></label>
+<label>Uses <input type="number" name="uses" min="1" max="{{ max_uses }}" required></label>
+<label>Days valid <input type="number" name="days" min="1" max="{{ max_days }}" required></label>
+<button type="submit">Create a code</button>
+</form>
+{% if codes.is_empty() %}<p>No codes yet.</p>{% else %}
+<table>
+<tr><th>Label</th><th>Code and link</th><th>Used</th><th>Expires</th></tr>
+{% for code in codes %}
+<tr><td>{{ code.label }}</td><td><code>{{ code.code }}</code><br><code>{{ public_url }}/signup?invite={{ code.code }}</code></td><td>{{ code.used }} of {{ code.max_uses }}</td><td>{{ code.expires_at }}{% if let Some(revoked) = code.revoked_at %}, revoked {{ revoked }}{% endif %}</td></tr>
+{% endfor %}
+</table>
+{% endif %}
+{% endblock %}

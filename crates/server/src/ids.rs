@@ -35,6 +35,11 @@ pub fn new_join_key() -> String {
     format!("fdj_{}", random_text(52))
 }
 
+/// A new invite code: `inv-` and 16 characters, 80 bits, short enough to read out.
+pub fn new_invite_code() -> String {
+    format!("inv-{}", random_text(16))
+}
+
 /// A new secret for a session cookie or an email link: 52 characters, 260 bits.
 pub fn new_secret() -> String {
     random_text(52)

@@ -20,7 +20,7 @@ use crate::pages::{
     VerifyPage, page,
 };
 use crate::time::now_utc;
-use crate::{AppState, admin, deletion, jobs, passwords, series};
+use crate::{AppState, admin, deletion, invites, jobs, passwords, series};
 
 const COOKIE: &str = "fd_session";
 
@@ -96,8 +96,18 @@ async fn send_verification(state: &AppState, account_id: &str, to: &str) -> Resu
     Ok(())
 }
 
-pub async fn signup_page() -> Response {
-    page(StatusCode::OK, &SignupPage::default())
+#[derive(Deserialize)]
+pub struct SignupQuery {
+    invite: Option<String>,
+}
+
+/// The signup form; a link such as `/signup?invite=inv-...` fills in the code.
+pub async fn signup_page(Query(query): Query<SignupQuery>) -> Response {
+    let template = SignupPage {
+        invite: query.invite.as_deref().unwrap_or("").trim(),
+        ..SignupPage::default()
+    };
+    page(StatusCode::OK, &template)
 }
 
 #[derive(Deserialize)]
@@ -105,7 +115,11 @@ pub struct SignupForm {
     email: String,
     password: String,
     display_name: String,
+    #[serde(default)]
+    invite: String,
 }
+
+const BAD_INVITE: &str = "That invite code can't be used: it may be mistyped, expired, revoked or used up. Leave it empty to sign up without one.";
 
 pub async fn signup(
     State(state): State<AppState>,
@@ -114,6 +128,16 @@ pub async fn signup(
 ) -> Result<Response, AppError> {
     let email = accounts::normalise_email(&form.email);
     let display_name = accounts::one_line_name(&form.display_name, 50);
+    let invite = Some(form.invite.trim()).filter(|code| !code.is_empty());
+    let again = |problem: &str| {
+        let template = SignupPage {
+            error: Some(problem),
+            email: &email,
+            display_name: form.display_name.trim(),
+            invite: invite.unwrap_or(""),
+        };
+        page(StatusCode::UNPROCESSABLE_ENTITY, &template)
+    };
     let problem = if !accounts::looks_like_email(&email) {
         Some("That isn't an email address.".to_string())
     } else if let Some(problem) = passwords::problem(&form.password) {
@@ -124,25 +148,34 @@ pub async fn signup(
         None
     };
     let (None, Some(display_name)) = (&problem, display_name) else {
-        let problem = problem.unwrap_or_default();
-        let template = SignupPage {
-            error: Some(&problem),
-            email: &email,
-            display_name: form.display_name.trim(),
-        };
-        return Ok(page(StatusCode::UNPROCESSABLE_ENTITY, &template));
+        return Ok(again(&problem.unwrap_or_default()));
     };
+    // A code is checked before the limits it lifts; sign_up checks it again, with
+    // the account's insert, for its last use.
+    if let Some(code) = invite
+        && invites::usable(&state.pool, code, now_utc())
+            .await?
+            .is_none()
+    {
+        // A wrong code counts against the IP's signups, so codes can't be guessed
+        // at the request rate; the answer is the same for any address.
+        let guess = [Counted::signups_from(&state.rate_limits.limits, &ip)];
+        limits::count_event(&state.pool, &guess, now_utc()).await?;
+        return Ok(again(BAD_INVITE));
+    }
     // A signup sends an email either way, a verification or a note that the address
-    // has an account, so it counts as one too.
+    // has an account, so it counts as one too. With a code, a sprint behind one IP
+    // counts per address only.
     let limits = &state.rate_limits.limits;
-    let counts = [
-        Counted::signups_from(limits, &ip),
-        Counted::emails_to(limits, &email),
-        Counted::emails_from(limits, &ip),
-    ];
+    let mut counts = vec![Counted::emails_to(limits, &email)];
+    if invite.is_none() {
+        counts.push(Counted::signups_from(limits, &ip));
+        counts.push(Counted::emails_from(limits, &ip));
+    }
     limits::count_event(&state.pool, &counts, now_utc()).await?;
     let hash = hash_password(form.password).await;
-    match accounts::sign_up(&state.pool, &email, &hash, display_name).await? {
+    match accounts::sign_up(&state.pool, &email, &hash, display_name, invite).await? {
+        Signup::BadInvite => return Ok(again(BAD_INVITE)),
         Signup::Created(id) => send_verification(&state, &id, &email).await?,
         Signup::Taken => {
             let body = format!(
@@ -290,7 +323,7 @@ pub async fn reset(
 ) -> Result<Response, AppError> {
     let email = accounts::normalise_email(&form.email);
     // Counted whether or not the address has an account, so a limit never says.
-    limits::count_email(&state, &ip, &email).await?;
+    limits::count_email(&state, Some(&ip), &email).await?;
     if let Some(Login { account_id, .. }) = accounts::login_for_email(&state.pool, &email).await? {
         let secret = accounts::new_email_link(&state.pool, &account_id, Purpose::Reset).await?;
         let body = format!(
@@ -508,7 +541,8 @@ pub async fn resend_verification(
 ) -> Result<Response, AppError> {
     let view = accounts::view(&state.pool, &session.id).await?;
     if let (Some(email), false) = (view.email, view.verified) {
-        limits::count_email(&state, &ip, &email).await?;
+        let invited = invites::invited(&state.pool, &session.id).await?;
+        limits::count_email(&state, (!invited).then_some(&ip), &email).await?;
         send_verification(&state, &session.id, &email).await?;
     }
     Ok(Redirect::to("/account").into_response())

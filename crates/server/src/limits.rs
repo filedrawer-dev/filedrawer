@@ -410,13 +410,17 @@ async fn insert(
     Ok(rows)
 }
 
-/// Counts a verification or password-reset email to `address` asked for from `ip`.
-pub async fn count_email(state: &AppState, ip: &ClientIp, address: &str) -> Result<(), AppError> {
+/// Counts a verification or password-reset email to `address`, and against the IP
+/// that asked for it when `from` names one: an invited account's emails count per
+/// address only (design.md, Limits and abuse).
+pub async fn count_email(
+    state: &AppState,
+    from: Option<&ClientIp>,
+    address: &str,
+) -> Result<(), AppError> {
     let limits = &state.rate_limits.limits;
-    let counts = [
-        Counted::emails_to(limits, address),
-        Counted::emails_from(limits, ip),
-    ];
+    let mut counts = vec![Counted::emails_to(limits, address)];
+    counts.extend(from.map(|ip| Counted::emails_from(limits, ip)));
     count_event(&state.pool, &counts, OffsetDateTime::now_utc()).await
 }
 

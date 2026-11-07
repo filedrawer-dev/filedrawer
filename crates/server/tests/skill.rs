@@ -23,6 +23,7 @@ const NOT_FOR_AGENTS: &[&str] = &[
     "/account/series/{id}/publish",
     "/account/delete",
     "/admin",
+    "/admin/invites",
     "/admin/e/{id}",
     "/admin/e/{id}/publish",
     "/admin/e/{id}/hold",

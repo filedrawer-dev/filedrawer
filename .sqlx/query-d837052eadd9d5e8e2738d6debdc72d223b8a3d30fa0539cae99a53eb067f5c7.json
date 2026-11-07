@@ -1,0 +1,81 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT c.code, c.label, c.max_uses,\n                  (SELECT COUNT(*) FROM accounts a WHERE a.invite_seq = c.seq) AS \"used!: i64\",\n                  c.expires_at, c.revoked_at\n           FROM invite_codes c ORDER BY c.seq DESC",
+  "describe": {
+    "columns": [
+      {
+        "name": "code",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "invite_codes",
+            "name": "code"
+          }
+        }
+      },
+      {
+        "name": "label",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "invite_codes",
+            "name": "label"
+          }
+        }
+      },
+      {
+        "name": "max_uses",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "invite_codes",
+            "name": "max_uses"
+          }
+        }
+      },
+      {
+        "name": "used!: i64",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "expires_at",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "invite_codes",
+            "name": "expires_at"
+          }
+        }
+      },
+      {
+        "name": "revoked_at",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "invite_codes",
+            "name": "revoked_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "d837052eadd9d5e8e2738d6debdc72d223b8a3d30fa0539cae99a53eb067f5c7"
+}

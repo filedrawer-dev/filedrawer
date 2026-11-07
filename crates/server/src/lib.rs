@@ -14,6 +14,7 @@ mod entries;
 mod error;
 pub mod file_store;
 mod ids;
+mod invites;
 pub mod jobs;
 pub mod limits;
 mod links;
@@ -149,6 +150,10 @@ fn build(state: AppState) -> Routes<Router> {
             post(account::publish_series),
         )
         .route("/admin", get(admin::queue))
+        .route(
+            "/admin/invites",
+            get(admin::invites).post(admin::create_invite),
+        )
         .route("/admin/e/{id}", get(admin::entry))
         .route("/admin/e/{id}/publish", post(admin::publish))
         .route("/admin/e/{id}/hold", post(admin::hold))

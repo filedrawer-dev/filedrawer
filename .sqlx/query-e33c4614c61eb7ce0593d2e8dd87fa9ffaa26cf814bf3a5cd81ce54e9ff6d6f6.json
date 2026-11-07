@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT EXISTS (\n               SELECT 1 FROM accounts a JOIN invite_codes c ON c.seq = a.invite_seq\n               WHERE a.id = ? AND c.revoked_at IS NULL\n           ) AS \"invited!: bool\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "invited!: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "e33c4614c61eb7ce0593d2e8dd87fa9ffaa26cf814bf3a5cd81ce54e9ff6d6f6"
+}
