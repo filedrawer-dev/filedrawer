@@ -5,3 +5,7 @@ status-level = "fail"
 final-status-level = "fail"
 # Every test runs even after one fails, so one run shows every failure.
 fail-fast = false
+# A test still running after 3 periods of a minute is killed and fails, so one that
+# hangs can't hold the run, the commit hook or CI. Three, not two: under another
+# session's load, honest tests have taken over a minute.
+slow-timeout = { period = "60s", terminate-after = 3 }
