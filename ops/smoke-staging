@@ -333,6 +333,11 @@ if [[ $mode == eval ]]; then
     done < "$1"
   }
 
+  # list_of ENTRY: the list of ENTRY's attached files, beside it.
+  list_of() {
+    printf '%s\n' "${1%.md}.attachments"
+  }
+
   # gathered LIST: whether the store holds every file LIST names.
   gathered() {
     local path
@@ -367,7 +372,6 @@ if [[ $mode == eval ]]; then
     record field-tests "$field_tests"
     # Field-test families: each repo's latest round, the field test's last word on it.
     if (( families )); then
-      record families 1
       declare -A latest=() latest_round=()
       for family in "$field_test_dir"/round*/*/; do
         family=${family%/}
@@ -393,7 +397,7 @@ if [[ $mode == eval ]]; then
         name=$(basename "$file")
         [[ -n "${picked[$name]:-}" ]] && continue
         picked[$name]=1
-        if [[ -f ${file%.md}.attachments ]] && ! gathered "${file%.md}.attachments"; then
+        if [[ -f $(list_of "$file") ]] && ! gathered "$(list_of "$file")"; then
           passed_over=$((passed_over + 1))
           continue
         fi
@@ -412,7 +416,6 @@ if [[ $mode == eval ]]; then
     case $kind in
       case) expecteds+=("$one"); cases+=("$two") ;;
       field-tests) field_tests=$one ;;
-      families) families=$one ;;
       family) family_dirs+=("$one") ;;
       series) series_ids[$one]=$two ;;
       series-failed) series_failed[$one]=1 ;;
@@ -429,7 +432,7 @@ if [[ $mode == eval ]]; then
   # only when a field-test entry attaches files.
   attaches=0
   for file in "${candidates[@]}"; do
-    [[ -f ${file%.md}.attachments ]] && attaches=1
+    [[ -f $(list_of "$file") ]] && attaches=1
   done
   for family in "${family_dirs[@]}"; do
     compgen -G "$family/*.attachments" > /dev/null && attaches=1
@@ -467,6 +470,19 @@ if [[ $mode == eval ]]; then
       fail=$((fail + 1))
       [[ $status == review && $2 != review ]] && echo "  if every case went to review, the screen-test account is still guarded: clear it on $base/admin"
     fi
+  }
+
+  # stop_run WHY: stops the run, counted as a failure, since what is left can't be sent
+  # now; WHY names what wouldn't take it.
+  stop_run() {
+    stopped=1
+    stop_why=$1
+    fail=$((fail + 1))
+  }
+
+  # first_reason: the first reason in the last reply, a `- ` line or an `error: ` one.
+  first_reason() {
+    printf '%s\n' "$BODY" | sed -n 's/^- //p; s/^error: //p' | head -1
   }
 
   # later: whether the last request's CODE asks to try again later: no answer, a 429
@@ -526,11 +542,11 @@ if [[ $mode == eval ]]; then
       return 0
     fi
     if later; then
-      stopped=1; stop_why="POST /series answered $CODE"; fail=$((fail + 1))
+      stop_run "POST /series answered $CODE"
       return 1
     fi
     # The reply's own words, with the author's quoted values masked; never its key.
-    reason=$(printf '%s\n' "$BODY" | sed -n 's/^- //p; s/^error: //p' | head -1 | sed 's/`[^`]*`/`X`/g')
+    reason=$(first_reason | sed 's/`[^`]*`/`X`/g')
     echo "FAIL series series-$series_n: $CODE${reason:+: $reason}; its entries go without it"
     fail=$((fail + 1))
     # Never sent again: a series the screen held back mustn't be resent.
@@ -551,57 +567,75 @@ if [[ $mode == eval ]]; then
   }
 
   # send_batch BODY MEMBERS: sends the batch BODY, whose entries are the files MEMBERS
-  # lists, publishes it and judges every member, unless the run already sent it, which
-  # is polled instead. Returns 1 when the run stops.
+  # lists, and judges every member, unless the run already sent it, which is polled
+  # instead (published first if its hold is still on). Returns 1 when the run stops.
   send_batch() {
-    local -a members ids
-    local first n i m wait unsent=0 held=0 waiting=0 reasons
-    mapfile -t members < "$2"
-    first=${members[0]}
-    n=${#members[@]}
-    [[ -n "${refused[$first]:-}" ]] && return 0
+    local m unsent=0
+    mapfile -t batch_members < "$2"
+    [[ -n "${refused[${batch_members[0]}]:-}" ]] && return 0
     CITED=0
-    for m in "${members[@]}"; do
-      [[ -f ${m%.md}.attachments ]] && CITED=1
+    for m in "${batch_members[@]}"; do
+      [[ -f $(list_of "$m") ]] && CITED=1
       [[ -z "${sent[$m]:-}" ]] && unsent=$((unsent + 1))
     done
-    if (( unsent > 0 && unsent < n )); then
-      echo "FAIL a batch of $n field-test entries: the run sent some of them in another batch, so the family changed since"
+    if (( unsent == ${#batch_members[@]} )); then
+      post_batch "$1"
+      case $? in
+        1) return 1 ;;
+        2) return 0 ;;
+      esac
+    elif (( unsent > 0 )); then
+      echo "FAIL a batch of ${#batch_members[@]} field-test entries: the run sent some of them in another batch, so the family changed since"
       fail=$((fail + 1))
       return 0
-    fi
-    if (( unsent == n )); then
-      req POST /entries/batch "$1" application/json
-      if [[ $CODE != 201 ]]; then
-        if later; then
-          stopped=1; stop_why="POST /entries/batch answered $CODE"; fail=$((fail + 1))
-          return 1
-        fi
-        # The reasons quote slugs, links and commands, so they go to a file beside the
-        # run file, git-ignored with it, and only their place is printed.
-        reasons="$run_file.refused-$(( $(compgen -G "$run_file.refused-*" | wc -l) + 1 ))"
-        printf '%s\n' "$BODY" > "$reasons"
-        echo "FAIL a batch of $n field-test entries was refused ($CODE); its reasons are in $reasons"
-        fail=$((fail + 1))
-        for m in "${members[@]}"; do
-          refused[$m]=1; record refused "$m"
-        done
-        return 0
-      fi
-      mapfile -t ids < <(printf '%s\n' "$BODY" | sed -n 's/^entry: \([^ ]*\) .*/\1/p')
-      batch_ids[$first]=$(field id)
-      record batch "$first" "${batch_ids[$first]}"
-      for i in "${!members[@]}"; do
-        sent[${members[$i]}]=${ids[$i]:-}
-        record sent "${members[$i]}" "${ids[$i]:-}"
-      done
-      req POST "/batches/${batch_ids[$first]}/publish"
-      [[ $CODE == 200 ]] || { echo "FAIL publish batch ${batch_ids[$first]}: $CODE"; fail=$((fail + 1)); }
     else
-      ID=${sent[$first]}
+      ID=${sent[${batch_members[0]}]}
       req GET "/e/$ID"
-      [[ $(field status) == pending ]] && req POST "/batches/${batch_ids[$first]:-}/publish"
+      [[ $(field status) == pending ]] && req POST "/batches/${batch_ids[${batch_members[0]}]:-}/publish"
     fi
+    judge_batch
+  }
+
+  # post_batch BODY: sends the batch BODY, whose entries are batch_members, records
+  # them and publishes it. Returns 1 when the server can't take it now (see later),
+  # stopping the run, and 2 when it refuses it, a FAIL.
+  post_batch() {
+    local -a ids
+    local i m reasons first=${batch_members[0]}
+    req POST /entries/batch "$1" application/json
+    if [[ $CODE != 201 ]]; then
+      if later; then
+        stop_run "POST /entries/batch answered $CODE"
+        return 1
+      fi
+      # The reasons quote slugs, links and commands, so they go to a file beside the
+      # run file, git-ignored with it, and only their place is printed.
+      reasons="$run_file.refused-$(( $(compgen -G "$run_file.refused-*" | wc -l) + 1 ))"
+      printf '%s\n' "$BODY" > "$reasons"
+      echo "FAIL a batch of ${#batch_members[@]} field-test entries was refused ($CODE); its reasons are in $reasons"
+      fail=$((fail + 1))
+      for m in "${batch_members[@]}"; do
+        refused[$m]=1; record refused "$m"
+      done
+      return 2
+    fi
+    mapfile -t ids < <(printf '%s\n' "$BODY" | sed -n 's/^entry: \([^ ]*\) .*/\1/p')
+    batch_ids[$first]=$(field id)
+    record batch "$first" "${batch_ids[$first]}"
+    for i in "${!batch_members[@]}"; do
+      sent[${batch_members[$i]}]=${ids[$i]:-}
+      record sent "${batch_members[$i]}" "${ids[$i]:-}"
+    done
+    req POST "/batches/${batch_ids[$first]}/publish"
+    [[ $CODE == 200 ]] || { echo "FAIL publish batch ${batch_ids[$first]}: $CODE"; fail=$((fail + 1)); }
+    return 0
+  }
+
+  # judge_batch: waits for the sent batch batch_members and judges each member as a
+  # field-test case expected public. Returns 1 when the run stops.
+  judge_batch() {
+    local m wait held=0 waiting=0 first=${batch_members[0]} n=${#batch_members[@]}
+    local -a members=("${batch_members[@]}")
     # The members are decided together, so the first waits for the whole batch, unless
     # a member in review holds the rest for the owner.
     wait=$(( $(case_wait) * ((n + 9) / 10) ))
@@ -648,9 +682,7 @@ if [[ $mode == eval ]]; then
           set_for "$one" "goes without its attached code"
           case $? in
             0) args+=(--set "$one=$SET") ;;
-            2)
-              stopped=1; stop_why="an attachment set couldn't be uploaded now"
-              fail=$((fail + 1)); return 1 ;;
+            2) stop_run "an attachment set couldn't be uploaded now"; return 1 ;;
           esac ;;
       esac
     done < <("$batches_tool" needs "$1")
@@ -708,7 +740,7 @@ PY
         record set "$key" "$SET" "$1" ;;
       *)
         if later; then
-          reason=$(printf '%s\n' "$BODY" | sed -n 's/^- //p' | head -1)
+          reason=$(first_reason)
           echo "  POST /attachments answered $CODE${reason:+: $reason}"
           return 2
         fi
@@ -750,8 +782,8 @@ PY
     echo "decoding, run here with no model call: $hiding of $files attached files hide text; parts found: $parts, $bytes bytes; past a limit: $limits"
     n=0
     for path in "${!status_of[@]}"; do
-      [[ -f ${path%.md}.attachments ]] || continue
-      key=$(list_key "${path%.md}.attachments")
+      [[ -f $(list_of "$path") ]] || continue
+      key=$(list_key "$(list_of "$path")")
       [[ -n "${hides[$key]:-}" ]] || continue
       n=$((n + 1))
       by_status[${status_of[$path]}]=$(( ${by_status[${status_of[$path]}]:-0} + 1 ))
@@ -777,7 +809,7 @@ PY
     (( taken < field_tests && ! stopped )) || break
     [[ -n "${refused[$file]:-}" ]] && continue
     screen_entry "$file" > "$dir/case.md"
-    list=${file%.md}.attachments
+    list=$(list_of "$file")
     CITED=0
     if [[ -f $list ]]; then
       CITED=1
@@ -785,9 +817,7 @@ PY
         set_for "$list"
         case $? in
           1) refused[$file]=1; record refused "$file"; continue ;;
-          2)
-            stopped=1; stop_why="an attachment set couldn't be uploaded now"
-            fail=$((fail + 1)); break ;;
+          2) stop_run "an attachment set couldn't be uploaded now"; break ;;
         esac
         sed -i "1a attachments: $SET" "$dir/case.md"
       fi
@@ -795,9 +825,7 @@ PY
     eval_case "$file" "$dir/case.md" quiet
     case $? in
       1) refused[$file]=1; record refused "$file"; continue ;;
-      2)
-        stopped=1; stop_why="POST /entries answered $CODE"
-        fail=$((fail + 1)); break ;;
+      2) stop_run "POST /entries answered $CODE"; break ;;
       3) continue ;;
     esac
     taken=$((taken + 1))
