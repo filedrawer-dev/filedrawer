@@ -21,7 +21,7 @@ cd "$tree"
 # The hook's git variables name the repo being committed; no check should reach it.
 unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_OBJECT_DIRECTORY GIT_PREFIX
 failed=0
-uvx --quiet pytest@9.2.0 -q -p no:cacheprovider bin/tests >"$logs/pytest" 2>&1 || { cat "$logs/pytest"; failed=1; }
+uvx --quiet --with pytest-timeout==2.4.0 pytest@9.2.0 -q -p no:cacheprovider bin/tests >"$logs/pytest" 2>&1 || { cat "$logs/pytest"; failed=1; }
 if [ -f Cargo.toml ]; then
   export CARGO_TARGET_DIR="$repo/target"
   if ! cargo nextest --version >/dev/null 2>&1; then
