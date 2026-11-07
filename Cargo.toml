@@ -20,3 +20,9 @@ opt-level = 3
 
 [profile.dev.package.sha2]
 opt-level = 3
+
+# cargo-mutants builds with this profile (.cargo/mutants.toml): without debug info, each
+# mutant links its test binaries faster.
+[profile.mutants]
+inherits = "test"
+debug = "none"

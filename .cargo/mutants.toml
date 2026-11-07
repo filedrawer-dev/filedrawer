@@ -1,0 +1,20 @@
+# cargo-mutants' settings, read by `cargo mutants` here and by
+# .github/workflows/mutants.yml, so a local run on one file
+# (`cargo mutants --file crates/analyzer/src/card.rs`) tests the way CI does.
+# The tests run under nextest, as in bin/agent-pre-commit, and stop at the first
+# failure: one failing test is enough to catch a mutant.
+test_tool = "nextest"
+additional_cargo_test_args = ["--fail-fast"]
+# Every mutant runs the whole workspace's tests: the server's tests go through the
+# analyzer, so analyzer code only they check isn't reported as missed.
+test_workspace = true
+# The baseline times only the mutated crates' tests, though each mutant then runs the
+# whole workspace's (cargo-mutants 27.1.0, src/lab.rs), and the auto-set timeout
+# derives from that time. A floor keeps a run over the analyzer alone from timing out
+# mutants whose server tests are merely slow.
+minimum_test_timeout = 60
+# Lints only warn in mutants: a mutant that leaves a parameter unused would otherwise
+# fail to build where RUSTFLAGS holds -D warnings, and count as unviable.
+cap_lints = true
+# Cargo.toml's `mutants` profile: the test profile without debug info.
+profile = "mutants"
