@@ -1,0 +1,137 @@
+#!/usr/bin/env python3
+"""Gather the files the field-test entries attach into field-test/files/, by SHA-256.
+
+    bin/field-test-files [--dir DIR] [--repos-root ROOT] [SEARCH-DIR...]
+
+Each entry's `<name>.attachments` beside it lists the files it attaches, one a line, as
+`<origin> <size> <sha256>`; the bytes live elsewhere. This finds each listed file by its
+SHA-256, wherever it sits, in the repos the field test read and in every SEARCH-DIR, and
+copies it to DIR/files/<sha256>, which `ops/smoke-staging eval` builds the entries' sets
+from. The repos are the folders under ROOT named like the field test's own folders
+(`round<n>/<repo>/`). Only files whose size some list names are hashed; `.git` folders
+and symlinks are skipped. A file already in the store is left alone, so later edits in
+the repos can't change what eval uploads.
+
+It prints counts, and the list and origin of each file it can't find, never a file's
+contents: field-test/ is local and never published (AGENTS.md).
+
+Exit status: 0 every listed file is in the store, 1 some are missing, 2 a usage error
+or a list it can't read.
+"""
+
+import argparse
+import hashlib
+import os
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[1]
+
+
+class BadList(Exception):
+    """A list holds a line that isn't `<origin> <size> <sha256>`."""
+
+
+def listed(directory: Path) -> dict[str, tuple[int, str]]:
+    """Each listed file's SHA-256, with its size and where it is first listed (the list's
+    path under DIR, and the origin)."""
+    files: dict[str, tuple[int, str]] = {}
+    for listing in sorted(directory.rglob("*.attachments")):
+        where = listing.relative_to(directory)
+        for number, text in enumerate(listing.read_text().splitlines(), 1):
+            parts = text.rsplit(" ", 2)
+            if len(parts) != 3 or not parts[1].isdigit() or len(parts[2]) != 64:
+                raise BadList(f"{where}:{number} isn't `<origin> <size> <sha256>`")
+            origin, size, digest = parts
+            files.setdefault(digest, (int(size), f"{where}: {origin}"))
+    return files
+
+
+def candidates(roots: list[Path], sizes: set[int]):
+    """Every regular file under `roots` whose size is in `sizes`, outside `.git`."""
+    for root in roots:
+        for folder, subfolders, names in os.walk(root):
+            subfolders[:] = [name for name in subfolders if name != ".git"]
+            for name in names:
+                path = Path(folder, name)
+                regular = not path.is_symlink() and path.is_file()
+                if regular and path.stat().st_size in sizes:
+                    yield path
+
+
+def store(target: Path, data: bytes) -> None:
+    """Writes `data` to `target` whole, or not at all."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    partial = target.with_name(f".{target.name}.partial")
+    partial.write_bytes(data)
+    partial.replace(target)
+
+
+def fail(why: str) -> int:
+    print(f"field-test-files: {why}", file=sys.stderr)
+    return 2
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description=__doc__.split("\n\n")[0],
+        epilog=__doc__.split("\n\n", 2)[2],
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--dir",
+        type=Path,
+        default=REPO / "field-test",
+        help="the field-test folder (default: field-test/)",
+    )
+    parser.add_argument(
+        "--repos-root",
+        type=Path,
+        default=REPO.parent,
+        help="the folder holding the repos the field test read (default: the one "
+        "holding this checkout)",
+    )
+    parser.add_argument(
+        "search",
+        nargs="*",
+        type=Path,
+        help="more folders to search, such as a scratchpad",
+    )
+    args = parser.parse_args(argv)
+    if not args.dir.is_dir():
+        return fail(f"no folder {args.dir}")
+    try:
+        files = listed(args.dir)
+    except (BadList, OSError, UnicodeDecodeError) as error:
+        return fail(f"can't read a list: {error}")
+    files_dir = args.dir / "files"
+    missing = {
+        digest: info
+        for digest, info in files.items()
+        if not (files_dir / digest).is_file()
+    }
+    before = len(files) - len(missing)
+    repos = sorted(
+        {args.repos_root / folder.name for folder in args.dir.glob("round*/*/")}
+    )
+    roots = [root for root in [*repos, *args.search] if root.is_dir()]
+    sizes = {size for size, _ in missing.values()}
+    for path in candidates(roots, sizes):
+        data = path.read_bytes()
+        digest = hashlib.sha256(data).hexdigest()
+        if digest in missing:
+            store(files_dir / digest, data)
+            del missing[digest]
+    found = len(files) - len(missing) - before
+    print(f"{files_dir}: {found} new, {before} already there")
+    if not missing:
+        print(f"all {len(files)} listed files are in the store")
+        return 0
+    print(f"{len(missing)} of {len(files)} listed files not found:")
+    for _, where in sorted(missing.values(), key=lambda info: info[1]):
+        print(f"  {where}")
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
