@@ -22,6 +22,8 @@ REPO = Path(__file__).resolve().parent
 HOOKS = {
     "pre-commit": "bin/git-pre-commit",
     "agent-pre-commit": "bin/agent-pre-commit",
+    # What llm-toolbox's agent-commit-gate runs for an agent's small fix commit.
+    "agent-quick-check": "bin/agent-quick-check",
     # Rebuild target/dev.db when a merge, checkout or rebase brings new migrations.
     "post-merge": "bin/git-post-change",
     "post-checkout": "bin/git-post-change",
@@ -34,8 +36,25 @@ CARGO_TOOLS = [
 ]
 
 
-def link_hooks() -> None:
-    hooks = REPO / ".git" / "hooks"
+def link_hooks(repo: Path = REPO) -> None:
+    """Links each of HOOKS into the git directory `repo` shares: its own `.git`, or,
+    in a worktree, whose `.git` is a file, the main tree's, which every worktree reads
+    hooks from."""
+    common = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-common-dir",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    hooks = Path(common) / "hooks"
+    hooks.mkdir(exist_ok=True)
     for name, target in HOOKS.items():
         link = hooks / name
         wanted = Path("../..") / target

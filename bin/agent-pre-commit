@@ -10,7 +10,10 @@
 # so dependencies build once. The tests run under cargo-nextest, which prints only the
 # failures and a summary (.config/nextest.toml); it skips doctests, so cargo test --doc
 # runs those.
+# --quick runs clippy alone, for bin/agent-quick-check.
 set -e
+quick=
+[ "${1:-}" = --quick ] && quick=1
 repo=$(git rev-parse --show-toplevel)
 tree=$(mktemp -d)
 logs=$(mktemp -d)
@@ -21,15 +24,19 @@ cd "$tree"
 # The hook's git variables name the repo being committed; no check should reach it.
 unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_OBJECT_DIRECTORY GIT_PREFIX
 failed=0
-uvx --quiet --with pytest-timeout==2.4.0 pytest@9.2.0 -q -p no:cacheprovider bin/tests >"$logs/pytest" 2>&1 || { cat "$logs/pytest"; failed=1; }
+if [ -z "$quick" ]; then
+  uvx --quiet --with pytest-timeout==2.4.0 pytest@9.2.0 -q -p no:cacheprovider bin/tests >"$logs/pytest" 2>&1 || { cat "$logs/pytest"; failed=1; }
+fi
 if [ -f Cargo.toml ]; then
   export CARGO_TARGET_DIR="$repo/target"
-  if ! cargo nextest --version >/dev/null 2>&1; then
-    echo "COMMIT REFUSED: cargo-nextest is missing; install it with: cargo install cargo-nextest --locked" >&2
-    exit 1
+  if [ -z "$quick" ]; then
+    if ! cargo nextest --version >/dev/null 2>&1; then
+      echo "COMMIT REFUSED: cargo-nextest is missing; install it with: cargo install cargo-nextest --locked" >&2
+      exit 1
+    fi
+    cargo nextest run --cargo-quiet >"$logs/test" 2>&1 || { cat "$logs/test"; failed=1; }
+    cargo test --doc --quiet >"$logs/doc" 2>&1 || { cat "$logs/doc"; failed=1; }
   fi
-  cargo nextest run --cargo-quiet >"$logs/test" 2>&1 || { cat "$logs/test"; failed=1; }
-  cargo test --doc --quiet >"$logs/doc" 2>&1 || { cat "$logs/doc"; failed=1; }
   cargo clippy --quiet --all-targets -- -D warnings >"$logs/clippy" 2>&1 || { cat "$logs/clippy"; failed=1; }
 fi
 exit $failed

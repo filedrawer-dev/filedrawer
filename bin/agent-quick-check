@@ -1,0 +1,7 @@
+#!/bin/sh
+# The quick check for agents' small fix commits: llm-toolbox's agent-commit-gate runs it
+# in place of agent-pre-commit for a fixup!, squash! or amend! commit of at most 20
+# lines, in files it only modifies, none a test; build-state finish runs the full check
+# on each commit a fold rewrites. It is agent-pre-commit's clippy, the one fast check
+# the pre-commit hook lacks (cargo fmt and ruff run there), on a copy of what's staged.
+exec "$(dirname "$0")/agent-pre-commit" --quick
