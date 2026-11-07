@@ -99,7 +99,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     if not args.dir.is_dir():
-        return fail(f"no folder {args.dir}")
+        return fail(f"no folder {args.dir}; name the field-test folder with --dir")
     try:
         files = listed(args.dir)
     except (BadList, OSError, UnicodeDecodeError) as error:
@@ -116,18 +116,24 @@ def main(argv: list[str] | None = None) -> int:
     )
     roots = [root for root in [*repos, *args.search] if root.is_dir()]
     sizes = {size for size, _ in missing.values()}
-    for path in candidates(roots, sizes):
-        data = path.read_bytes()
-        digest = hashlib.sha256(data).hexdigest()
-        if digest in missing:
-            store(files_dir / digest, data)
-            del missing[digest]
+    try:
+        for path in candidates(roots, sizes):
+            data = path.read_bytes()
+            digest = hashlib.sha256(data).hexdigest()
+            if digest in missing:
+                store(files_dir / digest, data)
+                del missing[digest]
+    except OSError as error:
+        return fail(f"can't copy {error.filename}: {error.strerror}")
     found = len(files) - len(missing) - before
     print(f"{files_dir}: {found} new, {before} already there")
     if not missing:
         print(f"all {len(files)} listed files are in the store")
         return 0
-    print(f"{len(missing)} of {len(files)} listed files not found:")
+    print(
+        f"{len(missing)} of {len(files)} listed files not found; name the folders "
+        "that hold them as arguments:"
+    )
     for _, where in sorted(missing.values(), key=lambda info: info[1]):
         print(f"  {where}")
     return 1

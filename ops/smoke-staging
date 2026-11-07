@@ -60,12 +60,14 @@ tally per expectation, and exits 1 when any case misses. Then it counts what the
 server's own decoding finds hidden in the sets' files, run here with no model call
 (filedrawer unpack, built with cargo unless FILEDRAWER_BIN names the binary), and
 how the field-test entries citing a set that hides text fared. It stops at the
-first case left undecided, and says why as screen does, or when POST /attachments
-answers 429. Each run writes its cases, and the ID of each entry and set it sends,
+first case left undecided, and says why as screen does, or at the first field-test
+entry or set the server can't take now (no answer, a 429 or a 5xx); one it refuses
+is passed over. Each run writes its cases, and the ID of each entry and set it sends,
 to a run file under ops/.eval-runs/ (paths and IDs, no entry text), and prints its
 path; --resume goes on from there, polling what the run sent rather than sending it
-again. The owner then rejects the review cases on /admin, which guards the
-screen-test account; clear the guard there afterwards. Same settings as screen.
+again. Once a run is over, the owner rejects the review cases on /admin, which
+guards the screen-test account; clear the guard there afterwards. Same settings as
+screen.
   --field-test N      how many field-test entries to add
   --resume RUNFILE    go on with the run RUNFILE records, its cases and tag
 EOF
@@ -197,9 +199,9 @@ send() {
   fi
 }
 
-# decide: ends entry ID's hold, then waits for its verdict as await does. A failed
-# publish is a FAIL, and returns 1.
-decide() {
+# publish_then_await: ends entry ID's hold, then waits for its verdict as await does.
+# A failed publish is a FAIL, and returns 1.
+publish_then_await() {
   req POST "/e/$ID/publish"
   [[ $CODE == 200 ]] || { echo "FAIL publish $ID: $CODE"; fail=$((fail + 1)); return 1; }
   await
@@ -219,7 +221,7 @@ await() {
 # screened FILE [quiet]: submits FILE and publishes it, then waits for its verdict;
 # sets ID, CODE and BODY. Returns 1 when either fails.
 screened() {
-  send "$@" && decide
+  send "$@" && publish_then_await
 }
 
 # screen_entry FILE: FILE with this run's tags. The title stays as written: a test
@@ -286,13 +288,26 @@ if [[ $mode == eval ]]; then
     printf '%s\n' "$*" >> "$run_file"
   }
 
-  # gathered LIST: whether the store holds every file the attachment list LIST names,
-  # one a line as `<origin> <size> <sha256>`.
-  gathered() {
+  # listed LIST: the store path of each file the attachment list LIST names, one a
+  # line as `<origin> <size> <sha256>`, a last line with no newline included.
+  listed() {
     local line
-    while IFS= read -r line; do
-      [[ -f "$store/${line##* }" ]] || return 1
+    while IFS= read -r line || [[ -n $line ]]; do
+      printf '%s\n' "$store/${line##* }"
     done < "$1"
+  }
+
+  # gathered LIST: whether the store holds every file LIST names.
+  gathered() {
+    local path
+    while IFS= read -r path; do
+      [[ -f $path ]] || return 1
+    done < <(listed "$1")
+  }
+
+  # list_key LIST: the key a set made from LIST goes by in the run file.
+  list_key() {
+    sha256sum < "$1" | cut -d' ' -f1
   }
 
   # The run file: the run's tag, its cases in order, then what it sent, so --resume
@@ -403,12 +418,12 @@ if [[ $mode == eval ]]; then
       fi
       sent[$1]=$ID
       record sent "$1" "$ID"
-      decide || return 3
+      publish_then_await || return 3
     else
       ID=${sent[$1]}
       req GET "/e/$ID"
       if [[ $(field status) == pending ]]; then
-        decide || return 3
+        publish_then_await || return 3
       else
         await
       fi
@@ -421,7 +436,7 @@ if [[ $mode == eval ]]; then
   # saying why.
   set_for() {
     local key reason
-    key=$(sha256sum < "$1" | cut -d' ' -f1)
+    key=$(list_key "$1")
     SET=${set_ids[$key]:-}
     [[ -n $SET ]] && return 0
     python3 - "$1" "$store" > "$dir/set.json" 2>/dev/null <<'PY' || { echo "  an attachment set couldn't be made from the store: its entry is passed over"; return 1; }
@@ -474,10 +489,7 @@ PY
     local key line path what n files=0 hiding=0 parts=0 bytes=0 limits=0
     local -a paths
     for key in "${!set_lists[@]}"; do
-      paths=()
-      while IFS= read -r line; do
-        paths+=("$store/${line##* }")
-      done < "${set_lists[$key]}"
+      mapfile -t paths < <(listed "${set_lists[$key]}")
       "$bin" unpack "${paths[@]}" > "$dir/unpack" || echo "  filedrawer unpack couldn't read a set's files"
       while IFS= read -r line; do
         path=${line%%: *}
@@ -501,7 +513,7 @@ PY
     n=0
     for path in "${!status_of[@]}"; do
       [[ -f ${path%.md}.attachments ]] || continue
-      key=$(sha256sum < "${path%.md}.attachments" | cut -d' ' -f1)
+      key=$(list_key "${path%.md}.attachments")
       [[ -n "${hides[$key]:-}" ]] || continue
       n=$((n + 1))
       by_status[${status_of[$path]}]=$(( ${by_status[${status_of[$path]}]:-0} + 1 ))
