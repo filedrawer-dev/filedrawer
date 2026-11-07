@@ -13,6 +13,25 @@ from conftest import opened_urls
 
 REPO = Path(__file__).resolve().parents[2]
 WIZARD = REPO / "ops/provision-vps"
+# A wizard that loops on a prompt its answers don't cover would hang the run: on
+# 2026-11-06 one waited 15 hours. A test that takes this long fails instead.
+WIZARD_TIMEOUT = 60
+
+
+def run_wizard(
+    *args: str, cwd: Path, answers: str, env: dict
+) -> subprocess.CompletedProcess:
+    """Runs ops/provision-vps with `args` in `cwd`, `answers` on stdin."""
+    return subprocess.run(
+        ["bash", WIZARD, *args],
+        cwd=cwd,
+        input=answers,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=WIZARD_TIMEOUT,
+    )
 
 
 @pytest.fixture
@@ -33,6 +52,7 @@ def run(tmp_path, fake_host):
             capture_output=True,
             text=True,
             check=False,
+            timeout=WIZARD_TIMEOUT,
         )
 
     return run
@@ -108,15 +128,7 @@ def smoke(tmp_path, fake_host):
     env_file.write_text(f"VPS_HOST='h'\nSTAGING_KEY='{STAGING_KEY}'\n")
 
     def run(answers: str = "\n") -> subprocess.CompletedProcess:
-        return subprocess.run(
-            ["bash", WIZARD, "smoke"],
-            cwd=tmp_path,
-            input=answers,
-            env=fake_host.env,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        return run_wizard("smoke", cwd=tmp_path, answers=answers, env=fake_host.env)
 
     return SimpleNamespace(
         run=run,
@@ -256,15 +268,7 @@ def stage(tmp_path, fake_host):
     env_file.write_text("VPS_HOST='h'\n")
 
     def run(name: str, answers: str) -> subprocess.CompletedProcess:
-        return subprocess.run(
-            ["bash", WIZARD, name],
-            cwd=tmp_path,
-            input=answers,
-            env=fake_host.env,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        return run_wizard(name, cwd=tmp_path, answers=answers, env=fake_host.env)
 
     return SimpleNamespace(
         run=run,
@@ -363,16 +367,7 @@ def rerun(tmp_path, fake_host):
     )
 
     def run() -> subprocess.CompletedProcess:
-        return subprocess.run(
-            ["bash", WIZARD, "--only-new"],
-            cwd=tmp_path,
-            input="",
-            env=fake_host.env,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=60,
-        )
+        return run_wizard("--only-new", cwd=tmp_path, answers="", env=fake_host.env)
 
     def sent_scripts() -> list[str]:
         return [fake_host.sent(n + 1) for n in range(len(fake_host.calls()))]
