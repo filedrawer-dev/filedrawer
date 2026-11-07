@@ -1,0 +1,281 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["pyyaml==6.0.2"]
+# ///
+"""Turn a field-test family into the bodies of POST /entries/batch, for ops/smoke-staging.
+
+    bin/field-test-batches needs FAMILY
+    bin/field-test-batches series-body SERIES_FILE
+    bin/field-test-batches build FAMILY --tag TAG --out DIR [--series MADEUP=REAL]...
+                                 [--set LIST=ID]... [--max-bytes N]
+
+A family is one field-test folder, `round<n>/<repo>/`. Its entries are the `*.md` files
+with front matter, other than its series, `series-*.md`. They name runs that the
+family's `*runs.yaml` files declare, series by IDs the field-test agents made up, and
+each other by slug.
+
+needs prints what the family needs before it can be sent, one a line, tab-separated:
+`series MADEUP FILE` for each made-up series ID its entries cite, FILE being the
+`series-*.md` whose `id` field is that ID, else the first that holds it, or empty; and
+`list LIST` for each entry's list of attached files, `<name>.attachments`.
+
+series-body prints a series file as POST /series takes it: front matter holding only
+its title, then its description.
+
+build writes DIR/batch-<k>.json, a POST /entries/batch body, and DIR/batch-<k>.members,
+its entries' paths in order, for k = 1, 2, .... Each entry's slug, every `slug:`
+link and every run ID gets TAG and a hyphen in front, since an account's slugs and runs
+are its own for good; `series: MADEUP@n` becomes `series: REAL@1` for each --series
+(a new series has only version 1), and a series with no --series is taken out; an
+entry with a --set for its list cites that set; and the tags, a flow or a block list,
+become those of eval's other cases. The batches hold the entries in path order, each
+body under --max-bytes (default 900,000; the server takes 1 MiB) and at most 100
+entries, and the first declares every run. It prints counts, never an entry's text.
+
+Exit status: 0 done, 2 a usage error or a file it can't read.
+"""
+
+import argparse
+import json
+import re
+import sys
+from pathlib import Path
+
+import yaml
+
+MAX_ENTRIES = 100
+SLUG_LINK = re.compile(r"slug:([A-Za-z0-9._-]+)")
+SERIES_CITE = re.compile(r"^series:\s*(\S+?)@\d+(#\S+)?\s*$")
+FIELD = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*):")
+ITEM = re.compile(r"^(\s*-\s*)(\S+)\s*$")
+
+
+class BadFile(Exception):
+    """A family's file isn't what its name says. The message names the file only."""
+
+
+def read(path: Path) -> str:
+    """A file's text with a leading BOM dropped and Windows line ends made plain, as
+    the analyzer reads an entry."""
+    return path.read_text(encoding="utf-8").lstrip("﻿").replace("\r\n", "\n")
+
+
+def listing_of(entry: Path) -> Path:
+    """The list of an entry's attached files, beside it."""
+    return entry.with_suffix(".attachments")
+
+
+def entries(family: Path) -> list[Path]:
+    """The family's entries: its `*.md` files with front matter, not its series."""
+    return [
+        path
+        for path in sorted(family.glob("*.md"))
+        if not path.name.startswith("series-") and read(path).startswith("---\n")
+    ]
+
+
+def split(text: str) -> tuple[list[str], str]:
+    """An entry's front matter lines and the rest, from the line after its closing `---`."""
+    lines = text.split("\n")
+    end = lines.index("---", 1)
+    return lines[1:end], "\n".join(lines[end + 1 :])
+
+
+def fields(front: list[str]) -> list[tuple[str | None, list[str]]]:
+    """Front matter as its fields, each its name and its lines, a block list's items
+    included. A comment, or a line outside any field, has no name."""
+    out: list[tuple[str | None, list[str]]] = []
+    for line in front:
+        if m := FIELD.match(line):
+            out.append((m.group(1), [line]))
+        elif out and out[-1][0] is not None and not line.startswith("#"):
+            out[-1][1].append(line)
+        else:
+            out.append((None, [line]))
+    return out
+
+
+def unquoted(text: str) -> str:
+    return text.strip().strip("\"'")
+
+
+def value(line: str) -> str:
+    """A field line's value, unquoted."""
+    return unquoted(line.split(":", 1)[1])
+
+
+def cited_series(text: str) -> list[str]:
+    front, _ = split(text)
+    return [m.group(1) for line in front if (m := SERIES_CITE.match(line))]
+
+
+def tagged_runs(lines: list[str], tag: str) -> list[str]:
+    """A `uses_runs` field with each run ID tagged, kept a flow or a block list."""
+    if m := re.match(r"^uses_runs:\s*\[(.*)\]\s*$", lines[0]):
+        ids = [unquoted(i) for i in m.group(1).split(",") if i.strip()]
+        return ["uses_runs: [" + ", ".join(f"{tag}-{i}" for i in ids) + "]"]
+    items = [(ITEM.match(line), line) for line in lines[1:]]
+    return [lines[0]] + [
+        f"{m.group(1)}{tag}-{unquoted(m.group(2))}" if m else line for m, line in items
+    ]
+
+
+def rewrite(text: str, tag: str, series: dict[str, str], set_id: str | None) -> str:
+    """One entry as eval sends it (see build in -h)."""
+    text = SLUG_LINK.sub(lambda m: f"slug:{tag}-{m.group(1)}", text)
+    front, rest = split(text)
+    out = ["---"] + ([f"attachments: {set_id}"] if set_id else [])
+    for name, lines in fields(front):
+        if name == "slug":
+            out.append(f"slug: {tag}-{value(lines[0])}")
+        elif name == "uses_runs":
+            out.extend(tagged_runs(lines, tag))
+        elif name == "series":
+            m = SERIES_CITE.match(lines[0])
+            if m and m.group(1) in series:
+                out.append(f"series: {series[m.group(1)]}@1{m.group(2) or ''}")
+        elif name == "tags":
+            out.append(f"tags: [screen-test, {tag}]")
+        else:
+            out.extend(lines)
+    out.append("---")
+    return "\n".join(out) + "\n" + rest
+
+
+def runs(family: Path, tag: str) -> list[dict]:
+    """Every run the family's `*runs.yaml` files declare, each once, its ID tagged."""
+    declared, seen = [], set()
+    for path in sorted(family.glob("*runs.yaml")):
+        try:
+            found = [(run["id"], run) for run in yaml.safe_load(read(path))["runs"]]
+        except (yaml.YAMLError, KeyError, TypeError, AttributeError):
+            # Not the parser's own message, which quotes the file.
+            raise BadFile(
+                f"{path} isn't `runs:` and a list of runs, each with an `id`"
+            ) from None
+        for run_id, run in found:
+            if run_id not in seen:
+                seen.add(run_id)
+                declared.append({**run, "id": f"{tag}-{run_id}"})
+    return declared
+
+
+def pairs(values: list[str], flag: str) -> dict[str, str]:
+    out = {}
+    for pair in values:
+        key, sep, val = pair.rpartition("=")
+        if not sep or not key or not val:
+            raise ValueError(f"{flag} takes KEY=VALUE, not {pair!r}")
+        out[key] = val
+    return out
+
+
+def series_file(made_up: str, texts: dict[Path, str]) -> str:
+    """The series file for a made-up ID: the one whose `id` field is it, else the
+    first that holds it, else none."""
+    for path, text in texts.items():
+        front, _ = split(text)
+        if any(value(line) == made_up for line in front if line.startswith("id:")):
+            return str(path)
+    return next((str(path) for path, text in texts.items() if made_up in text), "")
+
+
+def needs(family: Path) -> int:
+    texts = {path: read(path) for path in sorted(family.glob("series-*.md"))}
+    made_up: list[str] = []
+    for path in entries(family):
+        for cited in cited_series(read(path)):
+            if cited not in made_up:
+                made_up.append(cited)
+    for cited in made_up:
+        print(f"series\t{cited}\t{series_file(cited, texts)}")
+    for path in entries(family):
+        if listing_of(path).is_file():
+            print(f"list\t{listing_of(path)}")
+    return 0
+
+
+def series_body(path: Path) -> int:
+    front, rest = split(read(path))
+    title = next((line for line in front if line.startswith("title:")), "title: series")
+    sys.stdout.write(f"---\n{title}\n---\n{rest}")
+    return 0
+
+
+def body(declared: list[dict], texts: list[str]) -> str:
+    return json.dumps({"runs": declared, "entries": texts})
+
+
+def build(args: argparse.Namespace) -> int:
+    series = pairs(args.series, "--series")
+    sets = pairs(args.set, "--set")
+    declared = runs(args.family, args.tag)
+    batches: list[list[tuple[Path, str]]] = []
+    for path in entries(args.family):
+        text = rewrite(read(path), args.tag, series, sets.get(str(listing_of(path))))
+        if batches:
+            texts = [t for _, t in batches[-1]] + [text]
+            grown = body(declared if len(batches) == 1 else [], texts)
+            if len(grown.encode()) > args.max_bytes or len(texts) > MAX_ENTRIES:
+                batches.append([])
+        else:
+            batches.append([])
+        batches[-1].append((path, text))
+    args.out.mkdir(parents=True, exist_ok=True)
+    for k, members in enumerate(batches, 1):
+        texts = [t for _, t in members]
+        (args.out / f"batch-{k}.json").write_text(
+            body(declared if k == 1 else [], texts)
+        )
+        (args.out / f"batch-{k}.members").write_text(
+            "".join(f"{path}\n" for path, _ in members)
+        )
+    count = sum(len(members) for members in batches)
+    noun = "batch" if len(batches) == 1 else "batches"
+    print(f"{len(batches)} {noun}, {count} entries, {len(declared)} runs")
+    return 0
+
+
+def fail(why: str) -> int:
+    print(f"field-test-batches: {why}", file=sys.stderr)
+    return 2
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description=__doc__.split("\n\n")[0],
+        epilog=__doc__.split("\n\n", 2)[2],
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("needs", help="what a family needs first").add_argument(
+        "family", type=Path
+    )
+    commands.add_parser(
+        "series-body", help="a series as POST /series takes it"
+    ).add_argument("file", type=Path)
+    building = commands.add_parser("build", help="write a family's batches")
+    building.add_argument("family", type=Path)
+    building.add_argument("--tag", required=True)
+    building.add_argument("--out", type=Path, required=True)
+    building.add_argument(
+        "--series", action="append", default=[], metavar="MADEUP=REAL"
+    )
+    building.add_argument("--set", action="append", default=[], metavar="LIST=ID")
+    building.add_argument("--max-bytes", type=int, default=900_000)
+    args = parser.parse_args(argv)
+    try:
+        if args.command == "needs":
+            return needs(args.family)
+        if args.command == "series-body":
+            return series_body(args.file)
+        return build(args)
+    except BadFile as error:
+        return fail(str(error))
+    except (OSError, UnicodeDecodeError, ValueError) as error:
+        return fail(f"{error}; check the family's files")
+
+
+if __name__ == "__main__":
+    sys.exit(main())
