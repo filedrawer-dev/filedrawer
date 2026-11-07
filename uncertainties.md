@@ -317,8 +317,8 @@ Choices the docs left open, made while building the analyzer. Once the owner set
 ## GitHub's commit page as the fork check's first step
 
 - Options: when the page's empty answer can't be confirmed, because the confirming compare can't run, leave the pin "not verified" or trust the page and flag "commit on no branch"; note a page the compare overrules in the log only, or also somewhere the owner looks, such as `/staging/status`.
-- Chosen: "not verified", retried within the hour, since a check that couldn't run never says more; the log only. A page answer that lists a branch or tag is trusted without a call. The server falls back to the API on any answer but 200 with both lists of real entries. The page gets the same 10 s as any fetch, so one that hangs leaves the API path half of the request's 20 s.
-- Against: a page that broke into answering empty lists costs one API call for each GitHub link, and shows up only as warnings in `journalctl`. And only a commit on the default branch is overruled and logged: one on another branch, or only in a tag, would still be flagged "commit on no branch", with the fork warning and no log line, until the page answered right again. And the page's own limits aren't published, so a busy day could earn github.com a pause, which also pauses fetching github.com links.
+- Chosen: "not verified", retried within the hour, since a check that couldn't run never says more; a log line, and a count on `/staging/status` since the server started. A page answer that lists a branch or tag is trusted without a call. The server falls back to the API on any answer but 200 with both lists of real entries. The page gets the same 10 s as any fetch, so one that hangs leaves the API path half of the request's 20 s.
+- Against: a page that broke into answering empty lists costs one API call for each GitHub link, and shows up only as a growing count on `/staging/status` and warnings in `journalctl`. And only a commit on the default branch is overruled and logged: one on another branch, or only in a tag, would still be flagged "commit on no branch", with the fork warning and no log line, until the page answered right again. And the page's own limits aren't published, so a busy day could earn github.com a pause, which also pauses fetching github.com links.
 
 ## A commit on no branch: the order of the calls, and when it is checked again
 
@@ -348,4 +348,4 @@ Choices the docs left open, made while building the analyzer. Once the owner set
 
 - Options: staging refuses to start without `FILEDRAWER_GITHUB_TOKEN`, as production does, or starts and logs a warning.
 - Chosen: it starts, with the warning, so a deploy before `ops/provision-vps github` has run doesn't fail.
-- Against: staging can run for days at 60 calls an hour, and when GitHub's commit page doesn't answer, most GitHub links get "pin not verified", and nothing but the log says so.
+- Against: staging can run for days at 60 calls an hour, and when GitHub's commit page doesn't answer, most GitHub links get "pin not verified", which only `/staging/status` ("github allowance: 60 calls an hour") and the log say.

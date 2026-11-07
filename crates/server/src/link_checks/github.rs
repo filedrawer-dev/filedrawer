@@ -56,6 +56,13 @@ impl LinkChecker {
             .expect("no thread panics holding it")
     }
 
+    /// The calls left and when they come back, in Unix seconds, as GitHub's last
+    /// answer said, while that hour lasts.
+    pub(super) fn github_calls_left(&self) -> Option<(u32, i64)> {
+        let now = OffsetDateTime::now_utc().unix_timestamp();
+        (*self.quota()).filter(|(_, reset)| now < *reset)
+    }
+
     /// Whether GitHub's last answer left fewer than `floor` calls this hour.
     fn github_below(&self, floor: u32) -> bool {
         let now = OffsetDateTime::now_utc().unix_timestamp();
@@ -64,7 +71,7 @@ impl LinkChecker {
     }
 
     /// Whether the server has spent its half of the hour's calls.
-    fn github_budget_spent(&self) -> bool {
+    pub(super) fn github_budget_spent(&self) -> bool {
         self.github_below(self.github_hourly - self.github_budget())
     }
 
@@ -134,6 +141,7 @@ async fn confirm_held_by_none(
                 sha = %commit.sha,
                 "GitHub's commit page listed no branch for a commit on the default branch"
             );
+            state.link_checker.count_overrule();
             record_confirmed(&state.pool, commit).await
         }
         Ok(_) => PinCheck::OnNoBranch(on_no_branch_or_tag(commit)),

@@ -9,6 +9,11 @@ use filedrawer_server::link_checks::{
 };
 use serde_json::{Value, json};
 
+/// When GitHub's hourly calls come back, as its answers say: an hour on.
+fn an_hour_from_now() -> i64 {
+    time::OffsetDateTime::now_utc().unix_timestamp() + 60 * 60
+}
+
 /// Every page answers 200 and every GitHub commit is on its repository's default
 /// branch, unless a test says otherwise.
 #[derive(Clone, Default)]
@@ -117,7 +122,7 @@ impl FakeWeb {
                 status,
                 body: Some(body),
                 remaining: Some(remaining),
-                reset: Some(i64::MAX),
+                reset: Some(an_hour_from_now()),
                 retry_after: seconds,
             }),
         );
@@ -232,7 +237,7 @@ impl Fetcher for FakeWeb {
                 status: 200,
                 body: Some(body),
                 remaining: Some(4999),
-                reset: Some(i64::MAX),
+                reset: Some(an_hour_from_now()),
                 retry_after: None,
             })
         })

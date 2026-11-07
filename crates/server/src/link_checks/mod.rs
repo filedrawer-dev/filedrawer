@@ -11,8 +11,11 @@ mod pause;
 mod stored;
 
 use std::collections::{BTreeSet, HashMap};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+use time::OffsetDateTime;
 
 use analyzer::{
     CardContext, Fields, LISTED_HOSTS, Pin, PinFlag, code_pin, github_commit, listed_host,
@@ -40,8 +43,71 @@ pub struct LinkChecker {
     github_quota: Mutex<Option<(u32, i64)>>,
     /// The hosts that asked the server to wait, `api.github.com` among them.
     pauses: pause::Pauses,
+    /// How many empty answers from GitHub's commit page the API overruled.
+    overruled: AtomicU64,
     /// Checks nothing.
     off: bool,
+}
+
+/// What the link checks know of their hosts, for `GET /staging/status`. Kept in
+/// memory, so a restart empties it.
+#[derive(Debug, Clone)]
+pub struct LinkHealth {
+    /// GitHub's hourly allowance of API calls: 5,000 with a token, 60 without.
+    pub github_hourly: u32,
+    /// What GitHub's last answer this hour said is left.
+    pub calls_left: Option<CallsLeft>,
+    /// Whether the server has spent its half of the hour's calls.
+    pub half_spent: bool,
+    /// The hosts asking the server to wait.
+    pub paused: Vec<PausedHost>,
+    /// How many empty answers from GitHub's commit page the API overruled.
+    pub overruled: u64,
+}
+
+/// The API calls GitHub said are left this hour.
+#[derive(Debug, Clone, Copy)]
+pub struct CallsLeft {
+    pub left: u32,
+    /// When they come back; `None` when GitHub's time doesn't fit one.
+    pub reset: Option<OffsetDateTime>,
+}
+
+/// A host asking the server to wait, and when the wait ends.
+#[derive(Debug, Clone)]
+pub struct PausedHost {
+    pub host: String,
+    pub until: OffsetDateTime,
+}
+
+impl LinkChecker {
+    /// What the checks know now of GitHub and the hosts.
+    pub fn health(&self) -> LinkHealth {
+        let now = OffsetDateTime::now_utc();
+        LinkHealth {
+            github_hourly: self.github_hourly,
+            calls_left: self.github_calls_left().map(|(left, reset)| CallsLeft {
+                left,
+                reset: OffsetDateTime::from_unix_timestamp(reset).ok(),
+            }),
+            half_spent: self.github_budget_spent(),
+            paused: self
+                .pauses
+                .active()
+                .into_iter()
+                .map(|(host, left)| PausedHost {
+                    host,
+                    until: now + left,
+                })
+                .collect(),
+            overruled: self.overruled.load(Ordering::Relaxed),
+        }
+    }
+
+    /// Counts an empty answer from GitHub's commit page that the API overruled.
+    fn count_overrule(&self) {
+        self.overruled.fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 impl LinkChecker {
@@ -51,6 +117,7 @@ impl LinkChecker {
             github_hourly,
             github_quota: Mutex::new(None),
             pauses: pause::Pauses::default(),
+            overruled: AtomicU64::new(0),
             off: false,
         }
     }

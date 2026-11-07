@@ -1,6 +1,8 @@
 //! `GET /staging/status`: what staging's screen spent today, what waits for it, and how
-//! its last calls went, for agents that can't read the server's log (AGENTS.md). It
-//! names no account, entry or secret. Production doesn't route it (`lib::build`).
+//! its last calls went, and what the link checks know of GitHub's calls and of hosts
+//! that asked the server to wait, for agents that can't read the server's log
+//! (AGENTS.md). It names no account, entry or secret. Production doesn't route it
+//! (`lib::build`).
 
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -9,6 +11,7 @@ use serde_json::json;
 
 use crate::config::Environment;
 use crate::error::AppError;
+use crate::link_checks::{GITHUB_HOURLY_WITHOUT_TOKEN, LinkHealth};
 use crate::respond::{Format, one_line};
 use crate::screening::{Model, Screener};
 use crate::time::{now_utc, stamp};
@@ -46,10 +49,11 @@ pub async fn status(State(state): State<AppState>, format: Format) -> Result<Res
             one_line(&failure.error),
         )
     });
+    let links = state.link_checker.health();
     let text = format!(
         "environment: {environment}\nscreener: {screener_text}\n\
          spent today: ${spent_usd:.4} of the day's ${cap_usd:.2}\nwaiting: {}\n\
-         last success: {}\nlast failure: {}\n",
+         last success: {}\nlast failure: {}\n{}",
         match &oldest {
             Some(oldest) => format!("{waiting}, the oldest submitted {oldest}"),
             None => waiting.to_string(),
@@ -59,6 +63,7 @@ pub async fn status(State(state): State<AppState>, format: Format) -> Result<Res
             Some((at, subject, error)) => format!("{at} ({subject}): {error}"),
             None => NONE_YET.to_string(),
         },
+        link_lines(&links),
     );
     let json = json!({
         "environment": environment,
@@ -72,8 +77,59 @@ pub async fn status(State(state): State<AppState>, format: Format) -> Result<Res
         "last_failure": failure.map(|(at, subject, error)| {
             json!({"at": at, "subject": subject, "error": error})
         }),
+        "github": {
+            "hourly": links.github_hourly,
+            "calls_left": links.calls_left.map(|calls| calls.left),
+            "reset": links.calls_left.and_then(|calls| calls.reset).map(stamp),
+            "half_spent": links.half_spent,
+        },
+        "paused_hosts": links.paused.iter().map(|paused| {
+            json!({"host": paused.host, "until": stamp(paused.until)})
+        }).collect::<Vec<_>>(),
+        "commit_page_overruled": links.overruled,
     });
     Ok(format.reply(StatusCode::OK, text, json))
+}
+
+/// The text lines on what the link checks know of GitHub and the hosts.
+fn link_lines(links: &LinkHealth) -> String {
+    let allowance = if links.github_hourly == GITHUB_HOURLY_WITHOUT_TOKEN {
+        format!(
+            "{} calls an hour (no FILEDRAWER_GITHUB_TOKEN)",
+            links.github_hourly
+        )
+    } else {
+        format!("{} calls an hour", links.github_hourly)
+    };
+    let calls_left = match links.calls_left {
+        Some(calls) => {
+            let until = calls
+                .reset
+                .map_or(String::new(), |reset| format!(" until {}", stamp(reset)));
+            let half = if links.half_spent {
+                "; the server has used its half"
+            } else {
+                ""
+            };
+            format!("{}{until}{half}", calls.left)
+        }
+        None => "no answer from GitHub's API this hour".to_string(),
+    };
+    let paused = if links.paused.is_empty() {
+        "none".to_string()
+    } else {
+        links
+            .paused
+            .iter()
+            .map(|paused| format!("{} until {}", paused.host, stamp(paused.until)))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    format!(
+        "github allowance: {allowance}\ngithub calls left: {calls_left}\n\
+         paused hosts: {paused}\ncommit page overruled: {}\n",
+        links.overruled
+    )
 }
 
 /// Billionths of a dollar, in dollars.

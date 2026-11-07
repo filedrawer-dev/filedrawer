@@ -57,6 +57,19 @@ impl Pauses {
         hosts.insert(host.to_string(), Pause { until, strikes });
     }
 
+    /// The hosts asking the server to wait now, each with how long is left, by name.
+    pub(super) fn active(&self) -> Vec<(String, Duration)> {
+        let now = Instant::now();
+        let mut active: Vec<(String, Duration)> = self
+            .hosts()
+            .iter()
+            .filter(|(_, pause)| now < pause.until)
+            .map(|(host, pause)| (host.clone(), pause.until - now))
+            .collect();
+        active.sort();
+        active
+    }
+
     /// `host` answered without asking the server to wait, so its strikes are over.
     /// The pause stands: the answer may be to a fetch sent before the host asked.
     pub(super) fn clear(&self, host: &str) {

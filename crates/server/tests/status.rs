@@ -194,3 +194,104 @@ async fn production_has_no_such_route() {
         StatusCode::NOT_FOUND
     );
 }
+
+const SHA: &str = "0123456789abcdef0123456789abcdef01234567";
+
+fn github_code() -> String {
+    format!("https://github.com/ada/steering/tree/{SHA}")
+}
+
+#[tokio::test]
+async fn it_shows_githubs_allowance_and_no_answer_before_any_call() {
+    let app = test_app().await;
+    let status = app.get("/staging/status").await;
+    assert_eq!(
+        field(&status.body, "github allowance"),
+        Some("5000 calls an hour")
+    );
+    assert_eq!(
+        field(&status.body, "github calls left"),
+        Some("no answer from GitHub's API this hour")
+    );
+    assert_eq!(field(&status.body, "paused hosts"), Some("none"));
+    assert_eq!(field(&status.body, "commit page overruled"), Some("0"));
+    let without_token = test_app().await.with_github_hourly(60);
+    let status = without_token.get("/staging/status").await;
+    assert_eq!(
+        field(&status.body, "github allowance"),
+        Some("60 calls an hour (no FILEDRAWER_GITHUB_TOKEN)")
+    );
+}
+
+#[tokio::test]
+async fn it_shows_the_calls_github_last_said_were_left() {
+    let app = test_app().await;
+    app.post(
+        "/entries",
+        entry("Linked", &format!("code: {}\n", github_code())),
+    )
+    .await;
+    let status = app.get("/staging/status").await;
+    let left = field(&status.body, "github calls left").unwrap();
+    assert!(left.starts_with("4999 until "), "{left}");
+    let json = app.get_json("/staging/status").await;
+    assert_eq!(json["github"]["calls_left"], 4999);
+    assert_eq!(json["github"]["half_spent"], false);
+}
+
+#[tokio::test]
+async fn it_says_when_the_server_has_used_its_half_of_githubs_calls() {
+    let app = test_app().await;
+    app.web.api(
+        &format!("/repos/ada/steering/compare/HEAD...{SHA}?per_page=1"),
+        200,
+        serde_json::json!({"status": "identical"}),
+        2000,
+    );
+    app.post(
+        "/entries",
+        entry("Linked", &format!("code: {}\n", github_code())),
+    )
+    .await;
+    let status = app.get("/staging/status").await;
+    let left = field(&status.body, "github calls left").unwrap();
+    assert!(
+        left.starts_with("2000 ") && left.ends_with("; the server has used its half"),
+        "{left}"
+    );
+    assert_eq!(
+        app.get_json("/staging/status").await["github"]["half_spent"],
+        true
+    );
+}
+
+#[tokio::test]
+async fn it_lists_a_host_that_asked_the_server_to_wait() {
+    let app = test_app().await;
+    let logs = format!("https://huggingface.co/datasets/ada/logs/tree/{SHA}");
+    app.web.answer_after(&logs, 429, 300);
+    app.post("/entries", entry("Linked", &format!("logs: [{logs}]\n")))
+        .await;
+    let status = app.get("/staging/status").await;
+    let paused = field(&status.body, "paused hosts").unwrap();
+    assert!(paused.starts_with("huggingface.co until "), "{paused}");
+    let json = app.get_json("/staging/status").await;
+    assert_eq!(json["paused_hosts"][0]["host"], "huggingface.co");
+}
+
+#[tokio::test]
+async fn it_counts_the_commit_pages_empty_answers_the_api_overruled() {
+    let app = test_app().await;
+    app.web.json(
+        &format!("https://github.com/ada/steering/branch_commits/{SHA}"),
+        200,
+        Some(serde_json::json!({"branches": [], "tags": []})),
+    );
+    app.post(
+        "/entries",
+        entry("Linked", &format!("code: {}\n", github_code())),
+    )
+    .await;
+    let status = app.get("/staging/status").await;
+    assert_eq!(field(&status.body, "commit page overruled"), Some("1"));
+}
