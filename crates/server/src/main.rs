@@ -25,8 +25,12 @@ and forms must come from. Attached files' bytes are kept in files/ beside the
 database file.
 
 FILEDRAWER_SCREEN_TEST_ACCOUNT names staging's screen-test account, which
-`ops/smoke-staging screen` (in CI) and `eval` submit as: it isn't held to an
-account's share of the day's screening cap, only to the cap. Production refuses it.
+`ops/smoke-staging eval` submits as: it isn't held to an account's share of the
+day's screening cap, only to the cap. Production refuses it.
+
+FILEDRAWER_CI_SCREEN_ACCOUNT names staging's CI screen account, which CI's
+`ops/smoke-staging screen` submits as after each deploy: it has no daily allowance.
+Production refuses it.
 
 FILEDRAWER_SMOKE_ACCOUNT names staging's smoke-test account: its entries aren't
 screened, and their cards say so, so CI's smoke test calls no model after each
@@ -164,6 +168,7 @@ async fn serve() -> ExitCode {
         public_url: config.public_url.clone(),
         smoke_account: config.smoke_account.clone(),
         screen_test_account: config.screen_test_account.clone(),
+        ci_screen_account: config.ci_screen_account.clone(),
         files_url: config.files_url.clone(),
         files,
         attachment_store_cap_bytes: config.attachment_store_cap_bytes,

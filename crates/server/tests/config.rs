@@ -165,6 +165,24 @@ fn staging_reads_the_screen_test_account_and_production_refuses_it() {
 }
 
 #[test]
+fn staging_reads_the_ci_screen_account_and_production_refuses_it() {
+    let staging = config(&[("FILEDRAWER_CI_SCREEN_ACCOUNT", "a-ci1")]).unwrap();
+    assert_eq!(staging.ci_screen_account.as_deref(), Some("a-ci1"));
+    let mut production = vec![
+        ("FILEDRAWER_ENVIRONMENT", "production"),
+        ("FILEDRAWER_SCREENER", "anthropic"),
+        ("FILEDRAWER_ANTHROPIC_API_KEY", "sk-ant-not-real"),
+        ("FILEDRAWER_CI_SCREEN_ACCOUNT", "a-ci1"),
+    ];
+    production.extend(SMTP);
+    let error = config(&production).unwrap_err();
+    assert!(
+        error.to_string().contains("FILEDRAWER_CI_SCREEN_ACCOUNT"),
+        "{error}"
+    );
+}
+
+#[test]
 fn attached_files_are_kept_beside_the_database() {
     let config = config(&[(
         "FILEDRAWER_DATABASE",

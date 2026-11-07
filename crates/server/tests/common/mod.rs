@@ -175,6 +175,7 @@ pub fn state(pool: sqlx::SqlitePool, outbox: &Outbox, files_dir: &std::path::Pat
         public_url: PUBLIC_URL.to_string(),
         smoke_account: None,
         screen_test_account: None,
+        ci_screen_account: None,
         files_url: Some(FILES_URL.to_string()),
         files: Arc::new(FileStore::open(files_dir.join("files")).unwrap()),
         attachment_store_cap_bytes: 20_000_000_000,

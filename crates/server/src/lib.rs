@@ -62,6 +62,8 @@ pub struct AppState {
     pub smoke_account: Option<String>,
     /// Staging's screen-test account (`Config::screen_test_account`).
     pub screen_test_account: Option<String>,
+    /// Staging's CI screen account (`Config::ci_screen_account`).
+    pub ci_screen_account: Option<String>,
     /// Where attached files are served (`Config::files_url`).
     pub files_url: Option<String>,
     /// Attached files' bytes.

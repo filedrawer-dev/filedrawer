@@ -33,11 +33,16 @@ pub fn day_text(day: Date) -> String {
 }
 
 /// Whether `account_id` is outside the allowance: staging's smoke-test and
-/// screen-test accounts (the owner's decision, 2026-11-06).
+/// screen-test accounts (the owner's decision, 2026-11-06), and its CI screen
+/// account (2026-11-07).
 fn exempt(state: &AppState, account_id: &str) -> bool {
-    [&state.smoke_account, &state.screen_test_account]
-        .into_iter()
-        .any(|exempt| exempt.as_deref() == Some(account_id))
+    [
+        &state.smoke_account,
+        &state.screen_test_account,
+        &state.ci_screen_account,
+    ]
+    .into_iter()
+    .any(|exempt| exempt.as_deref() == Some(account_id))
 }
 
 /// The units an account made on `created` gets on `day`.

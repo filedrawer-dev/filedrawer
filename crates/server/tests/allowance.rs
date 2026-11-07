@@ -364,14 +364,22 @@ async fn a_batch_rejected_partway_gives_back_its_unscreened_members_units() {
     assert_eq!(field(&reply.body, "screen_from"), Some(date_in(2).as_str()));
 }
 
-/// A test app whose own account is staging's smoke-test account, or its screen-test
-/// account.
-async fn staging_app(smoke: bool) -> TestApp {
+/// Staging's accounts that are outside the allowance.
+#[derive(Debug, Clone, Copy)]
+enum TestAccount {
+    Smoke,
+    ScreenTest,
+    CiScreen,
+}
+
+/// A test app whose own account is `role` on staging.
+async fn staging_app(role: TestAccount) -> TestApp {
     let mut app = test_app().await;
-    if smoke {
-        app.state.smoke_account = Some(app.account.clone());
-    } else {
-        app.state.screen_test_account = Some(app.account.clone());
+    let account = Some(app.account.clone());
+    match role {
+        TestAccount::Smoke => app.state.smoke_account = account,
+        TestAccount::ScreenTest => app.state.screen_test_account = account,
+        TestAccount::CiScreen => app.state.ci_screen_account = account,
     }
     app.router = filedrawer_server::app(app.state.clone());
     app
@@ -379,8 +387,12 @@ async fn staging_app(smoke: bool) -> TestApp {
 
 #[tokio::test]
 async fn stagings_test_accounts_have_no_allowance() {
-    for smoke in [true, false] {
-        let app = staging_app(smoke).await;
+    for role in [
+        TestAccount::Smoke,
+        TestAccount::ScreenTest,
+        TestAccount::CiScreen,
+    ] {
+        let app = staging_app(role).await;
         fill(&app, 25).await;
         for n in 0..25 {
             let created = app

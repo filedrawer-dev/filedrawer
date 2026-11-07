@@ -30,10 +30,12 @@ pub struct Config {
     /// Staging's smoke-test account, whose entries aren't screened, so CI's smoke
     /// test calls no model after each deploy. Production refuses it.
     pub smoke_account: Option<String>,
-    /// Staging's screen-test account, which `ops/smoke-staging screen` (in CI) and
-    /// `eval` submit as: not held to an account's share of the day's cap. Production
-    /// refuses it.
+    /// Staging's screen-test account, which `ops/smoke-staging eval` submits as: not
+    /// held to an account's share of the day's cap. Production refuses it.
     pub screen_test_account: Option<String>,
+    /// Staging's CI screen account, which CI's `ops/smoke-staging screen` submits as
+    /// after each deploy: outside the daily allowance. Production refuses it.
+    pub ci_screen_account: Option<String>,
     /// Where attached files are served, on a host of their own with no cookies
     /// (design.md, Attached code), with no trailing slash. `None` turns attachments off.
     pub files_url: Option<String>,
@@ -88,6 +90,10 @@ pub enum ConfigError {
         "FILEDRAWER_SCREEN_TEST_ACCOUNT lifts an account's share of the screening cap, so production refuses it"
     )]
     ScreenTestAccountInProduction,
+    #[error(
+        "FILEDRAWER_CI_SCREEN_ACCOUNT lifts an account's daily allowance, so production refuses it"
+    )]
+    CiScreenAccountInProduction,
     #[error(
         "production sends verification and reset email, so it needs FILEDRAWER_SMTP_HOST, FILEDRAWER_SMTP_USER, FILEDRAWER_SMTP_PASSWORD and FILEDRAWER_MAIL_FROM"
     )]
@@ -215,14 +221,27 @@ impl Config {
                 });
             }
         };
-        let smoke_account = var("FILEDRAWER_SMOKE_ACCOUNT").filter(|id| !id.is_empty());
-        if environment == Environment::Production && smoke_account.is_some() {
-            return Err(ConfigError::SmokeAccountInProduction);
-        }
-        let screen_test_account = var("FILEDRAWER_SCREEN_TEST_ACCOUNT").filter(|id| !id.is_empty());
-        if environment == Environment::Production && screen_test_account.is_some() {
-            return Err(ConfigError::ScreenTestAccountInProduction);
-        }
+        // Staging's test accounts each lift a rule for one account, so production
+        // refuses every one.
+        let staging_account = |name: &str, refused: ConfigError| {
+            let id = var(name).filter(|id| !id.is_empty());
+            if environment == Environment::Production && id.is_some() {
+                return Err(refused);
+            }
+            Ok(id)
+        };
+        let smoke_account = staging_account(
+            "FILEDRAWER_SMOKE_ACCOUNT",
+            ConfigError::SmokeAccountInProduction,
+        )?;
+        let screen_test_account = staging_account(
+            "FILEDRAWER_SCREEN_TEST_ACCOUNT",
+            ConfigError::ScreenTestAccountInProduction,
+        )?;
+        let ci_screen_account = staging_account(
+            "FILEDRAWER_CI_SCREEN_ACCOUNT",
+            ConfigError::CiScreenAccountInProduction,
+        )?;
         let files_dir = Path::new(&database)
             .parent()
             .unwrap_or(Path::new(""))
@@ -243,6 +262,7 @@ impl Config {
             smtp,
             smoke_account,
             screen_test_account,
+            ci_screen_account,
             files_url,
         })
     }
