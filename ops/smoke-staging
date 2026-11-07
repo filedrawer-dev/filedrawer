@@ -27,8 +27,9 @@ Exit status: 0 every check passed, 1 a check failed, 2 a usage or setting error,
 3 (screen only) the day's screening cap is spent, so nothing more was checked.
 
 screen checks that the server screens with the real model, which the plain smoke
-test can't: staging doesn't screen CI's smoke account. Run it by hand, now and then;
-no automated suite runs it, and each run spends a few Haiku calls. As the
+test can't: staging doesn't screen CI's smoke account. CI runs it after each deploy
+to staging (the screen-staging job), with the token ops/provision-vps smoke stores
+as the staging secret SCREEN_TEST_TOKEN, and each run spends a few Haiku calls. As the
 screen-test account (robocarver's mailbox), it submits a bland on-topic entry and
 expects it public with no "not screened" note, and an off-topic one (sourdough) and
 expects it rejected with its reasons. It never submits anything like a hazard: an

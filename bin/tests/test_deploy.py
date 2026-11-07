@@ -249,7 +249,9 @@ def workflow_jobs() -> dict[str, str]:
 def test_a_job_that_reads_secrets_runs_only_githubs_own_actions():
     jobs = workflow_jobs()
     holding = {name: text for name, text in jobs.items() if "secrets." in text}
-    assert {"deploy-staging", "smoke-staging"} <= holding.keys(), jobs.keys()
+    assert {"deploy-staging", "smoke-staging", "screen-staging"} <= holding.keys(), (
+        jobs.keys()
+    )
     for name, text in holding.items():
         actions = re.findall(r"uses:\s*(\S+)", text)
         third_party = [a for a in actions if not a.startswith("actions/")]
@@ -263,6 +265,70 @@ def test_the_smoke_test_runs_after_the_deploy_and_waits_for_it():
     assert re.search(
         r"ops/smoke-staging --wait \d+ https://staging\.filedrawer\.dev", job
     )
+
+
+def test_the_screen_check_runs_after_the_deploy_as_the_screen_test_account():
+    job = workflow_jobs()["screen-staging"]
+    assert re.search(r"^    needs: deploy-staging$", job, re.MULTILINE), job
+    assert re.search(r"^    environment: staging$", job, re.MULTILINE), job
+    assert (
+        "FILEDRAWER_STAGING_SCREEN_API_KEY: ${{ secrets.SCREEN_TEST_TOKEN }}" in job
+    ), job
+    assert re.search(
+        r"ops/smoke-staging screen --wait \d+ https://staging\.filedrawer\.dev", job
+    ), job
+
+
+def step_script(job: str, step: str) -> str:
+    """The `run: |` block of the step named `step` in a job's text, dedented."""
+    after = job.split(f"- name: {step}\n", 1)[1]
+    lines = after.split("run: |\n", 1)[1].splitlines()
+    indent = len(lines[0]) - len(lines[0].lstrip())
+    block = []
+    for line in lines:
+        if line.strip() and len(line) - len(line.lstrip()) < indent:
+            break
+        block.append(line[indent:])
+    return "\n".join(block) + "\n"
+
+
+@pytest.mark.parametrize(
+    ("token", "status", "exits", "warns", "checked"),
+    [
+        ("", 0, 0, True, False),
+        ("fdt_x", 0, 0, False, True),
+        ("fdt_x", 1, 1, False, True),
+        ("fdt_x", 3, 0, True, True),
+    ],
+    ids=["no token", "passed", "failed", "day spent"],
+)
+def test_the_screen_check_passes_with_a_warning_only_when_nothing_could_be_checked(
+    tmp_path, token, status, exits, warns, checked
+):
+    script = step_script(
+        workflow_jobs()["screen-staging"], "Screen with the real model"
+    )
+    fake = tmp_path / "ops/smoke-staging"
+    fake.parent.mkdir()
+    fake.write_text(f'#!/bin/sh\necho "checked $*"\nexit {status}\n')
+    fake.chmod(0o755)
+    env = {
+        "PATH": os.environ["PATH"],
+        "FILEDRAWER_STAGING_KEY": "k",
+        "FILEDRAWER_STAGING_SCREEN_API_KEY": token,
+    }
+    # GitHub runs a step's script with bash -e.
+    result = subprocess.run(
+        ["bash", "-e", "-c", script],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == exits, result.stdout + result.stderr
+    assert ("::warning::" in result.stdout) == warns, result.stdout
+    assert ("checked screen" in result.stdout) == checked, result.stdout
 
 
 def test_the_files_host_has_a_caddy_site_behind_the_staging_gate_and_a_dns_record():

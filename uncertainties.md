@@ -250,7 +250,7 @@ Choices the docs left open, made while building the analyzer. Once the owner set
 
 ## The smoke-test account's screening note
 
-- Options: say "not screened" in the entry's screening note, or show it as a separate line the server owns. (The owner decided on 2026-11-06 that the smoke account isn't screened at all, so CI calls no model.)
+- Options: say "not screened" in the entry's screening note, or show it as a separate line the server owns. (The owner decided on 2026-11-06 that the smoke account isn't screened at all, so the smoke test calls no model.)
 - Chosen: the screening note, as `staging smoke account: not screened`. It is staging only (production refuses `FILEDRAWER_SMOKE_ACCOUNT`), and it needs no new card line.
 - Against: entry-format.md defines the screening note as the screen's doubt about `outcome`, quoted as model text, so the server's own words read as the model's.
 

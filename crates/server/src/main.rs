@@ -25,8 +25,8 @@ and forms must come from. Attached files' bytes are kept in files/ beside the
 database file.
 
 FILEDRAWER_SCREEN_TEST_ACCOUNT names staging's screen-test account, which
-`ops/smoke-staging eval` submits as: it isn't held to an account's share of the
-day's screening cap, only to the cap. Production refuses it.
+`ops/smoke-staging screen` (in CI) and `eval` submit as: it isn't held to an
+account's share of the day's screening cap, only to the cap. Production refuses it.
 
 FILEDRAWER_SMOKE_ACCOUNT names staging's smoke-test account: its entries aren't
 screened, and their cards say so, so CI's smoke test calls no model after each

@@ -30,8 +30,9 @@ pub struct Config {
     /// Staging's smoke-test account, whose entries aren't screened, so CI's smoke
     /// test calls no model after each deploy. Production refuses it.
     pub smoke_account: Option<String>,
-    /// Staging's screen-test account, which `ops/smoke-staging eval` submits as: not
-    /// held to an account's share of the day's cap. Production refuses it.
+    /// Staging's screen-test account, which `ops/smoke-staging screen` (in CI) and
+    /// `eval` submit as: not held to an account's share of the day's cap. Production
+    /// refuses it.
     pub screen_test_account: Option<String>,
     /// Where attached files are served, on a host of their own with no cookies
     /// (design.md, Attached code), with no trailing slash. `None` turns attachments off.
