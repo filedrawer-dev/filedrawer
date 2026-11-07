@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "DELETE FROM files WHERE NOT EXISTS (\n             SELECT 1 FROM attachment_files af WHERE af.sha256 = files.sha256)\n         RETURNING sha256",
+  "query": "DELETE FROM files WHERE removed_at IS NULL AND NOT EXISTS (\n             SELECT 1 FROM attachment_files af WHERE af.sha256 = files.sha256)\n         RETURNING sha256",
   "describe": {
     "columns": [
       {
@@ -22,5 +22,5 @@
       false
     ]
   },
-  "hash": "ed4dedc9752cf90490af5906164b4833333c6c83681bdd45d3020e1daf5a2af7"
+  "hash": "a2df268d8b4933965e51c7085426dcc8e715d1aae282f5bc55d17366651f2173"
 }

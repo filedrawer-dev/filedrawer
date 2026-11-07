@@ -1,6 +1,7 @@
 //! A fresh server on an in-memory database, with one account and its token.
 #![allow(dead_code)]
 
+pub mod attachments;
 pub mod fake_models;
 pub mod series;
 
@@ -34,8 +35,9 @@ use tower::ServiceExt;
 
 /// The site's address in tests; emails link to it and forms must come from it.
 pub const PUBLIC_URL: &str = "http://localhost";
-/// The files host in tests.
+/// The files host in tests, and its name as a Host header gives it.
 pub const FILES_URL: &str = "http://files.localhost";
+pub const FILES_HOST: &str = "files.localhost";
 
 /// The line between the server's own fields and author text (design.md, Agent
 /// interface).

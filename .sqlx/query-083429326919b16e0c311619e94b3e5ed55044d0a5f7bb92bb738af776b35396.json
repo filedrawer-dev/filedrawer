@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE files SET removed_at = COALESCE(removed_at, ?) WHERE sha256 = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "083429326919b16e0c311619e94b3e5ed55044d0a5f7bb92bb738af776b35396"
+}

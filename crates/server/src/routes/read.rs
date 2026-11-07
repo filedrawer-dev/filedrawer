@@ -105,10 +105,11 @@ pub async fn entry(
             set.files.len()
         ));
         for file in &set.files {
-            descriptions.push_str(&format!(
-                "file: {files_url}/f/{} {}\n",
-                file.sha256,
-                one_line(&file.path)
+            descriptions.push_str(&file_line(
+                files_url,
+                &file.sha256,
+                &file.path,
+                file.removed,
             ));
         }
     }
@@ -163,7 +164,8 @@ pub async fn entry(
                 "repo_url": file.repo_url,
                 "sha256": file.sha256,
                 "bytes": file.bytes,
-                "url": format!("{files_url}/f/{}", file.sha256),
+                "url": (!file.removed).then(|| format!("{files_url}/f/{}", file.sha256)),
+                "removed": file.removed,
             })).collect::<Vec<_>>(),
         })),
     });
@@ -277,10 +279,11 @@ async fn own_entry(
     // Its attached files, as the public page will list them.
     let files_url = state.files_url.as_deref().unwrap_or("");
     for file in attachments::entry_files(&state.pool, entry.seq).await? {
-        reason_lines.push_str(&format!(
-            "file: {files_url}/f/{} {}\n",
-            file.sha256,
-            one_line(&file.path)
+        reason_lines.push_str(&file_line(
+            files_url,
+            &file.sha256,
+            &file.path,
+            file.removed,
         ));
     }
     text.push_str(&format!(
@@ -303,6 +306,17 @@ async fn own_entry(
         "series": cite.as_ref().map(series::EntryCite::text),
     });
     Ok(format.reply(StatusCode::OK, text, json))
+}
+
+/// An attached file's line on an entry's page, below the delimiter since its path is
+/// author text: its URL on the files host, or, once the archive's owner removed it,
+/// a line of its own that holds no URL.
+fn file_line(files_url: &str, sha256: &str, path: &str, removed: bool) -> String {
+    if removed {
+        format!("removed_file: {}\n", one_line(path))
+    } else {
+        format!("file: {files_url}/f/{sha256} {}\n", one_line(path))
+    }
 }
 
 #[derive(Debug, Deserialize)]

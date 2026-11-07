@@ -20,6 +20,7 @@ pub mod mail;
 mod pages;
 mod passwords;
 mod queue;
+mod removed_files;
 mod respond;
 mod review;
 mod routes;
@@ -156,7 +157,13 @@ fn build(state: AppState) -> Routes<Router> {
             "/admin/series-refusals/{id}/dismiss",
             post(admin::dismiss_refusal),
         )
-        .route("/admin/accounts/{id}/clear-guard", post(admin::clear_guard));
+        .route("/admin/accounts/{id}/clear-guard", post(admin::clear_guard))
+        .route("/admin/f/{sha256}", get(admin::file))
+        .route("/admin/f/{sha256}/remove", post(admin::remove_file))
+        .route(
+            "/admin/f/{sha256}/remove-hazard",
+            post(admin::remove_hazard),
+        );
     let same_origin = axum::middleware::from_fn_with_state(state.clone(), account::same_origin);
     accounts
         .map_router(|router| Router::new().merge(router.layer(same_origin)))

@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}File {{ file.sha256 }}{% endblock %}
+{% block content %}
+<p><a href="/admin">Review queue</a></p>
+<h1>Attached file</h1>
+<p><code>{{ file.sha256 }}</code>, {{ file.bytes }} bytes, screened: {{ file.verdict.as_deref().unwrap_or("not yet") }}{% if let Some(reason) = file.reason %} ({{ reason }}){% endif %}.</p>
+{% match file.state %}
+{% when FileState::Banned with (at) %}
+<p>Removed as a hazard {{ at }}: it is served for no entry, refused at upload and when cited, and its uploaders are under the review guard.</p>
+{% when FileState::Removed with (at) %}
+<p>Removed {{ at }}: it is served for no entry.</p>
+{% when FileState::Kept %}
+<form method="post" action="/admin/f/{{ file.sha256 }}/remove"><button type="submit">Remove</button></form>
+<p>Stops it being served for every entry that pins it. Its bytes stay for analysis, and the same bytes may be attached again, still unserved.</p>
+{% endmatch %}
+{% if !file.state.is_banned() %}
+<form method="post" action="/admin/f/{{ file.sha256 }}/remove-hazard"><button type="submit">Remove as a hazard</button></form>
+<p>Also bans its hash, rejects entries still to be screened that cite it, and puts every account that uploaded it under the review guard.</p>
+{% endif %}
+<h2>Where it is used</h2>
+<table>
+<tr><th>Set</th><th>Account</th><th>Path</th><th>Entry</th></tr>
+{% for used in uses %}
+<tr><td><code>{{ used.set_id }}</code></td><td><code>{{ used.account_id }}</code></td><td><code>{{ used.path }}</code></td><td>{% if let Some(id) = used.entry_id %}<code>{{ id }}</code> {{ used.entry_status.as_deref().unwrap_or("") }}{% else %}cited by no entry{% endif %}</td></tr>
+{% endfor %}
+</table>
+<h2>Text</h2>
+{% match text %}
+{% when Some with (text) %}
+<pre>{{ text }}</pre>
+{% when None %}
+<p>Its bytes are missing from the server's disk.</p>
+{% endmatch %}
+{% endblock %}

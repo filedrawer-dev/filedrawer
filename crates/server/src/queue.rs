@@ -9,7 +9,9 @@ use time::OffsetDateTime;
 
 use crate::embargo::embargoed_until;
 use crate::screening::{Call, MAX_ATTEMPTS, ModelError, Subject, Verdict};
-use crate::{AppState, accounts, allowance, attachments, entries, series, time::stamp, unpack};
+use crate::{
+    AppState, accounts, allowance, attachments, entries, removed_files, series, time::stamp, unpack,
+};
 
 /// The share of the day's cap one account may spend (design.md: 10%).
 const ACCOUNT_SHARE_PERCENT: i64 = 10;
@@ -282,7 +284,10 @@ async fn screen_files(
     let unscreened = usize::try_from(unscreened).expect("file sizes are stored from usize lengths");
     let mut budget = unpack::TextBudget::for_files(unscreened);
     for file in files {
+        // A ban decides every entry still to be screened that cites the file; the
+        // screen's own verdict stays on the file, for analysis.
         let call = match file.verdict.as_deref() {
+            _ if file.banned => FileCall::Reject(removed_files::REMOVED_BY_OWNER.into()),
             Some("pass") => FileCall::Pass(file.reason.clone()),
             Some(_) => FileCall::Reject(file.reason.clone().unwrap_or_default()),
             None => match screen_file(state, waiting, &file, &mut budget, now).await? {

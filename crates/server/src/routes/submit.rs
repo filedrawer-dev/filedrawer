@@ -17,9 +17,9 @@ use crate::entries::{self, NewEntry, OwnEntry};
 use crate::error::AppError;
 use crate::jobs::{end_hold, hold_until};
 use crate::links::{self, Linked, SlugRule};
-use crate::respond::{DELIMITER, Format, card_and_warnings};
+use crate::respond::{DELIMITER, Format, card_and_warnings, one_line};
 use crate::series::{self, Cited};
-use crate::{AppState, allowance, attachments, time};
+use crate::{AppState, allowance, attachments, removed_files, time};
 use ::time::format_description::well_known::Rfc3339;
 use ::time::{Date, OffsetDateTime};
 use analyzer::{SeriesCite, parse_series_cite, without_series};
@@ -166,14 +166,22 @@ pub(crate) async fn cited_set(
     let Some(id) = accepted.analysis.fields.attachments.as_deref() else {
         return Ok(Ok(None));
     };
-    Ok(
-        match attachments::owned_set(&state.pool, &account.id, id).await? {
-            Some(seq) => Ok(Some(seq)),
-            None => Err(format!(
-                "`attachments: {id}` names no attachment set this account uploaded; upload one with POST /attachments"
-            )),
-        },
-    )
+    let Some(seq) = attachments::owned_set(&state.pool, &account.id, id).await? else {
+        return Ok(Err(format!(
+            "`attachments: {id}` names no attachment set this account uploaded; upload one with POST /attachments"
+        )));
+    };
+    let banned = removed_files::banned_paths(&state.pool, seq).await?;
+    if !banned.is_empty() {
+        // Paths are the uploader's text: one line each, so none can pass for a field.
+        let paths: Vec<String> = banned.iter().map(|path| one_line(path)).collect();
+        return Ok(Err(format!(
+            "`attachments: {id}` holds {}, {}; upload a set without it",
+            paths.join(", "),
+            removed_files::REMOVED_BY_OWNER
+        )));
+    }
+    Ok(Ok(Some(seq)))
 }
 
 /// `cited_set` for one entry, refusing it with the reason.

@@ -123,6 +123,8 @@ When an author can't publish their code, they can attach it to the entry instead
 - The server serves attachments as `text/plain` with `X-Content-Type-Options: nosniff`, from a separate host, `files.filedrawer.dev`, which carries no cookies. The same process answers both hosts, telling them apart by the Host header (`FILEDRAWER_FILES_URL`); the files host answers `GET /f/<sha256>` for a file some public entry's set holds, reading it from disk, and nothing else. Without the setting, attachments are off. Reason: an attached HTML file must not run as a page on the site. Caddy doesn't serve the files from disk itself, since only the database knows which files a public entry holds.
 - Attachments embargo, version, get removed and get purged with their entry. A purge deletes a file only when no other entry uses it.
 - The owner can remove a single file, which stops every entry that pins it from serving it. A file removed for a hazard, or purged with an entry removed for one, goes on a list of banned hashes, checked at submission and when serving. Reason: screening verdicts are stored by hash, so re-attaching a removed file from a new account would otherwise skip screening.
+  - The owner's page for a file, `/admin/f/<sha256>`, offers two actions (the owner's decisions, 2026-11-06). Remove stops the file being served and keeps its bytes for analysis. Remove as a hazard also bans the hash: an upload holding it, or an entry citing a set that does, is refused, and an entry still waiting to be screened that cites it is rejected. The ban outlives the file's record.
+  - Removing a file as a hazard puts every account that uploaded a set holding it under the review guard, as the owner's reject or hold of an entry does. Reason: otherwise the account could attach reworded copies, each a new hash that Haiku screens afresh, until one passes.
 - Attached code is under MIT unless the entry sets `code_license`. Reason: CC-BY is a poor fit for code.
 
 ## Entry status
@@ -292,7 +294,7 @@ Launch needs everything in this document except GitHub and ORCID sign-in.
 
 1. Field test of the entry format (see `AGENTS.md`). No server code until the owner signs off on the revised format.
 2. Accounts, tokens, submission, the analyzer and cards, reading and search, `/skill.md`, staging, backups.
-3. Screening, the fair queue, the review queue, attached code.
+3. Screening, the fair queue, the review queue, attached code. Removing entries, suspending accounts and purges are a slice of their own (#15), split from attached code's removals (the owner's decision, 2026-11-06).
 4. Embargoes, invite codes and rate limits. Then the usability runs on staging.
 5. Terms and privacy pages, then launch.
 6. After launch: GitHub sign-in, then ORCID.

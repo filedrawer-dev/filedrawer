@@ -7,6 +7,7 @@ use axum::response::{Html, IntoResponse, Response};
 
 use crate::accounts::{Guarded, TokenView};
 use crate::entries::{Doubted, Undecided};
+use crate::removed_files::{FileState, FileUse, OwnersFile};
 use crate::series::{Owned, Refused};
 
 /// A rendered page with its status code.
@@ -120,8 +121,21 @@ pub struct AdminEntryPage<'a> {
 
 /// An attached file as the owner's review page shows it.
 pub struct ShownFile {
+    pub sha256: String,
     pub path: String,
     pub verdict: Option<String>,
+    pub removed: bool,
+    pub banned: bool,
     /// `None` when its bytes are missing from disk.
     pub text: Option<String>,
+}
+
+#[derive(Template)]
+#[template(path = "admin_file.html")]
+pub struct AdminFilePage<'a> {
+    pub file: &'a OwnersFile,
+    /// `None` when its bytes are missing from disk.
+    pub text: Option<&'a str>,
+    /// The sets that hold it, each with an entry citing it, if any.
+    pub uses: &'a [FileUse],
 }

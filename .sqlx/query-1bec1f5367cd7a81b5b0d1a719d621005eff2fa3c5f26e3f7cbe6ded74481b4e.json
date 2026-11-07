@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT af.path FROM attachment_files af\n         JOIN banned_files b ON b.sha256 = af.sha256\n         WHERE af.set_seq = ? ORDER BY af.path",
+  "describe": {
+    "columns": [
+      {
+        "name": "path",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "attachment_files",
+            "name": "path"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "1bec1f5367cd7a81b5b0d1a719d621005eff2fa3c5f26e3f7cbe6ded74481b4e"
+}

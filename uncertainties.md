@@ -283,3 +283,9 @@ Choices the docs left open, made while building the analyzer. Once the owner set
 - Options: one `screen_from` for the batch, the day its last member waits for, as here, or one per member.
 - Chosen: one, since the batch publishes as one once its last member passes.
 - Against: an agent reading the text can't tell which members are screened today.
+
+## A removed file: restoring it, and attaching it again
+
+- Options: no restore for a removed file, and its bytes may be attached again unserved, as here; a restore action like the one design.md gives entries; or refusing a plainly removed file's bytes at upload, as a banned one is.
+- Chosen: no restore and no refusal. design.md gives restore for entries only, and bans only files removed as a hazard.
+- Against: an owner who removes the wrong file can't undo it, and an entry attaching a plainly removed file again publishes with that file unserved, without being told at submission.

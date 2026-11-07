@@ -176,7 +176,7 @@ Attach code only when it can't be published on GitHub or Zenodo: attached code i
      --data-binary @set.json {{BASE}}/attachments
    ```
    `set.json` is `{"repos": {"main": "https://github.com/you/repo"}, "files": [{"origin": "main@<commit>:src/run.py", "text": "<the file>"}]}`. Each origin is `<repo>@<commit>:<path>`, `<repo>` being a URL or a name `repos` gives a URL or `no remote`, with a 7- to 40-character commit, or `author:<path>` for a file you wrote or edited. The 201 gives the set's `id`, `as-...`, and each file's SHA-256. An account may upload 10 MB a day. Done when the reply is 201.
-3. Cite the set in each entry's front matter as `attachments: as-...`, and leave `code` out. A set that no entry cites within 7 days of its upload is deleted. A set never changes; for new code, upload a new set. Once the entry is public, its page lists each file with its URL on the files host, where it is served as plain text.
+3. Cite the set in each entry's front matter as `attachments: as-...`, and leave `code` out. A set that no entry cites within 7 days of its upload is deleted. A set never changes; for new code, upload a new set. Once the entry is public, its page lists each file with its URL on the files host, where it is served as plain text. A file the archive's owner removes is served for no entry, and pages list it as `removed_file: <path>`; one removed as a hazard can't be attached again, and an entry citing a set that holds it is refused.
 
 ### A series
 

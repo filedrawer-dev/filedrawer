@@ -9,7 +9,8 @@ use axum::http::request::Parts;
 use axum::response::{IntoResponse, Redirect, Response};
 
 use crate::error::AppError;
-use crate::pages::{AdminEntryPage, AdminQueuePage, QueueRow, ShownFile, page};
+use crate::pages::{AdminEntryPage, AdminFilePage, AdminQueuePage, QueueRow, ShownFile, page};
+use crate::removed_files::{self, Removal};
 use crate::review::{self, Decided, Decision};
 use crate::routes::account::SessionAccount;
 use crate::series::RefusalCall;
@@ -93,8 +94,11 @@ pub async fn entry(
     for file in attachments::entry_files(&state.pool, entry.seq).await? {
         files.push(ShownFile {
             text: state.files.read(&file.sha256).await?,
+            sha256: file.sha256,
             path: file.path,
             verdict: file.verdict,
+            removed: file.removed,
+            banned: file.banned,
         });
     }
     Ok(page(
@@ -194,4 +198,51 @@ pub async fn clear_guard(
         return Err(AppError::NotFound);
     }
     Ok(Redirect::to("/admin").into_response())
+}
+
+/// One attached file, by its SHA-256 (design.md, Attached code): its text, where it is
+/// used, and the owner's two ways to remove it.
+pub async fn file(
+    _: AdminSession,
+    State(state): State<AppState>,
+    Path(sha256): Path<String>,
+) -> Result<Response, AppError> {
+    let file = removed_files::owners_file(&state.pool, &sha256)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    let text = state.files.read(&file.sha256).await?;
+    let uses = removed_files::file_uses(&state.pool, &file.sha256).await?;
+    Ok(page(
+        StatusCode::OK,
+        &AdminFilePage {
+            file: &file,
+            text: text.as_deref(),
+            uses: &uses,
+        },
+    ))
+}
+
+async fn remove(state: &AppState, sha256: &str, removal: Removal) -> Result<Response, AppError> {
+    if !removed_files::remove(&state.pool, sha256, removal).await? {
+        return Err(AppError::NotFound);
+    }
+    Ok(Redirect::to(&format!("/admin/f/{sha256}")).into_response())
+}
+
+/// Stops the file being served for any entry; its bytes and record stay.
+pub async fn remove_file(
+    _: AdminSession,
+    State(state): State<AppState>,
+    Path(sha256): Path<String>,
+) -> Result<Response, AppError> {
+    remove(&state, &sha256, Removal::Plain).await
+}
+
+/// Removes the file and bans its hash, and guards every account that uploaded it.
+pub async fn remove_hazard(
+    _: AdminSession,
+    State(state): State<AppState>,
+    Path(sha256): Path<String>,
+) -> Result<Response, AppError> {
+    remove(&state, &sha256, Removal::Hazard).await
 }

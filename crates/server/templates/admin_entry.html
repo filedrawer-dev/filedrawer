@@ -22,7 +22,7 @@
 <h2>Attached files</h2>
 <p>Publishing the entry passes any file the screen hasn't judged, for later entries too.</p>
 {% for file in files %}
-<h3><code>{{ file.path }}</code> ({{ file.verdict.as_deref().unwrap_or("not screened") }})</h3>
+<h3><a href="/admin/f/{{ file.sha256 }}"><code>{{ file.path }}</code></a> ({{ file.verdict.as_deref().unwrap_or("not screened") }}{% if file.banned %}, removed as a hazard{% else if file.removed %}, removed{% endif %})</h3>
 {% match file.text %}
 {% when Some with (text) %}
 <pre>{{ text }}</pre>

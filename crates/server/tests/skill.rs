@@ -31,6 +31,9 @@ const NOT_FOR_AGENTS: &[&str] = &[
     "/admin/series-refusals/{id}/confirm",
     "/admin/series-refusals/{id}/dismiss",
     "/admin/accounts/{id}/clear-guard",
+    "/admin/f/{sha256}",
+    "/admin/f/{sha256}/remove",
+    "/admin/f/{sha256}/remove-hazard",
     "/skill.md",
 ];
 

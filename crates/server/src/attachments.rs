@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 use sqlx::{SqliteConnection, SqlitePool};
 
 use crate::file_store::Writer;
-use crate::{AppState, ids, time::now};
+use crate::{AppState, ids, removed_files, time::now};
 
 /// The most bytes one set's files may hold in all (design.md: 1 MiB per entry).
 pub const MAX_SET_BYTES: usize = 1_048_576;
@@ -180,6 +180,9 @@ pub enum Stored {
     DailyCap,
     /// The site can store no more.
     Full(Limit),
+    /// These paths hold files the owner removed as a hazard, which no set may hold
+    /// again, under any path or account (design.md, Attached code).
+    Banned(Vec<String>),
 }
 
 /// What stops the site storing more attachments.
@@ -228,7 +231,13 @@ pub async fn store(
     }
     let mut new_bytes = 0i64;
     let mut seen = HashSet::new();
+    let mut banned = Vec::new();
     for file in files {
+        // Checked in this transaction, so no ban lands between the check and the
+        // insert below.
+        if removed_files::is_banned(&mut transaction, &file.sha256).await? {
+            banned.push(file.path.clone());
+        }
         let stored =
             sqlx::query_scalar!("SELECT 1 AS found FROM files WHERE sha256 = ?", file.sha256)
                 .fetch_optional(&mut *transaction)
@@ -236,6 +245,9 @@ pub async fn store(
         if stored.is_none() && seen.insert(file.sha256.clone()) {
             new_bytes += size(file);
         }
+    }
+    if !banned.is_empty() {
+        return Ok(Stored::Banned(banned));
     }
     let held = sqlx::query_scalar!(r#"SELECT COALESCE(SUM(bytes), 0) AS "held!: i64" FROM files"#)
         .fetch_one(&mut *transaction)
@@ -311,6 +323,8 @@ pub struct SetFile {
     pub repo_url: Option<String>,
     pub sha256: String,
     pub bytes: i64,
+    /// The archive's owner removed it, so it isn't served.
+    pub removed: bool,
 }
 
 /// The set an entry cites, as its page lists it.
@@ -334,7 +348,8 @@ pub async fn entry_set(pool: &SqlitePool, seq: i64) -> Result<Option<EntrySet>, 
     };
     let files = sqlx::query_as!(
         SetFile,
-        r#"SELECT af.path, af.origin, af.repo_url, af.sha256, f.bytes
+        r#"SELECT af.path, af.origin, af.repo_url, af.sha256, f.bytes,
+                  f.removed_at IS NOT NULL AS "removed!: bool"
            FROM attachment_files af JOIN files f ON f.sha256 = af.sha256
            WHERE af.set_seq = ? ORDER BY af.path"#,
         set.seq
@@ -344,12 +359,16 @@ pub async fn entry_set(pool: &SqlitePool, seq: i64) -> Result<Option<EntrySet>, 
     Ok(Some(EntrySet { id: set.id, files }))
 }
 
-/// Whether a public entry's set holds file `sha256`, so the files host may serve it.
+/// Whether a public entry's set holds file `sha256`, and the owner hasn't removed it,
+/// so the files host may serve it. A banned file was removed when it was banned, and
+/// can't be uploaded again, so this covers bans too.
 pub async fn is_public_file(pool: &SqlitePool, sha256: &str) -> Result<bool, sqlx::Error> {
     let found = sqlx::query_scalar!(
         "SELECT 1 AS found FROM attachment_files af
          JOIN entries e ON e.attachment_set_seq = af.set_seq
-         WHERE af.sha256 = ? AND e.status = 'public' LIMIT 1",
+         JOIN files f ON f.sha256 = af.sha256
+         WHERE af.sha256 = ? AND e.status = 'public' AND f.removed_at IS NULL
+         LIMIT 1",
         sha256
     )
     .fetch_optional(pool)
@@ -390,13 +409,16 @@ pub async fn delete_uncited_sets(
 
 /// Deletes the record of every file no set holds, and returns their hashes. Their
 /// bytes stay on disk until [`remove_bytes`] or [`sweep`] removes them, after the
-/// transaction commits; `_lock` proves the store's lock is held until then.
+/// transaction commits; `_lock` proves the store's lock is held until then. A file
+/// the owner removed stays, record and bytes, for analysis, as an entry the owner
+/// removed outlives its account (design.md, Admin), and so its removal holds when
+/// the same bytes are attached again.
 pub async fn delete_lone_files(
     _lock: &Writer<'_>,
     transaction: &mut SqliteConnection,
 ) -> Result<Vec<String>, sqlx::Error> {
     sqlx::query_scalar!(
-        "DELETE FROM files WHERE NOT EXISTS (
+        "DELETE FROM files WHERE removed_at IS NULL AND NOT EXISTS (
              SELECT 1 FROM attachment_files af WHERE af.sha256 = files.sha256)
          RETURNING sha256"
     )
@@ -458,13 +480,19 @@ pub struct EntryFile {
     pub bytes: i64,
     pub verdict: Option<String>,
     pub reason: Option<String>,
+    /// The archive's owner removed it, so it isn't served.
+    pub removed: bool,
+    /// The owner removed it as a hazard, so no entry citing it passes screening.
+    pub banned: bool,
 }
 
 /// The files of the set entry `seq` cites, by path; none when it cites no set.
 pub async fn entry_files(pool: &SqlitePool, seq: i64) -> Result<Vec<EntryFile>, sqlx::Error> {
     sqlx::query_as!(
         EntryFile,
-        r#"SELECT af.sha256, af.path, f.bytes, f.screen_verdict AS verdict, f.screen_reason AS reason
+        r#"SELECT af.sha256, af.path, f.bytes, f.screen_verdict AS verdict, f.screen_reason AS reason,
+                  f.removed_at IS NOT NULL AS "removed!: bool",
+                  EXISTS (SELECT 1 FROM banned_files b WHERE b.sha256 = af.sha256) AS "banned!: bool"
            FROM entries e
            JOIN attachment_files af ON af.set_seq = e.attachment_set_seq
            JOIN files f ON f.sha256 = af.sha256

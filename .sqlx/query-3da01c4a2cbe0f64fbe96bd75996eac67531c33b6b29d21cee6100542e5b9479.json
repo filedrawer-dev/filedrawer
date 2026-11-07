@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT 1 AS found FROM attachment_files af\n         JOIN entries e ON e.attachment_set_seq = af.set_seq\n         WHERE af.sha256 = ? AND e.status = 'public' LIMIT 1",
+  "query": "SELECT 1 AS found FROM banned_files WHERE sha256 = ?",
   "describe": {
     "columns": [
       {
@@ -17,5 +17,5 @@
       false
     ]
   },
-  "hash": "690c7bc85a8c4b5eaf50b502a4657939757ef2e09494846a07b81e4dcd9e1038"
+  "hash": "3da01c4a2cbe0f64fbe96bd75996eac67531c33b6b29d21cee6100542e5b9479"
 }

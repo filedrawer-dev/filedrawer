@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT OR IGNORE INTO banned_files (sha256, banned_at) VALUES (?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "ac6353079a9c3f5276e5e93b25f91c58fab5507e06c3a43cee4f3f1c78b282f4"
+}

@@ -11,6 +11,7 @@ use crate::attachments::{self, Invalid, Limit, SetRequest, Stored};
 use crate::auth::TokenAccount;
 use crate::error::AppError;
 use crate::mail::{Email, send_later};
+use crate::removed_files::REMOVED_BY_OWNER;
 use crate::respond::{DELIMITER, Format, one_line};
 use crate::{AppState, accounts};
 
@@ -59,6 +60,18 @@ pub async fn upload(
                     attachments::ACCOUNT_DAILY_BYTES
                 )],
             ));
+        }
+        Stored::Banned(paths) => {
+            let reasons = paths
+                .iter()
+                .map(|path| {
+                    format!(
+                        "file {} was {REMOVED_BY_OWNER}, so it can't be attached",
+                        one_line(path)
+                    )
+                })
+                .collect();
+            return Err(refused(StatusCode::UNPROCESSABLE_ENTITY, reasons));
         }
         Stored::Full(limit) => {
             tell_owner(&state, limit).await?;

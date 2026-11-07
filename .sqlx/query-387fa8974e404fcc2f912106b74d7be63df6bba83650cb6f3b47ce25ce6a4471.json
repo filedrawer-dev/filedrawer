@@ -1,0 +1,74 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT s.id AS set_id, s.account_id, af.path,\n                  e.id AS \"entry_id?\", e.status AS \"entry_status?\"\n           FROM attachment_files af\n           JOIN attachment_sets s ON s.seq = af.set_seq\n           LEFT JOIN entries e ON e.attachment_set_seq = s.seq\n           WHERE af.sha256 = ? ORDER BY s.seq, e.seq",
+  "describe": {
+    "columns": [
+      {
+        "name": "set_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "attachment_sets",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "account_id",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "attachment_sets",
+            "name": "account_id"
+          }
+        }
+      },
+      {
+        "name": "path",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "attachment_files",
+            "name": "path"
+          }
+        }
+      },
+      {
+        "name": "entry_id?",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "entry_status?",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "status"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "387fa8974e404fcc2f912106b74d7be63df6bba83650cb6f3b47ce25ce6a4471"
+}

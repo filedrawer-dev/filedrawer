@@ -1,0 +1,86 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT f.sha256 AS \"sha256!\", f.bytes, f.screen_verdict AS verdict,\n                  f.screen_reason AS reason, f.removed_at, b.banned_at AS \"banned_at?\"\n           FROM files f LEFT JOIN banned_files b ON b.sha256 = f.sha256\n           WHERE f.sha256 = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "sha256!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "files",
+            "name": "sha256"
+          }
+        }
+      },
+      {
+        "name": "bytes",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "files",
+            "name": "bytes"
+          }
+        }
+      },
+      {
+        "name": "verdict",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "files",
+            "name": "screen_verdict"
+          }
+        }
+      },
+      {
+        "name": "reason",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "files",
+            "name": "screen_reason"
+          }
+        }
+      },
+      {
+        "name": "removed_at",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "files",
+            "name": "removed_at"
+          }
+        }
+      },
+      {
+        "name": "banned_at?",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "banned_files",
+            "name": "banned_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "b22106b306f0a090ef084dc497ccaa4893018946c5ad7b1c9d0ebeb493351626"
+}

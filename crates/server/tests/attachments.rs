@@ -6,35 +6,15 @@ mod common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use common::{FILES_URL, Reply, TestApp, test_app};
+use common::attachments::{COMMIT, get_on, sha256, upload};
+use common::{FILES_HOST, FILES_URL, TestApp, test_app};
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
-
-fn sha256(text: &str) -> String {
-    Sha256::digest(text.as_bytes())
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
-}
-
-pub async fn upload(app: &TestApp, token: &str, set: Value) -> Reply {
-    app.send(
-        Request::post("/attachments")
-            .header("authorization", format!("Bearer {token}"))
-            .header("content-type", "application/json")
-            .header("accept", "application/json")
-            .body(Body::from(set.to_string()))
-            .unwrap(),
-    )
-    .await
-}
 
 fn file(origin: &str, text: &str) -> Value {
     json!({"origin": origin, "text": text})
 }
 
 const SCRIPT: &str = "import sys\nprint(sys.argv)\n";
-const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
 
 #[tokio::test]
 async fn a_set_is_stored_and_its_files_hashes_are_returned() {
@@ -309,7 +289,7 @@ async fn a_public_file_whose_bytes_are_missing_answers_500_and_says_nothing_of_w
     let held = app.post("/entries", citing(&set)).await;
     publish_and_place(&app, &common::id_in(&held.body)).await;
     std::fs::remove_file(on_disk(&app, &sha256(SCRIPT))).unwrap();
-    let reply = get_on(&app, "files.localhost", &format!("/f/{}", sha256(SCRIPT))).await;
+    let reply = get_on(&app, FILES_HOST, &format!("/f/{}", sha256(SCRIPT))).await;
     assert_eq!(reply.status, StatusCode::INTERNAL_SERVER_ERROR);
     assert_eq!(reply.body, "internal error\n");
 }
@@ -405,12 +385,7 @@ mod tidy {
             common::stored_texts(&app),
             vec!["print('v1')\n", "print('v2')\n"]
         );
-        let served = get_on(
-            &app,
-            "files.localhost",
-            &format!("/f/{}", sha256("print('v1')\n")),
-        )
-        .await;
+        let served = get_on(&app, FILES_HOST, &format!("/f/{}", sha256("print('v1')\n"))).await;
         assert_eq!(served.status, StatusCode::OK, "{}", served.body);
         assert_eq!(served.body, "print('v1')\n");
     }
@@ -542,17 +517,6 @@ async fn batch_members_and_new_versions_check_their_set_too() {
     );
 }
 
-/// A GET of `path` addressed to `host`.
-async fn get_on(app: &TestApp, host: &str, path: &str) -> Reply {
-    app.send(
-        Request::get(path)
-            .header("host", host)
-            .body(Body::empty())
-            .unwrap(),
-    )
-    .await
-}
-
 #[tokio::test]
 async fn the_files_host_serves_a_public_entrys_files_as_plain_text_and_nothing_else() {
     let app = test_app().await;
@@ -563,7 +527,7 @@ async fn the_files_host_serves_a_public_entrys_files_as_plain_text_and_nothing_e
 
     // Not while the entry is held back.
     assert_eq!(
-        get_on(&app, "files.localhost", &path).await.status,
+        get_on(&app, FILES_HOST, &path).await.status,
         StatusCode::NOT_FOUND
     );
     // The author's own view lists the files already.
@@ -571,7 +535,7 @@ async fn the_files_host_serves_a_public_entrys_files_as_plain_text_and_nothing_e
     assert!(own.body.contains("src/steer.py"), "{}", own.body);
 
     publish_and_place(&app, &id).await;
-    let served = get_on(&app, "files.localhost", &path).await;
+    let served = get_on(&app, FILES_HOST, &path).await;
     assert_eq!(served.status, StatusCode::OK, "{}", served.body);
     assert_eq!(served.body, SCRIPT);
     let header = |name: &str| {
@@ -607,7 +571,7 @@ async fn the_files_host_serves_a_public_entrys_files_as_plain_text_and_nothing_e
         "/skill.md".to_string(),
         "/f/nothing".to_string(),
     ] {
-        let reply = get_on(&app, "files.localhost", &other).await;
+        let reply = get_on(&app, FILES_HOST, &other).await;
         assert_eq!(reply.status, StatusCode::NOT_FOUND, "{other}");
     }
 }

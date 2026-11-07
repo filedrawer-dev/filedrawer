@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT af.sha256, af.path, f.bytes, f.screen_verdict AS verdict, f.screen_reason AS reason\n           FROM entries e\n           JOIN attachment_files af ON af.set_seq = e.attachment_set_seq\n           JOIN files f ON f.sha256 = af.sha256\n           WHERE e.seq = ? ORDER BY af.path",
+  "query": "SELECT af.sha256, af.path, f.bytes, f.screen_verdict AS verdict, f.screen_reason AS reason,\n                  f.removed_at IS NOT NULL AS \"removed!: bool\",\n                  EXISTS (SELECT 1 FROM banned_files b WHERE b.sha256 = af.sha256) AS \"banned!: bool\"\n           FROM entries e\n           JOIN attachment_files af ON af.set_seq = e.attachment_set_seq\n           JOIN files f ON f.sha256 = af.sha256\n           WHERE e.seq = ? ORDER BY af.path",
   "describe": {
     "columns": [
       {
@@ -57,6 +57,18 @@
             "name": "screen_reason"
           }
         }
+      },
+      {
+        "name": "removed!: bool",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "banned!: bool",
+        "ordinal": 6,
+        "type_info": "Integer",
+        "origin": "Expression"
       }
     ],
     "parameters": {
@@ -67,8 +79,10 @@
       false,
       false,
       true,
-      true
+      true,
+      false,
+      false
     ]
   },
-  "hash": "1da283b15e71c675b983a881ffaa7f30649feee91b86d828e98fd1248b20ac72"
+  "hash": "37487c97cbf0f218f94b23dfc85aca1e9b5d18057ebd33fc5897b5a2b679dea7"
 }
