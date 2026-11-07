@@ -287,3 +287,14 @@ def test_smoke_env_also_names_the_screen_test_account_when_given(box):
     )
     bad = run(box, SMOKE_ENV, SMOKE_ACCOUNT="a-smoke1", SCREEN_TEST_ACCOUNT="b-x")
     assert bad.returncode == 2
+
+
+def test_smoke_env_also_names_the_ci_screen_account_when_given(box):
+    result = run(box, SMOKE_ENV, SMOKE_ACCOUNT="a-smoke1", CI_SCREEN_ACCOUNT="a-ci1")
+    assert result.returncode == 0, result.stderr
+    env_file = box.root / "etc/filedrawer/staging-smoke.env"
+    assert env_file.read_text() == (
+        "FILEDRAWER_SMOKE_ACCOUNT=a-smoke1\nFILEDRAWER_CI_SCREEN_ACCOUNT=a-ci1\n"
+    )
+    bad = run(box, SMOKE_ENV, SMOKE_ACCOUNT="a-smoke1", CI_SCREEN_ACCOUNT="b-x")
+    assert bad.returncode == 2

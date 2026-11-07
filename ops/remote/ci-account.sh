@@ -1,11 +1,19 @@
 #!/usr/bin/env bash
-# The account CI's smoke test submits as (ops/smoke-staging), and a new API token for
-# it. Runs as root; safe to rerun. SMOKE_ACCOUNT names the account an earlier run made:
-# it is kept when staging still has it, and made again when not. Each run adds a
-# token, and the wizard stores only the newest.
+# An account CI submits as on staging, and a new API token for it. ROLE says which:
+# smoke, for the smoke test (ops/smoke-staging), or screen, for the screen check
+# (ops/smoke-staging screen). Runs as root; safe to rerun. ACCOUNT names the account
+# an earlier run made: it is kept when staging still has it, and made again when not.
+# Each run adds a token, and the wizard stores only the newest.
 # Prints "<account ID><TAB><token>" as the only line on stdout, for the wizard to read.
-# Exits 3 when staging has no binary yet, so the wizard can say to deploy first.
+# Exits 2 for another ROLE, and 3 when staging has no binary yet, so the wizard can
+# say to deploy first.
 set -euo pipefail
+
+case "${ROLE-}" in
+  smoke) display_name="Smoke test (CI)"; token_name="smoke test (CI)" ;;
+  screen) display_name="Screen check (CI)"; token_name="screen check (CI)" ;;
+  *) echo "ROLE is '${ROLE-}'; it takes smoke or screen" >&2; exit 2 ;;
+esac
 
 # The override is for tests, which point it at a fake server root.
 root="${FILEDRAWER_ROOT:-}"
@@ -23,10 +31,10 @@ admin() {
 }
 
 new_token() {
-  admin create-token --account "$1" --name "smoke test (CI)"
+  admin create-token --account "$1" --name "$token_name"
 }
 
-account="${SMOKE_ACCOUNT:-}"
+account="${ACCOUNT:-}"
 token=""
 if [[ -n "$account" ]]; then
   errors=$(mktemp)
@@ -42,7 +50,7 @@ if [[ -n "$account" ]]; then
   fi
 fi
 if [[ -z "$token" ]]; then
-  account=$(admin create-account --display-name "Smoke test (CI)")
+  account=$(admin create-account --display-name "$display_name")
   token=$(new_token "$account")
 fi
 printf '%s\t%s\n' "$account" "$token"

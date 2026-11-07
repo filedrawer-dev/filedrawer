@@ -97,8 +97,8 @@ STAGING_KEY = "ab" * 32
 @pytest.fixture
 def smoke(tmp_path, fake_host):
     """Runs `ops/provision-vps smoke` in a folder with an ops/.vps.env, against a fake
-    ssh that answers as ops/remote/smoke-account.sh would."""
-    # Only smoke-account.sh answers with an account and a token.
+    ssh that answers as ops/remote/ci-account.sh would."""
+    # Only ci-account.sh answers with an account and a token.
     fake_host.answer("*", stdout="a-new\tfdt_s3cret\n", stdin="create-token")
     ops = tmp_path / "ops"
     ops.mkdir()
@@ -137,7 +137,7 @@ def test_smoke_stores_the_token_and_key_as_staging_secrets_and_shows_neither(smo
     assert STAGING_KEY not in shown
     assert "fdt_s3cret" not in smoke.log.read_text()
     sent = smoke.host.sent(1)
-    assert sent == (REPO / "ops/remote/smoke-account.sh").read_text()
+    assert sent == (REPO / "ops/remote/ci-account.sh").read_text()
 
 
 def test_smoke_also_names_the_screen_test_account_it_finds_in_ops(smoke):
@@ -198,7 +198,7 @@ def test_a_rerun_passes_the_known_account_and_keeps_the_token_unless_asked(smoke
     kept = smoke.run("n\n\n")
     assert kept.returncode == 0, kept.stdout + kept.stderr
     assert (smoke.secrets / "SMOKE_TEST_TOKEN").read_text() == "fdt_kept"
-    # The kept run sends only the setting, not smoke-account.sh.
+    # The kept run sends only the setting, not ci-account.sh.
     calls = [c for c in smoke.log.read_text().splitlines() if c.startswith("ssh ")]
     assert len(calls) == 5, calls
     assert smoke.host.sent(5) == (REPO / "ops/remote/smoke-env.sh").read_text()

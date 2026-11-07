@@ -298,7 +298,7 @@ smoke_stage() {
     note "Kept the token in SMOKE_TEST_TOKEN."
   else
     step "Making the account and a token on $VPS_HOST..."
-    reply=$(remote smoke-account.sh "SMOKE_ACCOUNT=$SMOKE_ACCOUNT") || status=$?
+    reply=$(remote ci-account.sh ROLE=smoke "ACCOUNT=$SMOKE_ACCOUNT") || status=$?
     if (( status == 3 )); then
       not_deployed_yet smoke "smoke-test account"
     elif (( status != 0 )) || [[ ! "$reply" =~ ^a-[^[:space:]]+$'\t'fdt_[^[:space:]]+$ ]]; then
