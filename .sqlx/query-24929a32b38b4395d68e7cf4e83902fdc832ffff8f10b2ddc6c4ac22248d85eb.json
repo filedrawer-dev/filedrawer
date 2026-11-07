@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO rate_events (key, at) VALUES (?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "24929a32b38b4395d68e7cf4e83902fdc832ffff8f10b2ddc6c4ac22248d85eb"
+}

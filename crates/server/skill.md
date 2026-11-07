@@ -135,6 +135,7 @@ Each accepted `POST` to `/entries`, `PUT`, new version and entry of a batch take
 - A `PUT` takes a unit too, but never moves the entry's day later; fix everything in one replacement where you can.
 - A batch's reply gives the day its last entry waits for; the batch publishes once every entry has passed.
 - Units go at most 10 days ahead. A request that doesn't fit gets a 429 and stores nothing; send it again once some of your waiting entries have been screened.
+- Apart from the allowance, an account may send 60 writes a minute, refused ones included, and an address 300 requests a minute in all. Past either, a 429 carries `Retry-After`, in seconds: wait that long and send the request again. Check entries offline with `entry-check` rather than by sending them over and over.
 - A series, and each new version of one, takes a unit dated today, since the screen reads it at once. Your series may take one day's allowance a day; past that, a 429 says to send it again tomorrow (UTC).
 
 ### New versions

@@ -2,7 +2,7 @@
 
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
-use axum::http::{HeaderMap, header};
+use axum::http::{HeaderMap, Method, header};
 
 use crate::error::AppError;
 use crate::{AppState, ids};
@@ -26,7 +26,12 @@ impl FromRequestParts<AppState> for TokenAccount {
     type Rejection = AppError;
 
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, AppError> {
-        token_account(&parts.headers, state).await
+        let account = token_account(&parts.headers, state).await?;
+        // A write counts against the account's rate, refused or not (#14).
+        if !matches!(parts.method, Method::GET | Method::HEAD) {
+            state.rate_limits.write_by(&account.id)?;
+        }
+        Ok(account)
     }
 }
 

@@ -11,6 +11,7 @@ use axum::http::{HeaderMap, Request, StatusCode};
 use std::sync::{Arc, Mutex};
 
 use filedrawer_server::file_store::FileStore;
+use filedrawer_server::limits::{Limits, RateLimits};
 use filedrawer_server::mail::{Email, Mailer, Sending};
 use filedrawer_server::{AppState, Screener, admin, app, db};
 
@@ -180,6 +181,7 @@ pub fn state(pool: sqlx::SqlitePool, outbox: &Outbox, files_dir: &std::path::Pat
         files: Arc::new(FileStore::open(files_dir.join("files")).unwrap()),
         attachment_store_cap_bytes: 20_000_000_000,
         attachment_disk_floor_bytes: 0,
+        rate_limits: Arc::new(RateLimits::new(Limits::site())),
     }
 }
 
@@ -309,6 +311,23 @@ impl TestApp {
     pub async fn get(&self, path: &str) -> Reply {
         self.send(Request::get(path).body(Body::empty()).unwrap())
             .await
+    }
+
+    /// Sends `request` as if over a connection from `peer`, as `filedrawer serve`
+    /// gives the rate limits it.
+    pub async fn send_from(&self, peer: &str, mut request: Request<Body>) -> Reply {
+        let peer: std::net::SocketAddr = peer.parse().unwrap();
+        request
+            .extensions_mut()
+            .insert(axum::extract::ConnectInfo(peer));
+        self.send(request).await
+    }
+
+    /// The app with these rate limits, and its counts so far forgotten.
+    pub fn with_limits(mut self, limits: Limits) -> TestApp {
+        self.state.rate_limits = Arc::new(RateLimits::new(limits));
+        self.router = app(self.state.clone());
+        self
     }
 
     pub async fn get_json(&self, path: &str) -> serde_json::Value {

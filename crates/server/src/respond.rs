@@ -43,7 +43,7 @@ pub fn card_and_warnings(card: &str, warnings: &[String]) -> String {
 }
 
 /// Whether the Accept header lists `application/json` with a nonzero quality.
-fn wants_json(headers: &HeaderMap) -> bool {
+pub fn wants_json(headers: &HeaderMap) -> bool {
     headers
         .get_all(header::ACCEPT)
         .iter()
@@ -65,6 +65,11 @@ fn wants_json(headers: &HeaderMap) -> bool {
 pub async fn json_errors(request: Request, next: Next) -> Response {
     let json = wants_json(request.headers());
     let response = next.run(request).await;
+    as_json_if(json, response).await
+}
+
+/// `response` as `{"error": "..."}` when `json` and it is an error in plain text.
+pub async fn as_json_if(json: bool, response: Response) -> Response {
     let is_text = response
         .headers()
         .get(header::CONTENT_TYPE)

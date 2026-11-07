@@ -15,6 +15,7 @@ mod error;
 pub mod file_store;
 mod ids;
 pub mod jobs;
+pub mod limits;
 mod links;
 pub mod mail;
 mod pages;
@@ -73,6 +74,8 @@ pub struct AppState {
     pub attachment_store_cap_bytes: i64,
     /// Uploads are refused when they would leave the disk with fewer bytes free.
     pub attachment_disk_floor_bytes: u64,
+    /// The rate limits and their per-minute counts.
+    pub rate_limits: std::sync::Arc<limits::RateLimits>,
 }
 
 /// The free disk an upload must leave (design.md, Attached code: 5 GB).
@@ -205,10 +208,12 @@ fn build(state: AppState) -> Routes<Router> {
         .map_router(|router| {
             let files_host =
                 axum::middleware::from_fn_with_state(state.clone(), routes::files::files_host);
+            let per_ip = axum::middleware::from_fn_with_state(state.clone(), limits::per_ip);
             router
                 .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
                 .layer(axum::middleware::from_fn(respond::json_errors))
                 .layer(files_host)
+                .layer(per_ip)
                 .with_state(state)
         })
 }

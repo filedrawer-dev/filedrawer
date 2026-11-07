@@ -29,6 +29,9 @@ pub enum AppError {
         .0.iter().map(|reason| format!("reason: {}", crate::respond::one_line(reason))).collect::<Vec<_>>().join("\n")
     )]
     ScreenRejected(Vec<String>),
+    /// A rate limit reached (design.md, Limits and abuse).
+    #[error("too many requests: {what} reached its limit; try again in {retry_after_secs} s")]
+    TooManyRequests { what: String, retry_after_secs: u64 },
     #[error("internal error")]
     Database(#[from] sqlx::Error),
     /// Reading or writing a file failed, such as an attached file's bytes.
@@ -55,6 +58,7 @@ impl IntoResponse for AppError {
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
             AppError::Refused { status, .. } => *status,
             AppError::ScreenRejected(_) => StatusCode::UNPROCESSABLE_ENTITY,
+            AppError::TooManyRequests { .. } => StatusCode::TOO_MANY_REQUESTS,
             AppError::Database(error) => {
                 tracing::error!(%error, "database error");
                 StatusCode::INTERNAL_SERVER_ERROR
@@ -65,6 +69,15 @@ impl IntoResponse for AppError {
             }
         };
         let mut response = (status, format!("{self}\n")).into_response();
+        if let AppError::TooManyRequests {
+            retry_after_secs, ..
+        } = &self
+        {
+            response.headers_mut().insert(
+                header::RETRY_AFTER,
+                header::HeaderValue::from(*retry_after_secs),
+            );
+        }
         if status == StatusCode::UNAUTHORIZED {
             response.headers_mut().insert(
                 header::WWW_AUTHENTICATE,

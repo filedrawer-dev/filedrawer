@@ -173,6 +173,9 @@ async fn serve() -> ExitCode {
         files,
         attachment_store_cap_bytes: config.attachment_store_cap_bytes,
         attachment_disk_floor_bytes: filedrawer_server::ATTACHMENT_DISK_FLOOR_BYTES,
+        rate_limits: std::sync::Arc::new(filedrawer_server::limits::RateLimits::new(
+            filedrawer_server::limits::Limits::site(),
+        )),
     };
     tokio::spawn(filedrawer_server::jobs::run_publisher(state.clone()));
     tokio::spawn(filedrawer_server::jobs::run_tidier(state.clone()));
@@ -194,6 +197,8 @@ async fn serve() -> ExitCode {
         }
         tracing::info!("shutting down");
     };
+    // The peer's address reaches the rate limits, which key on the client's IP.
+    let router = router.into_make_service_with_connect_info::<std::net::SocketAddr>();
     match axum::serve(listener, router)
         .with_graceful_shutdown(shutdown)
         .await
