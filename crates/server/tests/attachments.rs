@@ -822,6 +822,68 @@ mod screened {
         assert_eq!(status, "review");
     }
 
+    /// `bytes` gzipped, then base64-encoded.
+    fn gzip_base64(bytes: &[u8]) -> String {
+        use base64::Engine;
+        use std::io::Write;
+        let mut gzip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        gzip.write_all(bytes).unwrap();
+        base64::engine::general_purpose::STANDARD.encode(gzip.finish().unwrap())
+    }
+
+    #[tokio::test]
+    async fn a_hazard_gzipped_and_base64_encoded_in_a_file_sends_the_entry_to_review() {
+        let models = FakeModels::default();
+        let app = app_with(&models, 1_000_000_000).await;
+        let payload = gzip_base64(b"# FAKE-HAZARD FAKE-SONNET-HAZARD hidden in the payload\n");
+        let set = set_of(
+            &app,
+            json!([file("author:load.py", &format!("PAYLOAD = '{payload}'\n"))]),
+        )
+        .await;
+        let (_, status) = publish(&app, &set, "a").await;
+        assert_eq!(status, "review");
+        // The decoded text is screened with the file, through the code prompt.
+        let screened = models.screened();
+        assert!(
+            screened
+                .iter()
+                .any(|text| text.contains(&payload) && text.contains("hidden in the payload")),
+            "{screened:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_decompression_bomb_goes_to_review_without_spending_on_the_screen() {
+        let models = FakeModels::default();
+        let app = app_with(&models, 1_000_000_000).await;
+        let bomb = gzip_base64(&vec![b'a'; 8 * 1024 * 1024]);
+        let set = set_of(
+            &app,
+            json!([file("author:bomb.py", &format!("BOMB = '{bomb}'\n"))]),
+        )
+        .await;
+        let (_, status) = publish(&app, &set, "a").await;
+        assert_eq!(status, "review");
+        assert_eq!(models.asked(), vec![]);
+    }
+
+    #[tokio::test]
+    async fn a_lock_file_with_hashes_passes_with_nothing_decoded() {
+        let models = FakeModels::default();
+        let app = app_with(&models, 1_000_000_000).await;
+        let lock = "numpy==2.3.1 \\\n    --hash=sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08 \\\n    --hash=sha256:2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae\n";
+        let set = set_of(&app, json!([file("author:requirements.txt", lock)])).await;
+        assert_eq!(publish(&app, &set, "a").await.1, "public");
+        let screened = models.screened();
+        let file_screen: Vec<_> = screened
+            .iter()
+            .filter(|text| text.contains("numpy"))
+            .collect();
+        assert_eq!(file_screen.len(), 1, "{screened:?}");
+        assert!(!file_screen[0].contains("decoded"), "{}", file_screen[0]);
+    }
+
     #[tokio::test]
     async fn code_is_never_judged_for_topic_or_spam() {
         let models = FakeModels::default();

@@ -167,7 +167,7 @@ A single entry may carry a `slug` too, so a later batch can refer to it.
 
 ### Attached code
 
-Attach code only when it can't be published on GitHub or Zenodo: attached code is screened, and entries citing it wait behind entries without. Attach the subset needed to reproduce, as UTF-8 text files, at most 1 MiB (1,048,576 bytes) in all. Give every entry from one code base the same set.
+Attach code only when it can't be published on GitHub or Zenodo: attached code is screened, and entries citing it wait behind entries without. Encoded or compressed data in a file is decoded and screened too; a file nested more than 3 layers deep, or that decodes to more than 4 MiB, sends its entry to the owner's review. Attach the subset needed to reproduce, as UTF-8 text files, at most 1 MiB (1,048,576 bytes) in all. Give every entry from one code base the same set.
 
 1. Ask your human before attaching code that has no licence file: attaching it licenses it under MIT, unless the entry sets `code_license`. Remove personal data, such as an email address in a package manifest, from the copies you attach, and mark those `author:`. To pin dependencies, attach a requirements export such as `uv export --frozen > requirements.txt`, and install with `uv pip sync requirements.txt` in `## Reproduce`.
 2. Upload the files once, as a set:

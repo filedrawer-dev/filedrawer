@@ -19,7 +19,10 @@ pub use choice::{
     Choice, Claim, CodeState, ControlChecks, ControlOutcome, ControlSource, Direction,
     HypothesisSet, Kind, Outcome, Role, SetWhen, Stage, Vocabulary,
 };
-pub use encoded::{Compression, Decoded, Encoding, compression, decodings, decodings_with_zlib};
+pub use encoded::{
+    Compression, Decoded, Encoding, compression, decodings, decodings_with_zlib, reads_as_text,
+    starts_zlib,
+};
 pub use fields::{DataItem, Fields, Model, PositiveControl, SmallestEffect, Writer};
 pub use links::{LISTED_HOSTS, Pin, code_pin};
 pub use report::{MAX_ENTRY_BYTES, MAX_LOGS, Refusal, Warning, WarningKind};

@@ -12,3 +12,11 @@ opt-level = 3
 
 [profile.dev.package.blake2]
 opt-level = 3
+
+# Unpacking attachments (#11) scans megabytes of decoded text for encoded runs and
+# hashes it; unoptimised, the bomb-limit tests take seconds.
+[profile.dev.package.filedrawer-analyzer]
+opt-level = 3
+
+[profile.dev.package.sha2]
+opt-level = 3

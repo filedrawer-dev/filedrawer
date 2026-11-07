@@ -9,7 +9,7 @@ use time::OffsetDateTime;
 
 use crate::embargo::embargoed_until;
 use crate::screening::{Call, MAX_ATTEMPTS, ModelError, Subject, Verdict};
-use crate::{AppState, accounts, allowance, attachments, entries, series, time::stamp};
+use crate::{AppState, accounts, allowance, attachments, entries, series, time::stamp, unpack};
 
 /// The share of the day's cap one account may spend (design.md: 10%).
 const ACCOUNT_SHARE_PERCENT: i64 = 10;
@@ -319,6 +319,10 @@ async fn screen_file(
             tracing::error!(sha256 = %file.sha256, %error, "reading an attached file failed; its entry waits");
             return Ok(None);
         }
+    };
+    let text = match unpack::with_unpacked(&text) {
+        Ok(text) => text,
+        Err(limit) => return Ok(Some(FileCall::Review(limit.to_string()))),
     };
     let mut doubts = Vec::new();
     for chunk in attachments::chunks(&text) {

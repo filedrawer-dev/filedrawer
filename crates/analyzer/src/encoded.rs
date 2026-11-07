@@ -268,7 +268,7 @@ fn zlib_stream(run: &str, decode: fn(&str) -> Vec<u8>) -> Option<Vec<u8>> {
 
 /// Whether `bytes` start with a zlib header for a deflate stream with no preset
 /// dictionary.
-fn starts_zlib(bytes: &[u8]) -> bool {
+pub fn starts_zlib(bytes: &[u8]) -> bool {
     match bytes {
         [cmf, flg, ..] => {
             cmf & 0x0f == 8
@@ -280,22 +280,33 @@ fn starts_zlib(bytes: &[u8]) -> bool {
     }
 }
 
-/// Whether `bytes` read as text: UTF-8 (a stray last byte allowed), long enough,
-/// and almost free of control characters.
+/// Whether `bytes` read as text long enough to hide something.
 fn is_text(bytes: &[u8]) -> bool {
+    text_chars(bytes).is_some_and(|count| count >= MIN_DECODED)
+}
+
+/// Whether `bytes` read as text of any length, as what a stream decompresses to
+/// may: a stream that inflates is no accident, so it needs no minimum.
+pub fn reads_as_text(bytes: &[u8]) -> bool {
+    text_chars(bytes).is_some_and(|count| count > 0)
+}
+
+/// How many characters `bytes` hold when they read as text: UTF-8 (a stray last
+/// character cut short allowed) and almost free of control characters.
+fn text_chars(bytes: &[u8]) -> Option<usize> {
     let text = match std::str::from_utf8(bytes) {
         Ok(text) => text,
         Err(error) if error.valid_up_to() + 3 >= bytes.len() => {
             std::str::from_utf8(&bytes[..error.valid_up_to()]).unwrap_or_default()
         }
-        Err(_) => return false,
+        Err(_) => return None,
     };
     let count = text.chars().count();
     let control = text
         .chars()
         .filter(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
         .count();
-    count >= MIN_DECODED && control * 20 <= count
+    (control * 20 <= count).then_some(count)
 }
 
 /// Base64, standard or URL-safe or both, ignoring padding and stray characters.
