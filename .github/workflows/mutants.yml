@@ -94,48 +94,21 @@ jobs:
         with:
           pattern: mutants-shard-*
           path: shards
+      # bin/mutants-summary fails the step when fewer mutants were tested than
+      # cargo-mutants lists, as when a shard failed, was cancelled or ran out of time.
+      # It writes the lists and the summary all the same.
       - name: Merge the shards' lists
-        id: merge
         run: |
-          # download-artifact makes no shards/ when no shard uploaded anything.
-          mkdir -p mutants shards
-          total=$(cargo mutants --list | wc -l)
-          tested=0
-          rows=""
-          for list in missed caught timeout unviable; do
-            find shards -name "$list.txt" -exec cat {} + | sort -t: -k1,1 -k2,2n > "mutants/$list.txt"
-            count=$(wc -l < "mutants/$list.txt")
-            tested=$((tested + count))
-            rows+="| $list | $count |"$'\n'
-          done
-          {
-            echo "## Mutants"
-            echo
-            echo "Tested $tested of $total mutants. The shards' result: $SHARD_RESULT."
-            echo
-            echo "| Outcome | Mutants |"
-            echo "| --- | ---: |"
-            printf '%s' "$rows"
-            echo
-            echo "### Missed"
-            echo
-            echo '```text'
-            cat mutants/missed.txt
-            echo '```'
-          } > mutants/summary.md
-          cat mutants/summary.md >> "$GITHUB_STEP_SUMMARY"
-          echo "complete=$([ "$tested" -eq "$total" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
-        env:
-          SHARD_RESULT: ${{ needs.shard.result }}
-      - uses: actions/upload-artifact@v7
+          cargo mutants --list > all-mutants.txt
+          bin/mutants-summary shards mutants all-mutants.txt >> "$GITHUB_STEP_SUMMARY"
+      - if: always()
+        uses: actions/upload-artifact@v7
         with:
           name: mutants
           path: mutants
           retention-days: 30
-      # The counts leave out the mutants of a shard that failed, was cancelled or ran
-      # out of time, so the run shows red.
-      - name: Fail when mutants went untested
-        if: needs.shard.result != 'success' || steps.merge.outputs.complete != 'true'
+      - name: Fail when a shard failed
+        if: always() && needs.shard.result != 'success'
         run: |
-          echo "::error::Some mutants went untested: a shard failed, was cancelled or ran out of time."
+          echo "::error::A shard failed, was cancelled or ran out of time."
           exit 1

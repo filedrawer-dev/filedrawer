@@ -1,0 +1,107 @@
+#!/usr/bin/env python3
+"""Merge the shards' results of a cargo-mutants run and summarise them.
+
+    bin/mutants-summary SHARDS OUT ALL_MUTANTS
+
+.github/workflows/mutants.yml runs this after its shards. SHARDS is where
+actions/download-artifact put the shards' mutants.out folders: each in a folder of
+its own, or, when only one shard uploaded, unpacked into SHARDS itself. It may not
+exist at all. ALL_MUTANTS is `cargo mutants --list` for the same commit.
+
+Writes the missed, caught, timeout and unviable lists into OUT, each merged across
+the shards and sorted by file, then line, then column. Writes OUT/summary.md, the
+counts and the missed mutants as markdown, and prints it too.
+
+Exit status: 0 when the shards' lists hold every mutant in ALL_MUTANTS; 1 when some
+went untested, because a shard failed, was cancelled or ran out of time (OUT and the
+summary are written all the same); 2 for a usage error; 3 when a file can't be read
+or written.
+"""
+
+import argparse
+import re
+import sys
+from pathlib import Path
+
+OUTCOMES = ("missed", "caught", "timeout", "unviable")
+
+# A cargo-mutants list line: `crates/x/src/y.rs:12:5: replace ...`.
+POSITION = re.compile(r"^(.*?):(\d+):(\d+):")
+
+
+def sort_key(line: str) -> tuple:
+    match = POSITION.match(line)
+    return (match[1], int(match[2]), int(match[3]), line)
+
+
+def lines(path: Path) -> list[str]:
+    return path.read_text().splitlines()
+
+
+def merged(shards: Path, outcome: str) -> list[str]:
+    found = sorted(shards.rglob(f"{outcome}.txt"))
+    return sorted((line for path in found for line in lines(path)), key=sort_key)
+
+
+def summary(tested: int, total: int, lists: dict[str, list[str]]) -> str:
+    rows = "".join(f"| {name} | {len(lists[name])} |\n" for name in OUTCOMES)
+    missed = "".join(f"{line}\n" for line in lists["missed"])
+    return (
+        "## Mutants\n\n"
+        f"Tested {tested} of {total} mutants.\n\n"
+        "| Outcome | Mutants |\n"
+        "| --- | ---: |\n"
+        f"{rows}\n"
+        "### Missed\n\n"
+        f"```text\n{missed}```\n"
+    )
+
+
+def file_error(verb: str, error: OSError) -> int:
+    print(
+        f"mutants-summary: can't {verb} {error.filename}: {error.strerror}",
+        file=sys.stderr,
+    )
+    return 3
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument("shards", type=Path, help="the downloaded shard artifacts")
+    parser.add_argument(
+        "out", type=Path, help="the folder to write the merged lists to"
+    )
+    parser.add_argument("all_mutants", type=Path, help="`cargo mutants --list` output")
+    args = parser.parse_args()
+
+    try:
+        lists = {name: merged(args.shards, name) for name in OUTCOMES}
+        total = len(lines(args.all_mutants))
+    except OSError as error:
+        return file_error("read", error)
+    tested = sum(len(found) for found in lists.values())
+    text = summary(tested, total, lists)
+    try:
+        args.out.mkdir(parents=True, exist_ok=True)
+        for name, found in lists.items():
+            (args.out / f"{name}.txt").write_text(
+                "".join(f"{line}\n" for line in found)
+            )
+        (args.out / "summary.md").write_text(text)
+    except OSError as error:
+        return file_error("write", error)
+    print(text, end="")
+    if tested < total:
+        print(
+            f"mutants-summary: only {tested} of {total} mutants were tested; a shard "
+            "failed, was cancelled or ran out of time.",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

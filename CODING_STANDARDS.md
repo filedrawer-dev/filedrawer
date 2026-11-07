@@ -67,3 +67,7 @@ Entry text, series descriptions, feedback and screening notes are written by str
 - `uvx ruff check` and `uvx ruff format --check` pass.
 - A failure prints one line saying what failed and what to do, and exits non-zero. A hook's refusal ends with a `COMMIT REFUSED:` line.
 - `bin/pre-commit-run` and `bin/slop-lint` are copies of llm-toolbox's tools. Change them there and copy them back, not here.
+
+## GitHub workflows
+
+- A `run:` block runs a few commands in a row. Logic that loops, parses files or builds output, as `bin/mutants-summary` does for `.github/workflows/mutants.yml`, goes in a script in `bin/` or `ops/` with tests, so the commit hook tests it. Acting on one command's exit status, as the `screen-staging` job does, stays in the YAML.
