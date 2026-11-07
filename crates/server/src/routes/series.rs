@@ -26,9 +26,9 @@ fn byline(display_name: Option<&str>) -> String {
     }
 }
 
-/// Reads and screens a series document, or refuses it with every reason. Until it
-/// joins the screening queue (build step 3, slice 1b), it is screened inline, within
-/// the day's caps, and its cost logged against `account`.
+/// Reads and screens a series document, or refuses it with every reason. It is
+/// screened at once, within the day's caps and the account's allowance, and its cost
+/// logged against `account` (design.md, Series: the owner's decision, 2026-11-06).
 async fn accept_series(
     state: &AppState,
     account: &TokenAccount,

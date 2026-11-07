@@ -182,12 +182,6 @@ Choices the docs left open, made while building the analyzer. Once the owner set
 - Chosen: plain text, the simplest curl line.
 - Against: every other JSON route takes JSON bodies, and a body with stray text fails as a wrong key.
 
-## Series: screening inline
-
-- Options: screen a series' title and description inside `POST /series` and each new version, as here with the pass-all stub, or queue them like entries.
-- Chosen: inline, until build step 3 brings the real screen and its queue.
-- Against: step 3 must change these routes' replies, since a real screen can take minutes or send a series to review.
-
 ## Account deletion: what else goes
 
 - Options: delete the account's private feedback and its `rejected` entries, as here, or keep them for the owner. (`removed` entries stay: the owner's decision, 2026-11-05.)
