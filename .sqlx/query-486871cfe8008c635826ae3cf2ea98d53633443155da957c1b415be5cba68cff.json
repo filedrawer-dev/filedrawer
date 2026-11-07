@@ -1,0 +1,33 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT day, COUNT(*) AS \"units!: i64\" FROM allowance_units\n           WHERE account_id = ? AND day >= ? GROUP BY day",
+  "describe": {
+    "columns": [
+      {
+        "name": "day",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "allowance_units",
+            "name": "day"
+          }
+        }
+      },
+      {
+        "name": "units!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "486871cfe8008c635826ae3cf2ea98d53633443155da957c1b415be5cba68cff"
+}

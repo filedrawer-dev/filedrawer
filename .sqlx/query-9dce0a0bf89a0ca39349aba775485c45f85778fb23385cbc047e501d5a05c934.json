@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT 1 AS \"one!: i64\" FROM entries\n           WHERE seq = ? AND status = 'screening' AND screen_verdict IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "one!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "9dce0a0bf89a0ca39349aba775485c45f85778fb23385cbc047e501d5a05c934"
+}

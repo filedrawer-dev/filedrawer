@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM allowance_units WHERE account_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "75ad8417552b907507d742911665b3e5e3030c7e613873b6c64ee5ba4a0ef91c"
+}

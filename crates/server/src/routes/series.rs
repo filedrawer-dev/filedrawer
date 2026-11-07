@@ -15,7 +15,7 @@ use crate::queue::Screened;
 use crate::respond::{DELIMITER, Format, author_name, one_line};
 use crate::screening::Verdict;
 use crate::series::{self, Series, Version};
-use crate::{AppState, jobs, queue, time};
+use crate::{AppState, allowance, jobs, queue, time};
 
 /// Who wrote something, after the account ID on a line: "by <name>", with the name
 /// last so nothing in it can pass for the account, or "account deleted".
@@ -46,7 +46,17 @@ async fn accept_series(
     let screened = format!("{}\n\n{}", series.title, series.description);
     let now = time::now_utc();
     let _turn = state.screening_lock.lock().await;
-    match queue::screen_text(state, &account.id, None, &screened, now).await? {
+    // It takes its unit of the allowance before it is screened, and gives it back
+    // only when the server turns it away for its own reasons (design.md, Limits and
+    // abuse).
+    let Some(unit) = allowance::take_for_series(state, &account.id, now.date()).await? else {
+        return Err(allowance::series_refusal());
+    };
+    let screened = queue::screen_text(state, &account.id, None, &screened, now).await?;
+    if matches!(screened, Screened::OverCap | Screened::Failed(_)) {
+        allowance::give_back_series(&state.pool, unit).await?;
+    }
+    match screened {
         Screened::Verdict(Verdict::Pass { hazard_doubt, .. }) => {
             if let Some(doubt) = hazard_doubt {
                 tracing::warn!(account = %account.id, doubt, "a series passed with a hazard doubt");

@@ -19,9 +19,9 @@ use crate::jobs::{end_hold, hold_until};
 use crate::links::{self, Linked, SlugRule};
 use crate::respond::{DELIMITER, Format, card_and_warnings};
 use crate::series::{self, Cited};
-use crate::{AppState, attachments, time};
-use ::time::OffsetDateTime;
+use crate::{AppState, allowance, attachments, time};
 use ::time::format_description::well_known::Rfc3339;
+use ::time::{Date, OffsetDateTime};
 use analyzer::{SeriesCite, parse_series_cite, without_series};
 
 /// A submission that passed every check: the text to store, what the analyzer read
@@ -212,6 +212,9 @@ struct Held<'a> {
     publish_at: &'a str,
     /// The entry this one is a new version of.
     previous: Option<&'a str>,
+    /// The day its screening waits for, when the account's allowance is taken
+    /// until then.
+    screen_from: Option<Date>,
 }
 
 /// The reply to a submission or resubmission: the server's fields, then below the
@@ -223,6 +226,7 @@ fn held_reply(state: &AppState, format: Format, status: StatusCode, held: &Held<
         analysis,
         publish_at,
         previous,
+        screen_from,
     } = *held;
     let context = entries::own_card_context(id, &account.id, &account.display_name, analysis);
     let card = render_card(analysis, &context);
@@ -235,8 +239,9 @@ fn held_reply(state: &AppState, format: Format, status: StatusCode, held: &Held<
     let text = format!(
         "id: {id}\nstatus: pending\npublish_at: {publish_at}\n{embargo_line}{previous_line}url: {}/e/{id}\n\
          Fix it before then by sending the whole entry again with PUT to the url, or publish it now with a POST to the url plus /publish.\n\
-         {DELIMITER}\nprimary row: {}\n{}",
+         {}{DELIMITER}\nprimary row: {}\n{}",
         state.public_url,
+        allowance::screen_from_lines(screen_from),
         analysis.primary_row_summary(),
         card_and_warnings(&card, &warnings)
     );
@@ -244,6 +249,7 @@ fn held_reply(state: &AppState, format: Format, status: StatusCode, held: &Held<
         "id": id,
         "status": "pending",
         "publish_at": publish_at,
+        "screen_from": screen_from.map(allowance::day_text),
         "embargo_until": embargo,
         "previous": previous,
         "url": format!("{}/e/{id}", state.public_url),
@@ -252,6 +258,24 @@ fn held_reply(state: &AppState, format: Format, status: StatusCode, held: &Held<
         "warnings": warnings,
     });
     format.reply(status, text, json)
+}
+
+/// Takes the allowance unit of entry `seq`, which `account_id` has just stored in
+/// `transaction`, and commits; refuses the request, storing nothing, when the
+/// account's allowance has no room (design.md, Limits and abuse). Returns the day its
+/// screening waits for, if that is after `today`.
+async fn commit_with_unit(
+    state: &AppState,
+    mut transaction: sqlx::Transaction<'_, sqlx::Sqlite>,
+    account_id: &str,
+    seq: i64,
+    today: Date,
+) -> Result<Option<Date>, AppError> {
+    if !allowance::take(&mut transaction, state, account_id, &[seq], today).await? {
+        return Err(allowance::refusal(1));
+    }
+    transaction.commit().await?;
+    Ok(allowance::screen_from(&state.pool, seq, today).await?)
 }
 
 pub async fn submit(
@@ -264,7 +288,8 @@ pub async fn submit(
     check_links(&state, &account, &accepted, SlugRule::New, None).await?;
     let cited = one_cite(&state, &account, &accepted).await?;
     let set = one_set(&state, &account, &accepted).await?;
-    let publish_at = hold_until(time::now_utc());
+    let now = time::now_utc();
+    let publish_at = hold_until(now);
     let new = NewEntry {
         account_id: &account.id,
         source: &accepted.source,
@@ -276,13 +301,16 @@ pub async fn submit(
         series: cited.as_ref(),
         attachments: set,
     };
-    let (_, id) = entries::insert(&state.pool, &new).await?;
+    let mut transaction = state.pool.begin().await?;
+    let (seq, id) = entries::insert_on(&mut transaction, &new).await?;
+    let screen_from = commit_with_unit(&state, transaction, &account.id, seq, now.date()).await?;
     let held = Held {
         id: &id,
         account: &account,
         analysis: &accepted.analysis,
         publish_at: &publish_at,
         previous: None,
+        screen_from,
     };
     Ok(held_reply(&state, format, StatusCode::CREATED, &held))
 }
@@ -329,7 +357,8 @@ pub async fn new_version(
     .await?;
     let cited = one_cite(&state, &account, &accepted).await?;
     let set = one_set(&state, &account, &accepted).await?;
-    let publish_at = hold_until(time::now_utc());
+    let now = time::now_utc();
+    let publish_at = hold_until(now);
     let new = NewEntry {
         account_id: &account.id,
         source: &accepted.source,
@@ -344,12 +373,15 @@ pub async fn new_version(
         series: cited.as_ref(),
         attachments: set,
     };
-    let inserted = entries::insert(&state.pool, &new).await;
-    let (_, new_id) = match inserted {
+    let mut transaction = state.pool.begin().await?;
+    let inserted = entries::insert_on(&mut transaction, &new).await;
+    let (seq, new_id) = match inserted {
         Ok(inserted) => inserted,
         // Another version won the race between the check above and this insert; the
         // index allows one live successor.
         Err(sqlx::Error::Database(error)) if error.is_unique_violation() => {
+            // Rolled back first: the lookup below needs a connection of its own.
+            drop(transaction);
             return Err(newer_version(&state, &id, entry.seq)
                 .await?
                 .unwrap_or_else(|| {
@@ -360,12 +392,14 @@ pub async fn new_version(
         }
         Err(error) => return Err(error.into()),
     };
+    let screen_from = commit_with_unit(&state, transaction, &account.id, seq, now.date()).await?;
     let held = Held {
         id: &new_id,
         account: &account,
         analysis: &accepted.analysis,
         publish_at: &publish_at,
         previous: Some(&id),
+        screen_from,
     };
     Ok(held_reply(&state, format, StatusCode::CREATED, &held))
 }
@@ -455,9 +489,11 @@ pub async fn resubmit(
     .await?;
     let cited = one_cite(&state, &account, &accepted).await?;
     let set = one_set(&state, &account, &accepted).await?;
-    let publish_at = hold_until(time::now_utc());
-    let replaced = entries::replace(
-        &state.pool,
+    let now = time::now_utc();
+    let publish_at = hold_until(now);
+    let mut transaction = state.pool.begin().await?;
+    let replaced = entries::replace_on(
+        &mut transaction,
         entry.seq,
         &accepted.source,
         &accepted.analysis,
@@ -471,12 +507,16 @@ pub async fn resubmit(
             "entry {id}'s hold ended while it was being replaced"
         )));
     }
+    // The entry keeps the earliest day among its units, so a PUT never delays it.
+    let screen_from =
+        commit_with_unit(&state, transaction, &account.id, entry.seq, now.date()).await?;
     let held = Held {
         id: &id,
         account: &account,
         analysis: &accepted.analysis,
         publish_at: &publish_at,
         previous: entry.previous_id.as_deref(),
+        screen_from,
     };
     Ok(held_reply(&state, format, StatusCode::OK, &held))
 }
@@ -493,11 +533,14 @@ pub async fn publish(
             "entry {id} came in a batch, which publishes as one: POST to its batch's publish url"
         )));
     }
-    let Some(status) = end_hold(&state, entry.seq, time::now_utc()).await? else {
+    let now = time::now_utc();
+    let Some(status) = end_hold(&state, entry.seq, now).await? else {
         return Err(AppError::Conflict(format!(
             "entry {id}'s hold has already ended"
         )));
     };
+    // Ending the hold early doesn't skip the account's queue.
+    let screen_from = allowance::screen_from(&state.pool, entry.seq, now.date()).await?;
     let release = entry
         .embargo_until
         .clone()
@@ -506,12 +549,14 @@ pub async fn publish(
         .as_deref()
         .map_or(String::new(), |date| format!("release: {date}\n"));
     let text = format!(
-        "id: {id}\nstatus: {status}\n{release_line}url: {}/e/{id}\n",
-        state.public_url
+        "id: {id}\nstatus: {status}\n{release_line}url: {}/e/{id}\n{}",
+        state.public_url,
+        allowance::screen_from_lines(screen_from)
     );
     let json = json!({
         "id": id,
         "status": status,
+        "screen_from": screen_from.map(allowance::day_text),
         "release": release,
         "url": format!("{}/e/{id}", state.public_url),
     });

@@ -109,7 +109,7 @@ An accepted submission is held as `pending` for an hour before anything is publi
    curl -i -H "Authorization: Bearer $FILEDRAWER_TOKEN" -H "Content-Type: text/markdown" \
      --data-binary @entry.md {{BASE}}/entries
    ```
-   `-i` shows the status line. A 201 gives the entry's `id`, `status: pending`, `publish_at` (when the hold ends, in UTC) and its `url`. Below the delimiter come the headline row as the server read it, the card, and any warnings. A refusal stores nothing and lists every reason; fix them and submit again. Done when the reply is 201.
+   `-i` shows the status line. A 201 gives the entry's `id`, `status: pending`, `publish_at` (when the hold ends, in UTC), its `url`, and `screen_from` when its screening waits for your daily allowance (below). Below the delimiter come the headline row as the server read it, the card, and any warnings. A refusal stores nothing and lists every reason; fix them and submit again. Done when the reply is 201.
 3. Fix what the reply shows. Check that the headline row and the card say what you meant, and read each warning: each names something the server couldn't read. To fix the entry, send the whole file again to its url:
    ```sh
    curl -i -X PUT -H "Authorization: Bearer $FILEDRAWER_TOKEN" -H "Content-Type: text/markdown" \
@@ -126,6 +126,16 @@ When the hold ends, a model screens the entry. It fails an entry that plainly is
 - An entry in `review` waits for the owner, who publishes it (`public`, or `embargoed` with its release date), rejects it, or holds it as `held` until the vendor fixes the hole, then publishes or rejects it. A rejection in review gives the one reason `rejected in review`. Don't reword or resubmit an entry in `review` or `held`; wait for the owner's decision. Once the owner rejects or holds one of your account's entries, everything else the account sends goes to `review` too, unscreened, until the owner clears the account; withdrawing the entry doesn't lift it.
 - A screen that doubts the body matches your `outcome` doesn't fail the entry. The doubt shows on its card as a quoted "screening note"; if it's right, post a new version.
 - Screening has a daily budget, and one account may use a tenth of it. Past that, entries wait in `screening` for the next day (UTC).
+
+### Daily allowance
+
+Each accepted `POST` to `/entries`, `PUT`, new version and entry of a batch takes one unit of your account's daily allowance: 20 a day (UTC) in the account's first 7 days, then 50. A refused request takes none. Submit everything at once and let it trickle through:
+
+- Past today's units, an entry isn't refused. It takes a unit on the next day with room, and its reply shows that day as `screen_from: YYYY-MM-DD`. After the hold it waits in `screening` until that day, even if you publish it early. `GET {{BASE}}/e/<id>` with your token shows `screen_from` while it waits.
+- A `PUT` takes a unit too, but never moves the entry's day later; fix everything in one replacement where you can.
+- A batch's reply gives the day its last entry waits for; the batch publishes once every entry has passed.
+- Units go at most 10 days ahead. A request that doesn't fit gets a 429 and stores nothing; send it again once some of your waiting entries have been screened.
+- A series, and each new version of one, takes a unit dated today, since the screen reads it at once. Your series may take one day's allowance a day; past that, a 429 says to send it again tomorrow (UTC).
 
 ### New versions
 

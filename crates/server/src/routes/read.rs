@@ -18,7 +18,7 @@ use crate::entries::{self, Filters};
 use crate::error::AppError;
 use crate::respond::{DELIMITER, Format, author_name, card_and_warnings, one_line};
 use crate::series;
-use crate::{AppState, attachments};
+use crate::{AppState, allowance, attachments, time};
 use analyzer::slug_references;
 
 pub async fn entry(
@@ -239,9 +239,16 @@ async fn own_entry(
         ),
         _ => String::new(),
     };
+    // Set only while its screening waits for the account's allowance.
+    let screen_from =
+        allowance::screen_from(&state.pool, entry.seq, time::now_utc().date()).await?;
     let mut text = format!(
-        "id: {}\nstatus: {}\n{when}analyzer: v{ANALYZER_VERSION}\nurl: {}/e/{}\n",
-        entry.id, entry.status, state.public_url, entry.id
+        "id: {}\nstatus: {}\n{when}{}analyzer: v{ANALYZER_VERSION}\nurl: {}/e/{}\n",
+        entry.id,
+        entry.status,
+        allowance::screen_from_lines(screen_from),
+        state.public_url,
+        entry.id
     );
     if let Some(previous) = &entry.previous_id {
         text.push_str(&format!("previous: {previous}\n"));
@@ -285,6 +292,7 @@ async fn own_entry(
         "id": entry.id,
         "status": entry.status,
         "publish_at": entry.hold_until,
+        "screen_from": screen_from.map(allowance::day_text),
         "release": release.filter(|_| entry.status == "embargoed"),
         "analyzer_version": ANALYZER_VERSION,
         "row_notes": notes,

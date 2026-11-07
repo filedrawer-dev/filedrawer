@@ -22,7 +22,8 @@ use crate::queue;
 use crate::respond::{DELIMITER, Format, card_and_warnings};
 use crate::routes::submit::{Accepted, accept, cited_series, cited_set};
 use crate::series::Cited;
-use crate::{AppState, time};
+use crate::{AppState, allowance, time};
+use ::time::{Date, OffsetDateTime};
 
 /// Every string in `value`, however deeply nested.
 fn strings_in(value: &serde_json::Value) -> Vec<&str> {
@@ -173,10 +174,12 @@ pub async fn submit_batch(
         return Err(refused(problems));
     }
 
-    let publish_at = hold_until(time::now_utc());
-    let stored = store(&state, &account, &runs, &accepted, &cites, &publish_at).await;
+    let now = time::now_utc();
+    let publish_at = hold_until(now);
+    let stored = store(&state, &account, &runs, &accepted, &cites, &publish_at, now).await;
     let (batch_id, members) = match stored {
-        Ok(stored) => stored,
+        Ok(Some(stored)) => stored,
+        Ok(None) => return Err(allowance::refusal(accepted.len())),
         // Another request took one of these slugs or runs since the checks above.
         Err(sqlx::Error::Database(error)) if error.is_unique_violation() => {
             return Err(AppError::Conflict(
@@ -185,6 +188,12 @@ pub async fn submit_batch(
         }
         Err(error) => return Err(error.into()),
     };
+    let seqs: Vec<i64> = members.iter().map(|(seq, _, _)| *seq).collect();
+    let screen_from = allowance::last_screen_from(&state.pool, &seqs, now.date()).await?;
+    let members: Vec<(String, &Accepted)> = members
+        .into_iter()
+        .map(|(_, id, member)| (id, member))
+        .collect();
     Ok(batch_reply(
         &state,
         &account,
@@ -192,10 +201,13 @@ pub async fn submit_batch(
         &batch_id,
         &publish_at,
         &members,
+        screen_from,
     ))
 }
 
-/// Stores a checked batch in one transaction: the batch, its runs and its members.
+/// Stores a checked batch in one transaction: the batch, its runs and its members,
+/// each with its allowance unit. Returns each member's row and ID, or `None`, storing
+/// nothing, when the account's allowance has no room for them all.
 async fn store<'a>(
     state: &AppState,
     account: &TokenAccount,
@@ -203,7 +215,8 @@ async fn store<'a>(
     accepted: &'a [Accepted],
     cites: &[(Option<Cited>, Option<i64>)],
     publish_at: &str,
-) -> Result<(String, Vec<(String, &'a Accepted)>), sqlx::Error> {
+    now: OffsetDateTime,
+) -> Result<Option<(String, Vec<(i64, String, &'a Accepted)>)>, sqlx::Error> {
     let mut transaction = state.pool.begin().await?;
     let (batch_seq, batch_id) = entries::insert_batch(&mut transaction, &account.id).await?;
     for (run_id, declaration) in runs {
@@ -222,11 +235,15 @@ async fn store<'a>(
             series: cited.as_ref(),
             attachments: *set,
         };
-        let (_, id) = entries::insert_on(&mut transaction, &new).await?;
-        members.push((id, member));
+        let (seq, id) = entries::insert_on(&mut transaction, &new).await?;
+        members.push((seq, id, member));
+    }
+    let seqs: Vec<i64> = members.iter().map(|(seq, _, _)| *seq).collect();
+    if !allowance::take(&mut transaction, state, &account.id, &seqs, now.date()).await? {
+        return Ok(None);
     }
     transaction.commit().await?;
-    Ok((batch_id, members))
+    Ok(Some((batch_id, members)))
 }
 
 /// The reply to a batch: its fields and each member's ID and url above the delimiter,
@@ -238,11 +255,13 @@ fn batch_reply(
     batch_id: &str,
     publish_at: &str,
     members: &[(String, &Accepted)],
+    screen_from: Option<Date>,
 ) -> Response {
     let publish = format!("{}/batches/{batch_id}/publish", state.public_url);
     let mut text = format!(
         "id: {batch_id}\nstatus: pending\npublish_at: {publish_at}\npublish: {publish}\n\
-         Fix a member before then by sending it again with PUT to its url, or publish the whole batch now with a POST to the publish url.\n"
+         Fix a member before then by sending it again with PUT to its url, or publish the whole batch now with a POST to the publish url.\n{}",
+        allowance::screen_from_lines(screen_from)
     );
     for (id, _) in members {
         text.push_str(&format!("entry: {id} {}/e/{id}\n", state.public_url));
@@ -278,6 +297,7 @@ fn batch_reply(
         "id": batch_id,
         "status": "pending",
         "publish_at": publish_at,
+        "screen_from": screen_from.map(allowance::day_text),
         "publish": publish,
         "entries": json_members,
     });
@@ -307,13 +327,16 @@ pub async fn publish_batch(
     for seq in &members {
         queue::screen_now(&state, *seq, now).await?;
     }
+    // Ending the hold early doesn't skip the account's queue.
+    let screen_from = allowance::last_screen_from(&state.pool, &members, now.date()).await?;
     let statuses = entries::batch_statuses(&state.pool, &id).await?;
-    let mut text = format!("id: {id}\n");
+    let mut text = format!("id: {id}\n{}", allowance::screen_from_lines(screen_from));
     for (member, status) in &statuses {
         text.push_str(&format!("entry: {member} {status}\n"));
     }
     let json = json!({
         "id": id,
+        "screen_from": screen_from.map(allowance::day_text),
         "entries": statuses.iter().map(|(member, status)| json!({"id": member, "status": status})).collect::<Vec<_>>(),
     });
     Ok(format.reply(StatusCode::OK, text, json))

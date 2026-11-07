@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO allowance_units (account_id, day, entry_seq) VALUES (?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "b5cddab53f82194916f9aa1edd2d0b2a5105f09ad8e50bea3ffed8eab678c6ed"
+}

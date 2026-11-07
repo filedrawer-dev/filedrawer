@@ -9,7 +9,7 @@ use time::OffsetDateTime;
 
 use crate::embargo::embargoed_until;
 use crate::screening::{Call, MAX_ATTEMPTS, ModelError, Subject, Verdict};
-use crate::{AppState, accounts, attachments, entries, series, time::stamp};
+use crate::{AppState, accounts, allowance, attachments, entries, series, time::stamp};
 
 /// The share of the day's cap one account may spend (design.md: 10%).
 const ACCOUNT_SHARE_PERCENT: i64 = 10;
@@ -36,9 +36,10 @@ pub async fn screen_now(
     screen_entry(state, seq, now).await
 }
 
-/// Screens entry `seq` if it is in `screening` without a verdict and the caps allow,
-/// then places it, or its batch, when decided. Returns its status afterwards, or
-/// `None` if there is no such entry.
+/// Screens entry `seq` if it is in `screening` without a verdict, its account's
+/// allowance has reached the earliest day among its units (design.md, Limits and
+/// abuse), and the caps allow, then places it, or its batch, when decided. Returns
+/// its status afterwards, or `None` if there is no such entry.
 pub async fn screen_entry(
     state: &AppState,
     seq: i64,
@@ -48,11 +49,15 @@ pub async fn screen_entry(
     // day's cap is overshot by at most one item's calls. The check for a verdict
     // comes after the lock, so a second caller finds the first one's.
     let _turn = state.screening_lock.lock().await;
+    let today = allowance::day_text(now.date());
     let waiting = sqlx::query_as!(
         Waiting,
         r#"SELECT seq AS "seq!: i64", account_id, source, screen_attempts
-           FROM entries WHERE seq = ? AND status = 'screening' AND screen_verdict IS NULL"#,
-        seq
+           FROM entries WHERE seq = ? AND status = 'screening' AND screen_verdict IS NULL
+             AND COALESCE((SELECT day FROM entry_screen_from
+                           WHERE entry_seq = entries.seq), '') <= ?"#,
+        seq,
+        today
     )
     .fetch_optional(&state.pool)
     .await?;
@@ -530,14 +535,18 @@ pub async fn settle_screened(state: &AppState, now: OffsetDateTime) -> Result<()
     Ok(())
 }
 
-/// Entries in `screening` with no verdict yet, in the fair queue's order: by
-/// position, then submission time, so every account's first goes ahead of anyone's
-/// second.
-pub async fn unscreened(pool: &SqlitePool) -> Result<Vec<i64>, sqlx::Error> {
+/// Entries in `screening` with no verdict yet whose allowance day has come by `now`,
+/// in the fair queue's order: by position, then submission time, so every account's
+/// first goes ahead of anyone's second.
+pub async fn unscreened(pool: &SqlitePool, now: OffsetDateTime) -> Result<Vec<i64>, sqlx::Error> {
+    let today = allowance::day_text(now.date());
     sqlx::query_scalar!(
         r#"SELECT seq AS "seq!: i64" FROM entries
            WHERE status = 'screening' AND screen_verdict IS NULL
-           ORDER BY attachment_set_seq IS NOT NULL, queue_position, submitted_at, seq"#
+             AND COALESCE((SELECT day FROM entry_screen_from
+                           WHERE entry_seq = entries.seq), '') <= ?
+           ORDER BY attachment_set_seq IS NOT NULL, queue_position, submitted_at, seq"#,
+        today
     )
     .fetch_all(pool)
     .await

@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT seq AS \"seq!: i64\" FROM entries\n           WHERE status = 'screening' AND screen_verdict IS NULL\n             AND COALESCE((SELECT day FROM entry_screen_from\n                           WHERE entry_seq = entries.seq), '') <= ?\n           ORDER BY attachment_set_seq IS NOT NULL, queue_position, submitted_at, seq",
+  "describe": {
+    "columns": [
+      {
+        "name": "seq!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "seq"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "3caa17abf68e89438dde867b079b6010e2eb1db7e7dd84e28cac0ff232991f04"
+}

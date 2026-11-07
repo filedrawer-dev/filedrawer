@@ -54,6 +54,7 @@ const SINGLE_KEYS: &[&str] = &[
     "superseded_by",
     "rows",
     "publish_at",
+    "screen_from",
     "release",
     "url",
     "embargo_until",
@@ -80,6 +81,7 @@ const REPEATED_KEYS: &[&str] = &["link", "run", "entry", "member"];
 const INSTRUCTION_LINES: &[&str] = &[
     "Fix it before then by sending the whole entry again with PUT to the url, or publish it now with a POST to the url plus /publish.",
     "Fix a member before then by sending it again with PUT to its url, or publish the whole batch now with a POST to the publish url.",
+    "The account's daily allowance is taken until screen_from (UTC), so screening waits until then.",
 ];
 
 /// A line above the delimiter that starts as the server's own instruction does, with

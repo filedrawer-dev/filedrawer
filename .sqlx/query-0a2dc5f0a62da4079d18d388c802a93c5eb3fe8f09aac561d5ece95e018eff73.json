@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT created_at FROM accounts WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "created_at",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "accounts",
+            "name": "created_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "0a2dc5f0a62da4079d18d388c802a93c5eb3fe8f09aac561d5ece95e018eff73"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM allowance_units WHERE seq = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "9807602444f650059a7b82437ba01168ca72730fc5aa28106ab00ceca027ef63"
+}

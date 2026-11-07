@@ -4,7 +4,7 @@
 use sqlx::{SqliteConnection, SqlitePool};
 
 use crate::time::now;
-use crate::{AppState, attachments, series};
+use crate::{AppState, allowance, attachments, series};
 
 /// What deleting an account would do, for the confirm page.
 pub struct Preview {
@@ -98,6 +98,8 @@ pub async fn delete(state: &AppState, account_id: &str) -> Result<Outcome, sqlx:
     if !blocked.is_empty() {
         return Ok(Outcome::Blocked);
     }
+    // Its allowance goes with it, before the entries its units name.
+    allowance::delete_account(&mut transaction, account_id).await?;
     delete_entries(&mut transaction, account_id).await?;
     delete_hidden_series(&mut transaction, account_id).await?;
     let deleted_at = now();

@@ -8,7 +8,7 @@ use sqlx::SqlitePool;
 
 use crate::screening::Verdict;
 use crate::series::Cited;
-use crate::{ids, time::now};
+use crate::{allowance, ids, time::now};
 
 /// A public entry with its author, as reads need it.
 pub struct PublicEntry {
@@ -113,7 +113,7 @@ pub struct Previous<'a> {
     pub first_submitted_at: &'a str,
 }
 
-/// An accepted submission, as `insert` stores it.
+/// An accepted submission, as `insert_on` stores it.
 pub struct NewEntry<'a> {
     pub account_id: &'a str,
     pub source: &'a str,
@@ -134,17 +134,10 @@ pub struct NewEntry<'a> {
 }
 
 /// Stores an accepted submission as `pending` until its hold ends, with the columns
-/// search filters on, and returns its row number and ID.
-pub async fn insert(pool: &SqlitePool, entry: &NewEntry<'_>) -> Result<(i64, String), sqlx::Error> {
-    let mut transaction = pool.begin().await?;
-    let inserted = insert_on(&mut transaction, entry).await?;
-    transaction.commit().await?;
-    Ok(inserted)
-}
-
-/// `insert` inside a caller's transaction, as a batch stores all its members in one.
-/// A first version with a `slug` registers it for the account, and the entry's
-/// `uses_runs` are recorded; both were checked beforehand.
+/// search filters on, in the caller's transaction, and returns its row number and ID.
+/// A batch stores all its members in one. A first version with a `slug` registers it
+/// for the account, and the entry's `uses_runs` are recorded; both were checked
+/// beforehand.
 pub async fn insert_on(
     transaction: &mut sqlx::SqliteConnection,
     entry: &NewEntry<'_>,
@@ -242,10 +235,10 @@ async fn write_runs(
 }
 
 /// Replaces a pending entry's text and everything read from it, and restarts its
-/// hold. Its ID and first submission date stay. Returns false if it is no longer
-/// pending.
-pub async fn replace(
-    pool: &SqlitePool,
+/// hold, in the caller's transaction. Its ID and first submission date stay. Returns
+/// false if it is no longer pending.
+pub async fn replace_on(
+    transaction: &mut sqlx::SqliteConnection,
     seq: i64,
     source: &str,
     analysis: &Analysis,
@@ -256,7 +249,6 @@ pub async fn replace(
     let submitted_at = now();
     let columns = columns(analysis);
     let (series_seq, series_version, series_section) = series_columns(series);
-    let mut transaction = pool.begin().await?;
     let done = sqlx::query!(
         "UPDATE entries SET source = ?, submitted_at = ?, embargo_until = ?,
              analyzer_version = ?, outcome = ?, kind = ?, stage = ?, hold_until = ?,
@@ -303,8 +295,8 @@ pub async fn replace(
     )
     .fetch_one(&mut *transaction)
     .await?;
-    write_derived(&mut transaction, seq, analysis, kept.previous_seq).await?;
-    write_runs(&mut transaction, seq, &kept.account_id, analysis).await?;
+    write_derived(&mut *transaction, seq, analysis, kept.previous_seq).await?;
+    write_runs(&mut *transaction, seq, &kept.account_id, analysis).await?;
     // A batch is held as one: a PUT on any member restarts every member's hold.
     if let Some(batch_seq) = kept.batch_seq {
         sqlx::query!(
@@ -315,7 +307,6 @@ pub async fn replace(
         .execute(&mut *transaction)
         .await?;
     }
-    transaction.commit().await?;
     Ok(true)
 }
 
@@ -1019,9 +1010,20 @@ pub async fn store_verdict(
 
 /// Rejects an entry in screening, review or held, with `reasons` (a JSON array) when
 /// it has none of its own, and gives back the slug it took, so its author can submit
-/// again with it.
+/// again with it. An entry rejected before it was screened, as its batch's other
+/// members are, also gives back its allowance (design.md, Agent interface).
 pub async fn reject(pool: &SqlitePool, seq: i64, reasons: Option<&str>) -> Result<(), sqlx::Error> {
     let mut transaction = pool.begin().await?;
+    let unscreened = sqlx::query_scalar!(
+        r#"SELECT 1 AS "one!: i64" FROM entries
+           WHERE seq = ? AND status = 'screening' AND screen_verdict IS NULL"#,
+        seq
+    )
+    .fetch_optional(&mut *transaction)
+    .await?;
+    if unscreened.is_some() {
+        allowance::give_back(&mut transaction, seq).await?;
+    }
     sqlx::query!(
         "UPDATE entries SET status = 'rejected', screen_verdict = 'reject',
              rejection_reasons = COALESCE(?, rejection_reasons)

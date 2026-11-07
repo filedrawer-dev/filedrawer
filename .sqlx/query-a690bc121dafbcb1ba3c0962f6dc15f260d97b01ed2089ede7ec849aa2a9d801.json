@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT seq AS \"seq!: i64\", account_id, source, screen_attempts\n           FROM entries WHERE seq = ? AND status = 'screening' AND screen_verdict IS NULL",
+  "query": "SELECT seq AS \"seq!: i64\", account_id, source, screen_attempts\n           FROM entries WHERE seq = ? AND status = 'screening' AND screen_verdict IS NULL\n             AND COALESCE((SELECT day FROM entry_screen_from\n                           WHERE entry_seq = entries.seq), '') <= ?",
   "describe": {
     "columns": [
       {
@@ -49,7 +49,7 @@
       }
     ],
     "parameters": {
-      "Right": 1
+      "Right": 2
     },
     "nullable": [
       false,
@@ -58,5 +58,5 @@
       false
     ]
   },
-  "hash": "ea21c9dca2d4c2913554b90f776c95eabea444bf21db2ed5443c194275d7d4b1"
+  "hash": "a690bc121dafbcb1ba3c0962f6dc15f260d97b01ed2089ede7ec849aa2a9d801"
 }

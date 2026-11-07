@@ -3,6 +3,7 @@
 
 mod accounts;
 pub mod admin;
+mod allowance;
 mod attachments;
 mod auth;
 pub mod config;

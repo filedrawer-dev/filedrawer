@@ -107,7 +107,7 @@ Choices the docs left open, made while building the analyzer. Once the owner set
 ## Embargoed entries before the release job
 
 - Options: hold embargoed entries with no way to release them until build step 4 adds the release job, or build the job now.
-- Chosen: hold them. Staging is the owner's alone, and step 4 builds embargoes in full. The same goes for the rest of step 4 that series need: releasing an entry still `waiting_on_series` at the 12-month cap, and counting each `POST /series` and each new series version against the creator's daily allowance.
+- Chosen: hold them. Staging is the owner's alone, and step 4 builds embargoes in full. The same goes for releasing an entry still `waiting_on_series` at the 12-month cap, which series need.
 - Against: an embargoed entry on staging stays hidden past its date until step 4 lands, and a creator who never makes a series public holds its members' entries indefinitely.
 
 ## Session length
@@ -271,3 +271,15 @@ Choices the docs left open, made while building the analyzer. Once the owner set
 - Options: 422 for every refused `POST /attachments`, as for refused entries, or a code per cause.
 - Chosen: 422 for bad origins or text, 413 for a set over 1 MiB, 429 past the account's 10 MB a day, 507 when the site's storage is full, 501 when the server has no files host. An agent can tell "fix the set" from "wait" from "link the code instead" by the code alone, and an entry over 100 KB is already a 413.
 - Against: the brief said 422, and the entry routes answer every content refusal with 422 except size.
+
+## The review guard and the account's queue
+
+- Options: a guarded account's queued entries go to review as each one's allowance day comes, as here, or all at once when the guard trips.
+- Chosen: as each day comes. design.md has the server check the account "each time an item leaves its queue for screening", and issue #8 is about one account flooding the owner's review page.
+- Against: "and so does everything it already has waiting" can read as all at once, and the owner then sees a guarded account's whole queue only over several days.
+
+## A batch's allowance day in the plain-text reply
+
+- Options: one `screen_from` for the batch, the day its last member waits for, as here, or one per member.
+- Chosen: one, since the batch publishes as one once its last member passes.
+- Against: an agent reading the text can't tell which members are screened today.

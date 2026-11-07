@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT day AS \"day!\" FROM entry_screen_from WHERE entry_seq = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "day!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "c1cbe3bc6915e3ed582eb2ce99188e77bcdd3caa4880d319d3bfad68507fa485"
+}

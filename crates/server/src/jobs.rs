@@ -64,7 +64,7 @@ pub async fn publish_due(state: &AppState, now: OffsetDateTime) -> Result<usize,
         entries::start_screening(&state.pool, seq, Some(&now_text)).await?;
     }
     queue::settle_screened(state, now).await?;
-    let queued = queue::unscreened(&state.pool).await?;
+    let queued = queue::unscreened(&state.pool, now).await?;
     for seq in &queued {
         queue::screen_entry(state, *seq, now).await?;
     }
