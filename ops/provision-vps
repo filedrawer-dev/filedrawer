@@ -381,16 +381,16 @@ screening_stage() {
 # github_stage: the GitHub token the link checks call GitHub's API with (design.md,
 # Submission and screening, step 2), in one file that staging reads now and
 # production will at launch. Until it runs, staging gets 60 API calls an hour, which
-# the check spends only when GitHub's commit page doesn't answer.
+# the check spends when GitHub's commit page lists no branch or doesn't answer.
 github_stage() {
   stage "A GitHub token for the link checks"
   if keep_existing "The GitHub token" /etc/filedrawer/github.env; then
     return 0
   fi
   say "Submissions ask GitHub whether a code link's commit is on one of the repository's"
-  say "own branches or tags: its commit page first, then its API when the page doesn't"
-  say "answer. Without a token the API allows 60 calls an hour; with one, 5,000. The"
-  say "server spends at most half, and leaves the rest to you."
+  say "own branches or tags: its commit page first, then its API when the page lists"
+  say "none or doesn't answer. Without a token the API allows 60 calls an hour; with"
+  say "one, 5,000. The server spends at most half, and leaves the rest to you."
   open_url "https://github.com/settings/personal-access-tokens/new"
   step "Make a fine-grained token named such as 'filedrawer link checks'."
   step "Repository access: 'Public repositories'. Add no permissions: it only reads."

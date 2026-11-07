@@ -316,9 +316,9 @@ Choices the docs left open, made while building the analyzer. Once the owner set
 
 ## GitHub's commit page as the fork check's first step
 
-- Options: trust an empty answer from `branch_commits` and flag the commit, or confirm it through the API first; ask the page only, or keep the API path as the fallback.
-- Chosen: trust it, as GitHub's own banner does, so a commit on no branch costs no API calls; fall back to the API on any answer but 200 with both lists of real entries. The page isn't documented, and the fallback keeps the check working if GitHub changes it. The page gets the same 10 s as any fetch, so one that hangs leaves the API path half of the request's 20 s.
-- Against: if GitHub changed the page to answer empty lists for a commit on a branch, every GitHub entry would be flagged "commit on no branch" until someone noticed, since that answer doesn't fall back. And the page's own limits aren't published, so a busy day could earn github.com a pause, which also pauses fetching github.com links.
+- Options: when the page's empty answer can't be confirmed, because the confirming compare can't run, leave the pin "not verified" or trust the page and flag "commit on no branch"; note a page the compare overrules in the log only, or also somewhere the owner looks, such as `/staging/status`.
+- Chosen: "not verified", retried within the hour, since a check that couldn't run never says more; the log only. A page answer that lists a branch or tag is trusted without a call. The server falls back to the API on any answer but 200 with both lists of real entries. The page gets the same 10 s as any fetch, so one that hangs leaves the API path half of the request's 20 s.
+- Against: a page that broke into answering empty lists costs one API call for each GitHub link, and shows up only as warnings in `journalctl`. And only a commit on the default branch is overruled and logged: one on another branch, or only in a tag, would still be flagged "commit on no branch", with the fork warning and no log line, until the page answered right again. And the page's own limits aren't published, so a busy day could earn github.com a pause, which also pauses fetching github.com links.
 
 ## A commit on no branch: the order of the calls, and when it is checked again
 

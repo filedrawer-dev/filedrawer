@@ -1178,6 +1178,15 @@ fn branch_commits() -> String {
     format!("https://github.com/ada/steering/branch_commits/{SHA}")
 }
 
+/// GitHub's commit page says no branch or tag holds `SHA`.
+fn page_lists_nothing(app: &TestApp) {
+    app.web.json(
+        &branch_commits(),
+        200,
+        Some(serde_json::json!({"branches": [], "tags": []})),
+    );
+}
+
 #[tokio::test]
 async fn githubs_commit_page_verifies_a_commit_on_a_branch_with_no_api_call() {
     let app = test_app().await;
@@ -1206,13 +1215,10 @@ async fn githubs_commit_page_verifies_a_commit_inside_a_tag() {
 }
 
 #[tokio::test]
-async fn an_empty_answer_from_the_commit_page_flags_a_commit_on_no_branch() {
+async fn an_empty_answer_the_api_confirms_flags_a_commit_on_no_branch() {
     let app = test_app().await;
-    app.web.json(
-        &branch_commits(),
-        200,
-        Some(serde_json::json!({"branches": [], "tags": []})),
-    );
+    page_lists_nothing(&app);
+    not_on_default(&app, 3);
     let reply = app.post("/entries", with_code(&github_code())).await;
     assert_eq!(
         warnings(&reply.body),
@@ -1222,7 +1228,40 @@ async fn an_empty_answer_from_the_commit_page_flags_a_commit_on_no_branch() {
             no_branch_advice()
         )]
     );
-    assert_eq!(app.web.api_calls(), Vec::<String>::new());
+    // One call to confirm it, and no tag or branch lists.
+    assert_eq!(app.web.api_calls(), [compare_path("HEAD", SHA)]);
+}
+
+#[tokio::test]
+async fn an_empty_answer_for_a_commit_on_the_default_branch_is_overruled() {
+    let app = test_app().await;
+    page_lists_nothing(&app);
+    let reply = app.post("/entries", with_code(&github_code())).await;
+    assert_eq!(warnings(&reply.body), Vec::<&str>::new(), "{}", reply.body);
+    assert_eq!(app.web.api_calls(), [compare_path("HEAD", SHA)]);
+    // Recorded, so the next submission asks neither again.
+    app.post("/entries", with_code(&github_code())).await;
+    assert_eq!(app.web.api_calls().len(), 1);
+    assert_eq!(app.web.json_fetched().len(), 1);
+}
+
+#[tokio::test]
+async fn an_empty_answer_the_api_cant_confirm_is_not_verified() {
+    let app = test_app().await;
+    page_lists_nothing(&app);
+    app.web.api_fails(&compare_path("HEAD", SHA));
+    let reply = app.post("/entries", with_code(&github_code())).await;
+    assert_eq!(
+        warnings(&reply.body),
+        [format!(
+            "the server couldn't confirm the pin of `code: {}`: GitHub's API didn't answer (timed out); the card says \"pin not verified\" until a recheck confirms it",
+            github_code()
+        )]
+    );
+    // The one confirming call, not the API's whole path.
+    assert_eq!(app.web.api_calls(), [compare_path("HEAD", SHA)]);
+    // Checked again within the hour, as any pin that couldn't be confirmed.
+    assert_eq!(recheck_after_minutes(&app, 61).await, 1);
 }
 
 #[tokio::test]

@@ -1,7 +1,8 @@
 //! GitHub's fork check (design.md, Submission and screening, step 2): whether a
 //! `code` commit is on one of the named repository's own branches or in one of its
 //! tags, since GitHub serves a fork's commits under its parent's URL; GitHub's
-//! commit page says first, and its API when the page doesn't. And the API calls it
+//! commit page says first, and its API confirms a page that lists none, or stands
+//! in for one that doesn't answer. And the API calls it
 //! spends: at most half of the hour's, each account a tenth of that half,
 //! and none while GitHub asks the server to wait.
 
@@ -94,7 +95,8 @@ impl LinkChecker {
 }
 
 /// Whether `commit` is its repository's own: on one of its branches or in one of its
-/// tags, as GitHub's commit page says, or else as GitHub's API does (`api_pin`).
+/// tags, as GitHub's commit page says, with one API call to confirm an empty answer,
+/// or else as GitHub's API does (`api_pin`).
 /// Only the repository's writers can push a branch or a tag, and GitHub doesn't
 /// prune a commit one holds. On none of them, the commit is a fork's or its branch
 /// was squashed or rebased away, which GitHub can't tell apart, so it is flagged and
@@ -110,8 +112,32 @@ pub(super) async fn github_pin(
     }
     match commit_page(state, commit).await {
         CommitPage::Held => record_confirmed(&state.pool, commit).await,
-        CommitPage::HeldByNone => PinCheck::OnNoBranch(on_no_branch_or_tag(commit)),
+        CommitPage::HeldByNone => confirm_held_by_none(state, commit, account).await,
         CommitPage::Unread => api_pin(state, commit, account).await,
+    }
+}
+
+/// The commit page said no branch or tag holds `commit`. One API call, a compare
+/// with the default branch, confirms it before the flag, so a page that changed to
+/// answer empty lists can't flag every entry (the owner, 2026-11-07: "a single
+/// follow-up sounds reasonable"). A call that can't run leaves the pin not verified,
+/// as any check that can't run does.
+async fn confirm_held_by_none(
+    state: &AppState,
+    commit: &GithubCommit,
+    account: Option<&str>,
+) -> PinCheck {
+    match compare(state, account, &commit.repo, "HEAD", &commit.sha).await {
+        Ok(head) if head.on_branch => {
+            tracing::warn!(
+                repo = %commit.repo,
+                sha = %commit.sha,
+                "GitHub's commit page listed no branch for a commit on the default branch"
+            );
+            record_confirmed(&state.pool, commit).await
+        }
+        Ok(_) => PinCheck::OnNoBranch(on_no_branch_or_tag(commit)),
+        Err(why) => PinCheck::NotVerified(why),
     }
 }
 
