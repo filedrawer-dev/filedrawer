@@ -332,7 +332,7 @@ pub async fn take_slot(
 ) -> Result<Slot, AppError> {
     // IMMEDIATE takes the write lock first, so two requests can't both read a
     // window with one place left, and the second doesn't fail on upgrading.
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let mut tx = crate::db::write_tx(pool).await?;
     if let Some(refusal) = full_window(&mut tx, counts, now).await? {
         return Err(refusal);
     }

@@ -2,8 +2,18 @@
 
 use std::str::FromStr;
 
-use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
+use sqlx::{Sqlite, SqlitePool, Transaction};
+
+/// A transaction that holds SQLite's write lock from its first statement (`BEGIN
+/// IMMEDIATE`). Every transaction is one of these: a deferred transaction that reads
+/// and then writes fails with SQLITE_BUSY when another writer commits in between,
+/// and two can both pass a check before either writes. clippy.toml refuses the other
+/// ways to begin one.
+pub async fn write_tx(pool: &SqlitePool) -> Result<Transaction<'static, Sqlite>, sqlx::Error> {
+    #[allow(clippy::disallowed_methods)]
+    pool.begin_with("BEGIN IMMEDIATE").await
+}
 
 /// Opens (creating if needed) the database at `path` and runs the migrations.
 /// `:memory:` gives a private in-memory database, for tests.

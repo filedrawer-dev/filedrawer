@@ -129,7 +129,7 @@ pub async fn remove(
     removal: Removal,
 ) -> Result<bool, sqlx::Error> {
     let at = now();
-    let mut transaction = pool.begin().await?;
+    let mut transaction = crate::db::write_tx(pool).await?;
     let done = sqlx::query!(
         "UPDATE files SET removed_at = COALESCE(removed_at, ?) WHERE sha256 = ?",
         at,

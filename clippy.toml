@@ -1,0 +1,13 @@
+# Every write transaction goes through db::write_tx, which begins IMMEDIATE: a
+# deferred one that reads and then writes fails with SQLITE_BUSY when another writer
+# commits in between, and two of them can both pass a check before either writes.
+disallowed-methods = [
+    { path = "sqlx_core::pool::Pool::begin", reason = "use db::write_tx, which begins IMMEDIATE" },
+    { path = "sqlx_core::pool::Pool::begin_with", reason = "use db::write_tx, which begins IMMEDIATE" },
+    { path = "sqlx_core::pool::Pool::try_begin", reason = "use db::write_tx, which begins IMMEDIATE" },
+    { path = "sqlx_core::pool::Pool::try_begin_with", reason = "use db::write_tx, which begins IMMEDIATE" },
+    { path = "sqlx_core::connection::Connection::begin", reason = "use db::write_tx, which begins IMMEDIATE" },
+    { path = "sqlx_core::connection::Connection::begin_with", reason = "use db::write_tx, which begins IMMEDIATE" },
+    { path = "sqlx_core::acquire::Acquire::begin", reason = "use db::write_tx, which begins IMMEDIATE" },
+    { path = "sqlx_core::transaction::Transaction::begin", reason = "use db::write_tx, which begins IMMEDIATE" },
+]

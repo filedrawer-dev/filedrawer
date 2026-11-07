@@ -217,7 +217,7 @@ async fn store<'a>(
     publish_at: &str,
     now: OffsetDateTime,
 ) -> Result<Option<(String, Vec<(i64, String, &'a Accepted)>)>, sqlx::Error> {
-    let mut transaction = state.pool.begin().await?;
+    let mut transaction = crate::db::write_tx(&state.pool).await?;
     let (batch_seq, batch_id) = entries::insert_batch(&mut transaction, &account.id).await?;
     for (run_id, declaration) in runs {
         entries::insert_run(&mut transaction, &account.id, run_id, declaration).await?;

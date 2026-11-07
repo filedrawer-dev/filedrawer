@@ -521,7 +521,7 @@ pub async fn publish(
 ) -> Result<Option<Placed>, sqlx::Error> {
     let published_at = now();
     let fields = &analysis.fields;
-    let mut transaction = pool.begin().await?;
+    let mut transaction = crate::db::write_tx(pool).await?;
     // Only from `screening` or `waiting_on_series`, so an entry placed twice is
     // indexed once.
     let Some(source) = sqlx::query_scalar!(
@@ -1032,7 +1032,7 @@ pub async fn store_verdict(
 /// batch's other members are, frozen ones included, also gives back its allowance
 /// (design.md, Agent interface).
 pub async fn reject(pool: &SqlitePool, seq: i64, reasons: Option<&str>) -> Result<(), sqlx::Error> {
-    let mut transaction = pool.begin().await?;
+    let mut transaction = crate::db::write_tx(pool).await?;
     let unscreened = sqlx::query_scalar!(
         r#"SELECT 1 AS "one!: i64" FROM entries
            WHERE seq = ? AND (status = 'frozen'
@@ -1104,7 +1104,7 @@ pub async fn reject_frozen(
     seq: i64,
     reasons: &str,
 ) -> Result<bool, sqlx::Error> {
-    let mut transaction = pool.begin().await?;
+    let mut transaction = crate::db::write_tx(pool).await?;
     let done = sqlx::query!(
         "UPDATE entries SET status = 'screening', screen_verdict = 'reject',
              rejection_reasons = ?
@@ -1125,7 +1125,7 @@ pub async fn reject_frozen(
 /// Holds an entry in review until a vendor fixes the hole, and guards its account.
 /// False if it wasn't in review.
 pub async fn hold(pool: &SqlitePool, seq: i64) -> Result<bool, sqlx::Error> {
-    let mut transaction = pool.begin().await?;
+    let mut transaction = crate::db::write_tx(pool).await?;
     let done = sqlx::query!(
         "UPDATE entries SET status = 'held' WHERE seq = ? AND status = 'review'",
         seq
@@ -1157,7 +1157,7 @@ pub async fn owner_pass(pool: &SqlitePool, seq: i64) -> Result<bool, sqlx::Error
 /// back to `screening` with a rejection, for the queue to send its whole batch back,
 /// and its account is guarded. False if it was in neither.
 pub async fn owner_reject(pool: &SqlitePool, seq: i64, reasons: &str) -> Result<bool, sqlx::Error> {
-    let mut transaction = pool.begin().await?;
+    let mut transaction = crate::db::write_tx(pool).await?;
     let done = sqlx::query!(
         "UPDATE entries SET status = 'screening', screen_verdict = 'reject',
              rejection_reasons = ?

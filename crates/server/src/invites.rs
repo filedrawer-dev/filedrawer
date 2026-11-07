@@ -70,7 +70,7 @@ pub async fn revoke(
     code: &str,
     now: OffsetDateTime,
 ) -> Result<Option<u64>, sqlx::Error> {
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let mut tx = crate::db::write_tx(pool).await?;
     let at = stamp(now);
     let revoked = sqlx::query_scalar!(
         r#"UPDATE invite_codes SET revoked_at = ? WHERE code = ? AND revoked_at IS NULL

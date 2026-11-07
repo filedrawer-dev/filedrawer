@@ -94,7 +94,7 @@ pub async fn password_hash(
 /// invite code it signed up with, so it still counts as one of the code's uses.
 pub async fn delete(state: &AppState, account_id: &str) -> Result<Outcome, sqlx::Error> {
     let writer = state.files.write().await;
-    let mut transaction = state.pool.begin().await?;
+    let mut transaction = crate::db::write_tx(&state.pool).await?;
     let blocked = blocking(&mut transaction, account_id).await?;
     if !blocked.is_empty() {
         return Ok(Outcome::Blocked);

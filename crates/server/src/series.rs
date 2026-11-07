@@ -45,7 +45,7 @@ pub async fn create(
     let key = ids::new_join_key();
     let hash = ids::token_hash(&key);
     let created_at = now();
-    let mut transaction = pool.begin().await?;
+    let mut transaction = crate::db::write_tx(pool).await?;
     let seq = sqlx::query_scalar!(
         r#"INSERT INTO series (id, account_id, key_hash, created_at) VALUES (?, ?, ?, ?)
            RETURNING seq AS "seq!: i64""#,
@@ -96,7 +96,7 @@ pub async fn add_version(
     seq: i64,
     text: &SeriesText,
 ) -> Result<i64, sqlx::Error> {
-    let mut transaction = pool.begin().await?;
+    let mut transaction = crate::db::write_tx(pool).await?;
     let version = sqlx::query_scalar!(
         r#"SELECT COALESCE(MAX(version), 0) + 1 AS "next!: i64" FROM series_versions
            WHERE series_seq = ?"#,
@@ -394,7 +394,7 @@ pub async fn remove_entry(
     entry_id: &str,
 ) -> Result<bool, sqlx::Error> {
     let removed_at = now();
-    let mut transaction = pool.begin().await?;
+    let mut transaction = crate::db::write_tx(pool).await?;
     let done = sqlx::query!(
         "UPDATE entries SET series_removed_at = COALESCE(series_removed_at, ?)
          WHERE id = ? AND series_seq = ?",
@@ -439,7 +439,7 @@ pub async fn make_public(
     account_id: &str,
 ) -> Result<bool, sqlx::Error> {
     let public_at = now();
-    let mut transaction = pool.begin().await?;
+    let mut transaction = crate::db::write_tx(pool).await?;
     let found = sqlx::query_scalar!(
         r#"UPDATE series SET public_at = COALESCE(public_at, ?)
            WHERE id = ? AND account_id = ? RETURNING seq AS "seq!: i64""#,
@@ -534,7 +534,7 @@ pub async fn decide_refusal(
 ) -> Result<bool, sqlx::Error> {
     let decision = call.as_str();
     let at = now();
-    let mut transaction = pool.begin().await?;
+    let mut transaction = crate::db::write_tx(pool).await?;
     let account = sqlx::query_scalar!(
         "UPDATE refused_series SET decision = ?, decided_at = ?
          WHERE id = ? AND decision IS NULL RETURNING account_id",

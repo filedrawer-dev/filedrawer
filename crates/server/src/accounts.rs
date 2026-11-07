@@ -69,7 +69,7 @@ pub async fn sign_up(
     invite: Option<&str>,
 ) -> Result<Signup, sqlx::Error> {
     // IMMEDIATE, so two signups can't both take a code's last use.
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let mut tx = crate::db::write_tx(pool).await?;
     // The code first, so a bad one answers the same whether or not the address has
     // an account.
     let invite_seq = match invite {
@@ -214,7 +214,7 @@ async fn mark_verified(
 /// Verifies the account a verification link was sent for. False when the link is
 /// used, expired or unknown.
 pub async fn verify_with_link(pool: &SqlitePool, secret: &str) -> Result<bool, sqlx::Error> {
-    let mut transaction = pool.begin().await?;
+    let mut transaction = crate::db::write_tx(pool).await?;
     let Some(account_id) = spend_link(&mut transaction, secret, Purpose::Verify).await? else {
         return Ok(false);
     };
@@ -231,7 +231,7 @@ pub async fn reset_with_link(
     secret: &str,
     password_hash: &str,
 ) -> Result<bool, sqlx::Error> {
-    let mut transaction = pool.begin().await?;
+    let mut transaction = crate::db::write_tx(pool).await?;
     let Some(account_id) = spend_link(&mut transaction, secret, Purpose::Reset).await? else {
         return Ok(false);
     };

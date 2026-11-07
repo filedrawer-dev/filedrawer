@@ -217,7 +217,7 @@ pub async fn store(
     let bytes: i64 = files.iter().map(size).sum();
     let today = format!("{}%", &now()[..10]);
     let writer = state.files.write().await;
-    let mut transaction = pool.begin().await?;
+    let mut transaction = crate::db::write_tx(pool).await?;
     let spent = sqlx::query_scalar!(
         r#"SELECT COALESCE(SUM(bytes), 0) AS "spent!: i64" FROM attachment_sets
            WHERE account_id = ? AND created_at LIKE ?"#,
@@ -434,7 +434,7 @@ pub async fn expire_uncited_sets(
     lock: &Writer<'_>,
     uploaded_before: &str,
 ) -> Result<(), sqlx::Error> {
-    let mut transaction = pool.begin().await?;
+    let mut transaction = crate::db::write_tx(pool).await?;
     delete_uncited_sets(&mut transaction, None, Some(uploaded_before)).await?;
     delete_lone_files(lock, &mut transaction).await?;
     transaction.commit().await

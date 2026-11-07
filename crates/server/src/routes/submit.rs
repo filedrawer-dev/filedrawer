@@ -307,7 +307,7 @@ pub async fn submit(
         series: cited.as_ref(),
         attachments: set,
     };
-    let mut transaction = state.pool.begin().await?;
+    let mut transaction = crate::db::write_tx(&state.pool).await?;
     let (seq, id) = entries::insert_on(&mut transaction, &new).await?;
     let screen_from = commit_with_unit(&state, transaction, &account.id, seq, now.date()).await?;
     let held = Held {
@@ -379,7 +379,7 @@ pub async fn new_version(
         series: cited.as_ref(),
         attachments: set,
     };
-    let mut transaction = state.pool.begin().await?;
+    let mut transaction = crate::db::write_tx(&state.pool).await?;
     let inserted = entries::insert_on(&mut transaction, &new).await;
     let (seq, new_id) = match inserted {
         Ok(inserted) => inserted,
@@ -497,7 +497,7 @@ pub async fn resubmit(
     let set = one_set(&state, &account, &accepted).await?;
     let now = time::now_utc();
     let publish_at = hold_until(now);
-    let mut transaction = state.pool.begin().await?;
+    let mut transaction = crate::db::write_tx(&state.pool).await?;
     let replaced = entries::replace_on(
         &mut transaction,
         entry.seq,
