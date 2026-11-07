@@ -10,12 +10,38 @@ put its own recording fakes ahead of these.
 
 import json
 import os
+import shutil
 import sys
 from pathlib import Path
 
 import pytest
 
 OPENERS = ("wslview", "explorer.exe", "xdg-open", "open")
+# Tools that reach other machines. A test that needs one uses fake_host.
+NETWORK_TOOLS = ("gh", "ssh", "scp", "sftp", "curl")
+# Looked up before any fixture changes PATH: the guard's curl passes calls on that
+# reach only this machine.
+REAL_CURL = shutil.which("curl")
+REFUSE = 'echo "blocked: a test ran the real $(basename "$0"); use the fake_host fixture" >&2; exit 97'
+# curl with only file:// and loopback URLs runs the real curl. Refused: any other URL;
+# one with a user name, whose host is after the @; and a bare host with a common
+# top-level domain, which curl fetches over http (an option's value, such as
+# `-o out.json`, must still pass).
+LOCAL_CURL = """for arg in "$@"; do
+  case "$arg" in
+    file://*) ;;
+    *://*@*) {refuse} ;;
+    http://127.0.0.1|http://127.0.0.1[:/]*|http://localhost|http://localhost[:/]*|http://\\[::1\\]*) ;;
+    *://*) {refuse} ;;
+    -*) ;;
+    *)
+      if printf '%s' "$arg" | grep -Eq '^[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*\\.(com|org|net|dev|io|ai|co|app|gov|edu|uk|de)([:/]|$)'; then
+        {refuse}
+      fi ;;
+  esac
+done
+exec "{curl}" "$@"
+"""
 
 
 @pytest.fixture(autouse=True)
@@ -27,6 +53,24 @@ def no_browser(tmp_path_factory, monkeypatch):
         fake.chmod(0o755)
     monkeypatch.setenv("PATH", f"{fakes}{os.pathsep}{os.environ['PATH']}")
     monkeypatch.setenv("NO_BROWSER_DIR", str(fakes))
+
+
+@pytest.fixture(autouse=True)
+def no_network_tools(tmp_path_factory, monkeypatch):
+    """No test reaches a real gh, ssh, scp, sftp or curl: on 2026-11-06 a stubbed
+    fixture's red run called the real `gh secret set` from inside the repo. Each is a
+    refusal first on PATH, exit 97, except that curl of only `file://` and loopback
+    URLs runs the real curl, as tests that serve a fake site on 127.0.0.1 need.
+    fake_host's fakes go ahead of these."""
+    fakes = tmp_path_factory.mktemp("no-network")
+    for tool in NETWORK_TOOLS:
+        fake = fakes / tool
+        body = REFUSE + "\n"
+        if tool == "curl" and REAL_CURL:
+            body = LOCAL_CURL.format(refuse=REFUSE, curl=REAL_CURL)
+        fake.write_text("#!/bin/sh\n" + body)
+        fake.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fakes}{os.pathsep}{os.environ['PATH']}")
 
 
 def opened_urls() -> Path:
