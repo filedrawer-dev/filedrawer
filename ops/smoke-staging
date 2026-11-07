@@ -142,9 +142,13 @@ anon() {
 # field NAME: the first `NAME: value` line's value in BODY.
 field() { printf '%s\n' "$BODY" | sed -n "s/^$1: //p" | head -1; }
 
-# make_entry TITLE LOGS-LINE: the fixture with a smoke-test title and tags.
+# make_entry TITLE [LINE]: the fixture with a smoke-test title and tags, and LINE, if
+# given, added to its front matter. The fixture links nothing, so staging fetches
+# nothing for it.
 make_entry() {
-  sed "s/^title: .*/title: SMOKE TEST $tag $1, not a real result/; s/^tags: .*/tags: [smoke-test, $tag]/; s/^logs: .*/$2/" "$fixture"
+  local extra=""
+  [[ -n "${2:-}" ]] && extra="$2\n"
+  sed "s/^title: .*/title: SMOKE TEST $tag $1, not a real result/; s/^tags: .*/tags: [smoke-test, $tag]/; s/^written_by:/${extra}written_by:/" "$fixture"
 }
 
 if (( wait_seconds > 0 )); then
@@ -328,7 +332,7 @@ anon "/e/$ID"
 check "held entry hidden from others" '[[ $CODE == 404 ]]'
 req GET "/e/$ID"
 check "held entry shown to its author" '[[ $CODE == 200 && $(field status) == pending ]]'
-make_entry single "logs: [https:\/\/wandb.ai\/example\/politeness\/runs\/abc123]" > "$dir/e1b.md"
+make_entry single > "$dir/e1b.md"
 req PUT "/e/$ID" "$dir/e1b.md"
 check "PUT fixes it: 200, no warnings" '[[ $CODE == 200 && $BODY != *"warning:"* ]]'
 req POST "/e/$ID/publish"
@@ -338,7 +342,7 @@ check "public entry readable" '[[ $CODE == 200 ]]'
 req GET "/search?q=$tag"
 check "search finds it" '[[ $BODY == *"$ID"* ]]'
 
-make_entry version "logs: [https:\/\/wandb.ai\/example\/politeness\/runs\/abc123]" > "$dir/v.md"
+make_entry version > "$dir/v.md"
 req POST "/e/$ID/versions" "$dir/v.md"
 check "version: 201 with previous" '[[ $CODE == 201 && $(field previous) == "$ID" ]]'
 VID=$(field id)

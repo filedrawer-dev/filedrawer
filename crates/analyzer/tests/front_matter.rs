@@ -3,7 +3,7 @@
 
 mod common;
 
-use analyzer::{Choice, Outcome, Refusal, Role, WarningKind, analyze};
+use analyzer::{CardContext, Choice, Outcome, Refusal, Role, WarningKind, analyze, render_card};
 use common::{EXAMPLE, entry, example_with};
 
 fn warning_kinds(text: &str) -> Vec<WarningKind> {
@@ -267,10 +267,34 @@ fn a_github_lookalike_host_is_not_listed() {
 }
 
 #[test]
+fn a_host_is_read_as_a_browser_reads_it() {
+    let hash = "0123456789abcdef0123456789abcdef01234567";
+    // A browser opens evil.example: a backslash ends the host.
+    let text = entry(
+        &format!("code: https://evil.example\\@github.com/a/b/tree/{hash}\n"),
+        "",
+    );
+    assert_eq!(warning_kinds(&text), vec![WarningKind::HostNotListed]);
+    assert!(render_card(&analyze(&text), &CardContext::default()).contains("pin not verified"));
+    // A scheme or host in capitals is still github.com.
+    let text = entry(&format!("code: HTTPS://GitHub.com/a/b/tree/{hash}\n"), "");
+    assert_eq!(warning_kinds(&text), vec![]);
+    assert_eq!(analyze(&text).refusals, vec![]);
+}
+
+#[test]
 fn a_zenodo_code_link_is_accepted_with_a_note_that_its_pin_is_checked_online() {
     let text = entry("code: https://zenodo.org/records/1234567\n", "");
     assert_eq!(analyze(&text).refusals, vec![]);
     assert_eq!(warning_kinds(&text), vec![WarningKind::PinNotChecked]);
+}
+
+#[test]
+fn wandb_links_are_warned_since_the_server_cant_tell_a_dead_one() {
+    // wandb.ai sends every link to forge.coreweave.com, which answers the same page
+    // for a run that doesn't exist.
+    let text = entry("logs: [https://wandb.ai/a/b/runs/abc123]\n", "");
+    assert_eq!(warning_kinds(&text), vec![WarningKind::HostNotListed]);
 }
 
 #[test]

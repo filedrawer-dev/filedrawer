@@ -6,6 +6,7 @@ use analyzer::{
 };
 use sqlx::SqlitePool;
 
+use crate::link_checks::LinkFlags;
 use crate::screening::Verdict;
 use crate::series::Cited;
 use crate::{allowance, ids, time::now};
@@ -28,6 +29,11 @@ pub struct PublicEntry {
     pub screening_note: Option<String>,
     /// It cites an attachment set.
     pub code_attached: bool,
+    /// The link checks' flags (`link_checks::LinkFlags`).
+    pub code_link_dead: bool,
+    pub logs_link_dead: bool,
+    pub pin_not_verified: bool,
+    pub pin_failed: bool,
 }
 
 /// The card context only the server knows: the entry's ID and its author, whose
@@ -75,12 +81,18 @@ impl PublicEntry {
 
     /// The card, with `superseded_by` as the server's record of what replaced it.
     pub fn card_with(&self, superseded_by: Option<String>) -> String {
-        let context = CardContext {
+        let flags = LinkFlags {
+            code_link_dead: self.code_link_dead,
+            logs_link_dead: self.logs_link_dead,
+            pin_not_verified: self.pin_not_verified,
+            pin_failed: self.pin_failed,
+        };
+        let context = flags.on(CardContext {
             superseded_by_version: superseded_by,
             screening_note: self.screening_note.clone(),
             code_attached: self.code_attached,
             ..card_context(&self.id, &self.account_id, self.display_name.as_deref())
-        };
+        });
         render_card(&analyze(&self.source), &context)
     }
 }
@@ -561,8 +573,13 @@ pub async fn public_entry(pool: &SqlitePool, id: &str) -> Result<Option<PublicEn
                   (SELECT p.id FROM entries p WHERE p.seq = e.previous_seq AND p.status = 'public') AS "previous_id?",
                   (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS "superseded_by?",
                   e.screening_note,
-                  e.attachment_set_seq IS NOT NULL AS "code_attached!: bool"
+                  e.attachment_set_seq IS NOT NULL AS "code_attached!: bool",
+                  IFNULL(f.code_link_dead, 0) AS "code_link_dead!: bool",
+                  IFNULL(f.logs_link_dead, 0) AS "logs_link_dead!: bool",
+                  IFNULL(f.pin_not_verified, 0) AS "pin_not_verified!: bool",
+                  IFNULL(f.pin_failed, 0) AS "pin_failed!: bool"
          FROM entries e JOIN authors a ON a.id = e.account_id
+         LEFT JOIN link_flags f ON f.entry_seq = e.seq
          WHERE e.id = ? AND e.status = 'public'"#,
         id
     )
@@ -604,8 +621,13 @@ pub async fn search(
                   (SELECT p.id FROM entries p WHERE p.seq = e.previous_seq AND p.status = 'public') AS "previous_id?",
                   (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS "superseded_by?",
                   e.screening_note,
-                  e.attachment_set_seq IS NOT NULL AS "code_attached!: bool"
+                  e.attachment_set_seq IS NOT NULL AS "code_attached!: bool",
+                  IFNULL(f.code_link_dead, 0) AS "code_link_dead!: bool",
+                  IFNULL(f.logs_link_dead, 0) AS "logs_link_dead!: bool",
+                  IFNULL(f.pin_not_verified, 0) AS "pin_not_verified!: bool",
+                  IFNULL(f.pin_failed, 0) AS "pin_failed!: bool"
            FROM entries e JOIN authors a ON a.id = e.account_id
+           LEFT JOIN link_flags f ON f.entry_seq = e.seq
            WHERE e.status = 'public'
              -- Only the latest version in each chain (design.md, Entry lifecycle).
              AND NOT EXISTS (SELECT 1 FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public')
@@ -650,8 +672,13 @@ pub async fn all_public(pool: &SqlitePool) -> Result<Vec<PublicEntry>, sqlx::Err
                   (SELECT p.id FROM entries p WHERE p.seq = e.previous_seq AND p.status = 'public') AS "previous_id?",
                   (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS "superseded_by?",
                   e.screening_note,
-                  e.attachment_set_seq IS NOT NULL AS "code_attached!: bool"
+                  e.attachment_set_seq IS NOT NULL AS "code_attached!: bool",
+                  IFNULL(f.code_link_dead, 0) AS "code_link_dead!: bool",
+                  IFNULL(f.logs_link_dead, 0) AS "logs_link_dead!: bool",
+                  IFNULL(f.pin_not_verified, 0) AS "pin_not_verified!: bool",
+                  IFNULL(f.pin_failed, 0) AS "pin_failed!: bool"
          FROM entries e JOIN authors a ON a.id = e.account_id
+         LEFT JOIN link_flags f ON f.entry_seq = e.seq
          WHERE e.status = 'public'
            AND NOT EXISTS (SELECT 1 FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public')
          ORDER BY e.seq"#

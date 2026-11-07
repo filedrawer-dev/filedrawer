@@ -5,6 +5,7 @@ use std::process::ExitCode;
 
 use filedrawer_server::config::Config;
 use filedrawer_server::file_store::FileStore;
+use filedrawer_server::link_checks::LinkChecker;
 use std::sync::Arc;
 
 use filedrawer_server::mail::{LogMailer, Mailer, SmtpMailer};
@@ -39,6 +40,13 @@ deploy. Production refuses it.
 Email goes through SMTP over TLS when FILEDRAWER_SMTP_HOST, FILEDRAWER_SMTP_USER,
 FILEDRAWER_SMTP_PASSWORD and FILEDRAWER_MAIL_FROM are all set (FILEDRAWER_SMTP_PORT
 defaults to 465), and to the log otherwise. Production refuses to start without them.
+
+Submissions fetch their code and logs links on github.com, huggingface.co and
+zenodo.org, and ask GitHub's API whether a code commit is on the repository's own
+branches. FILEDRAWER_GITHUB_TOKEN, a token with no repository access, raises GitHub's
+allowance from 60 calls an hour to 5,000; production refuses to start without it.
+FILEDRAWER_LINK_CHECKS=off fetches nothing, for tests that run this binary;
+production refuses it.
 
 The admin commands need only FILEDRAWER_DATABASE. create-account prints the new
 account's ID. create-token prints a new API token for the account; only its hash
@@ -159,6 +167,11 @@ async fn serve() -> ExitCode {
             Arc::new(LogMailer)
         }
     };
+    if config.github_token.is_none() {
+        tracing::warn!(
+            "no FILEDRAWER_GITHUB_TOKEN: the link checks may call GitHub's API 60 times an hour"
+        );
+    }
     let state = AppState {
         pool,
         screener: config.screener,
@@ -178,6 +191,16 @@ async fn serve() -> ExitCode {
         )),
         environment: config.environment,
         screening_health: Default::default(),
+        link_checker: Arc::new(if config.link_checks {
+            LinkChecker::over_https(
+                config
+                    .github_token
+                    .as_ref()
+                    .map(|token| token.expose().to_string()),
+            )
+        } else {
+            LinkChecker::off()
+        }),
     };
     tokio::spawn(filedrawer_server::jobs::run_publisher(state.clone()));
     tokio::spawn(filedrawer_server::jobs::run_tidier(state.clone()));

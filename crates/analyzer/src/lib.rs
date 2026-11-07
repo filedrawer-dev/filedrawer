@@ -24,7 +24,9 @@ pub use encoded::{
     starts_zlib,
 };
 pub use fields::{DataItem, Fields, Model, PositiveControl, SmallestEffect, Writer};
-pub use links::{LISTED_HOSTS, Pin, code_pin};
+pub use links::{
+    GithubCommit, LISTED_HOSTS, Pin, code_pin, github_commit, listed_host, zenodo_record,
+};
 pub use report::{MAX_ENTRY_BYTES, MAX_LOGS, Refusal, Warning, WarningKind};
 pub use results::{
     CORE_COLUMNS, Interval, Intervals, NoEffect, Reading, Results, ResultsTable, Row, Tally,

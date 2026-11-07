@@ -289,3 +289,45 @@ Choices the docs left open, made while building the analyzer. Once the owner set
 - Options: as now, an invited signup counts against its address's email limit only, so a holder of a valid code can have the server send "this address already has an account" notes to any number of addresses from one IP, each up to its own address limit; count the IP for such signups too, which would tell a code holder which addresses have accounts, since only those would trip it; or send no note at all when a signup with a code meets a taken address.
 - Chosen: as now. design.md lifts the per-IP email limit for invited signups so a sprint behind one IP can verify, and both alternatives either leak or change what an honest person who signs up twice is told.
 - Against: a leaked sprint code is a mail-sending tool until it expires or the owner revokes it (the next build), at up to 5 notes an hour to each address. Sending no note for invited signups costs only that rare honest case.
+
+## What a link check counts as dead
+
+- Options: count only 404 and 410 as dead, or any 4xx but 408 and 429; follow a redirect to a listed host's download domain, or count it live unfetched.
+- Chosen: any 4xx but 408 and 429 is dead, since Hugging Face answers 401 for a private or missing repository. A redirect to `codeload.github.com`, `raw.githubusercontent.com`, `objects.githubusercontent.com`, or a host under `huggingface.co` or `hf.co`, is live without a fetch, so the server never downloads a file. A link with a user or a port is dead unfetched.
+- Against: a 403 from GitHub's web pages can mean a rate limit rather than a missing page, and such a link would be flagged dead until a recheck a week later.
+
+## When the link checks run, and for how long
+
+- Options: in the submission request, or in a job during the hour's hold, with the warnings shown at `GET /e/<id>`.
+- Chosen: in the request, after every other check, each URL once, 8 at a time, each fetch at most 10 s, all of them at most 20 s; what is unanswered then counts as "retry later". The warnings arrive in the reply, and a bad pin can be refused.
+- Against: a submission with a slow host takes up to 20 s longer, and a batch of 100 entries with many distinct links may leave some unchecked until the weekly recheck.
+
+## An account's share of GitHub's API calls
+
+- Options: count each account's calls per UTC hour, or in a token bucket that refills over an hour; in memory, or in SQLite as the hourly rate limits are.
+- Chosen: a token bucket of a tenth of the hour's calls, in memory beside the per-minute rate limits. It has no boundary at which an account gets two hours' worth at once, and a restart forgets at most one hour's count.
+- Against: a deploy hands every account a full share again.
+
+## Which branches the fork check compares
+
+- Options: the first 10 other branches in GitHub's list (alphabetical), or the 10 most recently pushed, which needs a call per branch to learn.
+- Chosen: the first 10 in the list, skipping the one whose head is the default branch's. One call lists up to 100.
+- Against: in a repository with many branches, the commit's branch may sort late, and an honest entry is refused; the reason says how many branches the server checked.
+
+## What the weekly recheck covers
+
+- Options: recheck only the flagged links, or every link of an entry that has one; skip entries by status.
+- Chosen: every link of an entry with a link that is dead, answered "retry later", or holds a pin not verified or failed, so a link that died since gets its flag too; every status except rejected, withdrawn and removed. It runs from the hourly tidier, up to 100 entries a run.
+- Against: a public entry whose links were all live at submission is never rechecked, so a repository deleted later keeps a clean card.
+
+## `FILEDRAWER_LINK_CHECKS=off`
+
+- Options: a setting that turns the checks off, or no setting, with every fixture the binary's tests submit kept free of listed-host links.
+- Chosen: the setting, which production refuses, like `FILEDRAWER_SCREENER=pass-all`. `crates/server/tests/smoke.rs` sets it, since `ops/smoke-staging eval` submits the `ops/screen-eval/` cases, which link github.com.
+- Against: one more setting, and the binary's tests no longer exercise the checks; the router tests do, with a fake web.
+
+## Staging without a GitHub token
+
+- Options: staging refuses to start without `FILEDRAWER_GITHUB_TOKEN`, as production does, or starts and logs a warning.
+- Chosen: it starts, with the warning, so a deploy before `ops/provision-vps github` has run doesn't fail.
+- Against: staging can run for days at 60 calls an hour, with most GitHub links "pin not verified", and nothing but the log says so.

@@ -3,6 +3,7 @@
 
 pub mod attachments;
 pub mod fake_models;
+pub mod fake_web;
 pub mod series;
 pub mod through_caddy;
 
@@ -170,6 +171,8 @@ pub struct TestApp {
     pub outbox: Outbox,
     /// Where the app keeps attached files' bytes, deleted when the test ends.
     pub files_dir: Arc<tempfile::TempDir>,
+    /// The web its link checks see.
+    pub web: fake_web::FakeWeb,
 }
 
 /// The text of every attached file the app keeps on disk, sorted: the files under
@@ -216,6 +219,7 @@ pub fn state(pool: sqlx::SqlitePool, outbox: &Outbox, files_dir: &std::path::Pat
         rate_limits: Arc::new(RateLimits::new(Limits::site())),
         environment: filedrawer_server::config::Environment::Dev,
         screening_health: Default::default(),
+        link_checker: fake_web::FakeWeb::default().checker(5000),
     }
 }
 
@@ -233,9 +237,11 @@ pub async fn test_app_with(screener: Screener, daily_nano_usd: i64) -> TestApp {
         .unwrap();
     let outbox = Outbox::default();
     let files_dir = files_dir();
+    let web = fake_web::FakeWeb::default();
     let state = AppState {
         screener,
         screening_daily_nano_usd: daily_nano_usd,
+        link_checker: web.checker(5000),
         ..state(pool.clone(), &outbox, files_dir.path())
     };
     let router = app(state.clone());
@@ -247,6 +253,7 @@ pub async fn test_app_with(screener: Screener, daily_nano_usd: i64) -> TestApp {
         token,
         outbox,
         files_dir,
+        web,
     }
 }
 
@@ -355,6 +362,14 @@ impl TestApp {
             .extensions_mut()
             .insert(axum::extract::ConnectInfo(peer));
         self.send(request).await
+    }
+
+    /// The app with GitHub's hourly allowance of API calls at `calls`, of which each
+    /// account may spend a tenth.
+    pub fn with_github_hourly(mut self, calls: u32) -> TestApp {
+        self.state.link_checker = self.web.checker(calls);
+        self.router = app(self.state.clone());
+        self
     }
 
     /// The app with these rate limits, and its counts so far forgotten.

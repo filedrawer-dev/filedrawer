@@ -76,6 +76,7 @@ async fn admin_commands_make_an_account_and_a_token_the_server_accepts() {
         token,
         outbox,
         files_dir,
+        web: Default::default(),
     };
     let reply = test.post("/entries", common::entry("T", "")).await;
     assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
@@ -96,6 +97,7 @@ async fn admin_grant_lets_the_accounts_browser_session_reach_the_admin_pages() {
         token: String::new(),
         outbox,
         files_dir,
+        web: Default::default(),
     };
     let (cookie, _) = common::browser_account(&test, "owner@example.com").await;
     assert_eq!(

@@ -74,12 +74,15 @@ The server refuses an entry, with every reason, when:
 - a required field or section is missing;
 - it is over 100 KiB (HTTP 413);
 - `code` names GitHub or Hugging Face without a 40-character commit;
+- `code` names a GitHub commit that is on none of that repository's branches (GitHub shows a fork's commits under its parent's URL: link the fork), or a Zenodo concept record rather than a version record;
 - `## Reproduce` fetches code at a branch or tag;
 - `logs` lists more than 10 URLs;
 - `embargo_until` isn't a YYYY-MM-DD date, is more than 3 months away, or has passed;
 - it holds encoded text that decodes to readable text or a compressed stream (base64, base32, hex, base85, or many URL escapes outside a link). Link to such data on Zenodo or in a repo instead; hashes, keys, commit IDs and links are fine.
 
 Everything else it can't read, it accepts with a warning. Those refusals answer HTTP 422 unless noted.
+
+The server fetches `code` and `logs` links on github.com, huggingface.co and zenodo.org when you submit, and never links in the body. A link that answers 404 or another error, or redirects off those hosts, draws a warning and "code link dead" or "logs link dead" on the card; one that doesn't answer draws a warning only. When the server can't confirm a `code` pin, because the link is dead or GitHub or Zenodo didn't answer, the card says "pin not verified". The server checks such links again each week and updates the card, which says "code pin failed" if a later check finds a fork's commit or a concept record. A private repo is fine while the entry is embargoed: its links are checked again weekly. Links on other hosts, wandb.ai among them, aren't fetched, and draw a warning that the server can't check them.
 
 ### Rules for what you write
 
@@ -240,7 +243,7 @@ positive_control:
   source: this_run
 code_state: committed
 code: https://github.com/example/steering/tree/0123456789abcdef0123456789abcdef01234567
-logs: [https://wandb.ai/example/steering/runs/abc123]
+logs: [https://huggingface.co/datasets/example/steering-logs/tree/0123456789abcdef0123456789abcdef01234567]
 written_by:
   - model: claude-opus-5-5
     harness: Claude Code 2.1.318

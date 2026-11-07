@@ -98,8 +98,65 @@ fn the_anthropic_screener_needs_its_key() {
         SMTP[1],
         SMTP[2],
         SMTP[3],
+        ("FILEDRAWER_GITHUB_TOKEN", "github_pat_not_real"),
     ]);
     assert!(production.is_ok(), "{production:?}");
+}
+
+#[test]
+fn production_needs_a_github_token_and_debug_hides_it() {
+    let mut production = vec![
+        ("FILEDRAWER_ENVIRONMENT", "production"),
+        ("FILEDRAWER_SCREENER", "anthropic"),
+        ("FILEDRAWER_ANTHROPIC_API_KEY", "sk-ant-not-real"),
+    ];
+    production.extend(SMTP);
+    let error = config(&production).unwrap_err();
+    assert_eq!(error, ConfigError::NoGithubTokenInProduction);
+    assert!(error.to_string().contains("FILEDRAWER_GITHUB_TOKEN"));
+    production.push(("FILEDRAWER_GITHUB_TOKEN", "github_pat_not_real"));
+    let production = config(&production).unwrap();
+    assert_eq!(
+        production.github_token.as_ref().map(|token| token.expose()),
+        Some("github_pat_not_real")
+    );
+    assert!(!format!("{production:?}").contains("github_pat_not_real"));
+}
+
+#[test]
+fn link_checks_are_on_unless_turned_off_and_production_refuses_off() {
+    assert!(config(&[]).unwrap().link_checks);
+    assert!(
+        !config(&[("FILEDRAWER_LINK_CHECKS", "off")])
+            .unwrap()
+            .link_checks
+    );
+    assert!(matches!(
+        config(&[("FILEDRAWER_LINK_CHECKS", "sometimes")]),
+        Err(ConfigError::Invalid {
+            name: "FILEDRAWER_LINK_CHECKS",
+            ..
+        })
+    ));
+    let mut production = vec![
+        ("FILEDRAWER_ENVIRONMENT", "production"),
+        ("FILEDRAWER_SCREENER", "anthropic"),
+        ("FILEDRAWER_ANTHROPIC_API_KEY", "sk-ant-not-real"),
+        ("FILEDRAWER_GITHUB_TOKEN", "github_pat_not_real"),
+        ("FILEDRAWER_LINK_CHECKS", "off"),
+    ];
+    production.extend(SMTP);
+    assert_eq!(
+        config(&production).unwrap_err(),
+        ConfigError::LinkChecksOffInProduction
+    );
+}
+
+#[test]
+fn staging_runs_with_or_without_a_github_token() {
+    assert!(config(&[]).unwrap().github_token.is_none());
+    let staging = config(&[("FILEDRAWER_GITHUB_TOKEN", "github_pat_not_real")]).unwrap();
+    assert!(staging.github_token.is_some());
 }
 
 #[test]
@@ -204,6 +261,7 @@ fn the_attachment_cap_is_20_gb_in_production_and_2_gb_elsewhere() {
                 ("FILEDRAWER_ENVIRONMENT", "production"),
                 ("FILEDRAWER_SCREENER", "anthropic"),
                 ("FILEDRAWER_ANTHROPIC_API_KEY", "sk-not-real"),
+                ("FILEDRAWER_GITHUB_TOKEN", "github_pat_not_real"),
             ],
         ]
         .concat(),

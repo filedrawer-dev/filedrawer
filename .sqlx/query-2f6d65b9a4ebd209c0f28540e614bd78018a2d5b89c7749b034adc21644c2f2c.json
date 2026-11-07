@@ -1,0 +1,86 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT field, url, reach, reach_detail, pin, pin_detail FROM link_checks\n         WHERE entry_seq = ? ORDER BY field, rowid",
+  "describe": {
+    "columns": [
+      {
+        "name": "field",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "link_checks",
+            "name": "field"
+          }
+        }
+      },
+      {
+        "name": "url",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "link_checks",
+            "name": "url"
+          }
+        }
+      },
+      {
+        "name": "reach",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "link_checks",
+            "name": "reach"
+          }
+        }
+      },
+      {
+        "name": "reach_detail",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "link_checks",
+            "name": "reach_detail"
+          }
+        }
+      },
+      {
+        "name": "pin",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "link_checks",
+            "name": "pin"
+          }
+        }
+      },
+      {
+        "name": "pin_detail",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "link_checks",
+            "name": "pin_detail"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "2f6d65b9a4ebd209c0f28540e614bd78018a2d5b89c7749b034adc21644c2f2c"
+}

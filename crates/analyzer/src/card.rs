@@ -26,6 +26,11 @@ pub struct CardContext {
     pub code_attached: bool,
     pub code_link_dead: bool,
     pub logs_link_dead: bool,
+    /// The server couldn't confirm the `code` link's pin online.
+    pub pin_not_verified: bool,
+    /// A check after submission found the `code` link's pin bad: a fork's commit
+    /// under its parent's URL, or a Zenodo concept record.
+    pub pin_failed: bool,
     /// The ID of the version that superseded this one.
     pub superseded_by_version: Option<String>,
     pub replications: Vec<Replication>,
@@ -480,10 +485,13 @@ fn flags(analysis: &Analysis, context: &CardContext) -> Vec<Part> {
     if context.logs_link_dead {
         parts.push(server("; logs link dead"));
     }
-    if fields
-        .code
-        .as_deref()
-        .is_some_and(|url| code_pin(url) == Pin::HostNotListed)
+    if context.pin_failed {
+        parts.push(server("; code pin failed"));
+    } else if context.pin_not_verified
+        || fields
+            .code
+            .as_deref()
+            .is_some_and(|url| code_pin(url) == Pin::HostNotListed)
     {
         parts.push(server("; pin not verified"));
     }

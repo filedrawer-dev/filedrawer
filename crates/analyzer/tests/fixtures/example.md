@@ -20,7 +20,7 @@ positive_control:
   source: this_run
 code_state: committed
 code: https://github.com/example/steering/tree/0123456789abcdef0123456789abcdef01234567
-logs: [https://wandb.ai/example/steering/runs/abc123]
+logs: [https://huggingface.co/datasets/example/steering-logs/tree/0123456789abcdef0123456789abcdef01234567]
 written_by:
   - model: claude-opus-5-5
     harness: Claude Code 2.1.318

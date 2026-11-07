@@ -44,6 +44,30 @@ pub struct Config {
     /// The most bytes of attached files the site stores in all (design.md,
     /// Attached code: 20 GB in production, 2 GB elsewhere).
     pub attachment_store_cap_bytes: i64,
+    /// What the link checks call GitHub's API with: 5,000 calls an hour instead of
+    /// 60 (design.md, Submission and screening, step 2). Production refuses to run
+    /// without one.
+    pub github_token: Option<GithubToken>,
+    /// Whether submissions fetch their `code` and `logs` links. Off only for the
+    /// tests that run the server binary, so they reach no real host; production
+    /// refuses off.
+    pub link_checks: bool,
+}
+
+/// A GitHub token, which Debug output leaves out.
+#[derive(Clone)]
+pub struct GithubToken(String);
+
+impl GithubToken {
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for GithubToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("GithubToken(..)")
+    }
 }
 
 /// How to reach the SMTP server. Its Debug output leaves the password out.
@@ -102,6 +126,12 @@ pub enum ConfigError {
         "set all of FILEDRAWER_SMTP_HOST, FILEDRAWER_SMTP_USER, FILEDRAWER_SMTP_PASSWORD and FILEDRAWER_MAIL_FROM, or none; {0} is missing"
     )]
     PartialSmtp(&'static str),
+    #[error(
+        "production checks code links with GitHub's API, which allows 60 calls an hour without a token, so it needs FILEDRAWER_GITHUB_TOKEN"
+    )]
+    NoGithubTokenInProduction,
+    #[error("FILEDRAWER_LINK_CHECKS=off leaves every link unchecked, so production refuses it")]
+    LinkChecksOffInProduction,
 }
 
 /// The SMTP settings, if any are set. All four must be set together.
@@ -250,7 +280,30 @@ impl Config {
             Environment::Production => 20_000_000_000,
             Environment::Staging | Environment::Dev => 2_000_000_000,
         };
+        let github_token = var("FILEDRAWER_GITHUB_TOKEN")
+            .map(|token| token.trim().to_string())
+            .filter(|token| !token.is_empty())
+            .map(GithubToken);
+        if environment == Environment::Production && github_token.is_none() {
+            return Err(ConfigError::NoGithubTokenInProduction);
+        }
+        let link_checks = match var("FILEDRAWER_LINK_CHECKS").as_deref() {
+            None | Some("on") => true,
+            Some("off") => false,
+            Some(other) => {
+                return Err(ConfigError::Invalid {
+                    name: "FILEDRAWER_LINK_CHECKS",
+                    value: other.to_string(),
+                    expected: "on or off",
+                });
+            }
+        };
+        if environment == Environment::Production && !link_checks {
+            return Err(ConfigError::LinkChecksOffInProduction);
+        }
         Ok(Config {
+            link_checks,
+            github_token,
             files_dir,
             attachment_store_cap_bytes,
             database,

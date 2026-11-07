@@ -56,6 +56,8 @@ fn serve_with(database: PathBuf, settings: &[(&str, &str)]) -> Server {
         .env("FILEDRAWER_DATABASE", &database)
         .env("FILEDRAWER_LISTEN", format!("127.0.0.1:{port}"))
         .env("FILEDRAWER_ENVIRONMENT", "dev")
+        // So the eval's cases, which link github.com, fetch nothing.
+        .env("FILEDRAWER_LINK_CHECKS", "off")
         .env("FILEDRAWER_PUBLIC_URL", &url)
         .env("RUST_LOG", "error")
         .envs(settings.iter().copied())

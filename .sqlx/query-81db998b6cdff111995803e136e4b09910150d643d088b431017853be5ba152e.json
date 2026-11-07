@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT e.seq AS \"seq!: i64\", e.id, e.source, e.account_id,\n                  a.display_name AS \"display_name?: String\", e.submitted_at, e.published_at,\n                  (SELECT p.id FROM entries p WHERE p.seq = e.previous_seq AND p.status = 'public') AS \"previous_id?\",\n                  (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS \"superseded_by?\",\n                  e.screening_note,\n                  e.attachment_set_seq IS NOT NULL AS \"code_attached!: bool\"\n           FROM entries e JOIN authors a ON a.id = e.account_id\n           WHERE e.status = 'public'\n             -- Only the latest version in each chain (design.md, Entry lifecycle).\n             AND NOT EXISTS (SELECT 1 FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public')\n             AND (?1 IS NULL OR e.seq IN (SELECT rowid FROM entries_fts WHERE entries_fts MATCH ?1))\n             AND (?2 IS NULL OR e.outcome = ?2)\n             AND (?3 IS NULL OR e.kind = ?3)\n             AND (?4 IS NULL OR e.stage = ?4)\n             AND (?5 IS NULL OR e.seq IN (SELECT entry_seq FROM entry_tags WHERE tag = ?5))\n             AND (?6 IS NULL OR e.seq IN (SELECT entry_seq FROM entry_models\n                                          WHERE name = ?6 AND (role IS NULL OR role = 'subject')))\n             AND ((?7 IS NULL AND ?8 IS NULL) OR e.seq IN (\n                    SELECT entry_seq FROM entry_rows\n                    WHERE (?7 IS NULL OR model = ?7) AND (?8 IS NULL OR claim = ?8)))\n           ORDER BY\n             -- CASE runs the MATCH only when there are words; MATCH NULL is an error.\n             CASE WHEN ?1 IS NULL THEN NULL ELSE (\n               SELECT bm25(entries_fts, 10.0, 5.0, 2.0, 1.0) FROM entries_fts\n               WHERE entries_fts MATCH ?1 AND rowid = e.seq) END,\n             e.published_at DESC, e.seq DESC\n           LIMIT ?9 OFFSET ?10",
+  "query": "SELECT e.seq AS \"seq!: i64\", e.id, e.source, e.account_id,\n                  a.display_name AS \"display_name?: String\", e.submitted_at, e.published_at,\n                  (SELECT p.id FROM entries p WHERE p.seq = e.previous_seq AND p.status = 'public') AS \"previous_id?\",\n                  (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS \"superseded_by?\",\n                  e.screening_note,\n                  e.attachment_set_seq IS NOT NULL AS \"code_attached!: bool\",\n                  IFNULL(f.code_link_dead, 0) AS \"code_link_dead!: bool\",\n                  IFNULL(f.logs_link_dead, 0) AS \"logs_link_dead!: bool\",\n                  IFNULL(f.pin_not_verified, 0) AS \"pin_not_verified!: bool\",\n                  IFNULL(f.pin_failed, 0) AS \"pin_failed!: bool\"\n         FROM entries e JOIN authors a ON a.id = e.account_id\n         LEFT JOIN link_flags f ON f.entry_seq = e.seq\n         WHERE e.id = ? AND e.status = 'public'",
   "describe": {
     "columns": [
       {
@@ -50,7 +50,7 @@
       {
         "name": "display_name?: String",
         "ordinal": 4,
-        "type_info": "Null",
+        "type_info": "Text",
         "origin": "Expression"
       },
       {
@@ -111,26 +111,54 @@
       {
         "name": "code_attached!: bool",
         "ordinal": 10,
-        "type_info": "Null",
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "code_link_dead!: bool",
+        "ordinal": 11,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "logs_link_dead!: bool",
+        "ordinal": 12,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "pin_not_verified!: bool",
+        "ordinal": 13,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "pin_failed!: bool",
+        "ordinal": 14,
+        "type_info": "Integer",
         "origin": "Expression"
       }
     ],
     "parameters": {
-      "Right": 10
+      "Right": 1
     },
     "nullable": [
-      null,
       false,
       false,
       false,
-      null,
       false,
       true,
       false,
-      false,
       true,
-      null
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false
     ]
   },
-  "hash": "f66a05ec1edfb2f13f70961bbcca81f7cf65721aff9fbaa9e03412966dd8c9b0"
+  "hash": "81db998b6cdff111995803e136e4b09910150d643d088b431017853be5ba152e"
 }

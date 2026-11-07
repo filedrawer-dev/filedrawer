@@ -17,6 +17,7 @@ use crate::auth::TokenAccount;
 use crate::entries::{self, NewEntry};
 use crate::error::AppError;
 use crate::jobs::hold_until;
+use crate::link_checks::{self, CheckedLink, LinkFlags};
 use crate::links::{self, Linked, SlugRule};
 use crate::queue;
 use crate::respond::{DELIMITER, Format, card_and_warnings};
@@ -173,10 +174,32 @@ pub async fn submit_batch(
     if !problems.is_empty() {
         return Err(refused(problems));
     }
+    // Last, so a batch refused for anything else spends no fetches.
+    let fields: Vec<_> = accepted
+        .iter()
+        .map(|member| &member.analysis.fields)
+        .collect();
+    let links = link_checks::check(&state, &fields, Some(&account.id)).await;
+    for (member_links, label) in links.iter().zip(&labels) {
+        problems.extend(
+            link_checks::refusals(member_links)
+                .into_iter()
+                .map(|reason| format!("{label}: {reason}")),
+        );
+    }
+    if !problems.is_empty() {
+        return Err(refused(problems));
+    }
 
     let now = time::now_utc();
     let publish_at = hold_until(now);
-    let stored = store(&state, &account, &runs, &accepted, &cites, &publish_at, now).await;
+    let checked = CheckedBatch {
+        runs: &runs,
+        accepted: &accepted,
+        cites: &cites,
+        links: &links,
+    };
+    let stored = store(&state, &account, &checked, &publish_at, now).await;
     let (batch_id, members) = match stored {
         Ok(Some(stored)) => stored,
         Ok(None) => return Err(allowance::refusal(accepted.len())),
@@ -190,9 +213,10 @@ pub async fn submit_batch(
     };
     let seqs: Vec<i64> = members.iter().map(|(seq, _, _)| *seq).collect();
     let screen_from = allowance::last_screen_from(&state.pool, &seqs, now.date()).await?;
-    let members: Vec<(String, &Accepted)> = members
+    let members: Vec<(String, &Accepted, &[CheckedLink])> = members
         .into_iter()
-        .map(|(_, id, member)| (id, member))
+        .zip(&links)
+        .map(|((_, id, member), links)| (id, member, links.as_slice()))
         .collect();
     Ok(batch_reply(
         &state,
@@ -205,25 +229,37 @@ pub async fn submit_batch(
     ))
 }
 
+/// A batch that passed every check: its runs, and each member with its series cite,
+/// attachment set and links, in order.
+struct CheckedBatch<'a> {
+    runs: &'a [(String, String)],
+    accepted: &'a [Accepted],
+    cites: &'a [(Option<Cited>, Option<i64>)],
+    links: &'a [Vec<CheckedLink>],
+}
+
 /// Stores a checked batch in one transaction: the batch, its runs and its members,
-/// each with its allowance unit. Returns each member's row and ID, or `None`, storing
-/// nothing, when the account's allowance has no room for them all.
+/// each with its links and allowance unit. Returns each member's row and ID, or
+/// `None`, storing nothing, when the account's allowance has no room for them all.
 async fn store<'a>(
     state: &AppState,
     account: &TokenAccount,
-    runs: &[(String, String)],
-    accepted: &'a [Accepted],
-    cites: &[(Option<Cited>, Option<i64>)],
+    checked: &CheckedBatch<'a>,
     publish_at: &str,
     now: OffsetDateTime,
 ) -> Result<Option<(String, Vec<(i64, String, &'a Accepted)>)>, sqlx::Error> {
     let mut transaction = crate::db::write_tx(&state.pool).await?;
     let (batch_seq, batch_id) = entries::insert_batch(&mut transaction, &account.id).await?;
-    for (run_id, declaration) in runs {
+    for (run_id, declaration) in checked.runs {
         entries::insert_run(&mut transaction, &account.id, run_id, declaration).await?;
     }
     let mut members = Vec::new();
-    for (member, (cited, set)) in accepted.iter().zip(cites) {
+    for ((member, (cited, set)), links) in checked
+        .accepted
+        .iter()
+        .zip(checked.cites)
+        .zip(checked.links)
+    {
         let new = NewEntry {
             account_id: &account.id,
             source: &member.source,
@@ -236,6 +272,7 @@ async fn store<'a>(
             attachments: *set,
         };
         let (seq, id) = entries::insert_on(&mut transaction, &new).await?;
+        link_checks::store(&mut transaction, seq, links, now).await?;
         members.push((seq, id, member));
     }
     let seqs: Vec<i64> = members.iter().map(|(seq, _, _)| *seq).collect();
@@ -254,7 +291,7 @@ fn batch_reply(
     format: Format,
     batch_id: &str,
     publish_at: &str,
-    members: &[(String, &Accepted)],
+    members: &[(String, &Accepted, &[CheckedLink])],
     screen_from: Option<Date>,
 ) -> Response {
     let publish = format!("{}/batches/{batch_id}/publish", state.public_url);
@@ -263,21 +300,26 @@ fn batch_reply(
          Fix a member before then by sending it again with PUT to its url, or publish the whole batch now with a POST to the publish url.\n{}",
         allowance::screen_from_lines(screen_from)
     );
-    for (id, _) in members {
+    for (id, _, _) in members {
         text.push_str(&format!("entry: {id} {}/e/{id}\n", state.public_url));
     }
     text.push_str(&format!("{DELIMITER}\n"));
     let mut json_members = Vec::new();
-    for (id, member) in members {
-        let context =
-            entries::own_card_context(id, &account.id, &account.display_name, &member.analysis);
+    for (id, member, links) in members {
+        let context = LinkFlags::of(links).on(entries::own_card_context(
+            id,
+            &account.id,
+            &account.display_name,
+            &member.analysis,
+        ));
         let card = render_card(&member.analysis, &context);
-        let warnings: Vec<String> = member
+        let mut warnings: Vec<String> = member
             .analysis
             .warnings
             .iter()
             .map(ToString::to_string)
             .collect();
+        warnings.extend(link_checks::warnings(links));
         text.push_str(&format!(
             "\nentry {id}, slug {}\nprimary row: {}\n{}",
             member.analysis.fields.slug.as_deref().unwrap_or(""),

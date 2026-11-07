@@ -16,6 +16,7 @@ use crate::auth::optional_token_account;
 use crate::embargo::parse_date;
 use crate::entries::{self, Filters};
 use crate::error::AppError;
+use crate::link_checks::{self, LinkFlags};
 use crate::respond::{DELIMITER, Format, author_name, card_and_warnings, one_line};
 use crate::series;
 use crate::{AppState, allowance, attachments, time};
@@ -263,10 +264,16 @@ async fn own_entry(
     for (number, note) in (1..).zip(&notes) {
         text.push_str(&format!("row {number}: {note}\n"));
     }
-    let context =
-        entries::own_card_context(&entry.id, &account.id, &account.display_name, &analysis);
+    let links = link_checks::stored(&state.pool, entry.seq).await?;
+    let context = LinkFlags::of(&links).on(entries::own_card_context(
+        &entry.id,
+        &account.id,
+        &account.display_name,
+        &analysis,
+    ));
     let card = render_card(&analysis, &context);
-    let warnings: Vec<String> = analysis.warnings.iter().map(ToString::to_string).collect();
+    let mut warnings: Vec<String> = analysis.warnings.iter().map(ToString::to_string).collect();
+    warnings.extend(link_checks::warnings(&links));
     // A model wrote the reasons from the entry, so they are author text.
     let reasons: Vec<String> = entry
         .rejection_reasons

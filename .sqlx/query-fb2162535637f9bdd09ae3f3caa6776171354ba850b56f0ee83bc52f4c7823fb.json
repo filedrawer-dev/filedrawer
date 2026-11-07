@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT e.seq AS \"seq!: i64\", e.id, e.source, e.account_id,\n                  a.display_name AS \"display_name?: String\", e.submitted_at, e.published_at,\n                  (SELECT p.id FROM entries p WHERE p.seq = e.previous_seq AND p.status = 'public') AS \"previous_id?\",\n                  (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS \"superseded_by?\",\n                  e.screening_note,\n                  e.attachment_set_seq IS NOT NULL AS \"code_attached!: bool\"\n         FROM entries e JOIN authors a ON a.id = e.account_id\n         WHERE e.status = 'public'\n           AND NOT EXISTS (SELECT 1 FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public')\n         ORDER BY e.seq",
+  "query": "SELECT e.seq AS \"seq!: i64\", e.id, e.source, e.account_id,\n                  a.display_name AS \"display_name?: String\", e.submitted_at, e.published_at,\n                  (SELECT p.id FROM entries p WHERE p.seq = e.previous_seq AND p.status = 'public') AS \"previous_id?\",\n                  (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS \"superseded_by?\",\n                  e.screening_note,\n                  e.attachment_set_seq IS NOT NULL AS \"code_attached!: bool\",\n                  IFNULL(f.code_link_dead, 0) AS \"code_link_dead!: bool\",\n                  IFNULL(f.logs_link_dead, 0) AS \"logs_link_dead!: bool\",\n                  IFNULL(f.pin_not_verified, 0) AS \"pin_not_verified!: bool\",\n                  IFNULL(f.pin_failed, 0) AS \"pin_failed!: bool\"\n         FROM entries e JOIN authors a ON a.id = e.account_id\n         LEFT JOIN link_flags f ON f.entry_seq = e.seq\n         WHERE e.status = 'public'\n           AND NOT EXISTS (SELECT 1 FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public')\n         ORDER BY e.seq",
   "describe": {
     "columns": [
       {
@@ -113,6 +113,30 @@
         "ordinal": 10,
         "type_info": "Integer",
         "origin": "Expression"
+      },
+      {
+        "name": "code_link_dead!: bool",
+        "ordinal": 11,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "logs_link_dead!: bool",
+        "ordinal": 12,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "pin_not_verified!: bool",
+        "ordinal": 13,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "pin_failed!: bool",
+        "ordinal": 14,
+        "type_info": "Integer",
+        "origin": "Expression"
       }
     ],
     "parameters": {
@@ -129,8 +153,12 @@
       true,
       true,
       true,
+      false,
+      false,
+      false,
+      false,
       false
     ]
   },
-  "hash": "671912cd485019278c59913e880a11a330845f68bd77e35978ddaaaf91680a16"
+  "hash": "fb2162535637f9bdd09ae3f3caa6776171354ba850b56f0ee83bc52f4c7823fb"
 }

@@ -90,10 +90,11 @@ fn daily(count: i64) -> Window {
 /// The longest window, past which counted events are deleted.
 const LONGEST_WINDOW_SECONDS: i64 = 86_400;
 
-/// How many per-minute buckets are kept before the full ones are dropped. A full
+/// How many buckets are kept before the full ones are dropped: the per-minute ones,
+/// and each account's hourly share of GitHub's API calls (`link_checks`). A full
 /// bucket is what a new one would be, so dropping it changes nothing; if none is
-/// full, all go, which forgives at most a minute's requests and only happens to a
-/// server that 100,000 clients reach within a minute.
+/// full, all go, which forgives at most a minute's requests, or an hour's GitHub
+/// calls, and only happens to a server that 100,000 clients reach within a minute.
 const MAX_BUCKETS: usize = 100_000;
 
 /// The limits and the per-minute counts.

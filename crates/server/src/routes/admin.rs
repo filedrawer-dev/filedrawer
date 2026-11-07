@@ -9,6 +9,7 @@ use axum::http::request::Parts;
 use axum::response::{IntoResponse, Redirect, Response};
 
 use crate::error::AppError;
+use crate::link_checks::{self, LinkFlags};
 use crate::pages::{
     AdminEntryPage, AdminFilePage, AdminInvitesPage, AdminQueuePage, QueueRow, ShownFile, page,
 };
@@ -93,8 +94,12 @@ pub async fn entry(
         .pop()
         .ok_or(AppError::NotFound)?;
     let analysis = analyze(&entry.source);
-    let context =
-        entries::card_context(&entry.id, &entry.account_id, entry.display_name.as_deref());
+    let links = link_checks::stored(&state.pool, entry.seq).await?;
+    let context = LinkFlags::of(&links).on(entries::card_context(
+        &entry.id,
+        &entry.account_id,
+        entry.display_name.as_deref(),
+    ));
     let card = render_card(&analysis, &context);
     // Shown with the entry once public, so the owner reads them too.
     let runs = entries::run_declarations(&state.pool, entry.seq).await?;

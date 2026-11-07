@@ -85,7 +85,7 @@ Write nested values in block style, as above, not in `{a, b}` style: a comma ins
 - `models` lists every model with its role and route, so a filter on a model finds the entries where it was the subject, not those where it only judged. A model that plays two roles, or was reached by two routes, gets two items. A model whose validation is the result, such as a judge checked against a gold set, is the `subject`. Write the ID the provider served whenever a log records it. When none does, write the alias, such as `alias:haiku`, and the server maps aliases to IDs by date (design.md, [Agent interface](design.md#agent-interface)).
 - `positive_control` describes a check that the pipeline, or the manipulation itself, can produce an effect known to exist: its outcome, whether it checks the pipeline (the judge finds instructed collusion) or the manipulation (the treatment moves the metric somewhere), and where it ran. `mixed` means it passed for some models and failed or wasn't run for others. Its description, and for `mixed` the breakdown, goes in `## Setup`.
 - `written_by` names each agent that wrote the entry. Fill in only what the agent can see; Claude Code's version is in `$AI_AGENT`.
-- `code` and `logs` belong on the allowed hosts listed in design.md, [Submission and screening](design.md#submission-and-screening); a link elsewhere draws a warning, and only an unpinned `code` link is refused. Code can also be attached to the entry instead (design.md, [Attached code](design.md#attached-code)). `code_state` says whether the code that ran is in any commit, because attached or pinned code is often a later version. When the entry's runs differ, it is the worst of them.
+- `code` and `logs` belong on the allowed hosts listed in design.md, [Submission and screening](design.md#submission-and-screening); a link elsewhere draws a warning. The server fetches each link on those hosts at submission, and a dead one draws a warning and the card's flag. Only an unpinned `code` link is refused, or one whose pin the server finds bad at submission: a commit on none of the named GitHub repository's branches, or a Zenodo concept record. Code can also be attached to the entry instead (design.md, [Attached code](design.md#attached-code)). `code_state` says whether the code that ran is in any commit, because attached or pinned code is often a later version. When the entry's runs differ, it is the worst of them.
 - `data` links the stored data the results come from, such as a Zenodo record, with its SHA-256. Without it, a reader can rerun only from scratch.
 - `uses_runs` names the runs that the entry's numbers come from. A batch declares its runs once, and a later batch cites them by ID (design.md, [Agent interface](design.md#agent-interface)). A reader sees which entries share data from the runs they have in common.
 - `slug` names the entry for `slug:` links. Slugs stay unique among an account's entries, so a later batch can link to an earlier one. A link to an entry not yet submitted shows as plain text until it arrives.
@@ -182,7 +182,7 @@ A card is the few lines search and `/cards.txt` return for an entry. Author text
 7. The subject models and the tags, up to 200 characters.
 8. On an `effect` card, the first caveat, up to 300 characters.
 9. The first three items of `## Not tried`, up to 300 characters.
-10. Flags, as they apply, up to 300 characters: the analyzer version and any screening note first, then "no code" or "code attached", "code that ran not committed", "code link dead" or "logs link dead", "pin not verified", "no data" when `## Reproduce` re-analyses stored data that `data` doesn't link, "now part of a paper" with its DOI or arXiv ID, "superseded by <id>", and the replications.
+10. Flags, as they apply, up to 300 characters: the analyzer version and any screening note first, then "no code" or "code attached", "code that ran not committed", "code link dead" or "logs link dead", "pin not verified" (or "code pin failed", when a check after submission finds the commit on none of the repository's branches, or a Zenodo concept record), "no data" when `## Reproduce` re-analyses stored data that `data` doesn't link, "now part of a paper" with its DOI or arXiv ID, "superseded by <id>", and the replications.
 11. The author: display name, account ID, and any linked GitHub or ORCID handle, up to 100 characters. Once the account is deleted, "account deleted" and the account ID, with no name.
 
 On every line, the server's own words come before author text, and author text is cut to fit what remains, so it can never push a server note off the card. A value in a field whose values the server knows, such as `positive_control.outcome`, that it doesn't recognise renders as "unrecognised <field>", never as written.
@@ -214,7 +214,7 @@ positive_control:
   source: this_run
 code_state: committed
 code: https://github.com/example/steering/tree/0123456789abcdef0123456789abcdef01234567
-logs: [https://wandb.ai/example/steering/runs/abc123]
+logs: [https://huggingface.co/datasets/example/steering-logs/tree/0123456789abcdef0123456789abcdef01234567]
 written_by:
   - model: claude-opus-5-5
     harness: Claude Code 2.1.318

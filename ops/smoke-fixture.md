@@ -19,8 +19,6 @@ positive_control:
   checks: pipeline
   source: this_run
 code_state: committed
-code: https://github.com/example/politeness/tree/0123456789abcdef0123456789abcdef01234567
-logs: [https://wandb.ai/example/politeness/runs/abc123]
 written_by:
   - model: claude-opus-5-5
     harness: Claude Code 2.1.318

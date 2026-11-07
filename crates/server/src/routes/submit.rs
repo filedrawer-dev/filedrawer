@@ -16,6 +16,7 @@ use crate::embargo::{parse_date, release, token_may_change};
 use crate::entries::{self, NewEntry, OwnEntry};
 use crate::error::AppError;
 use crate::jobs::{end_hold, hold_until};
+use crate::link_checks::{self, CheckedLink, LinkFlags};
 use crate::links::{self, Linked, SlugRule};
 use crate::respond::{DELIMITER, Format, card_and_warnings};
 use crate::series::{self, Cited};
@@ -210,11 +211,32 @@ async fn one_cite(
         })
 }
 
+/// Checks one entry's `code` and `logs` links online, refusing it when a pin is bad.
+async fn one_check(
+    state: &AppState,
+    account: &TokenAccount,
+    accepted: &Accepted,
+) -> Result<Vec<CheckedLink>, AppError> {
+    let links = link_checks::check(state, &[&accepted.analysis.fields], Some(&account.id))
+        .await
+        .pop()
+        .unwrap_or_default();
+    let reasons = link_checks::refusals(&links);
+    if !reasons.is_empty() {
+        return Err(AppError::Refused {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            reasons,
+        });
+    }
+    Ok(links)
+}
+
 /// A held entry, as a reply describes it.
 struct Held<'a> {
     id: &'a str,
     account: &'a TokenAccount,
     analysis: &'a Analysis,
+    links: &'a [CheckedLink],
     publish_at: &'a str,
     /// The entry this one is a new version of.
     previous: Option<&'a str>,
@@ -230,13 +252,20 @@ fn held_reply(state: &AppState, format: Format, status: StatusCode, held: &Held<
         id,
         account,
         analysis,
+        links,
         publish_at,
         previous,
         screen_from,
     } = *held;
-    let context = entries::own_card_context(id, &account.id, &account.display_name, analysis);
+    let context = LinkFlags::of(links).on(entries::own_card_context(
+        id,
+        &account.id,
+        &account.display_name,
+        analysis,
+    ));
     let card = render_card(analysis, &context);
-    let warnings: Vec<String> = analysis.warnings.iter().map(ToString::to_string).collect();
+    let mut warnings: Vec<String> = analysis.warnings.iter().map(ToString::to_string).collect();
+    warnings.extend(link_checks::warnings(links));
     let embargo = parse_date(analysis.fields.embargo_until.as_deref()).map(|date| date.to_string());
     let previous_line = previous.map_or(String::new(), |id| format!("previous: {id}\n"));
     let embargo_line = embargo
@@ -291,9 +320,10 @@ pub async fn submit(
     body: Bytes,
 ) -> Result<Response, AppError> {
     let accepted = accept(&body, None)?;
-    check_links(&state, &account, &accepted, SlugRule::New, None).await?;
+    check_references(&state, &account, &accepted, SlugRule::New, None).await?;
     let cited = one_cite(&state, &account, &accepted).await?;
     let set = one_set(&state, &account, &accepted).await?;
+    let links = one_check(&state, &account, &accepted).await?;
     let now = time::now_utc();
     let publish_at = hold_until(now);
     let new = NewEntry {
@@ -309,11 +339,13 @@ pub async fn submit(
     };
     let mut transaction = crate::db::write_tx(&state.pool).await?;
     let (seq, id) = entries::insert_on(&mut transaction, &new).await?;
+    link_checks::store(&mut transaction, seq, &links, now).await?;
     let screen_from = commit_with_unit(&state, transaction, &account.id, seq, now.date()).await?;
     let held = Held {
         id: &id,
         account: &account,
         analysis: &accepted.analysis,
+        links: &links,
         publish_at: &publish_at,
         previous: None,
         screen_from,
@@ -353,7 +385,7 @@ pub async fn new_version(
     let accepted = accept(&body, Some(Prior::of(&entry)))?;
     let chain_slug = entries::chain_slug(&state.pool, entry.seq).await?;
     let register_slug = chain_slug.is_none() && accepted.analysis.fields.slug.is_some();
-    check_links(
+    check_references(
         &state,
         &account,
         &accepted,
@@ -363,6 +395,7 @@ pub async fn new_version(
     .await?;
     let cited = one_cite(&state, &account, &accepted).await?;
     let set = one_set(&state, &account, &accepted).await?;
+    let links = one_check(&state, &account, &accepted).await?;
     let now = time::now_utc();
     let publish_at = hold_until(now);
     let new = NewEntry {
@@ -398,11 +431,13 @@ pub async fn new_version(
         }
         Err(error) => return Err(error.into()),
     };
+    link_checks::store(&mut transaction, seq, &links, now).await?;
     let screen_from = commit_with_unit(&state, transaction, &account.id, seq, now.date()).await?;
     let held = Held {
         id: &new_id,
         account: &account,
         analysis: &accepted.analysis,
+        links: &links,
         publish_at: &publish_at,
         previous: Some(&id),
         screen_from,
@@ -412,7 +447,7 @@ pub async fn new_version(
 
 /// Refuses one entry whose slug, runs or references don't check out. `seq` is the
 /// stored entry a PUT replaces.
-async fn check_links(
+async fn check_references(
     state: &AppState,
     account: &TokenAccount,
     accepted: &Accepted,
@@ -485,7 +520,7 @@ pub async fn resubmit(
     let accepted = accept(&body, Some(Prior::for_put(&entry, previous.as_ref())))?;
     // A slug names the entry for good, and other entries may already refer to it.
     let kept = analyzer::analyze(&entry.source).fields.slug;
-    check_links(
+    check_references(
         &state,
         &account,
         &accepted,
@@ -495,6 +530,7 @@ pub async fn resubmit(
     .await?;
     let cited = one_cite(&state, &account, &accepted).await?;
     let set = one_set(&state, &account, &accepted).await?;
+    let links = one_check(&state, &account, &accepted).await?;
     let now = time::now_utc();
     let publish_at = hold_until(now);
     let mut transaction = crate::db::write_tx(&state.pool).await?;
@@ -513,6 +549,7 @@ pub async fn resubmit(
             "entry {id}'s hold ended while it was being replaced"
         )));
     }
+    link_checks::store(&mut transaction, entry.seq, &links, now).await?;
     // The entry keeps the earliest day among its units, so a PUT never delays it.
     let screen_from =
         commit_with_unit(&state, transaction, &account.id, entry.seq, now.date()).await?;
@@ -520,6 +557,7 @@ pub async fn resubmit(
         id: &id,
         account: &account,
         analysis: &accepted.analysis,
+        links: &links,
         publish_at: &publish_at,
         previous: entry.previous_id.as_deref(),
         screen_from,

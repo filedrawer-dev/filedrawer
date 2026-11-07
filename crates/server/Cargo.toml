@@ -23,6 +23,7 @@ lzma-rust2 = { version = "0.25.0", default-features = false, features = ["std", 
 tar = { version = "0.4.46", default-features = false }
 zip = { version = "9.4.1", default-features = false, features = ["deflate-flate2", "bzip2", "lzma", "xz"] }
 filedrawer-analyzer = { path = "../analyzer" }
+futures = "0.3.34"
 lettre = { version = "0.11.23", default-features = false, features = ["smtp-transport", "tokio1", "tokio1-rustls", "rustls-native-certs", "builder", "ring"] }
 rand = "0.10.3"
 reqwest = { version = "0.12.28", default-features = false, features = ["rustls-tls", "json"] }
@@ -40,7 +41,6 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 [dev-dependencies]
 base64 = "0.23.1"
 lzma-rust2 = { version = "0.25.0", default-features = false, features = ["std", "xz", "encoder"] }
-futures = "0.3.34"
 http-body-util = "0.1.5"
 serde_json = "1.0.154"
 tempfile = "3.27.0"

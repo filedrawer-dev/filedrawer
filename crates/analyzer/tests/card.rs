@@ -61,6 +61,8 @@ fn the_server_context_fills_the_id_flags_and_author() {
         code_attached: true,
         code_link_dead: false,
         logs_link_dead: true,
+        pin_not_verified: false,
+        pin_failed: false,
         superseded_by_version: Some("fd-9zz1".into()),
         replications: vec![
             Replication {
@@ -87,6 +89,28 @@ fn the_server_context_fills_the_id_flags_and_author() {
         "analyzer v1; screening note: \"The body reports an effect.\"; code attached; logs link dead; superseded by fd-9zz1; replication fd-r1 (null); self-replication fd-r2 (effect)"
     );
     assert_eq!(lines[9], "Ada, account a91x, github:ada");
+}
+
+#[test]
+fn the_server_flags_a_pin_it_couldnt_verify_or_found_bad() {
+    let flags = |context: CardContext| {
+        render_card(&analyze(EXAMPLE), &context)
+            .lines()
+            .nth(8)
+            .unwrap()
+            .to_string()
+    };
+    let not_verified = CardContext {
+        pin_not_verified: true,
+        ..CardContext::default()
+    };
+    assert_eq!(flags(not_verified), "analyzer v1; pin not verified");
+    let failed = CardContext {
+        pin_not_verified: true,
+        pin_failed: true,
+        ..CardContext::default()
+    };
+    assert_eq!(flags(failed), "analyzer v1; code pin failed");
 }
 
 #[test]

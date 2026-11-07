@@ -7,7 +7,9 @@ use crate::fields::Fields;
 use crate::report::{Refusal, Warning, WarningKind};
 
 /// The hosts the server fetches `code` and `logs` links on, matched exactly.
-pub const LISTED_HOSTS: [&str; 4] = ["github.com", "huggingface.co", "zenodo.org", "wandb.ai"];
+/// wandb.ai isn't one: it sends every link to forge.coreweave.com, which answers the
+/// same page for a run that doesn't exist, so no fetch can tell a dead link.
+pub const LISTED_HOSTS: [&str; 3] = ["github.com", "huggingface.co", "zenodo.org"];
 
 /// How far a `code` link can be checked offline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,6 +30,7 @@ pub fn code_pin(url: &str) -> Pin {
     let Some((host, path)) = host_and_path(url) else {
         return Pin::HostNotListed;
     };
+    let path = path.as_str();
     match host.as_str() {
         "github.com" | "huggingface.co" if at_commit(&host, path) => Pin::Pinned,
         "github.com" | "huggingface.co" => Pin::Unpinned,
@@ -35,6 +38,67 @@ pub fn code_pin(url: &str) -> Pin {
         "doi.org" if path.starts_with("10.5281/zenodo.") => Pin::CheckedOnline,
         _ => Pin::HostNotListed,
     }
+}
+
+/// The repository and commit a pinned GitHub link names, as in
+/// `github.com/<owner>/<repo>/tree/<hash>` (entry-format.md, Fields: `code`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GithubCommit {
+    /// `<owner>/<repo>`, lowercased, without a `.git` suffix.
+    pub repo: String,
+    /// The 40-character hash, lowercased.
+    pub sha: String,
+}
+
+/// The commit a GitHub link is pinned to, or `None` if it isn't a pinned GitHub link
+/// whose owner and repository GitHub's API could be asked about (entry-format.md,
+/// Fields: `code`).
+pub fn github_commit(url: &str) -> Option<GithubCommit> {
+    let (host, path) = host_and_path(url)?;
+    if host != "github.com" {
+        return None;
+    }
+    let segments: Vec<&str> = path.split(['/', '?', '#']).collect();
+    let [owner, repo, rest @ ..] = segments.as_slice() else {
+        return None;
+    };
+    let repo = repo.strip_suffix(".git").unwrap_or(repo);
+    let sha = rest.iter().find(|segment| is_commit_hash(segment))?;
+    let name = |part: &str| {
+        !part.is_empty()
+            && part != "."
+            && part != ".."
+            && part
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+    };
+    (name(owner) && name(repo)).then(|| GithubCommit {
+        repo: format!("{owner}/{repo}").to_ascii_lowercase(),
+        sha: sha.to_ascii_lowercase(),
+    })
+}
+
+/// The Zenodo record a link names: `zenodo.org/records/<n>` (or `record`, or
+/// `api/records`), or the DOI `10.5281/zenodo.<n>` on zenodo.org or doi.org
+/// (entry-format.md, Fields: `code`).
+pub fn zenodo_record(url: &str) -> Option<u64> {
+    let (host, path) = host_and_path(url)?;
+    let path = path.split(['?', '#']).next().unwrap_or_default();
+    let number = match host.as_str() {
+        "zenodo.org" => {
+            let path = path.strip_prefix("api/").unwrap_or(path);
+            path.strip_prefix("records/")
+                .or_else(|| path.strip_prefix("record/"))
+                .or_else(|| path.strip_prefix("doi/10.5281/zenodo."))?
+        }
+        "doi.org" => path.strip_prefix("10.5281/zenodo.")?,
+        _ => return None,
+    };
+    let number = number.split('/').next().unwrap_or(number);
+    if number.is_empty() || !number.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    number.parse().ok()
 }
 
 /// Checks the `code`, `logs` and `data` links, and `## Reproduce`'s fetches.
@@ -86,21 +150,37 @@ fn not_listed(field: &str, url: &str) -> Warning {
 }
 
 fn is_listed(url: &str) -> bool {
-    host_and_path(url).is_some_and(|(host, _)| LISTED_HOSTS.contains(&host.as_str()))
+    listed_host(url).is_some()
 }
 
-/// The lowercased host and the path after it, for an http(s) URL.
-fn host_and_path(url: &str) -> Option<(String, &str)> {
-    let rest = url
-        .trim()
-        .strip_prefix("https://")
-        .or_else(|| url.trim().strip_prefix("http://"))?;
-    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
-    let authority = &rest[..end];
-    let host = authority.rsplit('@').next().unwrap_or(authority);
-    let host = host.split(':').next().unwrap_or(host);
-    let path = rest[end..].trim_start_matches('/');
-    Some((host.to_ascii_lowercase(), path))
+/// The host of an http(s) `url` when it is one of [`LISTED_HOSTS`], read as a
+/// browser reads it (entry-format.md, Fields: `code` and `logs` belong on these
+/// hosts).
+pub fn listed_host(url: &str) -> Option<String> {
+    host_and_path(url)
+        .map(|(host, _)| host)
+        .filter(|host| LISTED_HOSTS.contains(&host.as_str()))
+}
+
+/// The lowercased host of an http(s) URL, and everything after it without the
+/// leading `/`. The URL is parsed as browsers parse it, so `https://a.example\@b.com`
+/// is on a.example, as a browser opening it finds.
+fn host_and_path(url: &str) -> Option<(String, String)> {
+    let parsed = url::Url::parse(url.trim()).ok()?;
+    if !matches!(parsed.scheme(), "https" | "http") {
+        return None;
+    }
+    let host = parsed.host_str()?.to_ascii_lowercase();
+    let mut path = parsed.path().trim_start_matches('/').to_string();
+    if let Some(query) = parsed.query() {
+        path.push('?');
+        path.push_str(query);
+    }
+    if let Some(fragment) = parsed.fragment() {
+        path.push('#');
+        path.push_str(fragment);
+    }
+    Some((host, path))
 }
 
 /// Whether a GitHub or Hugging Face path names a commit after the owner and repo, as in
@@ -174,7 +254,7 @@ fn fetches_moving_ref(word: &str) -> bool {
     let segments: Vec<&str> = path.split('/').collect();
     match (host.as_str(), segments.as_slice()) {
         ("raw.githubusercontent.com", [_, _, reference, ..]) => {
-            !is_commit_hash(reference) && is_script(path)
+            !is_commit_hash(reference) && is_script(&path)
         }
         ("github.com", [_, _, "archive", rest @ ..]) => !rest
             .iter()

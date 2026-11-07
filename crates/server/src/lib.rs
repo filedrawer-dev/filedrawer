@@ -17,6 +17,7 @@ mod ids;
 mod invites;
 pub mod jobs;
 pub mod limits;
+pub mod link_checks;
 mod links;
 pub mod mail;
 mod pages;
@@ -81,6 +82,8 @@ pub struct AppState {
     pub environment: config::Environment,
     /// What the last screening calls came to, for `GET /staging/status`.
     pub screening_health: std::sync::Arc<screening::ScreeningHealth>,
+    /// Fetches `code` and `logs` links, and asks GitHub's API about commits.
+    pub link_checker: std::sync::Arc<link_checks::LinkChecker>,
 }
 
 /// The free disk an upload must leave (design.md, Attached code: 5 GB).
