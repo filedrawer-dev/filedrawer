@@ -300,12 +300,12 @@ Choices the docs left open, made while building the analyzer. Once the owner set
 
 - Options: in the submission request, or in a job during the hour's hold, with the warnings shown at `GET /e/<id>`.
 - Chosen: in the request, after every other check, each URL once, 8 at a time, each fetch at most 10 s, all of them at most 20 s; what is unanswered then counts as "retry later". The warnings arrive in the reply, and a bad pin can be refused.
-- Against: a submission with a slow host takes up to 20 s longer, and a batch of 100 entries with many distinct links may leave some unchecked until the weekly recheck.
+- Against: a submission with a slow host takes up to 20 s longer, and a batch of 100 entries with many distinct links may leave some unchecked until a recheck an hour later.
 
 ## An account's share of GitHub's API calls
 
 - Options: count each account's calls per UTC hour, or in a token bucket that refills over an hour; in memory, or in SQLite as the hourly rate limits are.
-- Chosen: a token bucket of a tenth of the hour's calls, in memory beside the per-minute rate limits. It has no boundary at which an account gets two hours' worth at once, and a restart forgets at most one hour's count.
+- Chosen: a token bucket of a tenth of the server's half of the hour's calls (250 with a token), in memory beside the per-minute rate limits. It has no boundary at which an account gets two hours' worth at once, and a restart forgets at most one hour's count.
 - Against: a deploy hands every account a full share again.
 
 ## Which branches the fork check compares
@@ -314,11 +314,17 @@ Choices the docs left open, made while building the analyzer. Once the owner set
 - Chosen: the first 10 in the list, skipping the one whose head is the default branch's. One call lists up to 100.
 - Against: in a repository with many branches, the commit's branch may sort late, and an honest entry is refused; the reason says how many branches the server checked.
 
-## What the weekly recheck covers
+## What a recheck covers, and when
 
-- Options: recheck only the flagged links, or every link of an entry that has one; skip entries by status.
-- Chosen: every link of an entry with a link that is dead, answered "retry later", or holds a pin not verified or failed, so a link that died since gets its flag too; every status except rejected, withdrawn and removed. It runs from the hourly tidier, up to 100 entries a run.
-- Against: a public entry whose links were all live at submission is never rechecked, so a repository deleted later keeps a clean card.
+- Options: recheck only the due links, or every link of an entry that has one; skip entries by status. Retry a link that couldn't be checked every hour, or an hour then doubling.
+- Chosen: every link of an entry with a link whose next check has come, so a link that died since gets its flag too; every status except rejected, withdrawn and removed. A dead link or a bad pin waits a week; a "retry later" link or an unconfirmed pin waits an hour, then 2, 4 and so on, at most a week, as GitHub advises for backing off. The job runs every minute, up to 100 entries a run, and stops while fewer than three quarters of GitHub's hourly calls are left, leaving submissions the rest of the server's half.
+- Against: a public entry whose links were all live at submission is never rechecked, so a repository deleted later keeps a clean card. And a host that is down for a day is retried 4 times that day, at 1, 3, 7 and 15 hours.
+
+## Pauses for hosts that ask the server to wait
+
+- Options: keep the pauses in memory or in SQLite; treat every GitHub 403 as a rate limit, or only one that says so; cap the waits or not.
+- Chosen: in memory, per host, with `api.github.com` for the API. A GitHub 403 counts as a rate limit only with no calls left, with `Retry-After`, or with "rate limit" in its message, since a 403 can also mean an account or repository is blocked. A page host's 503 pauses it only with `Retry-After`. `Retry-After` is held to a day, and a doubling wait to an hour. A pause only grows, and a normal answer ends the doubling but not the pause, since it may answer a fetch sent before the host asked. The recheck job doesn't run while GitHub's API is paused, so a long wait costs no retries.
+- Against: a restart forgets a pause, so a deploy during GitHub's secondary limit sends one call too soon; and a rate-limit 403 worded otherwise is read as a plain error, retried at the next submission.
 
 ## `FILEDRAWER_LINK_CHECKS=off`
 

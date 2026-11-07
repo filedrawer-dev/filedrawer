@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO link_checks\n                 (entry_seq, field, url, reach, reach_detail, pin, pin_detail, checked_at,\n                  next_check_at, retries)\n             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 10
+    },
+    "nullable": []
+  },
+  "hash": "cc9cf5783c63ef44bd2f4792890f38ec85c60b07268087f67572628efeab73ac"
+}

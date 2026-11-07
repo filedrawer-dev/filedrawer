@@ -201,10 +201,10 @@ async fn a_link_that_doesnt_answer_or_answers_5xx_is_not_dead() {
         warnings(&reply.body),
         [
             format!(
-                "the server couldn't check `logs: {busy}`: it answered 503; it tries again within a week"
+                "the server couldn't check `logs: {busy}`: it answered 503; it tries again an hour after the check, then less often"
             ),
             format!(
-                "the server couldn't check `logs: {down}`: it didn't answer (timed out); it tries again within a week"
+                "the server couldn't check `logs: {down}`: it didn't answer (timed out); it tries again an hour after the check, then less often"
             ),
         ]
     );
@@ -386,8 +386,9 @@ async fn a_confirmed_commit_costs_no_calls_the_next_time() {
 
 #[tokio::test]
 async fn an_account_past_its_share_of_githubs_calls_gets_pin_not_verified() {
-    // 30 calls an hour, of which an account may spend 3.
-    let app = test_app().await.with_github_hourly(30);
+    // 60 calls an hour: the server spends at most half, and an account a tenth of
+    // that, 3.
+    let app = test_app().await.with_github_hourly(60);
     for digit in ['1', '2', '3'] {
         let url = format!("https://github.com/ada/steering/tree/{}", hash(digit));
         let reply = app.post("/entries", with_code(&url)).await;
@@ -399,7 +400,7 @@ async fn an_account_past_its_share_of_githubs_calls_gets_pin_not_verified() {
     assert_eq!(
         warnings(&reply.body),
         [format!(
-            "the server couldn't confirm the pin of `code: {fourth}`: this account has used its share of the server's GitHub API calls for the hour; the card says \"pin not verified\" until a weekly recheck confirms it"
+            "the server couldn't confirm the pin of `code: {fourth}`: this account has used its share of the server's GitHub API calls for the hour; the card says \"pin not verified\" until a recheck confirms it"
         )]
     );
     assert!(flags(&reply.body).ends_with("; pin not verified"));
@@ -422,7 +423,7 @@ async fn when_githubs_api_cant_answer_the_pin_is_not_verified() {
     assert_eq!(
         warnings(&reply.body),
         [format!(
-            "the server couldn't confirm the pin of `code: {}`: GitHub's API didn't answer (timed out); the card says \"pin not verified\" until a weekly recheck confirms it",
+            "the server couldn't confirm the pin of `code: {}`: GitHub's API didn't answer (timed out); the card says \"pin not verified\" until a recheck confirms it",
             github_code()
         )]
     );
@@ -447,7 +448,8 @@ async fn once_githubs_calls_are_spent_the_server_stops_asking_until_they_reset()
     let other = format!("https://github.com/ada/steering/tree/{}", hash('5'));
     let reply = app.post("/entries", with_code(&other)).await;
     assert!(
-        warnings(&reply.body)[0].contains("the server's GitHub API calls for the hour are spent"),
+        warnings(&reply.body)[0]
+            .contains("the server has used its half of the hour's GitHub API calls"),
         "{}",
         reply.body
     );
@@ -520,7 +522,7 @@ async fn a_zenodo_doi_is_checked_on_zenodo_and_doi_org_is_never_fetched() {
         link_warnings(&reply.body),
         [
             "`code: https://doi.org/10.5281/zenodo.999` names a record Zenodo doesn't have (it answered 404), so the card says \"code link dead\"; the server checks it again each week",
-            "the server couldn't confirm the pin of `code: https://doi.org/10.5281/zenodo.999`: Zenodo answered 404 for record 999; the card says \"pin not verified\" until a weekly recheck confirms it",
+            "the server couldn't confirm the pin of `code: https://doi.org/10.5281/zenodo.999`: Zenodo answered 404 for record 999; the card says \"pin not verified\" until a recheck confirms it",
         ]
     );
     assert!(flags(&reply.body).ends_with("; code link dead; pin not verified"));
@@ -537,7 +539,7 @@ async fn when_zenodo_doesnt_answer_the_pin_is_not_verified() {
     assert_eq!(
         link_warnings(&reply.body),
         [
-            "the server couldn't confirm the pin of `code: https://zenodo.org/records/123`: Zenodo didn't answer (timed out); the card says \"pin not verified\" until a weekly recheck confirms it"
+            "the server couldn't confirm the pin of `code: https://zenodo.org/records/123`: Zenodo didn't answer (timed out); the card says \"pin not verified\" until a recheck confirms it"
         ]
     );
     assert!(flags(&reply.body).ends_with("; pin not verified"));
@@ -664,6 +666,49 @@ async fn recheck(app: &TestApp, days: i64) -> usize {
         .unwrap()
 }
 
+async fn recheck_after_minutes(app: &TestApp, minutes: i64) -> usize {
+    let now = time::OffsetDateTime::now_utc() + time::Duration::minutes(minutes);
+    filedrawer_server::link_checks::recheck_due(&app.state, now)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_link_that_said_retry_later_is_checked_again_in_an_hour_then_less_often() {
+    let app = test_app().await;
+    let logs = format!("https://huggingface.co/datasets/ada/logs/tree/{SHA}");
+    app.web.answer(&logs, 503);
+    app.submit(&with_logs(&logs)).await;
+    assert_eq!(recheck_after_minutes(&app, 50).await, 0);
+    assert_eq!(recheck_after_minutes(&app, 61).await, 1);
+    // Still 503: two hours after that check, not one.
+    assert_eq!(recheck_after_minutes(&app, 61 + 110).await, 0);
+    assert_eq!(recheck_after_minutes(&app, 61 + 121).await, 1);
+    // Then four.
+    assert_eq!(recheck_after_minutes(&app, 61 + 121 + 230).await, 0);
+    assert_eq!(recheck_after_minutes(&app, 61 + 121 + 241).await, 1);
+}
+
+#[tokio::test]
+async fn a_pin_that_couldnt_be_checked_is_checked_again_in_an_hour_and_a_bad_one_flagged() {
+    let app = test_app().await;
+    app.web.api_fails(&compare_path("HEAD", SHA));
+    let id = app.submit(&with_code(&github_code())).await;
+    not_on_default(&app, 0);
+    assert_eq!(recheck_after_minutes(&app, 61).await, 1);
+    assert_eq!(public_card(&app, &id).await, "analyzer v1; code pin failed");
+}
+
+#[tokio::test]
+async fn a_dead_link_waits_a_week_not_an_hour() {
+    let app = test_app().await;
+    let logs = format!("https://huggingface.co/datasets/ada/logs/tree/{SHA}");
+    app.web.answer(&logs, 404);
+    app.submit(&with_logs(&logs)).await;
+    assert_eq!(recheck_after_minutes(&app, 61).await, 0);
+    assert_eq!(recheck(&app, 8).await, 1);
+}
+
 #[tokio::test]
 async fn the_weekly_recheck_clears_a_link_that_came_back() {
     let app = test_app().await;
@@ -741,9 +786,9 @@ async fn a_recheck_that_finds_a_bad_pin_leaves_an_embargoed_entry_embargoed() {
 
 #[tokio::test]
 async fn a_recheck_spends_no_account_share() {
-    // 30 calls an hour, of which an account may spend 3; the server's own rechecks
+    // 60 calls an hour, of which an account may spend 3; the server's own rechecks
     // spend none of it.
-    let app = test_app().await.with_github_hourly(30);
+    let app = test_app().await.with_github_hourly(60);
     for digit in ['1', '2', '3', '4'] {
         let url = format!("https://github.com/ada/steering/tree/{}", hash(digit));
         app.post("/entries", with_code(&url)).await;
@@ -761,15 +806,209 @@ async fn the_recheck_stops_while_githubs_calls_run_low() {
         app.web.api_fails(&compare_path("HEAD", &sha));
         let url = format!("https://github.com/ada/steering/tree/{sha}");
         app.submit_held(&with_code(&url)).await;
-        // Answers now, with fewer than half of the hour's 5,000 calls left.
+        // Answers now, with fewer than three quarters of the hour's 5,000 calls
+        // left, but more than half.
         app.web.api(
             &compare_path("HEAD", &sha),
             200,
             serde_json::json!({"status": "identical"}),
-            2000,
+            3000,
         );
     }
     assert_eq!(recheck(&app, 8).await, 1);
+    // A submission may still spend down to half.
+    let calls = app.web.api_calls().len();
+    let url = format!("https://github.com/ada/steering/tree/{}", hash('3'));
+    app.post("/entries", with_code(&url)).await;
+    assert_eq!(app.web.api_calls().len(), calls + 1);
+}
+
+#[tokio::test]
+async fn the_server_leaves_half_of_githubs_calls_to_the_accounts_owner() {
+    let app = test_app().await;
+    app.web.api(
+        &compare_path("HEAD", SHA),
+        200,
+        serde_json::json!({"status": "identical"}),
+        2499,
+    );
+    let reply = app.post("/entries", with_code(&github_code())).await;
+    assert_eq!(warnings(&reply.body), Vec::<&str>::new(), "{}", reply.body);
+    let other = format!("https://github.com/ada/steering/tree/{}", hash('6'));
+    let reply = app.post("/entries", with_code(&other)).await;
+    assert_eq!(
+        warnings(&reply.body),
+        [format!(
+            "the server couldn't confirm the pin of `code: {other}`: the server has used its half of the hour's GitHub API calls; the card says \"pin not verified\" until a recheck confirms it"
+        )]
+    );
+    assert_eq!(app.web.api_calls().len(), 1);
+}
+
+#[tokio::test]
+async fn githubs_retry_after_pauses_every_api_call() {
+    let app = test_app().await;
+    app.web.api_after(
+        &compare_path("HEAD", SHA),
+        429,
+        serde_json::json!({"message": "You have exceeded a secondary rate limit"}),
+        4000,
+        Some(120),
+    );
+    let reply = app.post("/entries", with_code(&github_code())).await;
+    assert!(
+        flags(&reply.body).ends_with("; pin not verified"),
+        "{}",
+        reply.body
+    );
+    let other = format!("https://github.com/ada/steering/tree/{}", hash('7'));
+    let reply = app.post("/entries", with_code(&other)).await;
+    assert!(
+        warnings(&reply.body)[0].contains("GitHub's API asked the server to wait"),
+        "{}",
+        reply.body
+    );
+    assert_eq!(app.web.api_calls().len(), 1);
+}
+
+#[tokio::test]
+async fn a_secondary_limit_without_retry_after_pauses_the_api_too() {
+    let app = test_app().await;
+    app.web.api(
+        &compare_path("HEAD", SHA),
+        403,
+        serde_json::json!({"message": "You have exceeded a secondary rate limit"}),
+        4000,
+    );
+    app.post("/entries", with_code(&github_code())).await;
+    let other = format!("https://github.com/ada/steering/tree/{}", hash('8'));
+    app.post("/entries", with_code(&other)).await;
+    assert_eq!(app.web.api_calls().len(), 1);
+}
+
+#[tokio::test]
+async fn a_host_that_answers_429_is_left_alone_while_it_asks() {
+    let app = test_app().await;
+    let busy = format!("https://huggingface.co/datasets/ada/a/tree/{SHA}");
+    app.web.answer_after(&busy, 429, 300);
+    app.post("/entries", with_logs(&busy)).await;
+    let other = format!("https://huggingface.co/datasets/ada/b/tree/{SHA}");
+    let hop = "https://github.com/ada/steering/releases/download/v1/run.log";
+    app.web.redirect(hop, 302, &other);
+    let text = entry(
+        "Linked",
+        &format!("code: {}\nlogs: [{other}, {hop}]\n", github_code()),
+    );
+    let reply = app.post("/entries", text).await;
+    assert!(
+        warnings(&reply.body).contains(&format!(
+            "the server couldn't check `logs: {other}`: huggingface.co asked the server to wait before fetching from it again; it tries again an hour after the check, then less often"
+        ).as_str()),
+        "{}",
+        reply.body
+    );
+    let mut fetched = app.web.fetched();
+    fetched.sort();
+    // github.com still answers; neither the link nor the hop reached huggingface.co.
+    assert_eq!(fetched, [hop.to_string(), github_code(), busy]);
+}
+
+#[tokio::test]
+async fn an_answer_to_a_fetch_sent_before_a_429_doesnt_lift_the_pause() {
+    let app = test_app().await;
+    let busy = format!("https://huggingface.co/datasets/ada/a/tree/{SHA}");
+    let in_flight = format!("https://huggingface.co/datasets/ada/b/tree/{SHA}");
+    app.web.answer_after(&busy, 429, 3600);
+    app.web.hold(&busy);
+    app.web.hold(&in_flight);
+    let text = entry("Linked", &format!("logs: [{busy}, {in_flight}]\n"));
+    let releasing = async {
+        // Both fetches have gone out; the 429 then answers first.
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while app.web.fetched().len() < 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("both fetches go out");
+        app.web.release(&busy);
+        app.web.release(&in_flight);
+    };
+    tokio::join!(app.post("/entries", text), releasing);
+    let later = format!("https://huggingface.co/datasets/ada/c/tree/{SHA}");
+    app.post("/entries", with_logs(&later)).await;
+    assert!(
+        !app.web.fetched().contains(&later),
+        "{:?}",
+        app.web.fetched()
+    );
+}
+
+#[tokio::test]
+async fn a_put_starts_the_retries_again_so_it_cant_push_the_next_check_out() {
+    let app = test_app().await;
+    app.web.api_fails(&compare_path("HEAD", SHA));
+    let id = app.submit_held(&with_code(&github_code())).await;
+    for _ in 0..8 {
+        let reply = app
+            .put_as(&format!("/e/{id}"), &app.token, with_code(&github_code()))
+            .await;
+        assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
+    }
+    assert_eq!(recheck_after_minutes(&app, 61).await, 1);
+}
+
+#[tokio::test]
+async fn a_link_that_leaves_the_retries_starts_them_again_at_an_hour() {
+    let app = test_app().await;
+    let logs = format!("https://huggingface.co/datasets/ada/logs/tree/{SHA}");
+    app.web.answer(&logs, 503);
+    app.submit(&with_logs(&logs)).await;
+    assert_eq!(recheck_after_minutes(&app, 61).await, 1);
+    // Dead now: a week, with the retries over.
+    app.web.answer(&logs, 404);
+    assert_eq!(recheck_after_minutes(&app, 61 + 121).await, 1);
+    // Busy again after the week: an hour, not the four that a third retry would wait.
+    app.web.answer(&logs, 503);
+    let week = 7 * 24 * 60;
+    assert_eq!(recheck_after_minutes(&app, 61 + 121 + week + 1).await, 1);
+    assert_eq!(
+        recheck_after_minutes(&app, 61 + 121 + week + 1 + 61).await,
+        1
+    );
+}
+
+#[tokio::test]
+async fn the_recheck_waits_while_githubs_api_asks_it_to() {
+    let app = test_app().await;
+    app.web.api_fails(&compare_path("HEAD", SHA));
+    app.submit_held(&with_code(&github_code())).await;
+    let other = format!("https://github.com/ada/steering/tree/{}", hash('9'));
+    app.web.api_after(
+        &compare_path("HEAD", &hash('9')),
+        429,
+        serde_json::json!({"message": "secondary rate limit"}),
+        4000,
+        Some(3600),
+    );
+    app.post("/entries", with_code(&other)).await;
+    assert_eq!(recheck_after_minutes(&app, 61).await, 0);
+}
+
+#[tokio::test]
+async fn a_503_with_retry_after_pauses_its_host() {
+    let app = test_app().await;
+    app.web
+        .answer_after("https://zenodo.org/records/5", 503, 60);
+    app.post("/entries", with_code("https://zenodo.org/records/5"))
+        .await;
+    app.post("/entries", with_code("https://zenodo.org/records/6"))
+        .await;
+    let fetched = app.web.fetched();
+    assert!(
+        !fetched.iter().any(|url| url.ends_with("/6")),
+        "{fetched:?}"
+    );
 }
 
 #[tokio::test]

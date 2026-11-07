@@ -27,6 +27,14 @@ async fn serve(seen: Seen) -> String {
             seen.lock().unwrap().push((uri.path().to_string(), auth));
             match uri.path() {
                 "/moved" => (StatusCode::FOUND, [(header::LOCATION, "/elsewhere")]).into_response(),
+                "/busy" => (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    [(header::RETRY_AFTER, "120")],
+                )
+                    .into_response(),
+                "/repos/c/d" => {
+                    (StatusCode::FORBIDDEN, [(header::RETRY_AFTER, "30")]).into_response()
+                }
                 "/slow" => {
                     tokio::time::sleep(std::time::Duration::from_secs(3)).await;
                     "late".into_response()
@@ -101,6 +109,16 @@ async fn a_fetch_that_takes_too_long_is_given_up() {
     let answer = fetcher.get(&format!("{base}/slow")).await;
     assert_eq!(answer, Err("timed out".to_string()));
     assert!(started.elapsed() < Duration::from_secs(2));
+}
+
+#[tokio::test]
+async fn it_reads_retry_after_from_a_page_and_from_the_api() {
+    let base = serve(Seen::default()).await;
+    let fetcher = HttpFetcher::with_api_base(None, &base, TIMEOUT);
+    let page = fetcher.get(&format!("{base}/busy")).await.unwrap();
+    assert_eq!((page.status, page.retry_after), (429, Some(120)));
+    let api = fetcher.github("/repos/c/d").await.unwrap();
+    assert_eq!((api.status, api.retry_after), (403, Some(30)));
 }
 
 #[tokio::test]

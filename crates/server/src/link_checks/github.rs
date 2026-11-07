@@ -1,7 +1,8 @@
 //! GitHub's fork check (design.md, Submission and screening, step 2): whether a
 //! `code` commit is on one of the named repository's own branches, since GitHub
-//! serves a fork's commits under its parent's URL. And the API calls it spends: the
-//! server's hour, and each account's tenth of it.
+//! serves a fork's commits under its parent's URL. And the API calls it spends: at
+//! most half of the hour's, each account a tenth of that half, and none while GitHub
+//! asks the server to wait.
 
 use std::time::Duration;
 
@@ -20,12 +21,23 @@ const MAX_OTHER_BRANCHES: usize = 10;
 /// What a refusal for a fork's commit tells its author to do.
 const FORK_ADVICE: &str = "GitHub shows a fork's commits under its parent's URL too, so link the repository whose branch holds it";
 
+/// The pause key for GitHub's API.
+const API_HOST: &str = "api.github.com";
+
 impl LinkChecker {
-    /// The calls one account may spend: a tenth of the server's an hour (the owner's
-    /// decision, 2026-11-07), as screening holds an account to a tenth of its cap.
+    /// The calls the server may spend in an hour: half of GitHub's, since the token's
+    /// account shares the rest with its owner (the owner's decision, 2026-11-07).
+    fn github_budget(&self) -> u32 {
+        self.github_hourly / 2
+    }
+
+    /// The calls one account may spend in an hour: a tenth of the server's (the
+    /// owner's decision, 2026-11-07, made of the whole hour's; of the server's half,
+    /// uncertainties.md, "An account's share of GitHub's API calls"), as screening
+    /// holds an account to a tenth of its cap.
     fn account_share(&self) -> Rate {
         Rate {
-            count: (self.github_hourly / 10).max(1),
+            count: (self.github_budget() / 10).max(1),
             per: Duration::from_secs(60 * 60),
         }
     }
@@ -36,24 +48,40 @@ impl LinkChecker {
             .expect("no thread panics holding it")
     }
 
-    /// Whether GitHub said the hour's calls are spent, and they haven't come back.
-    fn github_spent(&self) -> bool {
+    /// Whether GitHub's last answer left fewer than `floor` calls this hour.
+    fn github_below(&self, floor: u32) -> bool {
         let now = OffsetDateTime::now_utc().unix_timestamp();
         self.quota()
-            .is_some_and(|(remaining, reset)| remaining == 0 && now < reset)
+            .is_some_and(|(remaining, reset)| remaining < floor && now < reset)
     }
 
-    /// Whether fewer than half the hour's calls are left, so the weekly recheck
-    /// leaves the rest to submissions.
+    /// Whether the server has spent its half of the hour's calls.
+    fn github_budget_spent(&self) -> bool {
+        self.github_below(self.github_hourly - self.github_budget())
+    }
+
+    /// Whether fewer than three quarters of the hour's calls are left, so the
+    /// rechecks leave the server's half to submissions.
     pub(super) fn github_low(&self) -> bool {
-        let now = OffsetDateTime::now_utc().unix_timestamp();
-        self.quota()
-            .is_some_and(|(remaining, reset)| remaining < self.github_hourly / 2 && now < reset)
+        let three_quarters = self.github_hourly / 4 * 3;
+        self.github_below(three_quarters)
     }
 
+    /// Whether GitHub's API asked the server to wait, and the wait isn't over.
+    pub(super) fn github_paused(&self) -> bool {
+        self.pauses.holds(API_HOST)
+    }
+
+    /// Keeps what GitHub's answer said is left. Answers to concurrent calls can
+    /// arrive out of order, so within one hour the lowest count stands.
     fn note_quota(&self, answer: &ApiAnswer) {
         if let (Some(remaining), Some(reset)) = (answer.remaining, answer.reset) {
-            *self.quota() = Some((remaining, reset));
+            let mut quota = self.quota();
+            let remaining = match *quota {
+                Some((before, same_reset)) if same_reset == reset => before.min(remaining),
+                _ => remaining,
+            };
+            *quota = Some((remaining, reset));
         }
     }
 }
@@ -164,16 +192,36 @@ async fn compare(
     })
 }
 
-/// One call to GitHub's API, within `account`'s share and the server's calls.
+/// Whether GitHub's answer is a rate limit: a 429, or a 403 with no calls left, with
+/// `Retry-After`, or saying so (GitHub's REST docs, "Rate limits for the REST API").
+fn rate_limited(answer: &ApiAnswer) -> bool {
+    let says_so = || {
+        answer
+            .body
+            .as_ref()
+            .and_then(|body| body["message"].as_str())
+            .is_some_and(|message| message.to_ascii_lowercase().contains("rate limit"))
+    };
+    answer.status == 429
+        || (answer.status == 403
+            && (answer.remaining == Some(0) || answer.retry_after.is_some() || says_so()))
+}
+
+/// One call to GitHub's API, within the server's half of the hour's calls and
+/// `account`'s share, unless GitHub asked the server to wait.
 async fn github_call(
     state: &AppState,
     account: Option<&str>,
     path: &str,
 ) -> Result<ApiAnswer, String> {
     let checker = &state.link_checker;
-    let spent = || "the server's GitHub API calls for the hour are spent".to_string();
-    if checker.github_spent() {
+    let spent = || "the server has used its half of the hour's GitHub API calls".to_string();
+    let waiting = || "GitHub's API asked the server to wait before calling it again".to_string();
+    if checker.github_budget_spent() {
         return Err(spent());
+    }
+    if checker.pauses.holds(API_HOST) {
+        return Err(waiting());
     }
     if let Some(account) = account {
         state
@@ -194,9 +242,17 @@ async fn github_call(
         .await
         .map_err(|why| format!("GitHub's API didn't answer ({why})"))?;
     checker.note_quota(&answer);
+    if rate_limited(&answer) {
+        // With no calls left, the quota waits for the reset by itself.
+        if answer.remaining == Some(0) {
+            return Err(spent());
+        }
+        checker.pauses.pause(API_HOST, answer.retry_after);
+        return Err(waiting());
+    }
+    checker.pauses.clear(API_HOST);
     match answer.status {
-        403 | 429 if answer.remaining == Some(0) => Err(spent()),
-        429 | 500..=599 => Err(format!("GitHub's API answered {}", answer.status)),
+        500..=599 => Err(format!("GitHub's API answered {}", answer.status)),
         _ => Ok(answer),
     }
 }

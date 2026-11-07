@@ -7,6 +7,7 @@
 
 mod fetch;
 mod github;
+mod pause;
 mod stored;
 
 use std::collections::{BTreeSet, HashMap};
@@ -36,6 +37,8 @@ pub struct LinkChecker {
     /// The calls left and when they come back, in Unix seconds, as GitHub's last
     /// answer said.
     github_quota: Mutex<Option<(u32, i64)>>,
+    /// The hosts that asked the server to wait, `api.github.com` among them.
+    pauses: pause::Pauses,
     /// Checks nothing.
     off: bool,
 }
@@ -46,6 +49,7 @@ impl LinkChecker {
             fetcher,
             github_hourly,
             github_quota: Mutex::new(None),
+            pauses: pause::Pauses::default(),
             off: false,
         }
     }
@@ -113,7 +117,8 @@ pub enum Reach {
     Live,
     /// With what it answered, such as "answered 404".
     Dead(String),
-    /// It answered 408, 429 or 5xx, or not at all: not dead, and checked again later.
+    /// It answered 408, 429 or 5xx, or not at all, or its host asked the server to
+    /// wait so nothing was sent: not dead, and checked again soon.
     RetryLater(String),
 }
 
@@ -298,9 +303,10 @@ async fn reach(state: &AppState, url: &str) -> Reach {
         return Reach::Dead("names a user or a port, which the server doesn't fetch".into());
     }
     for _ in 0..=MAX_REDIRECTS {
-        let answer = match state.link_checker.fetcher.get(current.as_str()).await {
+        let host = current.host_str().unwrap_or("").to_ascii_lowercase();
+        let answer = match state.link_checker.fetch_from(&host, current.as_str()).await {
             Ok(answer) => answer,
-            Err(why) => return Reach::RetryLater(format!("it didn't answer ({why})")),
+            Err(no_answer) => return Reach::RetryLater(no_answer.why(&host)),
         };
         let status = answer.status;
         match status {
@@ -328,6 +334,43 @@ async fn reach(state: &AppState, url: &str) -> Reach {
         }
     }
     Reach::Dead(format!("redirects more than {MAX_REDIRECTS} times"))
+}
+
+/// Why a fetch has no answer.
+enum NoAnswer {
+    /// The host asked the server to wait, so nothing was sent.
+    Waiting,
+    /// It didn't answer, with why.
+    Silent(String),
+}
+
+impl NoAnswer {
+    /// Why a link on `host` has no answer, for the author.
+    fn why(&self, host: &str) -> String {
+        match self {
+            NoAnswer::Waiting => {
+                format!("{host} asked the server to wait before fetching from it again")
+            }
+            NoAnswer::Silent(why) => format!("it didn't answer ({why})"),
+        }
+    }
+}
+
+impl LinkChecker {
+    /// GETs `url` from `host`, unless `host` asked the server to wait; a 429, or a
+    /// 503 with `Retry-After`, makes it wait.
+    async fn fetch_from(&self, host: &str, url: &str) -> Result<Answer, NoAnswer> {
+        if self.pauses.holds(host) {
+            return Err(NoAnswer::Waiting);
+        }
+        let answer = self.fetcher.get(url).await.map_err(NoAnswer::Silent)?;
+        if answer.status == 429 || (answer.status == 503 && answer.retry_after.is_some()) {
+            self.pauses.pause(host, answer.retry_after);
+        } else {
+            self.pauses.clear(host);
+        }
+        Ok(answer)
+    }
 }
 
 /// The pin check of `code: url`, for GitHub and Zenodo links.
@@ -373,12 +416,16 @@ async fn pin(
 /// record redirects to its latest version, which a later upload changes.
 async fn zenodo_pin(state: &AppState, record: u64) -> (Reach, PinCheck) {
     let url = format!("https://zenodo.org/api/records/{record}");
-    let answer = match state.link_checker.fetcher.get(&url).await {
+    let answer = match state.link_checker.fetch_from("zenodo.org", &url).await {
         Ok(answer) => answer,
-        Err(why) => {
+        Err(no_answer) => {
+            let pin = match &no_answer {
+                NoAnswer::Waiting => no_answer.why("zenodo.org"),
+                NoAnswer::Silent(why) => format!("Zenodo didn't answer ({why})"),
+            };
             return (
-                Reach::RetryLater(format!("it didn't answer ({why})")),
-                PinCheck::NotVerified(format!("Zenodo didn't answer ({why})")),
+                Reach::RetryLater(no_answer.why("zenodo.org")),
+                PinCheck::NotVerified(pin),
             );
         }
     };
@@ -436,13 +483,13 @@ pub fn warnings(links: &[CheckedLink]) -> Vec<String> {
                 "`{field}: {url}` {why}, so the card says \"{field} link dead\"; the server checks it again each week"
             )),
             Reach::RetryLater(why) => warnings.push(format!(
-                "the server couldn't check `{field}: {url}`: {why}; it tries again within a week"
+                "the server couldn't check `{field}: {url}`: {why}; it tries again an hour after the check, then less often"
             )),
         }
         match &link.pin {
             None | Some(PinCheck::Verified) => {}
             Some(PinCheck::NotVerified(why)) => warnings.push(format!(
-                "the server couldn't confirm the pin of `{field}: {url}`: {why}; the card says \"pin not verified\" until a weekly recheck confirms it"
+                "the server couldn't confirm the pin of `{field}: {url}`: {why}; the card says \"pin not verified\" until a recheck confirms it"
             )),
             Some(PinCheck::Failed(why)) => warnings.push(format!(
                 "`{field}: {url}`: {why}; the card says \"code pin failed\""

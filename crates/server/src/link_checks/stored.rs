@@ -1,19 +1,60 @@
-//! The link checks' rows (`link_checks`, migration 0020), and the weekly recheck of
-//! the flagged ones.
+//! The link checks' rows (`link_checks`, migrations 0020 and 0021), and the recheck
+//! of the links that are due.
+
+use std::collections::HashMap;
 
 use sqlx::{SqliteConnection, SqlitePool};
-use time::OffsetDateTime;
+use time::{Duration, OffsetDateTime};
 
 use super::{CheckedLink, Field, PinCheck, Reach, check};
 use crate::AppState;
 use crate::time::stamp;
 
-/// How long a flagged link waits between checks (design.md, Embargo: the server
-/// rechecks every flagged link weekly).
+/// How long a dead link, or a pin found bad, waits for its next check (design.md,
+/// Submission and screening: a week).
 pub const RECHECK_DAYS: i64 = 7;
+
+/// How long a link that said "retry later", or a pin the server couldn't check,
+/// waits the first time: an hour (the owner's decision, 2026-11-07: "set up a timer
+/// to run more checks in an hour"). It doubles with each retry in a row, at most
+/// [`RECHECK_DAYS`] (uncertainties.md, "What a recheck covers, and when").
+const FIRST_RETRY: Duration = Duration::hours(1);
 
 /// The most entries one run rechecks; the rest wait for the next run.
 const RECHECKS_PER_RUN: i64 = 100;
+
+/// When a link is checked again.
+struct NextCheck {
+    /// `None`: never, as it is live and its pin, if any, verified.
+    at: Option<OffsetDateTime>,
+    /// Its retries in a row, counting this check.
+    retries: i64,
+}
+
+/// When `link`, checked at `now` after `retries_before` retries in a row, is
+/// checked again.
+fn next_check(link: &CheckedLink, retries_before: i64, now: OffsetDateTime) -> NextCheck {
+    let week = Duration::days(RECHECK_DAYS);
+    match (&link.reach, &link.pin) {
+        (Reach::Dead(_), _) | (_, Some(PinCheck::Failed(_))) => NextCheck {
+            at: Some(now + week),
+            retries: 0,
+        },
+        (Reach::RetryLater(_), _) | (_, Some(PinCheck::NotVerified(_))) => {
+            // 2^8 hours is past a week, so the doubling stops there.
+            let doublings = u32::try_from(retries_before.clamp(0, 8)).unwrap_or(8);
+            let wait = (FIRST_RETRY * 2i32.pow(doublings)).min(week);
+            NextCheck {
+                at: Some(now + wait),
+                retries: retries_before + 1,
+            }
+        }
+        _ => NextCheck {
+            at: None,
+            retries: 0,
+        },
+    }
+}
 
 // The columns' values. The table's CHECK constraints allow no others, so each
 // reading back takes the last value for anything else.
@@ -67,12 +108,46 @@ impl PinCheck {
     }
 }
 
-/// Stores entry `seq`'s links as checked at `now`, replacing what it had.
+/// Stores entry `seq`'s links as its submission checked them at `now`, replacing
+/// what it had. Each retry count starts again, so resubmitting can't push a check
+/// out.
 pub async fn store(
     transaction: &mut SqliteConnection,
     seq: i64,
     links: &[CheckedLink],
     now: OffsetDateTime,
+) -> Result<(), sqlx::Error> {
+    store_with(transaction, seq, links, now, HashMap::new()).await
+}
+
+/// Stores entry `seq`'s links as a recheck found them at `now`, carrying on each
+/// link's retries in a row.
+async fn store_rechecked(
+    transaction: &mut SqliteConnection,
+    seq: i64,
+    links: &[CheckedLink],
+    now: OffsetDateTime,
+) -> Result<(), sqlx::Error> {
+    let retries_before: HashMap<(String, String), i64> = sqlx::query!(
+        "SELECT field, url, retries FROM link_checks WHERE entry_seq = ?",
+        seq
+    )
+    .fetch_all(&mut *transaction)
+    .await?
+    .into_iter()
+    .map(|row| ((row.field, row.url), row.retries))
+    .collect();
+    store_with(transaction, seq, links, now, retries_before).await
+}
+
+/// Stores entry `seq`'s links checked at `now`, given each link's retries in a row
+/// before this check.
+async fn store_with(
+    transaction: &mut SqliteConnection,
+    seq: i64,
+    links: &[CheckedLink],
+    now: OffsetDateTime,
+    retries_before: HashMap<(String, String), i64>,
 ) -> Result<(), sqlx::Error> {
     sqlx::query!("DELETE FROM link_checks WHERE entry_seq = ?", seq)
         .execute(&mut *transaction)
@@ -83,10 +158,17 @@ pub async fn store(
         let (reach, reach_detail) = link.reach.to_columns();
         let (pin, pin_detail) = link.pin.as_ref().map(PinCheck::to_columns).unzip();
         let pin_detail = pin_detail.flatten();
+        let before = retries_before
+            .get(&(field.to_string(), link.url.clone()))
+            .copied()
+            .unwrap_or(0);
+        let next = next_check(link, before, now);
+        let next_check_at = next.at.map(stamp);
         sqlx::query!(
             "INSERT INTO link_checks
-                 (entry_seq, field, url, reach, reach_detail, pin, pin_detail, checked_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                 (entry_seq, field, url, reach, reach_detail, pin, pin_detail, checked_at,
+                  next_check_at, retries)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             seq,
             field,
             link.url,
@@ -94,7 +176,9 @@ pub async fn store(
             reach_detail,
             pin,
             pin_detail,
-            checked_at
+            checked_at,
+            next_check_at,
+            next.retries
         )
         .execute(&mut *transaction)
         .await?;
@@ -124,29 +208,27 @@ pub async fn stored(pool: &SqlitePool, seq: i64) -> Result<Vec<CheckedLink>, sql
         .collect())
 }
 
-/// Rechecks the links of every entry with a link that is dead, said "retry later",
-/// or holds a pin not verified or failed, last checked [`RECHECK_DAYS`] or more
-/// before `now`, unless the entry is rejected, withdrawn or removed. Its GitHub calls
-/// count against no account's share, and it stops while fewer than half the hour's
-/// calls are left. Returns how many entries it rechecked.
+/// Rechecks the links of every entry with a link whose next check (`next_check`) has
+/// come by `now`, unless the entry is rejected, withdrawn or removed. Its GitHub calls
+/// count against no account's share, and it stops while fewer than three quarters of
+/// the hour's calls are left. Returns how many entries it rechecked.
 pub async fn recheck_due(state: &AppState, now: OffsetDateTime) -> Result<usize, sqlx::Error> {
-    let before = stamp(now - time::Duration::days(RECHECK_DAYS));
+    let now_text = stamp(now);
     let due = sqlx::query_scalar!(
         r#"SELECT DISTINCT l.entry_seq AS "seq!: i64"
            FROM link_checks l JOIN entries e ON e.seq = l.entry_seq
-           WHERE (l.reach != 'live' OR l.pin IN ('not_verified', 'failed'))
-             AND l.checked_at <= ?
+           WHERE l.next_check_at <= ?
              AND e.status NOT IN ('rejected', 'withdrawn', 'removed')
            ORDER BY l.entry_seq
            LIMIT ?"#,
-        before,
+        now_text,
         RECHECKS_PER_RUN
     )
     .fetch_all(&state.pool)
     .await?;
     let mut rechecked = 0;
     for seq in due {
-        if state.link_checker.github_low() {
+        if state.link_checker.github_low() || state.link_checker.github_paused() {
             break;
         }
         recheck_entry(state, seq, now).await?;
@@ -176,7 +258,7 @@ async fn recheck_entry(state: &AppState, seq: i64, now: OffsetDateTime) -> Resul
         .await?
         .is_some_and(|now_stored| now_stored == source);
     if unchanged {
-        store(&mut transaction, seq, &links, now).await?;
+        store_rechecked(&mut transaction, seq, &links, now).await?;
     }
     transaction.commit().await
 }

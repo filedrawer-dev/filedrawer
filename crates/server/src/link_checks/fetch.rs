@@ -12,6 +12,8 @@ pub type Fetching<'a, T> = std::pin::Pin<Box<dyn Future<Output = Result<T, Strin
 pub struct Answer {
     pub status: u16,
     pub location: Option<String>,
+    /// `Retry-After`, in seconds, when the host gave it so.
+    pub retry_after: Option<u64>,
 }
 
 /// What GitHub's REST API answered.
@@ -23,6 +25,8 @@ pub struct ApiAnswer {
     pub remaining: Option<u32>,
     /// `x-ratelimit-reset`: when the hour's calls come back, in Unix seconds.
     pub reset: Option<i64>,
+    /// `Retry-After`, in seconds, when GitHub gave it.
+    pub retry_after: Option<u64>,
 }
 
 /// How the server reaches the web, so tests can stand in for it.
@@ -107,6 +111,7 @@ impl Fetcher for HttpFetcher {
             Ok(Answer {
                 status: response.status().as_u16(),
                 location,
+                retry_after: header_number(response.headers(), "retry-after"),
             })
         })
     }
@@ -125,6 +130,7 @@ impl Fetcher for HttpFetcher {
             let status = response.status().as_u16();
             let remaining = header_number(response.headers(), "x-ratelimit-remaining");
             let reset = header_number(response.headers(), "x-ratelimit-reset");
+            let retry_after = header_number(response.headers(), "retry-after");
             let mut bytes = Vec::new();
             while let Some(chunk) = response.chunk().await.map_err(fetch_error)? {
                 if bytes.len() + chunk.len() > MAX_API_BODY_BYTES {
@@ -137,6 +143,7 @@ impl Fetcher for HttpFetcher {
                 body: serde_json::from_slice(&bytes).ok(),
                 remaining,
                 reset,
+                retry_after,
             })
         })
     }

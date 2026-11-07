@@ -268,3 +268,52 @@ async fn migration_14_drops_stagings_attached_files_and_their_text_column() {
             .unwrap();
     assert_eq!(violations, vec![]);
 }
+
+#[tokio::test]
+async fn migration_21_times_the_next_check_of_every_link_staging_has_checked() {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            SqliteConnectOptions::from_str("sqlite::memory:")
+                .unwrap()
+                .foreign_keys(true),
+        )
+        .await
+        .unwrap();
+    let mut first_twenty = sqlx::migrate!("./migrations");
+    first_twenty.migrations = Cow::Owned(first_twenty.migrations[..20].to_vec());
+    first_twenty.run(&pool).await.unwrap();
+    for statement in [
+        "INSERT INTO accounts (id, display_name, created_at) VALUES ('a1', 'A', 't')",
+        "INSERT INTO entries (id, account_id, status, source, submitted_at, first_submitted_at,
+             analyzer_version) VALUES ('e1', 'a1', 'public', 'x', 't', 't', 1)",
+        "INSERT INTO link_checks (entry_seq, field, url, reach, pin, checked_at) VALUES
+             (1, 'logs', 'dead', 'dead', NULL, '2026-11-07T12:00:00Z'),
+             (1, 'logs', 'busy', 'retry', NULL, '2026-11-07T12:00:00Z'),
+             (1, 'code', 'unverified', 'live', 'not_verified', '2026-11-07T12:00:00Z'),
+             (1, 'code', 'fork', 'live', 'failed', '2026-11-07T12:00:00Z'),
+             (1, 'code', 'fine', 'live', 'verified', '2026-11-07T12:00:00Z')",
+    ] {
+        sqlx::query(statement).execute(&pool).await.unwrap();
+    }
+
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+
+    let next: Vec<(String, Option<String>, i64)> =
+        sqlx::query_as("SELECT url, next_check_at, retries FROM link_checks ORDER BY url")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    let week = Some("2026-11-14T12:00:00Z".to_string());
+    let hour = Some("2026-11-07T13:00:00Z".to_string());
+    assert_eq!(
+        next,
+        vec![
+            ("busy".into(), hour.clone(), 0),
+            ("dead".into(), week.clone(), 0),
+            ("fine".into(), None, 0),
+            ("fork".into(), week, 0),
+            ("unverified".into(), hour, 0),
+        ]
+    );
+}

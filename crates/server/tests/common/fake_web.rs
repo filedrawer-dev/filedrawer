@@ -20,6 +20,8 @@ struct Web {
     api: HashMap<String, Result<ApiAnswer, String>>,
     fetched: Vec<String>,
     api_calls: Vec<String>,
+    /// Pages that answer only once `release` lets them.
+    gated: HashMap<String, Arc<tokio::sync::Semaphore>>,
 }
 
 impl FakeWeb {
@@ -39,6 +41,19 @@ impl FakeWeb {
             Ok(Answer {
                 status,
                 location: None,
+                retry_after: None,
+            }),
+        );
+    }
+
+    /// `url` answers `status` with `Retry-After: seconds`.
+    pub fn answer_after(&self, url: &str, status: u16, seconds: u64) {
+        self.set_page(
+            url,
+            Ok(Answer {
+                status,
+                location: None,
+                retry_after: Some(seconds),
             }),
         );
     }
@@ -50,8 +65,26 @@ impl FakeWeb {
             Ok(Answer {
                 status,
                 location: Some(location.into()),
+                retry_after: None,
             }),
         );
+    }
+
+    /// `url` answers only after `release(url)`, so a test can hold a fetch in
+    /// flight.
+    pub fn hold(&self, url: &str) {
+        self.web
+            .lock()
+            .unwrap()
+            .gated
+            .insert(url.into(), Arc::new(tokio::sync::Semaphore::new(0)));
+    }
+
+    /// Lets a held `url` answer.
+    pub fn release(&self, url: &str) {
+        if let Some(gate) = self.web.lock().unwrap().gated.get(url) {
+            gate.add_permits(1);
+        }
     }
 
     /// `url` doesn't answer.
@@ -62,6 +95,18 @@ impl FakeWeb {
     /// GitHub's API answers `path` with `status` and `body`, and says `remaining`
     /// calls are left.
     pub fn api(&self, path: &str, status: u16, body: Value, remaining: u32) {
+        self.api_after(path, status, body, remaining, None);
+    }
+
+    /// `api`, with `Retry-After: seconds` when given.
+    pub fn api_after(
+        &self,
+        path: &str,
+        status: u16,
+        body: Value,
+        remaining: u32,
+        seconds: Option<u64>,
+    ) {
         self.web.lock().unwrap().api.insert(
             path.into(),
             Ok(ApiAnswer {
@@ -69,6 +114,7 @@ impl FakeWeb {
                 body: Some(body),
                 remaining: Some(remaining),
                 reset: Some(i64::MAX),
+                retry_after: seconds,
             }),
         );
     }
@@ -96,11 +142,19 @@ impl FakeWeb {
 impl Fetcher for FakeWeb {
     fn get<'a>(&'a self, url: &'a str) -> Fetching<'a, Answer> {
         Box::pin(async move {
-            let mut web = self.web.lock().unwrap();
-            web.fetched.push(url.into());
+            let gate = {
+                let mut web = self.web.lock().unwrap();
+                web.fetched.push(url.into());
+                web.gated.get(url).cloned()
+            };
+            if let Some(gate) = gate {
+                gate.acquire().await.unwrap().forget();
+            }
+            let web = self.web.lock().unwrap();
             web.pages.get(url).cloned().unwrap_or(Ok(Answer {
                 status: 200,
                 location: None,
+                retry_after: None,
             }))
         })
     }
@@ -122,6 +176,7 @@ impl Fetcher for FakeWeb {
                 body: Some(body),
                 remaining: Some(4999),
                 reset: Some(i64::MAX),
+                retry_after: None,
             })
         })
     }

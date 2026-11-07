@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT field, url, retries FROM link_checks WHERE entry_seq = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "field",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "link_checks",
+            "name": "field"
+          }
+        }
+      },
+      {
+        "name": "url",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "link_checks",
+            "name": "url"
+          }
+        }
+      },
+      {
+        "name": "retries",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "link_checks",
+            "name": "retries"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "fac2f839a0890d1fa501a3d64be6da3e6459b64354dfaf189f33a46ebceab130"
+}
