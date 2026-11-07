@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM rate_events WHERE rowid = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "8d3366cce1089f616fef49b5bb6c9da5828516d6feb655fa99180e8c4f8c7edc"
+}

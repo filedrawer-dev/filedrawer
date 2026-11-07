@@ -236,6 +236,11 @@ pub async fn login(
     Form(form): Form<LoginForm>,
 ) -> Result<Response, AppError> {
     let email = accounts::normalise_email(&form.email);
+    // Failed logins count per address, known or not; once full, even the right
+    // password waits (design.md, Limits and abuse). Each attempt takes its place
+    // before the password is checked, and a right one gives it back.
+    let failures = [Counted::failed_logins_to(&state.rate_limits.limits, &email)];
+    let slot = limits::take_slot(&state.pool, &failures, now_utc()).await?;
     let (account_id, stored) = match accounts::login_for_email(&state.pool, &email).await? {
         Some(login) => (Some(login.account_id), login.password_hash),
         None => (None, None),
@@ -249,6 +254,7 @@ pub async fn login(
         };
         return Ok(page(StatusCode::UNAUTHORIZED, &template));
     };
+    limits::give_back(&state.pool, slot).await?;
     let secret = accounts::new_session(&state.pool, &account_id).await?;
     let cookie = format!(
         "{COOKIE}={secret}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age={}",

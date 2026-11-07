@@ -48,6 +48,8 @@ pub struct Limits {
     /// whether or not the address has an account.
     pub emails_per_address: Vec<Window>,
     pub emails_per_ip: Vec<Window>,
+    /// Failed logins per email address, whether or not an account uses it.
+    pub failed_logins_per_address: Vec<Window>,
 }
 
 impl Limits {
@@ -59,6 +61,7 @@ impl Limits {
             signups_per_ip: vec![hourly(10), daily(40)],
             emails_per_address: vec![hourly(5), daily(20)],
             emails_per_ip: vec![hourly(20), daily(60)],
+            failed_logins_per_address: vec![hourly(10)],
         }
     }
 }
@@ -285,6 +288,15 @@ impl<'a> Counted<'a> {
         )
     }
 
+    pub fn failed_logins_to(limits: &'a Limits, address: &str) -> Self {
+        Counted::new(
+            "login-address",
+            address,
+            &limits.failed_logins_per_address,
+            "failed logins to this email address",
+        )
+    }
+
     pub fn emails_from(limits: &'a Limits, ip: &ClientIp) -> Self {
         Counted::new(
             "email-ip",
@@ -302,9 +314,50 @@ pub async fn count_event(
     counts: &[Counted<'_>],
     now: OffsetDateTime,
 ) -> Result<(), AppError> {
+    take_slot(pool, counts, now).await.map(|_| ())
+}
+
+/// The rows an event took in its counts, so that one which turns out not to count,
+/// such as a login whose password was right, can give them back.
+#[derive(Debug)]
+pub struct Slot(Vec<i64>);
+
+/// Counts one event under each of `counts`, as [`count_event`] does, and returns
+/// its slot. An event whose outcome isn't known yet takes its slot first, so a
+/// burst of them can't all pass a window with one place left.
+pub async fn take_slot(
+    pool: &SqlitePool,
+    counts: &[Counted<'_>],
+    now: OffsetDateTime,
+) -> Result<Slot, AppError> {
     // IMMEDIATE takes the write lock first, so two requests can't both read a
     // window with one place left, and the second doesn't fail on upgrading.
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    if let Some(refusal) = full_window(&mut tx, counts, now).await? {
+        return Err(refusal);
+    }
+    let rows = insert(&mut tx, counts, now).await?;
+    tx.commit().await?;
+    Ok(Slot(rows))
+}
+
+/// Gives back a slot whose event turned out not to count.
+pub async fn give_back(pool: &SqlitePool, slot: Slot) -> Result<(), sqlx::Error> {
+    for row in slot.0 {
+        sqlx::query!("DELETE FROM rate_events WHERE rowid = ?", row)
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
+}
+
+/// The refusal when any window of `counts` is full, naming the one that frees up
+/// last.
+async fn full_window(
+    conn: &mut sqlx::SqliteConnection,
+    counts: &[Counted<'_>],
+    now: OffsetDateTime,
+) -> Result<Option<AppError>, sqlx::Error> {
     let mut refusal: Option<(&str, i64)> = None;
     for counted in counts {
         for window in counted.windows {
@@ -315,7 +368,7 @@ pub async fn count_event(
                 counted.key,
                 since
             )
-            .fetch_one(&mut *tx)
+            .fetch_one(&mut *conn)
             .await?;
             if row.count < window.count {
                 continue;
@@ -334,21 +387,27 @@ pub async fn count_event(
             }
         }
     }
-    if let Some((what, wait)) = refusal {
-        return Err(too_many(what, Duration::from_secs(wait.unsigned_abs())));
-    }
+    Ok(refusal.map(|(what, wait)| too_many(what, Duration::from_secs(wait.unsigned_abs()))))
+}
+
+async fn insert(
+    conn: &mut sqlx::SqliteConnection,
+    counts: &[Counted<'_>],
+    now: OffsetDateTime,
+) -> Result<Vec<i64>, sqlx::Error> {
     let at = stamp(now);
+    let mut rows = Vec::new();
     for counted in counts {
-        sqlx::query!(
+        let done = sqlx::query!(
             "INSERT INTO rate_events (key, at) VALUES (?, ?)",
             counted.key,
             at
         )
-        .execute(&mut *tx)
+        .execute(&mut *conn)
         .await?;
+        rows.push(done.last_insert_rowid());
     }
-    tx.commit().await?;
-    Ok(())
+    Ok(rows)
 }
 
 /// Counts a verification or password-reset email to `address` asked for from `ip`.

@@ -36,7 +36,90 @@ fn wide() -> Limits {
         signups_per_ip: hourly(10_000),
         emails_per_address: hourly(10_000),
         emails_per_ip: hourly(10_000),
+        failed_logins_per_address: hourly(10_000),
     }
+}
+
+async fn log_in(app: &TestApp, email: &str, password: &str) -> Reply {
+    app.form("/login", &[("email", email), ("password", password)], None)
+        .await
+}
+
+#[tokio::test]
+async fn failed_logins_lock_the_address_for_the_window_right_password_or_not() {
+    let app = test_app().await.with_limits(Limits {
+        failed_logins_per_address: hourly(2),
+        ..wide()
+    });
+    common::signed_up_and_verified(&app, "grace@example.com").await;
+    // Successes don't count.
+    for _ in 0..3 {
+        assert_eq!(
+            log_in(&app, "grace@example.com", common::PASSWORD)
+                .await
+                .status,
+            StatusCode::SEE_OTHER
+        );
+    }
+    for _ in 0..2 {
+        let wrong = log_in(&app, "grace@example.com", "wrong guess").await;
+        assert_eq!(wrong.status, StatusCode::UNAUTHORIZED, "{}", wrong.body);
+    }
+    let locked = log_in(&app, "grace@example.com", common::PASSWORD).await;
+    assert_eq!(
+        locked.status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "{}",
+        locked.body
+    );
+    assert!(retry_after(&locked) > 60);
+    assert!(locked.body.contains("failed logins"), "{}", locked.body);
+}
+
+#[tokio::test]
+async fn a_burst_of_wrong_guesses_gets_no_more_than_the_limit() {
+    let app = test_app().await.with_limits(Limits {
+        failed_logins_per_address: hourly(2),
+        ..wide()
+    });
+    common::signed_up_and_verified(&app, "grace@example.com").await;
+    let guesses = (0..8).map(|n| {
+        let app = &app;
+        async move {
+            log_in(app, "grace@example.com", &format!("guess {n}"))
+                .await
+                .status
+        }
+    });
+    let statuses = futures::future::join_all(guesses).await;
+    let judged = statuses
+        .iter()
+        .filter(|s| **s == StatusCode::UNAUTHORIZED)
+        .count();
+    assert_eq!(judged, 2, "{statuses:?}");
+    assert!(
+        statuses
+            .iter()
+            .all(|s| *s == StatusCode::UNAUTHORIZED || *s == StatusCode::TOO_MANY_REQUESTS)
+    );
+}
+
+#[tokio::test]
+async fn an_address_with_no_account_locks_the_same_way() {
+    let app = test_app().await.with_limits(Limits {
+        failed_logins_per_address: hourly(2),
+        ..wide()
+    });
+    for _ in 0..2 {
+        assert_eq!(
+            log_in(&app, "nobody@example.com", "guess").await.status,
+            StatusCode::UNAUTHORIZED
+        );
+    }
+    let locked = log_in(&app, "nobody@example.com", "guess").await;
+    assert_eq!(locked.status, StatusCode::TOO_MANY_REQUESTS);
+    let other = log_in(&app, "someone@example.com", "guess").await;
+    assert_eq!(other.status, StatusCode::UNAUTHORIZED);
 }
 
 /// GETs /tags from `forwarded` through Caddy.
