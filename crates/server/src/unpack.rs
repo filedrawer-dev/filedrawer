@@ -14,6 +14,10 @@ use thiserror::Error;
 pub const MAX_LAYERS: usize = 3;
 /// The most bytes decoding and decompressing one file may produce.
 pub const MAX_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
+/// How many times its own size in text a file may hide (the owner's decision,
+/// 2026-11-06). With no floor, the entry's 1 MiB attachment cap holds what one
+/// entry's files hide to 4 MiB however many files it splits them into.
+pub const TEXT_RATIO: usize = 4;
 /// The most memory, in KiB, an xz stream's decoder may take: enough for `xz -7`'s
 /// 16 MiB dictionary. A stream that declares more isn't opened.
 const XZ_MEMORY_KIB: u32 = 32 * 1024;
@@ -32,6 +36,8 @@ pub enum Limit {
     TooDeep,
     #[error("it decodes and decompresses to more than {} MiB", MAX_OUTPUT_BYTES >> 20)]
     TooBig,
+    #[error("it hides more than {TEXT_RATIO} times its size in text")]
+    TooMuchText,
     #[error("it holds {0}, which the server doesn't open")]
     Unopened(String),
 }
@@ -55,6 +61,7 @@ pub fn unpack(text: &str) -> Result<Vec<Unpacked>, Limit> {
     let mut unpacker = Unpacker {
         found: Vec::new(),
         left: MAX_OUTPUT_BYTES,
+        text_left: text.len().saturating_mul(TEXT_RATIO),
         seen: HashSet::new(),
     };
     unpacker.search(text, "", 0)?;
@@ -65,6 +72,8 @@ struct Unpacker {
     found: Vec<Unpacked>,
     /// How many more bytes decoding and decompressing may produce.
     left: usize,
+    /// How many more bytes of text found the screen may be given to read.
+    text_left: usize,
     /// The SHA-256 of each thing opened, so a run repeated is screened once.
     seen: HashSet<[u8; 32]>,
 }
@@ -96,6 +105,10 @@ impl Unpacker {
         }
         match form {
             Form::Text => {
+                self.text_left = self
+                    .text_left
+                    .checked_sub(bytes.len())
+                    .ok_or(Limit::TooMuchText)?;
                 let text = String::from_utf8_lossy(bytes).into_owned();
                 self.found.push(Unpacked {
                     how: how.to_string(),
@@ -445,12 +458,22 @@ mod tests {
     }
 
     #[test]
+    fn a_small_file_may_hide_at_most_four_times_its_size_in_text() {
+        // About 300 bytes that inflate to 100 KiB of text: under 4 MiB, but a set of
+        // many such files would cost the screen a hundred times its size.
+        let file = format!("x = '{}'", b64(&gzip("filler\n".repeat(15_000).as_bytes())));
+        assert!(file.len() < 1_000, "{}", file.len());
+        assert_eq!(unpack(&file), Err(Limit::TooMuchText));
+        // Padding and noise don't count: a tar's blocks are mostly zeros.
+        let tar = tar(&[("a.txt", "first hidden file")]);
+        assert!(unpack(&format!("x = '{}'", b64(&gzip(&tar)))).is_ok());
+    }
+
+    #[test]
     fn many_small_finds_add_up_to_the_limit() {
-        let parts: String = (0..5)
-            .map(|n| {
-                let filler = format!("filler {n}\n").repeat(1024 * 1024 / 9);
-                format!("x = '{}'\n", b64(&gzip(filler.as_bytes())))
-            })
+        // Control bytes, which aren't text, so only the output limit counts them.
+        let parts: String = (1..=5u8)
+            .map(|n| format!("x = '{}'\n", b64(&gzip(&vec![n; 1024 * 1024]))))
             .collect();
         assert_eq!(unpack(&parts), Err(Limit::TooBig));
     }
