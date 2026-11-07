@@ -1,6 +1,6 @@
 # Every check the commit hooks run, over every file, on each push to main and each pull
-# request: the pre-commit hooks (slop-lint, ruff, lychee through bin/lychee, cargo fmt), then
-# the tests and clippy through bin/agent-pre-commit.
+# request: the hooks in .pre-commit-config.yaml, then the tests and clippy through
+# bin/agent-pre-commit.
 name: CI
 
 on:
