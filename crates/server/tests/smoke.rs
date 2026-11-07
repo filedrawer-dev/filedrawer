@@ -194,8 +194,8 @@ fn screen(args: &[&str], key: Option<&str>, token: Option<&str>) -> Output {
     screen_mode("screen", args, key, token)
 }
 
-/// Runs a mode of the script that submits as the screen-test account (`screen` or
-/// `eval`), with its settings files looked for in an empty folder.
+/// Runs a mode of the script that submits with a screen token (`screen` or `eval`),
+/// with its settings files looked for in an empty folder.
 fn screen_mode(mode: &str, args: &[&str], key: Option<&str>, token: Option<&str>) -> Output {
     let empty = scratch_database(&format!("{mode}-settings"));
     let empty = empty.parent().unwrap();

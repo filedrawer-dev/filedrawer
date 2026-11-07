@@ -216,6 +216,8 @@ def test_every_secret_and_variable_the_workflow_reads_is_one_the_wizard_sets():
             wizard,
         )
     )
+    # ci_account ROLE SAVED SECRET WHAT stores SECRET.
+    set_by_wizard |= set(re.findall(r"^\s*ci_account \w+ \w+ (\w+) ", wizard, re.M))
     assert read, "the workflow reads no secrets or variables"
     assert read <= set_by_wizard, read - set_by_wizard
 
@@ -267,13 +269,13 @@ def test_the_smoke_test_runs_after_the_deploy_and_waits_for_it():
     )
 
 
-def test_the_screen_check_runs_after_the_deploy_as_the_screen_test_account():
+def test_the_screen_check_runs_after_the_deploy_as_the_ci_screen_account():
     job = workflow_jobs()["screen-staging"]
     assert re.search(r"^    needs: deploy-staging$", job, re.MULTILINE), job
     assert re.search(r"^    environment: staging$", job, re.MULTILINE), job
-    assert (
-        "FILEDRAWER_STAGING_SCREEN_API_KEY: ${{ secrets.SCREEN_TEST_TOKEN }}" in job
-    ), job
+    assert "FILEDRAWER_STAGING_SCREEN_API_KEY: ${{ secrets.CI_SCREEN_TOKEN }}" in job, (
+        job
+    )
     assert re.search(
         r"ops/smoke-staging screen --wait \d+ https://staging\.filedrawer\.dev", job
     ), job

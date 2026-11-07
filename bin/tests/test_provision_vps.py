@@ -98,8 +98,10 @@ STAGING_KEY = "ab" * 32
 def smoke(tmp_path, fake_host):
     """Runs `ops/provision-vps smoke` in a folder with an ops/.vps.env, against a fake
     ssh that answers as ops/remote/ci-account.sh would."""
-    # Only ci-account.sh answers with an account and a token.
+    # Only ci-account.sh answers with an account and a token, a-new for the smoke
+    # test and a-ci for the screen check.
     fake_host.answer("*", stdout="a-new\tfdt_s3cret\n", stdin="create-token")
+    fake_host.answer("*ROLE=screen*", stdout="a-ci\tfdt_ci7\n", stdin="create-token")
     ops = tmp_path / "ops"
     ops.mkdir()
     env_file = ops / ".vps.env"
@@ -140,6 +142,20 @@ def test_smoke_stores_the_token_and_key_as_staging_secrets_and_shows_neither(smo
     assert sent == (REPO / "ops/remote/ci-account.sh").read_text()
 
 
+def test_smoke_makes_the_ci_screen_account_and_stores_its_token_unshown(smoke):
+    result = smoke.run()
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (smoke.secrets / "CI_SCREEN_TOKEN").read_text() == "fdt_ci7"
+    assert "CI_SCREEN_ACCOUNT='a-ci'" in smoke.env_file.read_text()
+    assert "fdt_ci7" not in smoke.log.read_text() + result.stdout + result.stderr
+    calls = [c for c in smoke.log.read_text().splitlines() if c.startswith("ssh ")]
+    assert "ssh env ROLE=screen ACCOUNT= bash -s" in calls, calls
+    assert (
+        smoke.host.sent(calls.index("ssh env ROLE=screen ACCOUNT= bash -s") + 1)
+        == (REPO / "ops/remote/ci-account.sh").read_text()
+    )
+
+
 def test_smoke_also_names_the_screen_test_account_it_finds_in_ops(smoke):
     (smoke.tmp / "ops/.screen-test.env").write_text(
         "SCREEN_TEST_ACCOUNT='a-screen1'\nSCREEN_TEST_TOKEN='fdt_secret'\n"
@@ -147,44 +163,20 @@ def test_smoke_also_names_the_screen_test_account_it_finds_in_ops(smoke):
     result = smoke.run()
     assert result.returncode == 0, result.stdout + result.stderr
     calls = [c for c in smoke.log.read_text().splitlines() if c.startswith("ssh ")]
-    assert (
-        calls[-1] == "ssh env SMOKE_ACCOUNT=a-new SCREEN_TEST_ACCOUNT=a-screen1 bash -s"
+    assert calls[-1] == (
+        "ssh env SMOKE_ACCOUNT=a-new SCREEN_TEST_ACCOUNT=a-screen1"
+        " CI_SCREEN_ACCOUNT=a-ci bash -s"
     )
     assert "fdt_secret" not in smoke.log.read_text() + result.stdout + result.stderr
-
-
-def test_smoke_stores_the_screen_test_token_for_ci_and_shows_it_nowhere(smoke):
-    (smoke.tmp / "ops/.screen-test.env").write_text(
-        "SCREEN_TEST_ACCOUNT='a-screen1'\nSCREEN_TEST_TOKEN='fdt_screen9'\n"
-    )
-    result = smoke.run()
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert (smoke.secrets / "SCREEN_TEST_TOKEN").read_text() == "fdt_screen9"
-    assert "fdt_screen9" not in smoke.log.read_text() + result.stdout + result.stderr
-
-
-def test_smoke_replaces_a_screen_test_token_github_holds(smoke):
-    (smoke.tmp / "ops/.screen-test.env").write_text(
-        "SCREEN_TEST_ACCOUNT='a-screen1'\nSCREEN_TEST_TOKEN='fdt_rotated'\n"
-    )
-    (smoke.secrets / "SCREEN_TEST_TOKEN").write_text("fdt_old")
-    result = smoke.run()
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert (smoke.secrets / "SCREEN_TEST_TOKEN").read_text() == "fdt_rotated"
-
-
-def test_smoke_without_a_screen_test_account_stores_no_screen_token(smoke):
-    result = smoke.run()
-    assert result.returncode == 0, result.stdout + result.stderr
+    # The eval's token stays local: CI has an account of its own.
     assert not (smoke.secrets / "SCREEN_TEST_TOKEN").exists()
-    assert "holds no screen-test token" in result.stdout
 
 
-def test_smoke_names_the_account_to_staging_so_its_entries_arent_rejected(smoke):
+def test_smoke_names_the_accounts_to_staging_so_their_entries_are_handled(smoke):
     result = smoke.run()
     assert result.returncode == 0, result.stdout + result.stderr
     calls = [c for c in smoke.log.read_text().splitlines() if c.startswith("ssh ")]
-    assert calls[-1] == "ssh env SMOKE_ACCOUNT=a-new bash -s"
+    assert calls[-1] == "ssh env SMOKE_ACCOUNT=a-new CI_SCREEN_ACCOUNT=a-ci bash -s"
     sent = smoke.host.sent(len(calls))
     assert sent == (REPO / "ops/remote/smoke-env.sh").read_text()
     # The unit first, so it reads the file smoke-env.sh writes.
@@ -192,20 +184,25 @@ def test_smoke_names_the_account_to_staging_so_its_entries_arent_rejected(smoke)
     assert unit == (REPO / "ops/remote/staging-service.sh").read_text()
 
 
-def test_a_rerun_passes_the_known_account_and_keeps_the_token_unless_asked(smoke):
+def test_a_rerun_passes_the_known_accounts_and_keeps_the_tokens_unless_asked(smoke):
     smoke.run()
     (smoke.secrets / "SMOKE_TEST_TOKEN").write_text("fdt_kept")
-    kept = smoke.run("n\n\n")
+    (smoke.secrets / "CI_SCREEN_TOKEN").write_text("fdt_kept2")
+    kept = smoke.run("n\nn\n\n")
     assert kept.returncode == 0, kept.stdout + kept.stderr
     assert (smoke.secrets / "SMOKE_TEST_TOKEN").read_text() == "fdt_kept"
+    assert (smoke.secrets / "CI_SCREEN_TOKEN").read_text() == "fdt_kept2"
     # The kept run sends only the setting, not ci-account.sh.
     calls = [c for c in smoke.log.read_text().splitlines() if c.startswith("ssh ")]
-    assert len(calls) == 5, calls
-    assert smoke.host.sent(5) == (REPO / "ops/remote/smoke-env.sh").read_text()
-    renewed = smoke.run("y\n\n")
+    assert len(calls) == 6, calls
+    assert smoke.host.sent(6) == (REPO / "ops/remote/smoke-env.sh").read_text()
+    renewed = smoke.run("y\ny\n\n")
     assert renewed.returncode == 0, renewed.stdout + renewed.stderr
     assert (smoke.secrets / "SMOKE_TEST_TOKEN").read_text() == "fdt_s3cret"
-    assert "SMOKE_ACCOUNT=a-new bash -s" in smoke.log.read_text()
+    assert (smoke.secrets / "CI_SCREEN_TOKEN").read_text() == "fdt_ci7"
+    log = smoke.log.read_text()
+    assert "ssh env ROLE=smoke ACCOUNT=a-new bash -s" in log
+    assert "ssh env ROLE=screen ACCOUNT=a-ci bash -s" in log
 
 
 def test_before_the_first_deploy_it_says_to_rerun_and_still_sets_the_key(smoke):
@@ -214,7 +211,27 @@ def test_before_the_first_deploy_it_says_to_rerun_and_still_sets_the_key(smoke):
     assert result.returncode == 0, result.stdout + result.stderr
     assert "ops/provision-vps smoke" in result.stdout
     assert not (smoke.secrets / "SMOKE_TEST_TOKEN").exists()
+    assert not (smoke.secrets / "CI_SCREEN_TOKEN").exists()
     assert (smoke.secrets / "STAGING_KEY").read_text() == STAGING_KEY
+
+
+def test_a_failure_on_the_second_account_still_names_the_first_to_staging(smoke):
+    smoke.host.answer("*ROLE=screen*", status=1)
+    result = smoke.run()
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (smoke.secrets / "SMOKE_TEST_TOKEN").read_text() == "fdt_s3cret"
+    assert not (smoke.secrets / "CI_SCREEN_TOKEN").exists()
+    calls = [c for c in smoke.log.read_text().splitlines() if c.startswith("ssh ")]
+    assert calls[-1] == "ssh env SMOKE_ACCOUNT=a-new bash -s", calls
+
+
+def test_smoke_says_to_delete_the_eval_token_ci_no_longer_reads(smoke):
+    first = smoke.run()
+    assert "SCREEN_TEST_TOKEN" not in first.stdout
+    (smoke.secrets / "SCREEN_TEST_TOKEN").write_text("old")
+    result = smoke.run("n\nn\n\n")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "gh secret delete SCREEN_TEST_TOKEN --env staging" in result.stdout
 
 
 def test_a_failure_on_the_server_stops_the_wizard(smoke):
@@ -329,6 +346,8 @@ def rerun(tmp_path, fake_host):
     )
     for secret in ("DEPLOY_SSH_KEY", "SMOKE_TEST_TOKEN", "STAGING_KEY"):
         (fake_host.secrets / secret).write_text("kept")
+    # The CI screen account is new to this server: ci-account.sh makes it.
+    fake_host.answer("*ROLE=screen*", stdout="a-ci\tfdt_ci7\n", stdin="create-token")
     fake_host.answer("*", stdout="203.0.113.7 STREAM x\n", tool="getent")
     fake_host.answer("*", stdout="401\n", tool="curl")
     fake_host.answer("*robots.txt*", stdout="200\n", tool="curl")
@@ -373,17 +392,17 @@ def script(name: str) -> str:
     return (REPO / "ops/remote" / name).read_text()
 
 
-def test_only_new_stores_a_new_screen_test_token_and_keeps_one_github_holds(rerun):
-    (rerun.tmp / "ops/.screen-test.env").write_text(
-        "SCREEN_TEST_ACCOUNT='a-screen1'\nSCREEN_TEST_TOKEN='fdt_screen9'\n"
-    )
+def test_only_new_makes_the_ci_screen_account_once_then_keeps_it(rerun):
     first = rerun.run()
     assert first.returncode == 0, first.stdout + first.stderr
-    assert (rerun.secrets / "SCREEN_TEST_TOKEN").read_text() == "fdt_screen9"
-    (rerun.secrets / "SCREEN_TEST_TOKEN").write_text("kept")
+    assert (rerun.secrets / "CI_SCREEN_TOKEN").read_text() == "fdt_ci7"
+    assert "CI_SCREEN_ACCOUNT='a-ci'" in (rerun.tmp / "ops/.vps.env").read_text()
+    (rerun.secrets / "CI_SCREEN_TOKEN").write_text("kept")
     again = rerun.run()
     assert again.returncode == 0, again.stdout + again.stderr
-    assert (rerun.secrets / "SCREEN_TEST_TOKEN").read_text() == "kept"
+    assert (rerun.secrets / "CI_SCREEN_TOKEN").read_text() == "kept"
+    assert rerun.log.read_text().count("ROLE=screen") == 1
+    assert "CI_SCREEN_ACCOUNT=a-ci bash -s" in rerun.log.read_text()
 
 
 def test_only_new_reruns_every_stage_without_asking_for_anything_saved(rerun):
@@ -405,7 +424,7 @@ def test_only_new_reruns_every_stage_without_asking_for_anything_saved(rerun):
     # The admin account is granted again, and the smoke token kept.
     assert "ADMIN_ACCOUNT=a-owner1 bash -s" in log
     assert "gh secret set SMOKE_TEST_TOKEN" not in log
-    assert "SMOKE_ACCOUNT=a-smoke1 bash -s" in log
+    assert "SMOKE_ACCOUNT=a-smoke1 CI_SCREEN_ACCOUNT=a-ci bash -s" in log
     assert script("smoke-env.sh") in sent
     for question in ("Press Enter", "Make a new token anyway", "Run it on"):
         assert question not in result.stdout, question

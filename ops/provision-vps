@@ -236,10 +236,10 @@ run_wizard() {
 # It saves the host name and basic-auth user in ops/.vps.env (git-ignored); the
 # password is never saved. Every remote step is a script in ops/remote/ that is safe
 # to rerun, so rerunning the wizard repairs a half-finished setup.
-# `ops/provision-vps smoke` runs only the last stage, the smoke test's account and
-# secrets, on a server the full wizard has set up; `ops/provision-vps screening`
-# only staging's API key and cap, and `ops/provision-vps admin` only making your
-# staging account the admin. `ops/provision-vps --only-new` reruns every stage, for
+# `ops/provision-vps smoke` runs only the last stage, CI's two accounts (the smoke
+# test's and the screen check's) and their secrets, on a server the full wizard has
+# set up; `ops/provision-vps screening` only staging's API key and cap, and
+# `ops/provision-vps admin` only making your staging account the admin. `ops/provision-vps --only-new` reruns every stage, for
 # new stages and new logic, without asking for anything ops/.vps.env, the server or
 # GitHub already holds: no passwords or keys again, and no pauses.
 
@@ -269,48 +269,62 @@ set_staging_secret() {
   printf '  %s✓ set%s GitHub secret %s (environment staging)\n' "$GREEN" "$RESET" "$1"
 }
 
-# smoke_stage: the account CI's smoke test submits as, after each deploy
-# (.github/workflows/ci.yml, smoke-staging), and the two secrets it reads.
 # screen_test_setting NAME VALUE-PATTERN: NAME's value in ops/.screen-test.env,
 # written as NAME='value', when it matches the sed regex VALUE-PATTERN; else nothing.
 screen_test_setting() {
   sed -n "s/^$1='\($2\)'\$/\1/p" ops/.screen-test.env 2>/dev/null || true
 }
 
+# ci_account ROLE SAVED SECRET WHAT: the CI account for ROLE (ops/remote/ci-account.sh)
+# and a token, made on the server; its ID saved as SAVED in ops/.vps.env and its token
+# stored as the staging secret SECRET, never shown. Both are kept when set, unless the
+# owner asks for a new token (never asked under --only-new). WHAT names it in messages.
+# Returns 1 when the server fails to make it, having said why.
+ci_account() {
+  local role=$1 saved=$2 secret=$3 what=$4 account reply status=0
+  account=$(_existing "$saved" || true)
+  if [[ -n "$account" ]] && staging_has_secret "$secret" \
+    && { (( ONLY_NEW )) || ! confirm "$secret is set already. Make a new token anyway?"; }; then
+    note "Kept the token in $secret."
+    return 0
+  fi
+  step "Making the $what and a token on $VPS_HOST..."
+  reply=$(remote ci-account.sh "ROLE=$role" "ACCOUNT=$account") || status=$?
+  if (( status == 3 )); then
+    not_deployed_yet smoke "$what"
+  elif (( status != 0 )) || [[ ! "$reply" =~ ^a-[^[:space:]]+$'\t'fdt_[^[:space:]]+$ ]]; then
+    warn "Making the $what failed; the server said why above. Rerun to try again."
+    return 1
+  else
+    write_env "$saved" "${reply%%$'\t'*}"
+    set_staging_secret "$secret" "${reply#*$'\t'}"
+  fi
+}
+
+# smoke_stage: the accounts CI submits as after each deploy (.github/workflows/ci.yml:
+# smoke-staging and screen-staging), and the secrets those jobs read.
 smoke_stage() {
-  stage "Smoke-test account for CI"
+  stage "CI's accounts: the smoke test and the screen check"
   say "After each deploy, CI runs ops/smoke-staging against staging, as an agent would,"
-  say "as an account of its own. Its entries say SMOKE TEST in the title, and stay."
-  say "This makes the account and a token on the server, and stores the token and the"
-  say "staging key as secrets of the 'staging' environment. Neither is shown. If"
-  say "ops/.screen-test.env holds the screen-test account's token, it stores that too,"
-  say "as SCREEN_TEST_TOKEN, for CI's check that staging screens with the real model."
+  say "as an account of its own. Its entries say SMOKE TEST in the title, and stay. It"
+  say "then runs ops/smoke-staging screen, which checks that staging screens with the"
+  say "real model, as a second account, the CI screen account, apart from the"
+  say "screen-test account the eval uses."
+  say "This makes both accounts and their tokens on the server, and stores the tokens"
+  say "and the staging key as secrets of the 'staging' environment. None is shown."
   need_gh
   STAGING_KEY=$(_existing STAGING_KEY || true)
   if [[ ! "$STAGING_KEY" =~ ^[0-9a-f]{64}$ ]]; then
     warn "$ENV_FILE has no staging key. Run the whole wizard (ops/provision-vps) first."
     exit 1
   fi
+  ci_account smoke SMOKE_ACCOUNT SMOKE_TEST_TOKEN "smoke-test account" || exit 1
+  # If the screen account fails, a smoke account just made is still named to staging
+  # below, so the next deploy's smoke test isn't screened; then the stage stops.
+  local screen_failed=0
+  ci_account screen CI_SCREEN_ACCOUNT CI_SCREEN_TOKEN "CI screen account" || screen_failed=1
   SMOKE_ACCOUNT=$(_existing SMOKE_ACCOUNT || true)
-  local reply status=0
-  if [[ -n "$SMOKE_ACCOUNT" ]] && staging_has_secret SMOKE_TEST_TOKEN \
-    && { (( ONLY_NEW )) || ! confirm "SMOKE_TEST_TOKEN is set already. Make a new token anyway?"; }; then
-    note "Kept the token in SMOKE_TEST_TOKEN."
-  else
-    step "Making the account and a token on $VPS_HOST..."
-    reply=$(remote ci-account.sh ROLE=smoke "ACCOUNT=$SMOKE_ACCOUNT") || status=$?
-    if (( status == 3 )); then
-      not_deployed_yet smoke "smoke-test account"
-    elif (( status != 0 )) || [[ ! "$reply" =~ ^a-[^[:space:]]+$'\t'fdt_[^[:space:]]+$ ]]; then
-      warn "Making the account failed; the server said why above. Rerun to try again."
-      exit 1
-    else
-      write_env SMOKE_ACCOUNT "${reply%%$'\t'*}"
-      set_staging_secret SMOKE_TEST_TOKEN "${reply#*$'\t'}"
-    fi
-    unset reply
-  fi
-  SMOKE_ACCOUNT=$(_existing SMOKE_ACCOUNT || true)
+  CI_SCREEN_ACCOUNT=$(_existing CI_SCREEN_ACCOUNT || true)
   if [[ -n "$SMOKE_ACCOUNT" ]]; then
     # Staging doesn't screen the smoke test's entries, so the smoke test calls no
     # model. The unit first, so it reads the file smoke-env.sh writes.
@@ -319,22 +333,20 @@ smoke_stage() {
     # account's share of the day's screening cap (ops/smoke-staging eval).
     local screen_test
     screen_test=$(screen_test_setting SCREEN_TEST_ACCOUNT 'a-[0-9a-z]\{1,\}')
-    remote smoke-env.sh "SMOKE_ACCOUNT=$SMOKE_ACCOUNT" ${screen_test:+"SCREEN_TEST_ACCOUNT=$screen_test"}
+    # The CI screen account has no daily allowance, since each deploy submits as it.
+    remote smoke-env.sh "SMOKE_ACCOUNT=$SMOKE_ACCOUNT" ${screen_test:+"SCREEN_TEST_ACCOUNT=$screen_test"} \
+      ${CI_SCREEN_ACCOUNT:+"CI_SCREEN_ACCOUNT=$CI_SCREEN_ACCOUNT"}
+  fi
+  if (( screen_failed )); then
+    exit 1
   fi
   set_staging_secret STAGING_KEY "$STAGING_KEY"
-  # CI's screening check (ops/smoke-staging screen) submits as the screen-test
-  # account, whose token ops/.screen-test.env holds, if it names one.
-  local screen_token
-  screen_token=$(screen_test_setting SCREEN_TEST_TOKEN "fdt_[^']*")
-  if [[ -z "$screen_token" ]]; then
-    note "ops/.screen-test.env holds no screen-test token, so CI's screening check"
-    note "passes with a warning and checks nothing."
-  elif (( ONLY_NEW )) && staging_has_secret SCREEN_TEST_TOKEN; then
-    note "Kept the screen-test token in SCREEN_TEST_TOKEN."
-  else
-    set_staging_secret SCREEN_TEST_TOKEN "$screen_token"
+  # CI's screen check read the eval's token until it got an account of its own.
+  if staging_has_secret SCREEN_TEST_TOKEN; then
+    note "Nothing reads the staging secret SCREEN_TEST_TOKEN any more: CI's screen check"
+    note "has an account of its own. Delete it:"
+    note "  gh secret delete SCREEN_TEST_TOKEN --env staging"
   fi
-  unset screen_token
   note "The next deploy runs the smoke test. To run it from here instead:"
   note "  FILEDRAWER_STAGING_KEY=... FILEDRAWER_STAGING_API_KEY=... ops/smoke-staging"
   pause

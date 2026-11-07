@@ -126,11 +126,13 @@ jobs:
         run: ops/smoke-staging --wait 120 https://staging.filedrawer.dev
 
   # After each deploy, ops/smoke-staging screen checks that staging screens with the
-  # real model, as the screen-test account, for a few Haiku calls. This job holds
-  # the staging key and that account's token (SCREEN_TEST_TOKEN, which
-  # `ops/provision-vps smoke` stores from ops/.screen-test.env), so it runs no
-  # third-party action. Without the token, or on a day whose screening cap is spent
-  # (the script's exit status 3), it passes with a warning: nothing was checked.
+  # real model, as the CI screen account, for a few Haiku calls. That account is
+  # CI's own, apart from the screen-test account the eval uses, whose review cases
+  # put it under the review guard. This job holds the staging key and the CI screen
+  # account's token (CI_SCREEN_TOKEN, which `ops/provision-vps smoke` makes and
+  # stores), so it runs no third-party action. Without the token, or on a day whose
+  # screening cap is spent (the script's exit status 3), it passes with a warning:
+  # nothing was checked.
   screen-staging:
     needs: deploy-staging
     runs-on: ubuntu-latest
@@ -146,10 +148,10 @@ jobs:
       - name: Screen with the real model
         env:
           FILEDRAWER_STAGING_KEY: ${{ secrets.STAGING_KEY }}
-          FILEDRAWER_STAGING_SCREEN_API_KEY: ${{ secrets.SCREEN_TEST_TOKEN }}
+          FILEDRAWER_STAGING_SCREEN_API_KEY: ${{ secrets.CI_SCREEN_TOKEN }}
         run: |
           if [ -z "$FILEDRAWER_STAGING_SCREEN_API_KEY" ]; then
-            echo "::warning::Screening wasn't checked: SCREEN_TEST_TOKEN isn't set; ops/provision-vps --only-new smoke stores it."
+            echo "::warning::Screening wasn't checked: CI_SCREEN_TOKEN isn't set; ops/provision-vps --only-new smoke makes it."
             exit 0
           fi
           status=0
