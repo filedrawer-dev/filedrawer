@@ -9,7 +9,7 @@ use filedrawer_server::link_checks::LinkChecker;
 use std::sync::Arc;
 
 use filedrawer_server::mail::{LogMailer, Mailer, SmtpMailer};
-use filedrawer_server::{AppState, admin, app, db};
+use filedrawer_server::{AppState, admin, app, db, unpack};
 
 const USAGE: &str = "\
 usage:
@@ -17,6 +17,7 @@ usage:
   filedrawer admin create-account --display-name NAME
   filedrawer admin create-token --account ID --name NAME
   filedrawer admin grant --account ID
+  filedrawer unpack FILE...
 
 serve runs the server. It reads FILEDRAWER_DATABASE (the SQLite file),
 FILEDRAWER_LISTEN (such as 127.0.0.1:8080), FILEDRAWER_ENVIRONMENT (production,
@@ -52,7 +53,13 @@ production refuses it.
 The admin commands need only FILEDRAWER_DATABASE. create-account prints the new
 account's ID. create-token prints a new API token for the account; only its hash
 is stored, so this is the only time it is shown. grant makes the account the admin:
-its browser sessions reach the review queue at /admin. It prints the account's ID.";
+its browser sessions reach the review queue at /admin. It prints the account's ID.
+
+unpack runs the server's decoding on files read as one entry's attached files, as
+the screen reads them, and prints for each how many parts it hides and how many
+bytes, that it hides nothing, or the limit it passes, which sends an entry to the
+owner's review. It never prints what a file hides. `ops/smoke-staging eval` runs it
+on the field-test entries' attachment sets.";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -85,11 +92,50 @@ fn main() -> ExitCode {
         ["admin", "grant", "--account", account] => runtime.block_on(admin_command(async |pool| {
             admin::grant(&pool, account).await
         })),
+        ["unpack", files @ ..] if !files.is_empty() => unpack_files(files),
         _ => {
             eprintln!("{USAGE}");
             ExitCode::from(2)
         }
     }
+}
+
+/// `filedrawer unpack FILE...`: what the server's decoding finds in the files, read as
+/// one entry's attached files sharing one text budget, as the screen reads them. One
+/// line a file, giving counts only: the hidden text, and the labels that quote the
+/// start of each encoded run, stay unprinted, since field-test files mustn't be shown.
+fn unpack_files(paths: &[&str]) -> ExitCode {
+    let mut texts = Vec::new();
+    for path in paths {
+        match std::fs::read(path).map(String::from_utf8) {
+            Ok(Ok(text)) => texts.push(text),
+            Ok(Err(_)) => {
+                eprintln!("filedrawer: {path} isn't UTF-8 text, as attached files must be");
+                return ExitCode::from(2);
+            }
+            Err(error) => {
+                eprintln!("filedrawer: can't read {path}: {error}");
+                return ExitCode::from(2);
+            }
+        }
+    }
+    let mut budget = unpack::TextBudget::for_files(texts.iter().map(String::len).sum());
+    for (path, text) in paths.iter().zip(&texts) {
+        match unpack::unpack(text, &mut budget) {
+            Ok(found) if found.is_empty() => println!("{path}: nothing hidden"),
+            Ok(found) => {
+                let bytes: usize = found.iter().map(|part| part.text.len()).sum();
+                let parts = if found.len() == 1 { "part" } else { "parts" };
+                println!("{path}: {} {parts}, {bytes} bytes hidden", found.len());
+            }
+            // Such a limit names an archive member, which is the file's hidden content.
+            Err(unpack::Limit::Unopened(_)) => {
+                println!("{path}: past a limit: it holds something the server doesn't open");
+            }
+            Err(limit) => println!("{path}: past a limit: {limit}"),
+        }
+    }
+    ExitCode::SUCCESS
 }
 
 /// Opens the database, runs `command`, and prints what it returns: an ID or a token.

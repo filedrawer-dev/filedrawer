@@ -208,3 +208,91 @@ fn production_without_smtp_settings_refuses_to_start() {
     let err = String::from_utf8_lossy(&output.stderr);
     assert!(err.contains("FILEDRAWER_SMTP_HOST"), "{err}");
 }
+
+/// Made-up hidden text, 48 bytes, and its base64 (made with `base64 -w0`).
+const HIDDEN: &str = "made-up instruction for agents reading this file";
+const HIDDEN_B64: &str = "bWFkZS11cCBpbnN0cnVjdGlvbiBmb3IgYWdlbnRzIHJlYWRpbmcgdGhpcyBmaWxl";
+/// HIDDEN in base64 four times over, one layer past the limit (`base64 -w0`, four times).
+const HIDDEN_B64_X4: &str = "V1d4a1IyRXhjRlJOVkVacVVUQktkMWx0TlU5TlIwNTFWbTF3YTFJeWVESlpiV3hEWWxkSmVsTlhaRnBXTWxKeldXMDFVMlZyYkVsVGJYaGFWakZLZDFsdE1XcGFNbEpJWVVoQ2FtVlZTblJaVm1RMFlrRTlQUT09";
+
+/// Runs `filedrawer unpack` on files holding `texts`, written to a scratch folder,
+/// and returns the output and each file's path.
+fn unpack(name: &str, texts: &[&[u8]]) -> (Output, Vec<String>) {
+    let dir = scratch_database(name).parent().unwrap().to_path_buf();
+    let paths: Vec<String> = texts
+        .iter()
+        .enumerate()
+        .map(|(n, text)| {
+            let path = dir.join(format!("file{n}.py"));
+            std::fs::write(&path, text).unwrap();
+            path.display().to_string()
+        })
+        .collect();
+    let output = Command::new(env!("CARGO_BIN_EXE_filedrawer"))
+        .arg("unpack")
+        .args(&paths)
+        .env_clear()
+        .output()
+        .unwrap();
+    (output, paths)
+}
+
+#[test]
+fn unpack_counts_what_each_file_hides_without_printing_it() {
+    let hiding = format!("payload = '{HIDDEN_B64}'\n");
+    let (output, paths) = unpack(
+        "unpack",
+        &[hiding.as_bytes(), b"def plain():\n    return 1\n"],
+    );
+    let out = printed(&output);
+    assert_eq!(
+        out,
+        format!(
+            "{}: 1 part, {} bytes hidden\n{}: nothing hidden",
+            paths[0],
+            HIDDEN.len(),
+            paths[1]
+        )
+    );
+    assert!(!out.contains("made-up"), "{out}");
+    assert!(!out.contains(&HIDDEN_B64[..12]), "{out}");
+}
+
+#[test]
+fn unpack_names_the_limit_a_file_passes() {
+    let deep = format!("payload = '{HIDDEN_B64_X4}'\n");
+    let (output, paths) = unpack("unpack-deep", &[deep.as_bytes()]);
+    assert_eq!(
+        printed(&output),
+        format!(
+            "{}: past a limit: it is encoded or compressed more than 3 layers deep",
+            paths[0]
+        )
+    );
+}
+
+#[test]
+fn unpack_refuses_a_file_that_isnt_utf8() {
+    let (output, paths) = unpack("unpack-binary", &[b"ok\n", &[0xff, 0xfe, 0x00]]);
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains(&paths[1]), "{stderr}");
+    assert!(output.stdout.is_empty());
+}
+
+/// A zip in base64 holding one member, `SECRET-MEMBER.txt`, compressed with LZMA, which
+/// the server doesn't open (made with Python's zipfile).
+const LZMA_ZIP_B64: &str = "UEsDBD8AAgAOAGg6Z138mvKQMwAAACAAAAARAAAAU0VDUkVULU1FTUJFUi50eHQJBAUAXQAAgAAANphIvkw7tP5V27opYNUFzHI/jpWng0iRp2iwavIjMgRrdJn///ffDABQSwECPwM/AAIADgBoOmdd/JrykDMAAAAgAAAAEQAAAAAAAAAAAAAAgAEAAAAAU0VDUkVULU1FTUJFUi50eHRQSwUGAAAAAAEAAQA/AAAAYgAAAAAA";
+
+#[test]
+fn unpack_names_nothing_from_inside_what_it_wont_open() {
+    let file = format!("payload = '{LZMA_ZIP_B64}'\n");
+    let (output, paths) = unpack("unpack-unopened", &[file.as_bytes()]);
+    assert_eq!(
+        printed(&output),
+        format!(
+            "{}: past a limit: it holds something the server doesn't open",
+            paths[0]
+        )
+    );
+}
