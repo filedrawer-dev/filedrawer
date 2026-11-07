@@ -50,7 +50,7 @@ Committing runs the checks, so commit and read the hook's output instead of runn
 
 The Rust tests run under cargo-nextest, set in `.config/nextest.toml` to print only the tests that fail, with their output, and a summary line. To run them that way, run `cargo nextest run --cargo-quiet`. nextest skips doctests, so the hook also runs `cargo test --doc`. Install nextest once per machine: `cargo install cargo-nextest --locked`, or the prebuilt binary from https://get.nexte.st/latest/linux.
 
-Mutation testing (cargo-mutants, set in `.cargo/mutants.toml`) runs in CI, only when started by hand, since a full run takes tens of runner-hours: `gh workflow run mutants.yml`. The workflow's header says where the results land. To check that a new test catches a mutant the run missed, write the change its line in `missed.txt` names as an apply-edits block and run it through `mutate-check` (`-h`), which takes seconds.
+Mutation testing (cargo-mutants, set in `.cargo/mutants.toml`) runs in CI, only when started by hand, since a full run takes about 10 runner-hours: `gh workflow run mutants.yml`. The workflow's header says where the results land, and the `mutants-triage` skill turns a run into the few issues worth a test. To check that a new test catches a mutant the run missed, write the change its line in `missed.txt` names as an apply-edits block and run it through `mutate-check` (`-h`), which takes seconds.
 
 `bin/lychee` downloads lychee once per machine and checks it against the SHA-256 pinned in the script. The version and hashes live only there, and its docstring says how to move to a new release. The first commit on a machine without network access is refused; `SKIP=lychee git commit` skips only that check.
 

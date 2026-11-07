@@ -1,8 +1,8 @@
 # Mutation testing, started by hand: cargo-mutants breaks the code in small ways (a
 # function returns a default, `==` becomes `!=`) and runs the tests against each
 # change. A missed mutant is one the tests still pass, which marks code no test
-# checks. The settings are in .cargo/mutants.toml. A full run is about 2000 mutants
-# and tens of runner-hours, so it never runs on push: start it from the Actions tab
+# checks. The settings are in .cargo/mutants.toml. A full run is about 2300 mutants,
+# 40 minutes and 10 runner-hours, so it never runs on push: start it from the Actions tab
 # or with `gh workflow run mutants.yml`. The summary job merges the shards' lists into
 # the `mutants` artifact (`gh run download RUN_ID -n mutants`) and writes the counts
 # and the missed mutants to the run's summary page. Each shard's whole mutants.out,
