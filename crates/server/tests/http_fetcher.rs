@@ -15,7 +15,8 @@ use filedrawer_server::link_checks::{Fetcher, HttpFetcher};
 type Seen = Arc<Mutex<Vec<(String, Option<String>)>>>;
 
 /// A local server: `/moved` redirects to `/elsewhere`, `/repos/a/b` answers JSON with
-/// GitHub's rate-limit headers, and everything else answers 200. Returns its base URL.
+/// GitHub's rate-limit headers, `/a/b/branch_commits/x` answers JSON only when asked
+/// as GitHub's page asks, and everything else answers 200. Returns its base URL.
 async fn serve(seen: Seen) -> String {
     let record = move |uri: Uri, headers: HeaderMap| {
         let seen = seen.clone();
@@ -32,6 +33,20 @@ async fn serve(seen: Seen) -> String {
                     [(header::RETRY_AFTER, "120")],
                 )
                     .into_response(),
+                "/a/b/branch_commits/x" => {
+                    let asks_json = headers
+                        .get(header::ACCEPT)
+                        .is_some_and(|value| value == "application/json")
+                        && headers
+                            .get("x-requested-with")
+                            .is_some_and(|value| value == "XMLHttpRequest");
+                    if asks_json {
+                        axum::Json(serde_json::json!({"branches": [], "tags": ["v1"]}))
+                            .into_response()
+                    } else {
+                        "<html>".into_response()
+                    }
+                }
                 "/repos/c/d" => {
                     (StatusCode::FORBIDDEN, [(header::RETRY_AFTER, "30")]).into_response()
                 }
@@ -119,6 +134,36 @@ async fn it_reads_retry_after_from_a_page_and_from_the_api() {
     assert_eq!((page.status, page.retry_after), (429, Some(120)));
     let api = fetcher.github("/repos/c/d").await.unwrap();
     assert_eq!((api.status, api.retry_after), (403, Some(30)));
+}
+
+#[tokio::test]
+async fn it_asks_a_page_for_json_as_its_script_does_without_the_token() {
+    let seen = Seen::default();
+    let base = serve(seen.clone()).await;
+    let fetcher = HttpFetcher::with_api_base(Some("github_pat_not_real".into()), &base, TIMEOUT);
+    let answer = fetcher
+        .get_json(&format!("{base}/a/b/branch_commits/x"))
+        .await
+        .unwrap();
+    assert_eq!(answer.status, 200);
+    assert_eq!(
+        answer.body,
+        Some(serde_json::json!({"branches": [], "tags": ["v1"]}))
+    );
+    let busy = fetcher.get_json(&format!("{base}/busy")).await.unwrap();
+    assert_eq!(
+        (busy.status, busy.body, busy.retry_after),
+        (429, None, Some(120))
+    );
+    let moved = fetcher.get_json(&format!("{base}/moved")).await.unwrap();
+    assert_eq!(moved.status, 302);
+    let auths: Vec<Option<String>> = seen
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(_, auth)| auth.clone())
+        .collect();
+    assert_eq!(auths, [None, None, None]);
 }
 
 #[tokio::test]

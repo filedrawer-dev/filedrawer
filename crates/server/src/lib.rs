@@ -82,7 +82,7 @@ pub struct AppState {
     pub environment: config::Environment,
     /// What the last screening calls came to, for `GET /staging/status`.
     pub screening_health: std::sync::Arc<screening::ScreeningHealth>,
-    /// Fetches `code` and `logs` links, and asks GitHub's API about commits.
+    /// Fetches `code` and `logs` links, and asks GitHub about commits.
     pub link_checker: std::sync::Arc<link_checks::LinkChecker>,
 }
 

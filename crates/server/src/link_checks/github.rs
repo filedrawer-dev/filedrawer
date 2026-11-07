@@ -1,7 +1,8 @@
 //! GitHub's fork check (design.md, Submission and screening, step 2): whether a
-//! `code` commit is on one of the named repository's own branches or at one of its
-//! tags, since GitHub serves a fork's commits under its parent's URL. And the API
-//! calls it spends: at most half of the hour's, each account a tenth of that half,
+//! `code` commit is on one of the named repository's own branches or in one of its
+//! tags, since GitHub serves a fork's commits under its parent's URL; GitHub's
+//! commit page says first, and its API when the page doesn't. And the API calls it
+//! spends: at most half of the hour's, each account a tenth of that half,
 //! and none while GitHub asks the server to wait.
 
 use std::time::Duration;
@@ -92,21 +93,95 @@ impl LinkChecker {
     }
 }
 
-/// Whether `commit` is its repository's own: on its default branch, or at one of its
-/// tags, or on up to [`MAX_OTHER_BRANCHES`] other branches. Only the repository's
-/// writers can push a tag, so one at the commit proves it, and keeps GitHub from
-/// pruning it. On none of them, the commit is a fork's or its branch was squashed
-/// or rebased away, which GitHub can't tell apart, so it is flagged and never
-/// refused (the owner's decision, 2026-11-07). `account` is charged for the calls.
+/// Whether `commit` is its repository's own: on one of its branches or in one of its
+/// tags, as GitHub's commit page says, or else as GitHub's API does (`api_pin`).
+/// Only the repository's writers can push a branch or a tag, and GitHub doesn't
+/// prune a commit one holds. On none of them, the commit is a fork's or its branch
+/// was squashed or rebased away, which GitHub can't tell apart, so it is flagged and
+/// never refused (the owner's decision, 2026-11-07). `account` is charged for the
+/// API's calls.
 pub(super) async fn github_pin(
     state: &AppState,
     commit: &GithubCommit,
     account: Option<&str>,
 ) -> PinCheck {
-    let GithubCommit { repo, sha } = commit;
     if known_confirmed(&state.pool, commit).await {
         return PinCheck::Verified;
     }
+    match commit_page(state, commit).await {
+        CommitPage::Held => record_confirmed(&state.pool, commit).await,
+        CommitPage::HeldByNone => PinCheck::OnNoBranch(on_no_branch_or_tag(commit)),
+        CommitPage::Unread => api_pin(state, commit, account).await,
+    }
+}
+
+/// "On no branch or tag", with how to clear the flag, for a complete answer.
+fn on_no_branch_or_tag(commit: &GithubCommit) -> String {
+    let GithubCommit { repo, sha } = commit;
+    format!(
+        "commit {sha} is on no branch or tag of {repo}: {}",
+        no_branch_advice(sha)
+    )
+}
+
+/// What GitHub's commit page said of a commit.
+enum CommitPage {
+    /// A branch or tag of the repository contains it.
+    Held,
+    /// No branch or tag does.
+    HeldByNone,
+    /// It said something else, or nothing: ask the API.
+    Unread,
+}
+
+/// Which branches and tags of the repository contain `commit`, as the list behind
+/// GitHub's own "does not belong to any branch" banner says:
+/// `github.com/{repo}/branch_commits/{sha}`, which spends no API calls and lists
+/// every branch and tag holding the commit, not just their tips. It isn't
+/// documented, so any answer but 200 with both lists is `Unread`, and the check goes
+/// to the API (the owner's decision, 2026-11-07: "build it with the fallback").
+async fn commit_page(state: &AppState, commit: &GithubCommit) -> CommitPage {
+    page_lists(state, commit)
+        .await
+        .map_or(CommitPage::Unread, |held| {
+            if held {
+                CommitPage::Held
+            } else {
+                CommitPage::HeldByNone
+            }
+        })
+}
+
+/// Whether the commit page lists any branch or tag holding `commit`; `None` when
+/// its answer isn't that list.
+async fn page_lists(state: &AppState, commit: &GithubCommit) -> Option<bool> {
+    let url = format!(
+        "https://github.com/{}/branch_commits/{}",
+        commit.repo, commit.sha
+    );
+    let answer = state
+        .link_checker
+        .fetch_json_from("github.com", &url)
+        .await
+        .ok()?;
+    if answer.status != 200 {
+        return None;
+    }
+    let body = answer.body?;
+    let branches = body["branches"].as_array()?;
+    let tags = body["tags"].as_array()?;
+    // A branch is listed as `{"branch": name, ...}` and a tag as its name: anything
+    // else isn't the list this reads.
+    let real = branches.iter().all(|branch| branch["branch"].is_string())
+        && tags.iter().all(serde_json::Value::is_string);
+    real.then_some(!branches.is_empty() || !tags.is_empty())
+}
+
+/// The fork check through GitHub's API: whether `commit` is on its repository's
+/// default branch, at one of its tags, or on up to [`MAX_OTHER_BRANCHES`] other
+/// branches. `account` is charged for the calls.
+async fn api_pin(state: &AppState, commit: &GithubCommit, account: Option<&str>) -> PinCheck {
+    let GithubCommit { repo, sha } = commit;
     let head = match compare(state, account, repo, "HEAD", sha).await {
         Ok(head) => head,
         Err(why) => return PinCheck::NotVerified(why),
@@ -145,7 +220,7 @@ pub(super) async fn github_pin(
     let every_branch = others.len() <= MAX_OTHER_BRANCHES;
     let every_tag = tags.as_array().map_or(0, Vec::len) < LISTED;
     PinCheck::OnNoBranch(match (every_branch, every_tag) {
-        (true, true) => format!("commit {sha} is on no branch or tag of {repo}: {advice}"),
+        (true, true) => on_no_branch_or_tag(commit),
         (true, false) => format!(
             "commit {sha} is on no branch of {repo}, nor at any of the first {LISTED} of its tags, the ones the server checked: {advice}"
         ),
@@ -326,7 +401,7 @@ async fn github_call(
     }
 }
 
-/// Whether GitHub's API already confirmed `commit` on a branch or at a tag.
+/// Whether GitHub already confirmed `commit` on a branch or in a tag.
 async fn known_confirmed(pool: &SqlitePool, commit: &GithubCommit) -> bool {
     sqlx::query_scalar!(
         "SELECT 1 FROM github_commits_confirmed WHERE repo = ? AND sha = ?",
@@ -338,7 +413,7 @@ async fn known_confirmed(pool: &SqlitePool, commit: &GithubCommit) -> bool {
     .is_ok_and(|row| row.is_some())
 }
 
-/// Records that `commit` is on a branch or at a tag, so it isn't asked about again,
+/// Records that `commit` is on a branch or in a tag, so it isn't asked about again,
 /// and says it is verified.
 async fn record_confirmed(pool: &SqlitePool, commit: &GithubCommit) -> PinCheck {
     let now = crate::time::now();

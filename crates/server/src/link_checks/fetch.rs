@@ -36,6 +36,19 @@ pub trait Fetcher: Send + Sync {
     /// GETs `path`, such as `/repos/o/r/branches`, from GitHub's REST API, with the
     /// server's token if it has one.
     fn github<'a>(&'a self, path: &'a str) -> Fetching<'a, ApiAnswer>;
+    /// GETs `url` asking for JSON, as a web page's script does, without a token or
+    /// following a redirect, and reads its body as JSON.
+    fn get_json<'a>(&'a self, url: &'a str) -> Fetching<'a, JsonAnswer>;
+}
+
+/// What a page answered when asked for JSON.
+#[derive(Debug, Clone, PartialEq)]
+pub struct JsonAnswer {
+    pub status: u16,
+    /// `None` when the body isn't JSON.
+    pub body: Option<serde_json::Value>,
+    /// `Retry-After`, in seconds, when the host gave it so.
+    pub retry_after: Option<u64>,
 }
 
 /// GitHub's hourly allowance of API calls with a token, and without one, per IP.
@@ -47,6 +60,10 @@ const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The most of an API answer the server reads. A compare lists at most 300 files.
 const MAX_API_BODY_BYTES: usize = 4 * 1024 * 1024;
+
+/// The most of a page's JSON the server reads. GitHub's list of the branches and
+/// tags holding git/git's v2.0.0 commit, 495 tags, is far smaller.
+const MAX_JSON_BODY_BYTES: usize = 1024 * 1024;
 
 /// Who the hosts see fetching.
 const USER_AGENT: &str = "filedrawer.dev link check (https://filedrawer.dev/skill.md)";
@@ -91,6 +108,21 @@ fn fetch_error(error: reqwest::Error) -> String {
     }
 }
 
+/// The body of `response` as JSON, if it is JSON, reading at most `cap` bytes.
+async fn json_body(
+    mut response: reqwest::Response,
+    cap: usize,
+) -> Result<Option<serde_json::Value>, String> {
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(fetch_error)? {
+        if bytes.len() + chunk.len() > cap {
+            return Err("the answer was too long to read".into());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(serde_json::from_slice(&bytes).ok())
+}
+
 fn header_number<T: std::str::FromStr>(
     headers: &reqwest::header::HeaderMap,
     name: &str,
@@ -99,6 +131,26 @@ fn header_number<T: std::str::FromStr>(
 }
 
 impl Fetcher for HttpFetcher {
+    fn get_json<'a>(&'a self, url: &'a str) -> Fetching<'a, JsonAnswer> {
+        Box::pin(async move {
+            let response = self
+                .http
+                .get(url)
+                .header(reqwest::header::ACCEPT, "application/json")
+                .header("x-requested-with", "XMLHttpRequest")
+                .send()
+                .await
+                .map_err(fetch_error)?;
+            let status = response.status().as_u16();
+            let retry_after = header_number(response.headers(), "retry-after");
+            Ok(JsonAnswer {
+                status,
+                body: json_body(response, MAX_JSON_BODY_BYTES).await?,
+                retry_after,
+            })
+        })
+    }
+
     fn get<'a>(&'a self, url: &'a str) -> Fetching<'a, Answer> {
         Box::pin(async move {
             let response = self.http.get(url).send().await.map_err(fetch_error)?;
@@ -126,21 +178,14 @@ impl Fetcher for HttpFetcher {
             if let Some(token) = &self.token {
                 request = request.bearer_auth(token);
             }
-            let mut response = request.send().await.map_err(fetch_error)?;
+            let response = request.send().await.map_err(fetch_error)?;
             let status = response.status().as_u16();
             let remaining = header_number(response.headers(), "x-ratelimit-remaining");
             let reset = header_number(response.headers(), "x-ratelimit-reset");
             let retry_after = header_number(response.headers(), "retry-after");
-            let mut bytes = Vec::new();
-            while let Some(chunk) = response.chunk().await.map_err(fetch_error)? {
-                if bytes.len() + chunk.len() > MAX_API_BODY_BYTES {
-                    return Err("GitHub's answer was too long to read".into());
-                }
-                bytes.extend_from_slice(&chunk);
-            }
             Ok(ApiAnswer {
                 status,
-                body: serde_json::from_slice(&bytes).ok(),
+                body: json_body(response, MAX_API_BODY_BYTES).await?,
                 remaining,
                 reset,
                 retry_after,

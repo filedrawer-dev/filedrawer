@@ -1172,3 +1172,133 @@ async fn a_rejected_entry_is_never_rechecked() {
     );
     assert_eq!(recheck(&app, 8).await, 0);
 }
+
+/// GitHub's commit page's list of the branches and tags that contain `SHA`.
+fn branch_commits() -> String {
+    format!("https://github.com/ada/steering/branch_commits/{SHA}")
+}
+
+#[tokio::test]
+async fn githubs_commit_page_verifies_a_commit_on_a_branch_with_no_api_call() {
+    let app = test_app().await;
+    app.web.json(
+        &branch_commits(),
+        200,
+        Some(serde_json::json!({"branches": [{"branch": "main", "prs": []}], "tags": []})),
+    );
+    let reply = app.post("/entries", with_code(&github_code())).await;
+    assert_eq!(warnings(&reply.body), Vec::<&str>::new(), "{}", reply.body);
+    assert_eq!(app.web.json_fetched(), [branch_commits()]);
+    assert_eq!(app.web.api_calls(), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn githubs_commit_page_verifies_a_commit_inside_a_tag() {
+    let app = test_app().await;
+    app.web.json(
+        &branch_commits(),
+        200,
+        Some(serde_json::json!({"branches": [], "tags": ["v1.0", "v2.0"]})),
+    );
+    let reply = app.post("/entries", with_code(&github_code())).await;
+    assert_eq!(warnings(&reply.body), Vec::<&str>::new(), "{}", reply.body);
+    assert_eq!(app.web.api_calls(), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn an_empty_answer_from_the_commit_page_flags_a_commit_on_no_branch() {
+    let app = test_app().await;
+    app.web.json(
+        &branch_commits(),
+        200,
+        Some(serde_json::json!({"branches": [], "tags": []})),
+    );
+    let reply = app.post("/entries", with_code(&github_code())).await;
+    assert_eq!(
+        warnings(&reply.body),
+        [format!(
+            "`code: {}`: commit {SHA} is on no branch or tag of ada/steering{}",
+            github_code(),
+            no_branch_advice()
+        )]
+    );
+    assert_eq!(app.web.api_calls(), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn any_other_answer_from_the_commit_page_falls_back_to_githubs_api() {
+    let odd: [(u16, Option<serde_json::Value>); 8] = [
+        (404, None),
+        (500, None),
+        // Both lists, but not a 200.
+        (500, Some(serde_json::json!({"branches": [], "tags": []}))),
+        // Not JSON.
+        (200, None),
+        // No `tags`.
+        (200, Some(serde_json::json!({"branches": []}))),
+        // Lists of things that aren't branches or tags.
+        (
+            200,
+            Some(serde_json::json!({"branches": [null], "tags": []})),
+        ),
+        (
+            200,
+            Some(serde_json::json!({"branches": [{"error": "x"}], "tags": []})),
+        ),
+        (200, Some(serde_json::json!({"branches": [], "tags": [{}]}))),
+    ];
+    for (status, body) in odd {
+        let app = test_app().await;
+        app.web.json(&branch_commits(), status, body.clone());
+        let reply = app.post("/entries", with_code(&github_code())).await;
+        assert_eq!(
+            warnings(&reply.body),
+            Vec::<&str>::new(),
+            "{status} {body:?}"
+        );
+        assert_eq!(
+            app.web.api_calls(),
+            [compare_path("HEAD", SHA)],
+            "{status} {body:?}"
+        );
+    }
+    let app = test_app().await;
+    app.web.json_fails(&branch_commits());
+    app.post("/entries", with_code(&github_code())).await;
+    assert_eq!(app.web.api_calls(), [compare_path("HEAD", SHA)]);
+}
+
+#[tokio::test]
+async fn while_github_com_is_paused_the_check_goes_to_githubs_api() {
+    let app = test_app().await;
+    let logs = "https://github.com/ada/steering/releases/download/v1/run.log";
+    app.web.answer_after(logs, 429, 300);
+    app.post("/entries", with_logs(logs)).await;
+    app.post("/entries", with_code(&github_code())).await;
+    assert_eq!(app.web.json_fetched(), Vec::<String>::new());
+    assert_eq!(app.web.api_calls(), [compare_path("HEAD", SHA)]);
+}
+
+#[tokio::test]
+async fn a_429_from_the_commit_page_pauses_github_com() {
+    let app = test_app().await;
+    app.web.json_after(&branch_commits(), 429, 300);
+    let reply = app.post("/entries", with_code(&github_code())).await;
+    assert_eq!(warnings(&reply.body), Vec::<&str>::new(), "{}", reply.body);
+    let logs = "https://github.com/ada/steering/releases/download/v1/run.log";
+    app.post("/entries", with_logs(logs)).await;
+    assert!(!app.web.fetched().contains(&logs.to_string()));
+}
+
+#[tokio::test]
+async fn a_commit_the_commit_page_verified_costs_nothing_the_next_time() {
+    let app = test_app().await;
+    app.web.json(
+        &branch_commits(),
+        200,
+        Some(serde_json::json!({"branches": [{"branch": "main", "prs": []}], "tags": []})),
+    );
+    app.submit_held(&with_code(&github_code())).await;
+    app.submit_held(&with_code(&github_code())).await;
+    assert_eq!(app.web.json_fetched().len(), 1);
+}

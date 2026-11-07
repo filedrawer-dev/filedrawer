@@ -4,7 +4,9 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use filedrawer_server::link_checks::{Answer, ApiAnswer, Fetcher, Fetching, LinkChecker};
+use filedrawer_server::link_checks::{
+    Answer, ApiAnswer, Fetcher, Fetching, JsonAnswer, LinkChecker,
+};
 use serde_json::{Value, json};
 
 /// Every page answers 200 and every GitHub commit is on its repository's default
@@ -22,6 +24,8 @@ struct Web {
     api_calls: Vec<String>,
     /// Pages that answer only once `release` lets them.
     gated: HashMap<String, Arc<tokio::sync::Semaphore>>,
+    json: HashMap<String, Result<JsonAnswer, String>>,
+    json_fetched: Vec<String>,
 }
 
 impl FakeWeb {
@@ -128,6 +132,45 @@ impl FakeWeb {
             .insert(path.into(), Err("timed out".into()));
     }
 
+    /// `url` answers a request for JSON with `status` and `body`, or with text that
+    /// isn't JSON when `body` is `None`.
+    pub fn json(&self, url: &str, status: u16, body: Option<Value>) {
+        self.web.lock().unwrap().json.insert(
+            url.into(),
+            Ok(JsonAnswer {
+                status,
+                body,
+                retry_after: None,
+            }),
+        );
+    }
+
+    /// `url` answers a request for JSON with `status` and `Retry-After: seconds`.
+    pub fn json_after(&self, url: &str, status: u16, seconds: u64) {
+        self.web.lock().unwrap().json.insert(
+            url.into(),
+            Ok(JsonAnswer {
+                status,
+                body: None,
+                retry_after: Some(seconds),
+            }),
+        );
+    }
+
+    /// A request for JSON from `url` doesn't answer.
+    pub fn json_fails(&self, url: &str) {
+        self.web
+            .lock()
+            .unwrap()
+            .json
+            .insert(url.into(), Err("timed out".into()));
+    }
+
+    /// Every URL asked for JSON, in order.
+    pub fn json_fetched(&self) -> Vec<String> {
+        self.web.lock().unwrap().json_fetched.clone()
+    }
+
     /// Every URL fetched, in order.
     pub fn fetched(&self) -> Vec<String> {
         self.web.lock().unwrap().fetched.clone()
@@ -154,6 +197,20 @@ impl Fetcher for FakeWeb {
             web.pages.get(url).cloned().unwrap_or(Ok(Answer {
                 status: 200,
                 location: None,
+                retry_after: None,
+            }))
+        })
+    }
+
+    /// A page asked for JSON answers 404 unless a test says otherwise, so the fork
+    /// check falls back to GitHub's API.
+    fn get_json<'a>(&'a self, url: &'a str) -> Fetching<'a, JsonAnswer> {
+        Box::pin(async move {
+            let mut web = self.web.lock().unwrap();
+            web.json_fetched.push(url.into());
+            web.json.get(url).cloned().unwrap_or(Ok(JsonAnswer {
+                status: 404,
+                body: None,
                 retry_after: None,
             }))
         })

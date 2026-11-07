@@ -1,6 +1,6 @@
 //! The online half of the link checks (design.md, Submission and screening, step 2):
 //! whether each `code` and `logs` link on a listed host answers, whether a GitHub
-//! `code` commit is on one of the named repository's own branches or at one of its
+//! `code` commit is on one of the named repository's own branches or in one of its
 //! tags, and whether a Zenodo `code` link names a version record. The offline half, by the URL's shape,
 //! is the analyzer's. Only a pin found bad at submission refuses an entry; anything
 //! else becomes a warning and a flag on the card (the owner's decisions, 2026-11-07).
@@ -23,7 +23,7 @@ use reqwest::Url;
 
 pub use fetch::{
     Answer, ApiAnswer, Fetcher, Fetching, GITHUB_HOURLY_WITH_TOKEN, GITHUB_HOURLY_WITHOUT_TOKEN,
-    HttpFetcher,
+    HttpFetcher, JsonAnswer,
 };
 pub use stored::{RECHECK_DAYS, pin_flag, recheck_due, store, stored};
 
@@ -370,12 +370,28 @@ impl LinkChecker {
             return Err(NoAnswer::Waiting);
         }
         let answer = self.fetcher.get(url).await.map_err(NoAnswer::Silent)?;
-        if answer.status == 429 || (answer.status == 503 && answer.retry_after.is_some()) {
-            self.pauses.pause(host, answer.retry_after);
+        self.heed(host, answer.status, answer.retry_after);
+        Ok(answer)
+    }
+
+    /// `fetch_from`, asking for JSON.
+    async fn fetch_json_from(&self, host: &str, url: &str) -> Result<JsonAnswer, NoAnswer> {
+        if self.pauses.holds(host) {
+            return Err(NoAnswer::Waiting);
+        }
+        let answer = self.fetcher.get_json(url).await.map_err(NoAnswer::Silent)?;
+        self.heed(host, answer.status, answer.retry_after);
+        Ok(answer)
+    }
+
+    /// Pauses `host` when its answer asks the server to wait: a 429, or a 503 with
+    /// `Retry-After`. Any other answer ends the doubling of its waits.
+    fn heed(&self, host: &str, status: u16, retry_after: Option<u64>) {
+        if status == 429 || (status == 503 && retry_after.is_some()) {
+            self.pauses.pause(host, retry_after);
         } else {
             self.pauses.clear(host);
         }
-        Ok(answer)
     }
 }
 
@@ -406,7 +422,7 @@ async fn pin(
     };
     let pin = if let Some(Reach::Dead(_)) = reach {
         PinCheck::NotVerified(format!(
-            "the link is dead, so GitHub's API can't say whether commit {} is on a branch of {}",
+            "the link is dead, so GitHub can't say whether commit {} is on a branch of {}",
             commit.sha, commit.repo
         ))
     } else {

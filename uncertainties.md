@@ -314,6 +314,12 @@ Choices the docs left open, made while building the analyzer. Once the owner set
 - Chosen: the first 10 in the list, skipping the one whose head is the default branch's. One call lists up to 100.
 - Against: in a repository with many branches, the commit's branch may sort late, and an honest entry is flagged "commit on no branch"; the warning says how many branches the server checked.
 
+## GitHub's commit page as the fork check's first step
+
+- Options: trust an empty answer from `branch_commits` and flag the commit, or confirm it through the API first; ask the page only, or keep the API path as the fallback.
+- Chosen: trust it, as GitHub's own banner does, so a commit on no branch costs no API calls; fall back to the API on any answer but 200 with both lists of real entries. The page isn't documented, and the fallback keeps the check working if GitHub changes it. The page gets the same 10 s as any fetch, so one that hangs leaves the API path half of the request's 20 s.
+- Against: if GitHub changed the page to answer empty lists for a commit on a branch, every GitHub entry would be flagged "commit on no branch" until someone noticed, since that answer doesn't fall back. And the page's own limits aren't published, so a busy day could earn github.com a pause, which also pauses fetching github.com links.
+
 ## A commit on no branch: the order of the calls, and when it is checked again
 
 - Options: list the tags before or after comparing the commit with the other branches; check every tag, or the first 100; recheck a no-branch commit within the hour, as an unconfirmed pin is, or weekly.
@@ -342,4 +348,4 @@ Choices the docs left open, made while building the analyzer. Once the owner set
 
 - Options: staging refuses to start without `FILEDRAWER_GITHUB_TOKEN`, as production does, or starts and logs a warning.
 - Chosen: it starts, with the warning, so a deploy before `ops/provision-vps github` has run doesn't fail.
-- Against: staging can run for days at 60 calls an hour, with most GitHub links "pin not verified", and nothing but the log says so.
+- Against: staging can run for days at 60 calls an hour, and when GitHub's commit page doesn't answer, most GitHub links get "pin not verified", and nothing but the log says so.
