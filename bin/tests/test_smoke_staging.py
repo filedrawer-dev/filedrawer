@@ -4,6 +4,7 @@ rejecting the series sent to learn why a case wasn't decided. The real server's
 replies are covered by crates/server/tests/smoke.rs."""
 
 import hashlib
+import json
 import os
 import subprocess
 import threading
@@ -28,9 +29,11 @@ def fake_server(
     series: tuple[int, str],
     attachments: tuple[int, str] = (404, "not found\n"),
 ) -> ThreadingHTTPServer:
-    """A server whose Nth entry reports status statuses[N], and whose POST /series and
-    POST /attachments answer series and attachments (code, body)."""
+    """A server whose Nth entry, sent alone or in a batch, reports status statuses[N],
+    and whose POST /series and POST /attachments answer series and attachments (code,
+    body). Its `posts` lists the path of every POST it took."""
     submitted: list[str] = []
+    posts: list[str] = []
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_args) -> None:
@@ -44,10 +47,19 @@ def fake_server(
             self.wfile.write(data)
 
         def do_POST(self) -> None:
-            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            raw = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            posts.append(self.path)
             if self.path == "/entries":
                 submitted.append(f"e{len(submitted)}")
                 self.answer(201, f"id: {submitted[-1]}\nstatus: pending\n")
+            elif self.path == "/entries/batch":
+                lines = ["id: b1", "status: pending"]
+                for _ in json.loads(raw)["entries"]:
+                    submitted.append(f"e{len(submitted)}")
+                    lines.append(
+                        f"entry: {submitted[-1]} http://fake/e/{submitted[-1]}"
+                    )
+                self.answer(201, "\n".join(lines) + "\n")
             elif self.path.endswith("/publish"):
                 self.answer(200, "status: screening\n")
             elif self.path == "/series":
@@ -66,6 +78,7 @@ def fake_server(
             self.answer(200, f"id: {entry}\nstatus: {status}\n{reasons}")
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server.posts = posts
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server
 
@@ -235,13 +248,96 @@ def test_an_upload_the_server_fails_stops_the_run_rather_than_skip_the_entry(
     assert "\nrefused\t" not in Path(run_file).read_text()
 
 
-def test_an_undecided_entry_with_attachments_may_wait_for_their_half_of_the_cap(
-    eval_run,
-):
+def test_an_undecided_entry_with_attachments_is_most_likely_slow(eval_run):
     series_made = (201, f"id: s-1\nstatus: hidden\nkey: {JOIN_KEY}\n")
     uploaded = (201, "id: as-1\nbytes: 17\n")
     result = eval_run([*LABELLED, "screening"], series_made, uploaded)
     assert "WAIT public field-test-1" in result.stdout
-    assert "half of the day's cap that attachments may spend" in result.stdout
-    assert "only slow" not in result.stdout
+    # Attached code is screened in parts, which takes minutes; the cap's half for
+    # attachments is the rarer cause, and only /staging/status can tell.
+    assert "attached code is screened in parts" in result.stdout
+    assert "FILEDRAWER_SCREEN_WAIT_SECONDS" in result.stdout
+    assert "/staging/status" in result.stdout
     assert JOIN_KEY not in result.stdout + result.stderr
+
+
+@pytest.fixture
+def families_run(tmp_path):
+    """Runs eval --families, or --resume, on one made-up family of two entries that
+    cite a made-up series, against a fake server that a test may pass again to resume
+    against it. Returns the result and the server."""
+    family = tmp_path / "field-test/round3/demo"
+    family.mkdir(parents=True)
+    for name in ("a", "b"):
+        (family / f"{name}.md").write_text(
+            f"---\ntitle: made-up {name}\nslug: {name}\nseries: ser_madeUp1@1\n---\nmade up\n"
+        )
+    (family / "series-demo.md").write_text(
+        "---\nid: ser_madeUp1\ntitle: made-up\n---\nmade-up setup\n"
+    )
+    servers = []
+
+    def run(args, statuses, series, server=None):
+        if server is None:
+            server = fake_server(statuses, series)
+            servers.append(server)
+        env = {
+            "PATH": os.environ["PATH"],
+            "FILEDRAWER_STAGING_KEY": "k",
+            "FILEDRAWER_STAGING_SCREEN_API_KEY": TOKEN,
+            "FILEDRAWER_OPS_DIR": str(tmp_path),
+            "FILEDRAWER_SCREEN_WAIT_SECONDS": "0",
+            "FILEDRAWER_FIELD_TEST_DIR": str(tmp_path / "field-test"),
+        }
+        url = f"http://127.0.0.1:{server.server_address[1]}"
+        result = subprocess.run(
+            ["bash", SCRIPT, "eval", *args, url],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+        return result, server
+
+    yield run
+    for server in servers:
+        server.shutdown()
+
+
+SERIES_MADE = (201, f"id: s-1\nversion: 1\nkey: {JOIN_KEY}\n")
+
+
+def test_a_member_in_review_holds_its_batch_without_stopping_the_run(families_run):
+    result, _ = families_run(
+        ["--families"], [*LABELLED, "review", "screening"], SERIES_MADE
+    )
+    assert "FAIL public field-test-1" in result.stdout, result.stdout
+    assert "got review" in result.stdout
+    assert (
+        "1 field-test entries wait in a batch for the owner's decision on a member in review"
+        in result.stdout
+    )
+    assert "WAIT" not in result.stdout and "Stopped" not in result.stdout
+    assert JOIN_KEY not in result.stdout + result.stderr
+
+
+def test_a_series_the_screen_held_back_isnt_sent_again_on_resume(families_run):
+    held = (
+        422,
+        "refused:\n- the screen held this series back for the archive's owner; don't send it again reworded\n",
+    )
+    result, server = families_run(["--families"], [*LABELLED, "public", "public"], held)
+    assert "FAIL series series-1: 422" in result.stdout, result.stdout
+    assert "PASS public field-test-2" in result.stdout
+    run_file = next(
+        line.removeprefix("run file: ")
+        for line in result.stdout.splitlines()
+        if line.startswith("run file: ")
+    )
+    again, _ = families_run(
+        ["--resume", run_file], [*LABELLED, "public", "public"], held, server
+    )
+    assert "PASS public field-test-2" in again.stdout, again.stdout
+    assert "FAIL series" not in again.stdout
+    assert server.posts.count("/series") == 1, server.posts

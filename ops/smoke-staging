@@ -9,7 +9,8 @@ usage() {
   cat <<'EOF'
 usage: ops/smoke-staging [--wait SECONDS] [URL]
        ops/smoke-staging screen [--wait SECONDS] [URL]
-       ops/smoke-staging eval [--field-test N | --resume RUNFILE] [--wait SECONDS] [URL]
+       ops/smoke-staging eval [--field-test N | --families | --resume RUNFILE]
+                              [--wait SECONDS] [URL]
 
 Runs File Drawer's smoke test against URL (default https://staging.filedrawer.dev),
 as /skill.md tells an agent to: submit, the hour's hold, a fix with PUT, publish,
@@ -54,9 +55,12 @@ fails, is a failure. Its settings, neither printed:
               ops/.screen-test.env
   the key     FILEDRAWER_STAGING_KEY, else STAGING_KEY in ops/.vps.env
 (FILEDRAWER_OPS_DIR moves where it looks for those files and where eval keeps its
-run files, FILEDRAWER_FIELD_TEST_DIR where eval looks for field-test entries, and
-FILEDRAWER_SCREEN_WAIT_SECONDS how long it waits for a verdict, default 120, for
-tests.)
+run files, and FILEDRAWER_FIELD_TEST_DIR where eval looks for field-test entries.
+FILEDRAWER_SCREEN_WAIT_SECONDS is how long it waits for a verdict, default 120: 4
+times that for an entry citing attached code, which the screen reads in parts, and
+once more for each 10 entries of a batch, whose entries are decided together. Raise
+it for a long eval; tests lower it. FILEDRAWER_BATCH_MAX_BYTES caps a batch's body,
+default 900000, for tests.)
 
 eval runs a labelled test set through the screen, as the screen-test account, to
 see whether it is too strict or too lax. By hand only. The cases are the entries
@@ -80,6 +84,11 @@ again. Once a run is over, the owner rejects the review cases on /admin, which
 guards the screen-test account; clear the guard there afterwards. Same settings as
 screen.
   --field-test N      how many field-test entries to add
+  --families          instead of a sample, send each repo's latest round in
+                      field-test/ as batches (bin/field-test-batches builds them),
+                      making the series its entries cite first, each a case; an
+                      entry that passed while its series waits hidden, as eval's
+                      series do, counts as public
   --resume RUNFILE    go on with the run RUNFILE records, its cases and tag
 EOF
 }
@@ -91,6 +100,7 @@ screen_wait="${FILEDRAWER_SCREEN_WAIT_SECONDS:-120}"
 mode=smoke
 field_tests=10
 field_tests_given=0
+families=0
 resume_file=""
 while (( $# )); do
   case "$1" in
@@ -99,6 +109,7 @@ while (( $# )); do
     --field-test)
       [[ "${2:-}" =~ ^[0-9]+$ ]] || { echo "smoke-staging: --field-test takes a number" >&2; exit 2; }
       field_tests=$2; field_tests_given=1; shift 2 ;;
+    --families) families=1; shift ;;
     --resume)
       [[ -n "${2:-}" ]] || { echo "smoke-staging: --resume takes a run file" >&2; exit 2; }
       resume_file=$2; shift 2 ;;
@@ -111,10 +122,20 @@ while (( $# )); do
 done
 if [[ -n $resume_file ]]; then
   [[ $mode == eval ]] || { echo "smoke-staging: --resume goes with eval" >&2; exit 2; }
+  for given in field-test:$field_tests_given families:$families; do
+    if [[ ${given#*:} == 1 ]]; then
+      echo "smoke-staging: --resume takes its cases from the run file, so --${given%:*} can't go with it" >&2
+      exit 2
+    fi
+  done
+fi
+if (( families )); then
+  [[ $mode == eval ]] || { echo "smoke-staging: --families goes with eval" >&2; exit 2; }
   if (( field_tests_given )); then
-    echo "smoke-staging: --resume takes its cases from the run file, so --field-test can't go with it" >&2
+    echo "smoke-staging: --families sends whole families instead of a sample, so --field-test can't go with it" >&2
     exit 2
   fi
+  field_tests=0
 fi
 # setting_from FILE NAME: NAME's value in FILE, written as NAME='value', if any.
 setting_from() {
@@ -210,18 +231,19 @@ send() {
   fi
 }
 
-# publish_then_await: ends entry ID's hold, then waits for its verdict as await does.
-# A failed publish is a FAIL, and returns 1.
+# publish_then_await [SECONDS]: ends entry ID's hold, then waits for its verdict as
+# await does. A failed publish is a FAIL, and returns 1.
 publish_then_await() {
   req POST "/e/$ID/publish"
   [[ $CODE == 200 ]] || { echo "FAIL publish $ID: $CODE"; fail=$((fail + 1)); return 1; }
-  await
+  await "$@"
 }
 
-# await: waits up to the screen wait (2 minutes) while entry ID is still being
-# screened (an outage or the day's cap); sets CODE and BODY from GET /e/<id>.
+# await [SECONDS]: waits up to SECONDS (default the screen wait, 2 minutes) while
+# entry ID is still being screened (an outage, the day's cap, or a slow screen); sets
+# CODE and BODY from GET /e/<id>.
 await() {
-  local deadline=$((SECONDS + screen_wait))
+  local deadline=$((SECONDS + ${1:-$screen_wait}))
   req GET "/e/$ID"
   while [[ $(field status) == screening ]] && (( SECONDS < deadline )); do
     sleep 5
@@ -272,8 +294,11 @@ explain_undecided() {
     503:*) echo "  screening fails; the server's log says why" ;;
     201:*)
       if (( ${CITED:-0} )); then
-        echo "  the screen answers now, so the case's attached files may be waiting for the"
-        echo "  half of the day's cap that attachments may spend: resume after 00:00 UTC"
+        echo "  the screen answers now, so the case is most likely only slow, since"
+        echo "  attached code is screened in parts. Resume with a longer"
+        echo "  FILEDRAWER_SCREEN_WAIT_SECONDS, or after 00:00 UTC if"
+        echo "  $base/staging/status shows half the day's cap or more spent, since"
+        echo "  attachments may spend only that half"
       else
         echo "  the screen answers now, so the case was only slow: rerun"
       fi ;;
@@ -340,6 +365,25 @@ if [[ $mode == eval ]]; then
       done
     done
     record field-tests "$field_tests"
+    # Field-test families: each repo's latest round, the field test's last word on it.
+    if (( families )); then
+      record families 1
+      declare -A latest=() latest_round=()
+      for family in "$field_test_dir"/round*/*/; do
+        family=${family%/}
+        repo=$(basename "$family")
+        round=$(basename "$(dirname "$family")")
+        round=${round#round}
+        [[ $round =~ ^[0-9]+$ ]] || continue
+        if (( round > ${latest_round[$repo]:-0} )); then
+          latest_round[$repo]=$round
+          latest[$repo]=$family
+        fi
+      done
+      while IFS= read -r repo; do
+        [[ -n $repo ]] && record family "${latest[$repo]}"
+      done < <(printf '%s\n' "${!latest[@]}" | sort)
+    fi
     # Field-test entries: one per name, since the rounds hold near-copies, in a random
     # order fixed here. One whose attached files aren't all gathered is passed over.
     if (( field_tests > 0 )); then
@@ -360,13 +404,19 @@ if [[ $mode == eval ]]; then
   fi
   echo "run file: $run_file"
 
-  cases=() expecteds=() candidates=()
-  declare -A sent=() refused=() set_ids=() set_lists=() status_of=()
+  cases=() expecteds=() candidates=() family_dirs=()
+  declare -A sent=() refused=() set_ids=() set_lists=() status_of=() series_ids=() batch_ids=()
+  declare -A series_failed=()
   passed_over=0
   while IFS=$'\t' read -r kind one two three; do
     case $kind in
       case) expecteds+=("$one"); cases+=("$two") ;;
       field-tests) field_tests=$one ;;
+      families) families=$one ;;
+      family) family_dirs+=("$one") ;;
+      series) series_ids[$one]=$two ;;
+      series-failed) series_failed[$one]=1 ;;
+      batch) batch_ids[$one]=$two ;;
       candidate) candidates+=("$one") ;;
       passed-over) passed_over=$one ;;
       sent) sent[$one]=$two ;;
@@ -377,9 +427,15 @@ if [[ $mode == eval ]]; then
 
   # bin: the filedrawer binary, whose `unpack` is the server's own decoding, needed
   # only when a field-test entry attaches files.
-  bin=""
+  attaches=0
   for file in "${candidates[@]}"; do
-    [[ -f ${file%.md}.attachments ]] || continue
+    [[ -f ${file%.md}.attachments ]] && attaches=1
+  done
+  for family in "${family_dirs[@]}"; do
+    compgen -G "$family/*.attachments" > /dev/null && attaches=1
+  done
+  bin=""
+  if (( attaches )); then
     bin=${FILEDRAWER_BIN:-}
     if [[ -z $bin ]]; then
       repo="$(dirname "$0")/.."
@@ -389,13 +445,15 @@ if [[ $mode == eval ]]; then
       fi
       bin="${CARGO_TARGET_DIR:-$repo/target}/debug/filedrawer"
     fi
-    break
-  done
+  fi
 
   # judge NAME EXPECTED: the entry just screened against EXPECTED.
   judge() {
     local status
     status=$(field status)
+    # An entry that passed while its series is hidden waits on it: the screen passed it,
+    # and eval's series stay hidden.
+    [[ $2 == public && $status == waiting_on_series ]] && status=public
     wanted[$2]=$(( ${wanted[$2]:-0} + 1 ))
     if [[ $status == "$2" ]]; then
       echo "PASS $2 $1"
@@ -429,28 +487,197 @@ if [[ $mode == eval ]]; then
       fi
       sent[$1]=$ID
       record sent "$1" "$ID"
-      publish_then_await || return 3
+      publish_then_await "$(case_wait)" || return 3
     else
       ID=${sent[$1]}
       req GET "/e/$ID"
       if [[ $(field status) == pending ]]; then
-        publish_then_await || return 3
+        publish_then_await "$(case_wait)" || return 3
       else
-        await
+        await "$(case_wait)"
       fi
     fi
   }
 
-  # set_for LIST: sets SET to the ID of the attachment set made from the files LIST
-  # names, uploading it unless the run already did. Returns 1 when it can't be made
-  # or the server refuses it, and 2 when the server can't take it now (see later),
+  # case_wait: how long the case being sent may take to screen: the screen wait, or 4
+  # times it for one citing attached code (CITED), which the screen reads in parts.
+  case_wait() {
+    echo $(( ${CITED:-0} ? screen_wait * 4 : screen_wait ))
+  }
+
+  # The field-test families' batches, built by bin/field-test-batches.
+  batches_tool="$(dirname "$0")/../bin/field-test-batches"
+  series_n=0
+
+  # make_series MADEUP FILE: creates the series FILE holds, which the family's entries
+  # cite as MADEUP, as a case expected made. Returns 1 when the server can't take it
+  # now (see later), stopping the run.
+  make_series() {
+    local reason
+    series_n=$((series_n + 1))
+    "$batches_tool" series-body "$2" > "$dir/series.md" || { echo "FAIL series series-$series_n: bin/field-test-batches couldn't read it"; fail=$((fail + 1)); return 0; }
+    req POST /series "$dir/series.md"
+    wanted[series]=$(( ${wanted[series]:-0} + 1 ))
+    if [[ $CODE == 201 ]]; then
+      series_ids[$1]=$(field id)
+      record series "$1" "${series_ids[$1]}" "$2"
+      echo "PASS series series-$series_n"
+      pass=$((pass + 1)); met[series]=$(( ${met[series]:-0} + 1 ))
+      return 0
+    fi
+    if later; then
+      stopped=1; stop_why="POST /series answered $CODE"; fail=$((fail + 1))
+      return 1
+    fi
+    # The reply's own words, with the author's quoted values masked; never its key.
+    reason=$(printf '%s\n' "$BODY" | sed -n 's/^- //p; s/^error: //p' | head -1 | sed 's/`[^`]*`/`X`/g')
+    echo "FAIL series series-$series_n: $CODE${reason:+: $reason}; its entries go without it"
+    fail=$((fail + 1))
+    # Never sent again: a series the screen held back mustn't be resent.
+    series_failed[$1]=1
+    record series-failed "$1"
+  }
+
+  # in_review MEMBER...: whether any of these sent entries is in review, which holds
+  # the rest of its batch for the owner.
+  in_review() {
+    local m
+    for m; do
+      ID=${sent[$m]}
+      req GET "/e/$ID"
+      [[ $(field status) == review ]] && return 0
+    done
+    return 1
+  }
+
+  # send_batch BODY MEMBERS: sends the batch BODY, whose entries are the files MEMBERS
+  # lists, publishes it and judges every member, unless the run already sent it, which
+  # is polled instead. Returns 1 when the run stops.
+  send_batch() {
+    local -a members ids
+    local first n i m wait unsent=0 held=0 waiting=0 reasons
+    mapfile -t members < "$2"
+    first=${members[0]}
+    n=${#members[@]}
+    [[ -n "${refused[$first]:-}" ]] && return 0
+    CITED=0
+    for m in "${members[@]}"; do
+      [[ -f ${m%.md}.attachments ]] && CITED=1
+      [[ -z "${sent[$m]:-}" ]] && unsent=$((unsent + 1))
+    done
+    if (( unsent > 0 && unsent < n )); then
+      echo "FAIL a batch of $n field-test entries: the run sent some of them in another batch, so the family changed since"
+      fail=$((fail + 1))
+      return 0
+    fi
+    if (( unsent == n )); then
+      req POST /entries/batch "$1" application/json
+      if [[ $CODE != 201 ]]; then
+        if later; then
+          stopped=1; stop_why="POST /entries/batch answered $CODE"; fail=$((fail + 1))
+          return 1
+        fi
+        # The reasons quote slugs, links and commands, so they go to a file beside the
+        # run file, git-ignored with it, and only their place is printed.
+        reasons="$run_file.refused-$(( $(compgen -G "$run_file.refused-*" | wc -l) + 1 ))"
+        printf '%s\n' "$BODY" > "$reasons"
+        echo "FAIL a batch of $n field-test entries was refused ($CODE); its reasons are in $reasons"
+        fail=$((fail + 1))
+        for m in "${members[@]}"; do
+          refused[$m]=1; record refused "$m"
+        done
+        return 0
+      fi
+      mapfile -t ids < <(printf '%s\n' "$BODY" | sed -n 's/^entry: \([^ ]*\) .*/\1/p')
+      batch_ids[$first]=$(field id)
+      record batch "$first" "${batch_ids[$first]}"
+      for i in "${!members[@]}"; do
+        sent[${members[$i]}]=${ids[$i]:-}
+        record sent "${members[$i]}" "${ids[$i]:-}"
+      done
+      req POST "/batches/${batch_ids[$first]}/publish"
+      [[ $CODE == 200 ]] || { echo "FAIL publish batch ${batch_ids[$first]}: $CODE"; fail=$((fail + 1)); }
+    else
+      ID=${sent[$first]}
+      req GET "/e/$ID"
+      [[ $(field status) == pending ]] && req POST "/batches/${batch_ids[$first]:-}/publish"
+    fi
+    # The members are decided together, so the first waits for the whole batch, unless
+    # a member in review holds the rest for the owner.
+    wait=$(( $(case_wait) * ((n + 9) / 10) ))
+    ID=${sent[$first]}
+    await "$(case_wait)"
+    if [[ $(field status) == screening ]] && ! in_review "${members[@]}"; then
+      ID=${sent[$first]}
+      await $(( wait - $(case_wait) ))
+    fi
+    in_review "${members[@]}" && held=1
+    for m in "${members[@]}"; do
+      ID=${sent[$m]}
+      if (( held )) || [[ $m == "$first" ]]; then
+        req GET "/e/$ID"
+      else
+        await "$screen_wait"
+      fi
+      if (( held )) && [[ $(field status) == screening ]]; then
+        waiting=$((waiting + 1))
+        continue
+      fi
+      taken=$((taken + 1))
+      judge "field-test-$taken" public
+      status_of[$m]=$(field status)
+      (( stopped )) && return 1
+    done
+    (( waiting )) && echo "  $waiting field-test entries wait in a batch for the owner's decision on a member in review"
+    return 0
+  }
+
+  # send_family DIR: makes the family's series and uploads its sets, unless the run
+  # already has, then sends its batches in order. Returns 1 when the run stops.
+  send_family() {
+    local kind one two out k
+    local -a args=()
+    while IFS=$'\t' read -r kind one two; do
+      case $kind in
+        series)
+          if [[ -z "${series_ids[$one]:-}" && -z "${series_failed[$one]:-}" && -n $two ]]; then
+            make_series "$one" "$two" || return 1
+          fi
+          [[ -n "${series_ids[$one]:-}" ]] && args+=(--series "$one=${series_ids[$one]}") ;;
+        list)
+          set_for "$one" "goes without its attached code"
+          case $? in
+            0) args+=(--set "$one=$SET") ;;
+            2)
+              stopped=1; stop_why="an attachment set couldn't be uploaded now"
+              fail=$((fail + 1)); return 1 ;;
+          esac ;;
+      esac
+    done < <("$batches_tool" needs "$1")
+    out=$(mktemp -d -p "$dir")
+    if ! "$batches_tool" build "$1" --tag "$tag" --out "$out" --max-bytes "${FILEDRAWER_BATCH_MAX_BYTES:-900000}" "${args[@]}" > /dev/null; then
+      echo "FAIL a family's batches: bin/field-test-batches couldn't build them"
+      fail=$((fail + 1))
+      return 0
+    fi
+    k=1
+    while [[ -f $out/batch-$k.json ]]; do
+      send_batch "$out/batch-$k.json" "$out/batch-$k.members" || return 1
+      k=$((k + 1))
+    done
+  }
+
+  # set_for LIST [WHAT]: sets SET to the ID of the attachment set made from the files
+  # LIST names, uploading it unless the run already did. Returns 1 when it can't be
+  # made or the server refuses it, saying what then happens to its entry (WHAT,
+  # default "is passed over"), and 2 when the server can't take it now (see later),
   # saying why.
   set_for() {
-    local key reason
+    local key reason what=${2:-is passed over}
     key=$(list_key "$1")
     SET=${set_ids[$key]:-}
     [[ -n $SET ]] && return 0
-    python3 - "$1" "$store" > "$dir/set.json" 2>/dev/null <<'PY' || { echo "  an attachment set couldn't be made from the store: its entry is passed over"; return 1; }
+    python3 - "$1" "$store" > "$dir/set.json" 2>/dev/null <<'PY' || { echo "  an attachment set couldn't be made from the store: its entry $what"; return 1; }
 import json
 import pathlib
 import sys
@@ -485,7 +712,7 @@ PY
           echo "  POST /attachments answered $CODE${reason:+: $reason}"
           return 2
         fi
-        echo "  POST /attachments answered $CODE: its entry is passed over"
+        echo "  POST /attachments answered $CODE: its entry $what"
         return 1 ;;
     esac
   }
@@ -577,6 +804,10 @@ PY
     judge "field-test-$taken" public
     status_of[$file]=$(field status)
   done
+  for family in "${family_dirs[@]}"; do
+    (( stopped )) && break
+    send_family "$family" || break
+  done
   (( field_tests > 0 && taken < field_tests && ! stopped )) && echo "  only $taken field-test entries found"
   (( passed_over > 0 )) && echo "  $passed_over field-test entries passed over: their attached files aren't all in $store; bin/field-test-files gathers them"
   if (( stopped )); then
@@ -589,7 +820,8 @@ PY
     fi
     echo "Resume with: ops/smoke-staging eval --resume $run_file"
   fi
-  for expected in public rejected review; do
+  for expected in public rejected review series; do
+    [[ $expected == series && -z "${wanted[series]:-}" ]] && continue
     echo "$expected: ${met[$expected]:-0} of ${wanted[$expected]:-0}"
   done
   echo "  (a miss on review may mean the screen saw that its made-up data is made up)"

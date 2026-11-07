@@ -811,3 +811,174 @@ fn curl_entry(server: &Server, token: &str, id: &str) -> String {
         .unwrap();
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
+
+/// A made-up family as the field test's round 3 left it, under `field-test/`: entries
+/// `a` and `b` name runs that `runs.yaml` declares, cite a series by a made-up ID that
+/// `series-demo.md` holds, and link each other by slug, and `b` attaches a gathered
+/// file. Beside them are notes that aren't an entry, and an older round of the same
+/// repo, which `--families` leaves alone. Every text is marked, so a test can check that
+/// none is printed.
+fn family_box(name: &str) -> PathBuf {
+    let dir = scratch_database(name).parent().unwrap().join("field-test");
+    let fixture = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/smoke-fixture.md"),
+    )
+    .unwrap();
+    let marked = fixture.replace("## Caveats", "SECRET-FIELD-TEST-MARKER\n\n## Caveats");
+    let with = |fields: &str| marked.replacen("---\n", &format!("---\n{fields}"), 1);
+    let family = dir.join("round3/demo-repo");
+    std::fs::create_dir_all(&family).unwrap();
+    std::fs::create_dir_all(dir.join("round2/demo-repo")).unwrap();
+    std::fs::create_dir_all(dir.join("files")).unwrap();
+    std::fs::write(
+        family.join("a.md"),
+        with("slug: alpha\nuses_runs:\n  - run-a\nseries: ser_madeUp1@2#setup\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        family.join("b.md"),
+        with("slug: beta\nuses_runs: [run-a, run-b]\nreplicates: slug:alpha\nseries: ser_madeUp1@1\n"),
+    )
+    .unwrap();
+    let plain = plain_file();
+    std::fs::write(dir.join("files").join(sha256(plain.as_bytes())), plain).unwrap();
+    std::fs::write(
+        family.join("b.attachments"),
+        list_line("author:analysis/plain.py", plain),
+    )
+    .unwrap();
+    std::fs::write(
+        family.join("series-demo.md"),
+        "---\ntitle: Made-up smoke-test series\n# its made-up id: ser_madeUp1\n---\nSECRET-FIELD-TEST-MARKER shared setup, made up.\n\n## Setup\n\nMade-up setup.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        family.join("runs.yaml"),
+        "runs:\n  - id: run-a\n    description: Made-up run A.\n    n: 10\n  - id: run-b\n    description: |\n      Made-up run B,\n      over two lines.\n    n: 20\n",
+    )
+    .unwrap();
+    std::fs::write(
+        family.join("FINDINGS.md"),
+        "SECRET-FIELD-TEST-MARKER notes\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("round2/demo-repo/old.md"), &marked).unwrap();
+    // A family of its own whose one entry the server refuses: its code link has no
+    // commit. Its reasons quote the slug and the link outside backticks.
+    std::fs::create_dir_all(dir.join("round3/bad-repo")).unwrap();
+    std::fs::write(
+        dir.join("round3/bad-repo/bad.md"),
+        with("slug: secret-slug-marker\ncode: https://github.com/made-up/secret-repo-marker\n"),
+    )
+    .unwrap();
+    dir
+}
+
+#[test]
+fn eval_sends_each_field_test_family_as_batches_and_resumes_without_resending() {
+    let (server, token) = serve_attachments("eval-families");
+    let field_test = family_box("eval-families-entries");
+    let ops = scratch_database("eval-families-ops");
+    let ops = ops.parent().unwrap();
+    // Small enough that a and b go in batches of their own.
+    let split = [("FILEDRAWER_BATCH_MAX_BYTES", "2500")];
+    let output = eval(
+        &["--families", "--wait", "30", &server.url],
+        &token,
+        ops,
+        &field_test,
+        &split,
+    );
+    let printed = text(&output);
+    let first_printed = printed.clone();
+    assert!(printed.contains("PASS series series-1"), "{printed}");
+    // A refused batch is a failure, and its reasons go to a file beside the run file,
+    // not to the output.
+    assert!(
+        printed.contains("FAIL a batch of 1 field-test entries was refused (422)"),
+        "{printed}"
+    );
+    // A member passed while its series is hidden waits on it: the screen passed it.
+    assert!(printed.contains("PASS public field-test-1"), "{printed}");
+    assert!(printed.contains("PASS public field-test-2"), "{printed}");
+    assert!(!printed.contains("field-test-3"), "{printed}");
+    let (path, run) = run_file(&printed);
+    let members: Vec<_> = sent(&run)
+        .into_iter()
+        .filter(|(path, _)| path.starts_with(field_test.to_str().unwrap()))
+        .collect();
+    assert_eq!(members.len(), 2, "{run}");
+    let id_of = |name: &str| {
+        members
+            .iter()
+            .find(|(path, _)| path.ends_with(name))
+            .map(|(_, id)| id.clone())
+            .unwrap()
+    };
+    // Two batches, the second citing runs only the first declares, which the server
+    // takes: a batch naming an undeclared run is refused.
+    assert_eq!(run.matches("\nbatch\t").count(), 2, "{run}");
+    assert_eq!(run.matches("\nseries\t").count(), 1, "{run}");
+    let series = run
+        .lines()
+        .find_map(|line| line.strip_prefix("series\t"))
+        .unwrap()
+        .split('\t')
+        .nth(1)
+        .unwrap()
+        .to_string();
+    // A member waiting on its series shows the real series it cites and its code.
+    let shown = curl_entry(&server, &token, &id_of("/b.md"));
+    assert!(shown.contains(&format!("series: {series}@1")), "{shown}");
+    assert!(shown.contains("analysis/plain.py"), "{shown}");
+
+    let again = eval(
+        &[
+            "--resume",
+            path.to_str().unwrap(),
+            "--wait",
+            "30",
+            &server.url,
+        ],
+        &token,
+        ops,
+        &field_test,
+        &split,
+    );
+    let printed = text(&again);
+    assert!(printed.contains("PASS public field-test-2"), "{printed}");
+    let run = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(
+        sent(&run).len(),
+        sent(&run)
+            .iter()
+            .map(|(p, _)| p)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        "{run}"
+    );
+    assert_eq!(run.matches("\nseries\t").count(), 1, "{run}");
+    let reasons = std::fs::read_to_string(format!("{}.refused-1", path.display())).unwrap();
+    assert!(reasons.contains("secret-repo-marker"), "{reasons}");
+    let _ = std::fs::remove_dir_all(field_test.parent().unwrap());
+    for out in [&first_printed, &printed] {
+        for secret in [
+            "SECRET-FIELD-TEST-MARKER",
+            "a.md",
+            "Made-up run",
+            "secret-slug-marker",
+            "secret-repo-marker",
+        ] {
+            assert!(!out.contains(secret), "{secret} printed: {out}");
+        }
+    }
+}
+
+#[test]
+fn families_and_field_test_samples_dont_go_together() {
+    let output = script(&["eval", "--families", "--field-test", "3"], Some("unused"))
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2), "{}", text(&output));
+    assert!(text(&output).contains("--families"), "{}", text(&output));
+}
