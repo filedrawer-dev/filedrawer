@@ -77,6 +77,10 @@ pub struct AppState {
     pub attachment_disk_floor_bytes: u64,
     /// The rate limits and their per-minute counts.
     pub rate_limits: std::sync::Arc<limits::RateLimits>,
+    /// Which deployment this is (`Config::environment`).
+    pub environment: config::Environment,
+    /// What the last screening calls came to, for `GET /staging/status`.
+    pub screening_health: std::sync::Arc<screening::ScreeningHealth>,
 }
 
 /// The free disk an upload must leave (design.md, Attached code: 5 GB).
@@ -111,6 +115,20 @@ impl Routes<Router<AppState>> {
         self.router = self.router.route(path, method_router);
         self.paths.push(path);
         self
+    }
+
+    /// `route` when `wanted`, so a route production mustn't serve isn't there at all.
+    fn route_if(
+        self,
+        wanted: bool,
+        path: &'static str,
+        method_router: MethodRouter<AppState>,
+    ) -> Self {
+        if wanted {
+            self.route(path, method_router)
+        } else {
+            self
+        }
     }
 }
 
@@ -196,6 +214,11 @@ fn build(state: AppState) -> Routes<Router> {
         .route("/search", get(routes::read::search))
         .route("/cards.txt", get(routes::read::cards))
         .route("/tags", get(routes::read::tags))
+        .route_if(
+            state.environment != config::Environment::Production,
+            "/staging/status",
+            get(routes::status::status),
+        )
         .route("/series", post(routes::series::create))
         .route("/series/{id}", get(routes::series::read))
         .route("/series/{id}/join", post(routes::series::join))

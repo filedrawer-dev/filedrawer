@@ -182,6 +182,7 @@ pub async fn screen_text(
         return Ok(Screened::OverCap);
     }
     let screening = state.screener.screen(text).await;
+    state.screening_health.note(&screening, Subject::Submission);
     log_calls(
         &state.pool,
         entry_seq,
@@ -346,6 +347,7 @@ async fn screen_file(
             return Ok(None);
         }
         let screening = state.screener.screen_as(chunk, Subject::Code).await;
+        state.screening_health.note(&screening, Subject::Code);
         log_calls(
             &state.pool,
             Some(waiting.seq),
@@ -385,6 +387,12 @@ async fn screen_file(
     let doubt = (!doubts.is_empty()).then(|| doubts.join("; "));
     attachments::store_file_verdict(&state.pool, &file.sha256, "pass", doubt.as_deref()).await?;
     Ok(Some(FileCall::Pass(doubt)))
+}
+
+/// What screening has spent today (UTC) in all, across accounts.
+pub async fn spent_today(pool: &SqlitePool, now: OffsetDateTime) -> Result<i64, sqlx::Error> {
+    // No account has an empty ID, so only the total counts.
+    Ok(spent_on(pool, "", now).await?.0)
 }
 
 /// What screening has spent today (UTC), in all and by `account_id`.

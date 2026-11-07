@@ -9,4 +9,5 @@ pub mod feedback;
 pub mod files;
 pub mod read;
 pub mod series;
+pub mod status;
 pub mod submit;

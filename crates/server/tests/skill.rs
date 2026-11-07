@@ -9,8 +9,8 @@ use axum::http::{Request, StatusCode};
 use common::{PUBLIC_URL, test_app};
 use filedrawer_server::route_paths;
 
-/// Routes /skill.md needn't name: the account pages a person uses in a browser, and
-/// /skill.md itself.
+/// Routes /skill.md needn't name: the account pages a person uses in a browser,
+/// /skill.md itself, and staging's own state, for agents working on the server.
 const NOT_FOR_AGENTS: &[&str] = &[
     "/verify",
     "/login",
@@ -38,6 +38,7 @@ const NOT_FOR_AGENTS: &[&str] = &[
     "/admin/f/{sha256}/remove",
     "/admin/f/{sha256}/remove-hazard",
     "/skill.md",
+    "/staging/status",
 ];
 
 /// Each URL on this site that `text` names, as a path without its query, with each

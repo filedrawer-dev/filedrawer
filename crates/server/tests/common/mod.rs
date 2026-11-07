@@ -213,6 +213,8 @@ pub fn state(pool: sqlx::SqlitePool, outbox: &Outbox, files_dir: &std::path::Pat
         attachment_store_cap_bytes: 20_000_000_000,
         attachment_disk_floor_bytes: 0,
         rate_limits: Arc::new(RateLimits::new(Limits::site())),
+        environment: filedrawer_server::config::Environment::Dev,
+        screening_health: Default::default(),
     }
 }
 

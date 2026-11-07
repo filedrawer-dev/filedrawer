@@ -1,0 +1,82 @@
+//! `GET /staging/status`: what staging's screen spent today, what waits for it, and how
+//! its last calls went, for agents that can't read the server's log (AGENTS.md). It
+//! names no account, entry or secret. Production doesn't route it (`lib::build`).
+
+use axum::extract::State;
+use axum::http::StatusCode;
+use axum::response::Response;
+use serde_json::json;
+
+use crate::config::Environment;
+use crate::error::AppError;
+use crate::respond::{Format, one_line};
+use crate::screening::{Model, Screener};
+use crate::time::{now_utc, stamp};
+use crate::{AppState, entries, queue};
+
+const NONE_YET: &str = "none since the server started";
+
+pub async fn status(State(state): State<AppState>, format: Format) -> Result<Response, AppError> {
+    let environment = match state.environment {
+        Environment::Production => "production",
+        Environment::Staging => "staging",
+        Environment::Dev => "dev",
+    };
+    let (screener, models, screener_text) = match state.screener {
+        Screener::PassAll => ("pass-all", vec![], "pass-all".to_string()),
+        Screener::Models(_) => (
+            "models",
+            vec![Model::Haiku.id(), Model::Sonnet.id()],
+            format!(
+                "models ({}, then {} on a hazard doubt)",
+                Model::Haiku.id(),
+                Model::Sonnet.id()
+            ),
+        ),
+    };
+    let spent_usd = dollars(queue::spent_today(&state.pool, now_utc()).await?);
+    let cap_usd = dollars(state.screening_daily_nano_usd);
+    let (waiting, oldest) = entries::waiting_to_screen(&state.pool).await?;
+    let health = state.screening_health.snapshot();
+    let success = health.last_success.map(stamp);
+    let failure = health.last_failure.map(|failure| {
+        (
+            stamp(failure.at),
+            failure.subject.name(),
+            one_line(&failure.error),
+        )
+    });
+    let text = format!(
+        "environment: {environment}\nscreener: {screener_text}\n\
+         spent today: ${spent_usd:.4} of the day's ${cap_usd:.2}\nwaiting: {}\n\
+         last success: {}\nlast failure: {}\n",
+        match &oldest {
+            Some(oldest) => format!("{waiting}, the oldest submitted {oldest}"),
+            None => waiting.to_string(),
+        },
+        success.as_deref().unwrap_or(NONE_YET),
+        match &failure {
+            Some((at, subject, error)) => format!("{at} ({subject}): {error}"),
+            None => NONE_YET.to_string(),
+        },
+    );
+    let json = json!({
+        "environment": environment,
+        "screener": screener,
+        "models": models,
+        "spent_today_usd": spent_usd,
+        "cap_usd": cap_usd,
+        "waiting": waiting,
+        "oldest_waiting_since": oldest,
+        "last_success": success,
+        "last_failure": failure.map(|(at, subject, error)| {
+            json!({"at": at, "subject": subject, "error": error})
+        }),
+    });
+    Ok(format.reply(StatusCode::OK, text, json))
+}
+
+/// Billionths of a dollar, in dollars.
+fn dollars(nano_usd: i64) -> f64 {
+    nano_usd as f64 / 1e9
+}

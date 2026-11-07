@@ -176,6 +176,8 @@ async fn serve() -> ExitCode {
         rate_limits: std::sync::Arc::new(filedrawer_server::limits::RateLimits::new(
             filedrawer_server::limits::Limits::site(),
         )),
+        environment: config.environment,
+        screening_health: Default::default(),
     };
     tokio::spawn(filedrawer_server::jobs::run_publisher(state.clone()));
     tokio::spawn(filedrawer_server::jobs::run_tidier(state.clone()));

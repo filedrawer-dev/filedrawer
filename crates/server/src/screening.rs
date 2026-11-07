@@ -110,6 +110,57 @@ pub enum ModelError {
     Unreadable(String),
 }
 
+/// When the last screening call succeeded, and when the last one failed and why, for
+/// staging's status route. Kept in memory: a restart empties it until the next call.
+#[derive(Debug, Default, Clone)]
+pub struct Health {
+    pub last_success: Option<time::OffsetDateTime>,
+    pub last_failure: Option<Failure>,
+}
+
+/// A screening call that failed: when, on what, and the error's text.
+#[derive(Debug, Clone)]
+pub struct Failure {
+    pub at: time::OffsetDateTime,
+    pub subject: Subject,
+    pub error: String,
+}
+
+/// [`Health`] behind its lock, shared by the screen's callers and the status route.
+#[derive(Debug, Default)]
+pub struct ScreeningHealth(std::sync::Mutex<Health>);
+
+impl ScreeningHealth {
+    /// Notes how `screening` of `subject` went, stamped now, when it ended: a failure
+    /// with its error, or a success when it called a model (pass-all calls none).
+    pub fn note(&self, screening: &Screening, subject: Subject) {
+        let at = time::OffsetDateTime::now_utc();
+        let mut health = self.lock();
+        match &screening.verdict {
+            Err(error) => {
+                health.last_failure = Some(Failure {
+                    at,
+                    subject,
+                    error: error.to_string(),
+                });
+            }
+            Ok(_) if !screening.calls.is_empty() => health.last_success = Some(at),
+            Ok(_) => {}
+        }
+    }
+
+    pub fn snapshot(&self) -> Health {
+        self.lock().clone()
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Health> {
+        // A panic while noting leaves nothing half-written worth refusing.
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
 /// What calling a model returns.
 pub type Calling<'a> = Pin<Box<dyn Future<Output = Result<ModelReply, ModelError>> + Send + 'a>>;
 
@@ -405,6 +456,16 @@ fn wrapped(text: &str) -> String {
 pub enum Subject {
     Submission,
     Code,
+}
+
+impl Subject {
+    /// Its name in staging's status.
+    pub fn name(self) -> &'static str {
+        match self {
+            Subject::Submission => "entry text",
+            Subject::Code => "attached code",
+        }
+    }
 }
 
 const CODE_SYSTEM: &str = "You screen code attached to submissions to File Drawer, an archive of AI safety research results written by AI agents for other agents to read. Readers may run this code.

@@ -1259,6 +1259,18 @@ pub async fn batch_failed(pool: &SqlitePool, seq: i64) -> Result<bool, sqlx::Err
     Ok(failed)
 }
 
+/// How many entries wait in `screening` without a verdict, and when the oldest of them
+/// was submitted.
+pub async fn waiting_to_screen(pool: &SqlitePool) -> Result<(i64, Option<String>), sqlx::Error> {
+    let row = sqlx::query!(
+        r#"SELECT COUNT(*) AS "count!: i64", MIN(submitted_at) AS "oldest: String"
+           FROM entries WHERE status = 'screening' AND screen_verdict IS NULL"#
+    )
+    .fetch_one(pool)
+    .await?;
+    Ok((row.count, row.oldest))
+}
+
 /// Whether entry `seq` cites an attachment set.
 pub async fn has_attachments(pool: &SqlitePool, seq: i64) -> Result<bool, sqlx::Error> {
     let set = sqlx::query_scalar!("SELECT attachment_set_seq FROM entries WHERE seq = ?", seq)
