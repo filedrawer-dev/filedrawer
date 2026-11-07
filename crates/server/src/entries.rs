@@ -979,28 +979,33 @@ pub async fn store_verdict(
     seq: i64,
     verdict: &Verdict,
 ) -> Result<(), sqlx::Error> {
-    let (name, note, reasons, doubt) = match verdict {
-        Verdict::Pass { note, hazard_doubt } => ("pass", note.clone(), None, hazard_doubt.clone()),
+    let (name, note, reasons, doubt, review_reason) = match verdict {
+        Verdict::Pass { note, hazard_doubt } => {
+            ("pass", note.clone(), None, hazard_doubt.clone(), None)
+        }
         Verdict::Reject { reasons } => (
             "reject",
             None,
             Some(serde_json::json!(reasons).to_string()),
             None,
+            None,
         ),
         Verdict::Review { why } => {
-            // `why` names the hazard's kind only; its passage stays out of the log.
+            // `why` names a hazard's kind, never its passage, so it may go in the log
+            // and on the owner's page.
             tracing::info!(seq, why, "an entry goes to review");
-            ("review", None, None, None)
+            ("review", None, None, None, Some(why.clone()))
         }
     };
     sqlx::query!(
         "UPDATE entries SET screen_verdict = ?, screening_note = ?, rejection_reasons = ?,
-             hazard_doubt = ?
+             hazard_doubt = ?, review_reason = ?
          WHERE seq = ? AND status = 'screening' AND screen_verdict IS NULL",
         name,
         note,
         reasons,
         doubt,
+        review_reason,
         seq
     )
     .execute(pool)
@@ -1169,6 +1174,9 @@ pub struct Undecided {
     pub display_name: Option<String>,
     pub submitted_at: String,
     pub batch_id: Option<String>,
+    /// Why the screen sent it to review; `None` for entries from before reasons
+    /// were kept.
+    pub review_reason: Option<String>,
 }
 
 /// Every entry in `review` or `held`, oldest submission first, or only entry `id`.
@@ -1176,7 +1184,7 @@ pub async fn undecided(pool: &SqlitePool, id: Option<&str>) -> Result<Vec<Undeci
     sqlx::query_as!(
         Undecided,
         r#"SELECT e.seq AS "seq!: i64", e.id, e.status, e.source, e.account_id,
-                  a.display_name, e.submitted_at, b.id AS "batch_id?"
+                  a.display_name, e.submitted_at, b.id AS "batch_id?", e.review_reason
            FROM entries e JOIN authors a ON a.id = e.account_id
            LEFT JOIN batches b ON b.seq = e.batch_seq
            WHERE e.status IN ('review', 'held') AND (?1 IS NULL OR e.id = ?1)

@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT e.seq AS \"seq!: i64\", e.id, e.status, e.source, e.account_id,\n                  a.display_name, e.submitted_at, b.id AS \"batch_id?\"\n           FROM entries e JOIN authors a ON a.id = e.account_id\n           LEFT JOIN batches b ON b.seq = e.batch_seq\n           WHERE e.status IN ('review', 'held') AND (?1 IS NULL OR e.id = ?1)\n           ORDER BY e.queue_position, e.submitted_at, e.seq",
+  "query": "SELECT e.seq AS \"seq!: i64\", e.id, e.status, e.source, e.account_id,\n                  a.display_name, e.submitted_at, b.id AS \"batch_id?\", e.review_reason\n           FROM entries e JOIN authors a ON a.id = e.account_id\n           LEFT JOIN batches b ON b.seq = e.batch_seq\n           WHERE e.status IN ('review', 'held') AND (?1 IS NULL OR e.id = ?1)\n           ORDER BY e.queue_position, e.submitted_at, e.seq",
   "describe": {
     "columns": [
       {
@@ -85,6 +85,17 @@
             "name": "id"
           }
         }
+      },
+      {
+        "name": "review_reason",
+        "ordinal": 8,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "review_reason"
+          }
+        }
       }
     ],
     "parameters": {
@@ -98,8 +109,9 @@
       false,
       true,
       false,
+      true,
       true
     ]
   },
-  "hash": "1fa85670fb2141539a6121c4609e3a3a582228092b272d6e94d5d8c606b93d74"
+  "hash": "e383af311f76f9b99e1db1f92eeb75c24f2eb501f59bc3dcfe0b2e0943714701"
 }

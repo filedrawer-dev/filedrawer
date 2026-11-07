@@ -363,6 +363,41 @@ async fn every_admin_write_refuses_a_token_and_another_accounts_session() {
 }
 
 #[tokio::test]
+async fn the_owners_page_says_why_the_screen_sent_an_entry_there_and_the_author_doesnt_see_it() {
+    let app = app().await;
+    let cookie = owner(&app).await;
+    let id = in_review(&app, "").await;
+    let page = app.page(&format!("/admin/e/{id}"), Some(&cookie)).await;
+    assert!(
+        page.body
+            .contains("Why it's here: the screens saw a likely hazard ("),
+        "{}",
+        page.body
+    );
+    let own = app.get_as_author(&format!("/e/{id}")).await;
+    assert!(!own.body.contains("likely hazard"), "{}", own.body);
+}
+
+#[tokio::test]
+async fn the_owners_page_says_when_the_review_guard_sent_an_entry() {
+    let app = app().await;
+    let cookie = owner(&app).await;
+    let rejected = in_review(&app, "").await;
+    decide(&app, &cookie, &format!("/admin/e/{rejected}/reject"), &[]).await;
+    let (guarded, status) = publish(&app, &entry("Plain steering", "slug: plain\n")).await;
+    assert_eq!(status, "review");
+    let page = app
+        .page(&format!("/admin/e/{guarded}"), Some(&cookie))
+        .await;
+    assert!(
+        page.body
+            .contains("Why it's here: the account is under the review guard"),
+        "{}",
+        page.body
+    );
+}
+
+#[tokio::test]
 async fn the_owners_reject_or_hold_guards_the_account_until_cleared() {
     let app = app().await;
     let cookie = owner(&app).await;

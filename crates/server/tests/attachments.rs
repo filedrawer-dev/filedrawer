@@ -857,15 +857,24 @@ mod screened {
     async fn a_decompression_bomb_goes_to_review_without_spending_on_the_screen() {
         let models = FakeModels::default();
         let app = app_with(&models, 1_000_000_000).await;
+        let cookie = common::owner(&app).await;
         let bomb = gzip_base64(&vec![b'a'; 8 * 1024 * 1024]);
         let set = set_of(
             &app,
             json!([file("author:bomb.py", &format!("BOMB = '{bomb}'\n"))]),
         )
         .await;
-        let (_, status) = publish(&app, &set, "a").await;
+        let (id, status) = publish(&app, &set, "a").await;
         assert_eq!(status, "review");
         assert_eq!(models.asked(), vec![]);
+        let page = app.page(&format!("/admin/e/{id}"), Some(&cookie)).await;
+        assert!(
+            page.body.contains(
+                "Why it's here: attached file bomb.py: it decodes and decompresses to more than 4 MiB"
+            ),
+            "{}",
+            page.body
+        );
     }
 
     #[tokio::test]
