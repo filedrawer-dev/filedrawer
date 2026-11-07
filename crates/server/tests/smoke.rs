@@ -425,3 +425,389 @@ fn screen_fails_when_screening_fails() {
     assert!(!printed.contains("off-topic"), "{printed}");
     assert!(!printed.contains(&token), "{printed}");
 }
+
+impl Server {
+    /// Stops this server and starts another on the same database with `settings`.
+    fn restart_with(mut self, settings: &[(&str, &str)]) -> Server {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        // Taken, so this server's drop leaves the database for the next one.
+        let database = std::mem::take(&mut self.database);
+        serve_with(database, settings)
+    }
+}
+
+/// Made-up hidden text, 48 bytes, and its base64 (made with `base64 -w0`).
+const HIDDEN: &str = "made-up instruction for agents reading this file";
+const HIDDEN_B64: &str = "bWFkZS11cCBpbnN0cnVjdGlvbiBmb3IgYWdlbnRzIHJlYWRpbmcgdGhpcyBmaWxl";
+
+/// The made-up attached file that hides HIDDEN, marked as the field-test box's files are.
+fn hiding_file() -> String {
+    format!("# SECRET-FIELD-TEST-MARKER\npayload = '{HIDDEN_B64}'\n")
+}
+
+/// A made-up attached file with Windows line ends, which an upload must keep.
+fn plain_file() -> &'static str {
+    "# SECRET-FIELD-TEST-MARKER\r\ndef plain():\r\n    return 1\r\n"
+}
+
+/// The line of an attachment list that names `text` as `origin`.
+fn list_line(origin: &str, text: &str) -> String {
+    format!("{origin} {} {}\n", text.len(), sha256(text.as_bytes()))
+}
+
+fn sha256(bytes: &[u8]) -> String {
+    use sha2::Digest;
+    sha2::Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// A made-up field-test folder, as bin/field-test-files leaves it: three entries,
+/// `one` and `two` listing the same two attached files, which the store holds, and
+/// `three` listing one it doesn't. Every entry and file is marked, so a test can check
+/// that none is printed.
+fn field_test_box(name: &str) -> PathBuf {
+    let dir = scratch_database(name).parent().unwrap().join("field-test");
+    let fixture = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/smoke-fixture.md"),
+    )
+    .unwrap();
+    let marked = fixture.replace("## Caveats", "SECRET-FIELD-TEST-MARKER\n\n## Caveats");
+    let hiding = hiding_file();
+    let plain = plain_file();
+    // Round 3's origins name a repo and commit; round 2's are bare paths.
+    let list = list_line("repo@1f66d29b25b8:src/hiding.py", &hiding)
+        + &list_line("analysis/plain.py", plain);
+    std::fs::create_dir_all(dir.join("round3/demo-repo")).unwrap();
+    std::fs::create_dir_all(dir.join("files")).unwrap();
+    for text in [hiding.as_str(), plain] {
+        std::fs::write(dir.join("files").join(sha256(text.as_bytes())), text).unwrap();
+    }
+    for entry in ["one", "two", "three"] {
+        std::fs::write(dir.join(format!("round3/demo-repo/{entry}.md")), &marked).unwrap();
+    }
+    std::fs::write(dir.join("round3/demo-repo/one.attachments"), &list).unwrap();
+    std::fs::write(dir.join("round3/demo-repo/two.attachments"), &list).unwrap();
+    let missing = "never gathered\n";
+    std::fs::write(
+        dir.join("round3/demo-repo/three.attachments"),
+        list_line("author:analysis/lost.py", missing),
+    )
+    .unwrap();
+    dir
+}
+
+/// `ops/smoke-staging eval` with `args`, as the screen-test account `token`, keeping
+/// its run files in `ops_dir`, reading field-test entries from `field_test`, and with
+/// `settings` besides.
+fn eval(
+    args: &[&str],
+    token: &str,
+    ops_dir: &Path,
+    field_test: &Path,
+    settings: &[(&str, &str)],
+) -> Output {
+    let mut command = script(&[&["eval"], args].concat(), Some("unused"));
+    command
+        .env("FILEDRAWER_OPS_DIR", ops_dir)
+        .env("FILEDRAWER_FIELD_TEST_DIR", field_test)
+        .env("FILEDRAWER_STAGING_SCREEN_API_KEY", token)
+        .env("FILEDRAWER_BIN", env!("CARGO_BIN_EXE_filedrawer"))
+        .envs(settings.iter().copied());
+    command.output().unwrap()
+}
+
+/// The run file eval printed the path of, read.
+fn run_file(printed: &str) -> (PathBuf, String) {
+    let path = printed
+        .lines()
+        .find_map(|line| line.strip_prefix("run file: "))
+        .unwrap_or_else(|| panic!("no run file named: {printed}"));
+    (PathBuf::from(path), std::fs::read_to_string(path).unwrap())
+}
+
+/// The IDs of the entries a run file says were sent, with the path each was sent from.
+fn sent(run: &str) -> Vec<(String, String)> {
+    run.lines()
+        .filter_map(|line| line.strip_prefix("sent\t"))
+        .map(|rest| {
+            let (path, id) = rest.split_once('\t').unwrap();
+            (path.to_string(), id.to_string())
+        })
+        .collect()
+}
+
+#[test]
+fn eval_sends_field_test_entries_citing_their_attachment_sets() {
+    let (server, token) = serve_attachments("eval-sets");
+    let field_test = field_test_box("eval-sets-entries");
+    let ops = scratch_database("eval-sets-ops");
+    let ops = ops.parent().unwrap();
+    let output = eval(
+        &["--field-test", "3", "--wait", "30", &server.url],
+        &token,
+        ops,
+        &field_test,
+        &[],
+    );
+    let printed = text(&output);
+    assert!(printed.contains("PASS public field-test-1"), "{printed}");
+    assert!(printed.contains("PASS public field-test-2"), "{printed}");
+    assert!(!printed.contains("field-test-3"), "{printed}");
+    assert!(
+        printed.contains("only 2 field-test entries found"),
+        "{printed}"
+    );
+    assert!(
+        printed.contains("1 field-test entries passed over"),
+        "{printed}"
+    );
+    assert!(printed.contains("bin/field-test-files"), "{printed}");
+    let (_, run) = run_file(&printed);
+    // The two entries share one list, so one upload.
+    assert_eq!(run.matches("\nset\t").count(), 1, "{run}");
+    let field_tests: Vec<_> = sent(&run)
+        .into_iter()
+        .filter(|(path, _)| path.starts_with(field_test.to_str().unwrap()))
+        .collect();
+    assert_eq!(field_tests.len(), 2, "{run}");
+    for (_, id) in &field_tests {
+        let shown = curl_entry(&server, &token, id);
+        assert!(shown.contains("attachments: as-"), "{shown}");
+        assert!(shown.contains(", 2 files"), "{shown}");
+        // The upload kept the file's bytes, Windows line ends included.
+        assert!(shown.contains(&sha256(plain_file().as_bytes())), "{shown}");
+    }
+    let _ = std::fs::remove_dir_all(field_test.parent().unwrap());
+    for secret in [
+        "SECRET-FIELD-TEST-MARKER",
+        "one.md",
+        HIDDEN,
+        &HIDDEN_B64[..16],
+    ] {
+        assert!(!printed.contains(secret), "{secret} printed: {printed}");
+    }
+}
+
+#[test]
+fn eval_counts_what_decoding_finds_in_the_sets_it_sent() {
+    let (server, token) = serve_attachments("eval-decode");
+    let field_test = field_test_box("eval-decode-entries");
+    // A fourth entry whose list differs but names the hiding file too: a second set,
+    // which shares that file.
+    let demo = field_test.join("round3/demo-repo");
+    std::fs::copy(demo.join("one.md"), demo.join("four.md")).unwrap();
+    std::fs::write(
+        demo.join("four.attachments"),
+        list_line("author:hiding.py", &hiding_file()),
+    )
+    .unwrap();
+    let ops = scratch_database("eval-decode-ops");
+    let output = eval(
+        &["--field-test", "3", "--wait", "30", &server.url],
+        &token,
+        ops.parent().unwrap(),
+        &field_test,
+        &[],
+    );
+    let printed = text(&output);
+    let _ = std::fs::remove_dir_all(field_test.parent().unwrap());
+    // Each file is counted once, though three entries and two sets cite the hiding one.
+    assert!(
+        printed.contains(&format!(
+            "decoding, run here with no model call: 1 of 2 attached files hide text; parts found: 1, {} bytes; past a limit: 0",
+            HIDDEN.len()
+        )),
+        "{printed}"
+    );
+    assert!(
+        printed.contains(
+            "field-test entries citing a set that hides text or passes a limit: 3 (public 3, rejected 0, review 0)"
+        ),
+        "{printed}"
+    );
+    assert!(!printed.contains(HIDDEN), "{printed}");
+}
+
+#[test]
+fn eval_resumes_a_stopped_run_without_sending_anything_twice() {
+    let (server, token) = screening_server("eval-resume", SPENT);
+    let ops = scratch_database("eval-resume-ops");
+    let ops = ops.parent().unwrap();
+    let field_test = field_test_box("eval-resume-entries");
+    let first = eval(
+        &["--field-test", "0", "--wait", "30", &server.url],
+        &token,
+        ops,
+        &field_test,
+        &[("FILEDRAWER_SCREEN_WAIT_SECONDS", "0")],
+    );
+    let printed = text(&first);
+    assert!(printed.contains("WAIT public"), "{printed}");
+    let (path, run) = run_file(&printed);
+    // With no field-test entries wanted, none is picked.
+    assert!(!run.contains("\ncandidate\t"), "{run}");
+    assert!(
+        printed.contains(&format!(
+            "Resume with: ops/smoke-staging eval --resume {}",
+            path.display()
+        )),
+        "{printed}"
+    );
+    let before = sent(&run);
+    assert_eq!(before.len(), 1, "{run}");
+    let tag = path.file_name().unwrap().to_str().unwrap().to_string();
+
+    // The cap no longer stops screening: the waiting entry is decided, and the rest sent.
+    let server = server.restart_with(&[("FILEDRAWER_SCREENER", "pass-all")]);
+    let output = eval(
+        &[
+            "--resume",
+            path.to_str().unwrap(),
+            "--wait",
+            "30",
+            &server.url,
+        ],
+        &token,
+        ops,
+        &field_test,
+        &[],
+    );
+    let _ = std::fs::remove_dir_all(field_test.parent().unwrap());
+    let printed = text(&output);
+    assert!(printed.contains("public: 4 of 4"), "{printed}");
+    assert!(printed.contains(&format!("eval {tag}: ")), "{printed}");
+    let after = sent(&std::fs::read_to_string(&path).unwrap());
+    let cases = ["public", "rejected", "review"]
+        .iter()
+        .map(|expected| {
+            std::fs::read_dir(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../ops/screen-eval")
+                    .join(expected),
+            )
+            .unwrap()
+            .filter(|file| file.as_ref().unwrap().path().extension() == Some("md".as_ref()))
+            .count()
+        })
+        .sum::<usize>();
+    assert_eq!(after.len(), cases, "each case sent once: {after:?}");
+    assert_eq!(after[0], before[0]);
+}
+
+#[test]
+fn a_resumed_run_cites_the_sets_it_already_uploaded() {
+    let (server, token) = serve_attachments("eval-resume-sets");
+    let field_test = field_test_box("eval-resume-sets-entries");
+    let ops = scratch_database("eval-resume-sets-ops");
+    let ops = ops.parent().unwrap();
+    let args = ["--wait", "30", &server.url];
+    let first = eval(
+        &[&["--field-test", "1"], &args[..]].concat(),
+        &token,
+        ops,
+        &field_test,
+        &[],
+    );
+    let printed = text(&first);
+    assert!(printed.contains("PASS public field-test-1"), "{printed}");
+    let (path, run) = run_file(&printed);
+    // Stands for a run that stopped after its first field-test entry: it wanted two.
+    std::fs::write(&path, run.replace("field-tests\t1\n", "field-tests\t2\n")).unwrap();
+    let second = eval(
+        &[&["--resume", path.to_str().unwrap()], &args[..]].concat(),
+        &token,
+        ops,
+        &field_test,
+        &[],
+    );
+    let printed = text(&second);
+    assert!(printed.contains("PASS public field-test-2"), "{printed}");
+    let run = std::fs::read_to_string(&path).unwrap();
+    // The two entries share one list: the resumed run cites the first run's set.
+    let sets: Vec<_> = run
+        .lines()
+        .filter_map(|line| line.strip_prefix("set\t"))
+        .collect();
+    assert_eq!(sets.len(), 1, "{run}");
+    let set = sets[0].split('\t').nth(1).unwrap();
+    let field_tests: Vec<_> = sent(&run)
+        .into_iter()
+        .filter(|(path, _)| path.starts_with(field_test.to_str().unwrap()))
+        .collect();
+    assert_eq!(field_tests.len(), 2, "{run}");
+    for (_, id) in &field_tests {
+        let shown = curl_entry(&server, &token, id);
+        assert!(shown.contains(&format!("attachments: {set},")), "{shown}");
+    }
+    // The tally covers the whole run, the first run's set included.
+    assert!(
+        printed.contains("citing a set that hides text or passes a limit: 2 (public 2"),
+        "{printed}"
+    );
+    let _ = std::fs::remove_dir_all(field_test.parent().unwrap());
+}
+
+#[test]
+fn resume_takes_its_cases_from_the_run_file_alone() {
+    let output = script(
+        &["eval", "--resume", "/nowhere", "--field-test", "3"],
+        Some("unused"),
+    )
+    .output()
+    .unwrap();
+    assert_eq!(output.status.code(), Some(2), "{}", text(&output));
+    assert!(
+        text(&output).contains("--field-test can't go with it"),
+        "{}",
+        text(&output)
+    );
+    let ops = scratch_database("eval-not-a-run");
+    let ops = ops.parent().unwrap();
+    std::fs::write(ops.join("notes"), "not a run file\n").unwrap();
+    let output = screen_mode(
+        "eval",
+        &["--resume", ops.join("notes").to_str().unwrap()],
+        Some("unused"),
+        Some("fdt_x"),
+    );
+    assert_eq!(output.status.code(), Some(2), "{}", text(&output));
+    assert!(
+        text(&output).contains("as an eval run file"),
+        "{}",
+        text(&output)
+    );
+}
+
+/// A server that takes attachments and passes everything, and an account's token. Its
+/// database, and the attached files beside it, sit under target/: the server refuses
+/// an upload that would leave its disk under 5 GB free, which a small /tmp can be.
+fn serve_attachments(name: &str) -> (Server, String) {
+    let dir =
+        Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("smoke-{}-{name}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let database = dir.join("filedrawer.db");
+    let account = admin(&database, &["create-account", "--display-name", "Sets"]);
+    let token = admin(
+        &database,
+        &["create-token", "--account", &account, "--name", "t"],
+    );
+    let settings = [
+        ("FILEDRAWER_SCREENER", "pass-all"),
+        ("FILEDRAWER_FILES_URL", "http://files.localhost"),
+    ];
+    (serve_with(database, &settings), token)
+}
+
+/// GET /e/<id> as the token's account, through curl, as the script sends requests.
+fn curl_entry(server: &Server, token: &str, id: &str) -> String {
+    let output = Command::new("curl")
+        .args(["-s", "-H", &format!("Authorization: Bearer {token}")])
+        .arg(format!("{}/e/{id}", server.url))
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}

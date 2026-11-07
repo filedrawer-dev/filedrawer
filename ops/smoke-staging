@@ -9,7 +9,7 @@ usage() {
   cat <<'EOF'
 usage: ops/smoke-staging [--wait SECONDS] [URL]
        ops/smoke-staging screen [--wait SECONDS] [URL]
-       ops/smoke-staging eval [--field-test N] [--wait SECONDS] [URL]
+       ops/smoke-staging eval [--field-test N | --resume RUNFILE] [--wait SECONDS] [URL]
 
 Runs File Drawer's smoke test against URL (default https://staging.filedrawer.dev),
 as /skill.md tells an agent to: submit, the hour's hold, a fix with PUT, publish,
@@ -42,20 +42,32 @@ fails, is a failure. Its settings, neither printed:
   the token   FILEDRAWER_STAGING_SCREEN_API_KEY, else SCREEN_TEST_TOKEN in
               ops/.screen-test.env
   the key     FILEDRAWER_STAGING_KEY, else STAGING_KEY in ops/.vps.env
-(FILEDRAWER_OPS_DIR moves where it looks for those files, FILEDRAWER_FIELD_TEST_DIR
-where eval looks for field-test entries, and FILEDRAWER_SCREEN_WAIT_SECONDS how long
-it waits for a verdict, default 120, for tests.)
+(FILEDRAWER_OPS_DIR moves where it looks for those files and where eval keeps its
+run files, FILEDRAWER_FIELD_TEST_DIR where eval looks for field-test entries, and
+FILEDRAWER_SCREEN_WAIT_SECONDS how long it waits for a verdict, default 120, for
+tests.)
 
 eval runs a labelled test set through the screen, as the screen-test account, to
 see whether it is too strict or too lax. By hand only. The cases are the entries
 under ops/screen-eval/<expected>/, <expected> being public, rejected or review,
 plus --field-test N (default 10; 0 for none) honest entries picked at random from
-field-test/, expected public (their contents are never printed). It prints PASS or
-FAIL per case and a tally per expectation, and exits 1 when any case misses. It
-stops at the first case left undecided, and says why as screen does. The
-owner then rejects the review cases on /admin, which guards the screen-test
-account; clear the guard there afterwards. Same settings as screen.
-  --field-test N  how many field-test entries to add
+field-test/, expected public (their contents are never printed). A field-test entry
+with a list of attached files beside it, <name>.attachments, is sent citing an
+attachment set of those files, which bin/field-test-files gathers into
+field-test/files/ first; one whose files aren't all there is passed over, and
+entries with the same list share one upload. It prints PASS or FAIL per case and a
+tally per expectation, and exits 1 when any case misses. Then it counts what the
+server's own decoding finds hidden in the sets' files, run here with no model call
+(filedrawer unpack, built with cargo unless FILEDRAWER_BIN names the binary), and
+how the field-test entries citing a set that hides text fared. It stops at the
+first case left undecided, and says why as screen does, or when POST /attachments
+answers 429. Each run writes its cases, and the ID of each entry and set it sends,
+to a run file under ops/.eval-runs/ (paths and IDs, no entry text), and prints its
+path; --resume goes on from there, polling what the run sent rather than sending it
+again. The owner then rejects the review cases on /admin, which guards the
+screen-test account; clear the guard there afterwards. Same settings as screen.
+  --field-test N      how many field-test entries to add
+  --resume RUNFILE    go on with the run RUNFILE records, its cases and tag
 EOF
 }
 
@@ -65,13 +77,18 @@ screen_wait="${FILEDRAWER_SCREEN_WAIT_SECONDS:-120}"
 [[ "$screen_wait" =~ ^[0-9]+$ ]] || { echo "smoke-staging: FILEDRAWER_SCREEN_WAIT_SECONDS takes a number of seconds" >&2; exit 2; }
 mode=smoke
 field_tests=10
+field_tests_given=0
+resume_file=""
 while (( $# )); do
   case "$1" in
     -h | --help) usage; exit 0 ;;
     screen | eval) mode=$1; shift ;;
     --field-test)
       [[ "${2:-}" =~ ^[0-9]+$ ]] || { echo "smoke-staging: --field-test takes a number" >&2; exit 2; }
-      field_tests=$2; shift 2 ;;
+      field_tests=$2; field_tests_given=1; shift 2 ;;
+    --resume)
+      [[ -n "${2:-}" ]] || { echo "smoke-staging: --resume takes a run file" >&2; exit 2; }
+      resume_file=$2; shift 2 ;;
     --wait)
       [[ "${2:-}" =~ ^[0-9]+$ ]] || { echo "smoke-staging: --wait takes a number of seconds" >&2; exit 2; }
       wait_seconds=$2; shift 2 ;;
@@ -79,6 +96,13 @@ while (( $# )); do
     *) base=${1%/}; shift ;;
   esac
 done
+if [[ -n $resume_file ]]; then
+  [[ $mode == eval ]] || { echo "smoke-staging: --resume goes with eval" >&2; exit 2; }
+  if (( field_tests_given )); then
+    echo "smoke-staging: --resume takes its cases from the run file, so --field-test can't go with it" >&2
+    exit 2
+  fi
+fi
 # setting_from FILE NAME: NAME's value in FILE, written as NAME='value', if any.
 setting_from() {
   [[ -r "$1" ]] && sed -n "s/^$2='\(.*\)'\$/\1/p" "$1" | head -1
@@ -162,24 +186,40 @@ if (( wait_seconds > 0 )); then
   done
 fi
 
-# screened FILE [quiet]: submits FILE, publishes it, and waits up to 2 minutes while
-# it is still being screened (an outage or the day's cap); sets ID, and CODE and BODY
-# from GET /e/<id>. A refused submission is a FAIL, or with `quiet` just returns 1.
-screened() {
+# send FILE [quiet]: submits FILE; sets ID. A refused submission is a FAIL, or with
+# `quiet` just returns 1.
+send() {
   req POST /entries "$1"
   ID=$(field id)
   if [[ $CODE != 201 || -z "$ID" ]]; then
     [[ "${2:-}" == quiet ]] && return 1
     echo "FAIL submit $1: $CODE"; fail=$((fail + 1)); return 1
   fi
+}
+
+# decide: ends entry ID's hold, then waits for its verdict as await does. A failed
+# publish is a FAIL, and returns 1.
+decide() {
   req POST "/e/$ID/publish"
   [[ $CODE == 200 ]] || { echo "FAIL publish $ID: $CODE"; fail=$((fail + 1)); return 1; }
+  await
+}
+
+# await: waits up to the screen wait (2 minutes) while entry ID is still being
+# screened (an outage or the day's cap); sets CODE and BODY from GET /e/<id>.
+await() {
   local deadline=$((SECONDS + screen_wait))
   req GET "/e/$ID"
   while [[ $(field status) == screening ]] && (( SECONDS < deadline )); do
     sleep 5
     req GET "/e/$ID"
   done
+}
+
+# screened FILE [quiet]: submits FILE and publishes it, then waits for its verdict;
+# sets ID, CODE and BODY. Returns 1 when either fails.
+screened() {
+  send "$@" && decide
 }
 
 # screen_entry FILE: FILE with this run's tags. The title stays as written: a test
@@ -217,16 +257,115 @@ explain_undecided() {
     "429:the day's screening budget is spent"*)
       echo "  the day's screening cap is spent: rerun after 00:00 UTC"; DAY_SPENT=1 ;;
     503:*) echo "  screening fails; the server's log says why" ;;
-    201:*) echo "  the screen answers now, so the case was only slow: rerun" ;;
+    201:*)
+      if (( ${CITED:-0} )); then
+        echo "  the screen answers now, so the case's attached files may be waiting for the"
+        echo "  half of the day's cap that attachments may spend: resume after 00:00 UTC"
+      else
+        echo "  the screen answers now, so the case was only slow: rerun"
+      fi ;;
     *) echo "  POST /series answered $CODE${reason:+: $reason}" ;;
   esac
 }
 
 if [[ $mode == eval ]]; then
   declare -A wanted=() met=()
-  # Set once a case is left undecided: the day's cap is spent, or screening fails,
-  # and every later case would wait out its time for nothing.
+  # Set once the run can't go on now, since every later case would wait out its time
+  # for nothing: a case left undecided, or a request the server can't take now, which
+  # stop_why then names.
   stopped=0
+  stop_why=""
+  field_test_dir="${FILEDRAWER_FIELD_TEST_DIR:-$(dirname "$0")/../field-test}"
+  # The field-test entries' attached files, named by SHA-256, as bin/field-test-files
+  # gathers them.
+  store="$field_test_dir/files"
+
+  # record FIELD...: appends a line to the run file, its fields split by tabs.
+  record() {
+    local IFS=$'\t'
+    printf '%s\n' "$*" >> "$run_file"
+  }
+
+  # gathered LIST: whether the store holds every file the attachment list LIST names,
+  # one a line as `<origin> <size> <sha256>`.
+  gathered() {
+    local line
+    while IFS= read -r line; do
+      [[ -f "$store/${line##* }" ]] || return 1
+    done < "$1"
+  }
+
+  # The run file: the run's tag, its cases in order, then what it sent, so --resume
+  # goes on without sending anything twice. It holds paths and IDs, never entry text.
+  if [[ -n $resume_file ]]; then
+    run_file=$resume_file
+    tag=$(sed -n 's/^tag\t//p' "$run_file" 2>/dev/null | head -1)
+    if [[ -z $tag ]]; then
+      echo "smoke-staging: can't read $run_file as an eval run file" >&2
+      exit 2
+    fi
+  else
+    run_file="$ops_dir/.eval-runs/$tag"
+    mkdir -p "$(dirname "$run_file")"
+    record tag "$tag"
+    for expected in public rejected review; do
+      for file in "$(dirname "$0")/screen-eval/$expected"/*.md; do
+        [[ -e $file ]] && record case "$expected" "$file"
+      done
+    done
+    record field-tests "$field_tests"
+    # Field-test entries: one per name, since the rounds hold near-copies, in a random
+    # order fixed here. One whose attached files aren't all gathered is passed over.
+    if (( field_tests > 0 )); then
+      declare -A picked=()
+      passed_over=0
+      while IFS= read -r file; do
+        name=$(basename "$file")
+        [[ -n "${picked[$name]:-}" ]] && continue
+        picked[$name]=1
+        if [[ -f ${file%.md}.attachments ]] && ! gathered "${file%.md}.attachments"; then
+          passed_over=$((passed_over + 1))
+          continue
+        fi
+        record candidate "$file"
+      done < <(find "$field_test_dir" -name '*.md' 2>/dev/null | shuf)
+      record passed-over "$passed_over"
+    fi
+  fi
+  echo "run file: $run_file"
+
+  cases=() expecteds=() candidates=()
+  declare -A sent=() refused=() set_ids=() set_lists=() status_of=()
+  passed_over=0
+  while IFS=$'\t' read -r kind one two three; do
+    case $kind in
+      case) expecteds+=("$one"); cases+=("$two") ;;
+      field-tests) field_tests=$one ;;
+      candidate) candidates+=("$one") ;;
+      passed-over) passed_over=$one ;;
+      sent) sent[$one]=$two ;;
+      refused) refused[$one]=1 ;;
+      set) set_ids[$one]=$two; set_lists[$one]=$three ;;
+    esac
+  done < "$run_file"
+
+  # bin: the filedrawer binary, whose `unpack` is the server's own decoding, needed
+  # only when a field-test entry attaches files.
+  bin=""
+  for file in "${candidates[@]}"; do
+    [[ -f ${file%.md}.attachments ]] || continue
+    bin=${FILEDRAWER_BIN:-}
+    if [[ -z $bin ]]; then
+      repo="$(dirname "$0")/.."
+      if ! (cd "$repo" && cargo build -q --bin filedrawer); then
+        echo "smoke-staging: building filedrawer failed; run cargo build --bin filedrawer to see why" >&2
+        exit 2
+      fi
+      bin="${CARGO_TARGET_DIR:-$repo/target}/debug/filedrawer"
+    fi
+    break
+  done
+
   # judge NAME EXPECTED: the entry just screened against EXPECTED.
   judge() {
     local status
@@ -245,41 +384,196 @@ if [[ $mode == eval ]]; then
       [[ $status == review && $2 != review ]] && echo "  if every case went to review, the screen-test account is still guarded: clear it on $base/admin"
     fi
   }
-  for expected in public rejected review; do
-    for file in "$(dirname "$0")/screen-eval/$expected"/*.md; do
-      [[ -e $file ]] || continue
-      name=$(basename "$file" .md)
-      screen_entry "$file" > "$dir/case.md"
-      screened "$dir/case.md" && judge "$name" "$expected"
-      (( stopped )) && break 2
+
+  # later: whether the last request's CODE asks to try again later: no answer, a 429
+  # or a 5xx.
+  later() {
+    [[ $CODE == 000 || $CODE == 429 || $CODE == 5* ]]
+  }
+
+  # eval_case KEY FILE [quiet]: the case KEY, as the entry FILE: submitted and
+  # recorded, unless the run already sent it, which is polled instead. Returns 1 when
+  # the server refuses it, 2 when it can't take it now (see later), and 3 when it
+  # can't be published, a FAIL already counted.
+  eval_case() {
+    if [[ -z "${sent[$1]:-}" ]]; then
+      if ! send "$2" "${3:-}"; then
+        later && return 2
+        return 1
+      fi
+      sent[$1]=$ID
+      record sent "$1" "$ID"
+      decide || return 3
+    else
+      ID=${sent[$1]}
+      req GET "/e/$ID"
+      if [[ $(field status) == pending ]]; then
+        decide || return 3
+      else
+        await
+      fi
+    fi
+  }
+
+  # set_for LIST: sets SET to the ID of the attachment set made from the files LIST
+  # names, uploading it unless the run already did. Returns 1 when it can't be made
+  # or the server refuses it, and 2 when the server can't take it now (see later),
+  # saying why.
+  set_for() {
+    local key reason
+    key=$(sha256sum < "$1" | cut -d' ' -f1)
+    SET=${set_ids[$key]:-}
+    [[ -n $SET ]] && return 0
+    python3 - "$1" "$store" > "$dir/set.json" 2>/dev/null <<'PY' || { echo "  an attachment set couldn't be made from the store: its entry is passed over"; return 1; }
+import json
+import pathlib
+import sys
+
+listing, store = sys.argv[1], pathlib.Path(sys.argv[2])
+repos, files = {}, []
+for line in pathlib.Path(listing).read_text(encoding="utf-8").splitlines():
+    origin, _size, sha = line.rsplit(" ", 2)
+    head = origin.split(":", 1)[0]
+    if "@" in head:
+        # A repo the list names by a short name, as in `repo@<commit>:<path>`.
+        repos[head.split("@", 1)[0]] = "no remote"
+    elif not origin.startswith("author:"):
+        # Round 2's lists give bare paths, with no commit; the screen doesn't judge
+        # origins.
+        origin = f"author:{origin}"
+    # As bytes, so line ends stay as the list's hash has them.
+    text = (store / sha).read_bytes().decode("utf-8")
+    files.append({"origin": origin, "text": text})
+json.dump({"repos": repos, "files": files}, sys.stdout)
+PY
+    req POST /attachments "$dir/set.json" application/json
+    case $CODE in
+      201)
+        SET=$(field id)
+        set_ids[$key]=$SET
+        set_lists[$key]=$1
+        record set "$key" "$SET" "$1" ;;
+      *)
+        if later; then
+          reason=$(printf '%s\n' "$BODY" | sed -n 's/^- //p' | head -1)
+          echo "  POST /attachments answered $CODE${reason:+: $reason}"
+          return 2
+        fi
+        echo "  POST /attachments answered $CODE: its entry is passed over"
+        return 1 ;;
+    esac
+  }
+
+  # decode_tally: what the server's own decoding finds hidden in the files of each set
+  # the run sent, each file counted once, run here with no model call, since the
+  # screen's verdict can't say; then how the field-test entries citing a set that
+  # hides text fared. It prints counts only, never what a file hides.
+  decode_tally() {
+    (( ${#set_lists[@]} )) || return 0
+    declare -A seen=() hides=() by_status=()
+    local key line path what n files=0 hiding=0 parts=0 bytes=0 limits=0
+    local -a paths
+    for key in "${!set_lists[@]}"; do
+      paths=()
+      while IFS= read -r line; do
+        paths+=("$store/${line##* }")
+      done < "${set_lists[$key]}"
+      "$bin" unpack "${paths[@]}" > "$dir/unpack" || echo "  filedrawer unpack couldn't read a set's files"
+      while IFS= read -r line; do
+        path=${line%%: *}
+        what=${line#*: }
+        [[ $what == "nothing hidden" ]] || hides[$key]=1
+        [[ -n "${seen[$path]:-}" ]] && continue
+        seen[$path]=1
+        files=$((files + 1))
+        case $what in
+          "nothing hidden") ;;
+          "past a limit: "*) limits=$((limits + 1)) ;;
+          *)
+            hiding=$((hiding + 1))
+            parts=$((parts + ${what%% part*}))
+            n=${what#*, }
+            bytes=$((bytes + ${n%% bytes*})) ;;
+        esac
+      done < "$dir/unpack"
     done
-  done
-  # Field-test entries: one per name, since the rounds hold near-copies. One the
-  # server refuses, or that isn't an entry, is skipped; it costs no screening. Only
-  # its number and ID are printed, never its contents.
-  taken=0
-  declare -A picked=()
-  field_test_dir="${FILEDRAWER_FIELD_TEST_DIR:-$(dirname "$0")/../field-test}"
-  while IFS= read -r file && (( taken < field_tests && ! stopped )); do
-    name=$(basename "$file")
-    [[ -n "${picked[$name]:-}" ]] && continue
-    picked[$name]=1
+    echo "decoding, run here with no model call: $hiding of $files attached files hide text; parts found: $parts, $bytes bytes; past a limit: $limits"
+    n=0
+    for path in "${!status_of[@]}"; do
+      [[ -f ${path%.md}.attachments ]] || continue
+      key=$(sha256sum < "${path%.md}.attachments" | cut -d' ' -f1)
+      [[ -n "${hides[$key]:-}" ]] || continue
+      n=$((n + 1))
+      by_status[${status_of[$path]}]=$(( ${by_status[${status_of[$path]}]:-0} + 1 ))
+    done
+    local decided=$(( ${by_status[public]:-0} + ${by_status[rejected]:-0} + ${by_status[review]:-0} ))
+    line="  field-test entries citing a set that hides text or passes a limit: $n (public ${by_status[public]:-0}, rejected ${by_status[rejected]:-0}, review ${by_status[review]:-0}"
+    (( n > decided )) && line+=", undecided $((n - decided))"
+    echo "$line)"
+  }
+
+  for i in "${!cases[@]}"; do
+    file=${cases[$i]}
     screen_entry "$file" > "$dir/case.md"
-    screened "$dir/case.md" quiet || continue
+    CITED=0
+    eval_case "$file" "$dir/case.md" && judge "$(basename "$file" .md)" "${expecteds[$i]}"
+    (( stopped )) && break
+  done
+  # A field-test entry the server refuses, or that isn't an entry, is recorded and
+  # skipped; it costs no screening. Only its number and ID are printed, never its
+  # contents.
+  taken=0
+  for file in "${candidates[@]}"; do
+    (( taken < field_tests && ! stopped )) || break
+    [[ -n "${refused[$file]:-}" ]] && continue
+    screen_entry "$file" > "$dir/case.md"
+    list=${file%.md}.attachments
+    CITED=0
+    if [[ -f $list ]]; then
+      CITED=1
+      if [[ -z "${sent[$file]:-}" ]]; then
+        set_for "$list"
+        case $? in
+          1) refused[$file]=1; record refused "$file"; continue ;;
+          2)
+            stopped=1; stop_why="an attachment set couldn't be uploaded now"
+            fail=$((fail + 1)); break ;;
+        esac
+        sed -i "1a attachments: $SET" "$dir/case.md"
+      fi
+    fi
+    eval_case "$file" "$dir/case.md" quiet
+    case $? in
+      1) refused[$file]=1; record refused "$file"; continue ;;
+      2)
+        stopped=1; stop_why="POST /entries answered $CODE"
+        fail=$((fail + 1)); break ;;
+      3) continue ;;
+    esac
     taken=$((taken + 1))
     judge "field-test-$taken" public
-  done < <(find "$field_test_dir" -name '*.md' 2>/dev/null | shuf)
+    status_of[$file]=$(field status)
+  done
   (( field_tests > 0 && taken < field_tests && ! stopped )) && echo "  only $taken field-test entries found"
+  (( passed_over > 0 )) && echo "  $passed_over field-test entries passed over: their attached files aren't all in $store; bin/field-test-files gathers them"
   if (( stopped )); then
-    echo "Stopped: a case wasn't decided in time. Entries already sent wait in the"
-    echo "  queue, and are screened once the screen answers."
-    explain_undecided
+    if [[ -n $stop_why ]]; then
+      echo "Stopped: $stop_why."
+    else
+      echo "Stopped: a case wasn't decided in time. Entries already sent wait in the"
+      echo "  queue, and are screened once the screen answers."
+      explain_undecided
+    fi
+    echo "Resume with: ops/smoke-staging eval --resume $run_file"
   fi
   for expected in public rejected review; do
     echo "$expected: ${met[$expected]:-0} of ${wanted[$expected]:-0}"
   done
   echo "  (a miss on review may mean the screen saw that its made-up data is made up)"
-  (( ${wanted[review]:-0} > 0 )) && echo "Reject the review cases on $base/admin, then clear the screen-test account's guard there."
+  decode_tally
+  # Only once the run is over: a resume would read a review case the owner rejected
+  # as a miss.
+  (( ${wanted[review]:-0} > 0 && ! stopped )) && echo "Reject the review cases on $base/admin, then clear the screen-test account's guard there."
   echo "eval $tag: $pass passed, $fail failed"
   (( fail == 0 ))
   exit

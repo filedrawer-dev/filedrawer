@@ -5,3 +5,4 @@ ops/.vps.env
 ops/.screen-test.env
 /mutants.out/
 /mutants.out.old/
+ops/.eval-runs/
