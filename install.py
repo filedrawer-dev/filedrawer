@@ -19,7 +19,14 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent
-HOOKS = {"pre-commit": "bin/git-pre-commit", "agent-pre-commit": "bin/agent-pre-commit"}
+HOOKS = {
+    "pre-commit": "bin/git-pre-commit",
+    "agent-pre-commit": "bin/agent-pre-commit",
+    # Rebuild target/dev.db when a merge, checkout or rebase brings new migrations.
+    "post-merge": "bin/git-post-change",
+    "post-checkout": "bin/git-post-change",
+    "post-rewrite": "bin/git-post-change",
+}
 # (command that shows it is installed, cargo install arguments)
 CARGO_TOOLS = [
     ("cargo-nextest", ["cargo-nextest"]),

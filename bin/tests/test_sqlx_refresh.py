@@ -16,6 +16,7 @@ FAKE = """#!/bin/sh
 echo "$(basename "$0") $* url=$DATABASE_URL" >> "$LOG"
 case "$(basename "$0") $*" in
   "sqlx database create"*) : > "${DATABASE_URL#sqlite://}" ;;
+  "sqlx migrate run"*) echo "Applied 1/migrate a" ;;
 esac
 if [ "$(basename "$0")" = "${FAIL:-}" ]; then echo "boom" >&2; exit 3; fi
 """
@@ -93,3 +94,53 @@ def test_help_says_what_it_does():
     done = subprocess.run([str(SCRIPT), "-h"], capture_output=True, text=True)
     assert done.returncode == 0
     assert "target/dev.db" in done.stdout and ".sqlx" in done.stdout
+
+
+# --if-stale, which the post-merge, post-checkout and post-rewrite hooks run.
+
+
+def with_env_file(root):
+    (root / ".env").write_text(f"DATABASE_URL=sqlite://{root / 'target/dev.db'}\n")
+
+
+def test_if_stale_rebuilds_only_the_database_once_per_set_of_migrations(repo):
+    root, env, log = repo
+    with_env_file(root)
+    (root / "crates/server/migrations/0001_a.sql").write_text("CREATE TABLE a (x);\n")
+    first = run(root, env, "--if-stale")
+    assert first.returncode == 0, first.stderr
+    assert "cargo" not in log.read_text()
+    assert "sqlx migrate run" in log.read_text()
+    # From a git hook it says one line, not sqlx's own.
+    assert "Applied" not in first.stdout + first.stderr
+    assert "rebuilt" in first.stdout
+    log.write_text("")
+    again = run(root, env, "--if-stale")
+    assert again.returncode == 0 and log.read_text() == "" and again.stdout == ""
+    # A migration that lands, as another session's merge brings one.
+    (root / "crates/server/migrations/0002_b.sql").write_text("CREATE TABLE b (y);\n")
+    assert run(root, env, "--if-stale").returncode == 0
+    assert "sqlx migrate run" in log.read_text()
+
+
+def test_if_stale_after_a_full_refresh_does_nothing(repo):
+    root, env, log = repo
+    with_env_file(root)
+    (root / "crates/server/migrations/0001_a.sql").write_text("CREATE TABLE a (x);\n")
+    assert run(root, env).returncode == 0
+    log.write_text("")
+    assert run(root, env, "--if-stale").returncode == 0
+    assert log.read_text() == ""
+
+
+def test_if_stale_does_nothing_without_an_env_file_or_sqlx(repo):
+    root, env, log = repo
+    # A worktree has no .env: it builds from .sqlx, so no database can be stale.
+    assert run(root, env, "--if-stale").returncode == 0
+    assert log.read_text() == "" and not (root / ".env").exists()
+    # The owner's host has no sqlx-cli, and the hooks run there too.
+    with_env_file(root)
+    bare = {**env, "PATH": "/usr/bin:/bin"}
+    done = run(root, bare, "--if-stale")
+    assert done.returncode == 0 and done.stdout == "", done.stderr
+    assert log.read_text() == ""

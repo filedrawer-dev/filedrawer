@@ -1,0 +1,8 @@
+#!/bin/sh
+# post-merge, post-checkout and post-rewrite: rebuild target/dev.db when the
+# migrations changed, as after another session's merge brings one, so the sqlx
+# macros don't compile against a stale schema. It does nothing without python3,
+# without a .env or without sqlx (the owner's host), and never fails the git command.
+command -v python3 >/dev/null 2>&1 || exit 0
+repo=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+python3 "$repo/bin/sqlx-refresh" --repo "$repo" --if-stale || true

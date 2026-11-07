@@ -2,6 +2,8 @@
 """Rebuild the development database from the migrations, then refresh .sqlx/.
 
   bin/sqlx-refresh [--repo DIR]
+  bin/sqlx-refresh --if-stale    rebuild only the database, only if the migrations
+                                 changed since it was built (the git hooks run this)
 
 Deletes target/dev.db (the database in .env's DATABASE_URL, when .env names one),
 creates it again, runs every migration in crates/server/migrations, and runs
@@ -11,10 +13,19 @@ manual cleanup. Writes .env with DATABASE_URL when it is missing.
 
 Needs sqlx-cli (`cargo install sqlx-cli --no-default-features --features
 sqlite,rustls --locked`). A step that fails stops the rest, with one line naming it.
+
+Each rebuild writes a hash of the migrations beside the database
+(target/dev.db.migrations). --if-stale compares it, and when the migrations
+differ, as after another session's merge brings one, rebuilds the database
+without `cargo sqlx prepare`, which the committed .sqlx/ already covers. It does
+nothing, silently, in a tree with no .env (a worktree builds from .sqlx/) or
+without sqlx on PATH (the owner's host, where the hooks run too).
 """
 
 import argparse
+import hashlib
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -39,14 +50,37 @@ def database_url(repo: Path) -> str:
     )
 
 
-def delete_database(repo: Path, url: str) -> None:
+def database_path(repo: Path, url: str) -> Path:
     if not url.startswith("sqlite://"):
         sys.exit(f"sqlx-refresh: DATABASE_URL {url} isn't a SQLite file")
     path = Path(url.removeprefix("sqlite://").split("?")[0])
-    if not path.is_absolute():
-        path = repo / path
+    return path if path.is_absolute() else repo / path
+
+
+def delete_database(path: Path) -> None:
     for suffix in ("", "-wal", "-shm"):
         path.with_name(path.name + suffix).unlink(missing_ok=True)
+
+
+def migrations_hash(repo: Path) -> str:
+    """A hash of every migration's name and text, in order."""
+    digest = hashlib.sha256()
+    for path in sorted((repo / MIGRATIONS).glob("*.sql")):
+        digest.update(path.name.encode() + b"\0" + path.read_bytes() + b"\0")
+    return digest.hexdigest()
+
+
+def stamp_of(database: Path) -> Path:
+    return database.with_name(database.name + ".migrations")
+
+
+def is_stale(repo: Path, database: Path) -> bool:
+    stamp = stamp_of(database)
+    return not (
+        database.exists()
+        and stamp.exists()
+        and stamp.read_text().strip() == migrations_hash(repo)
+    )
 
 
 def main() -> int:
@@ -59,22 +93,49 @@ def main() -> int:
         default=DEFAULT_REPO,
         help="the repository (default: this one)",
     )
-    repo = parser.parse_args().repo.resolve()
+    parser.add_argument(
+        "--if-stale",
+        action="store_true",
+        help="rebuild only the database, only if the migrations changed since it was built",
+    )
+    args = parser.parse_args()
+    repo = args.repo.resolve()
+    if args.if_stale and (not (repo / ".env").exists() or shutil.which("sqlx") is None):
+        return 0
     url = database_url(repo)
-    delete_database(repo, url)
+    database = database_path(repo, url)
+    if args.if_stale and not is_stale(repo, database):
+        return 0
+    delete_database(database)
     env = {**os.environ, "DATABASE_URL": url}
-    for step in (
+    steps = [
         ["sqlx", "database", "create"],
         ["sqlx", "migrate", "run", "--source", MIGRATIONS],
-        ["cargo", "sqlx", "prepare", "--workspace"],
-    ):
-        done = subprocess.run(step, cwd=repo, env=env, check=False)
+    ]
+    if not args.if_stale:
+        steps.append(["cargo", "sqlx", "prepare", "--workspace"])
+    for step in steps:
+        # From a git hook, sqlx's "Applied ..." lines would interrupt `git checkout
+        # -q`: they show only when a step fails.
+        done = subprocess.run(
+            step,
+            cwd=repo,
+            env=env,
+            check=False,
+            capture_output=args.if_stale,
+            text=True,
+        )
         if done.returncode != 0:
+            if args.if_stale:
+                print(done.stdout + done.stderr, end="", file=sys.stderr)
             print(
                 f"sqlx-refresh: `{' '.join(step)}` failed (exit {done.returncode}); its output is above",
                 file=sys.stderr,
             )
             return 1
+    stamp_of(database).write_text(migrations_hash(repo) + "\n")
+    if args.if_stale:
+        print(f"sqlx-refresh: rebuilt {database} for the migrations that changed")
     return 0
 
 
