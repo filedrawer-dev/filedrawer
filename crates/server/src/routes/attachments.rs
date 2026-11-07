@@ -64,12 +64,7 @@ pub async fn upload(
         Stored::Banned(paths) => {
             let reasons = paths
                 .iter()
-                .map(|path| {
-                    format!(
-                        "file {} was {REMOVED_BY_OWNER}, so it can't be attached",
-                        one_line(path)
-                    )
-                })
+                .map(|path| format!("file {path} was {REMOVED_BY_OWNER}, so it can't be attached"))
                 .collect();
             return Err(refused(StatusCode::UNPROCESSABLE_ENTITY, reasons));
         }

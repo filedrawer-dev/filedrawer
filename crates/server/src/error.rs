@@ -1,7 +1,12 @@
-//! The one error type handlers return, and the status code each case maps to.
+//! The one error type handlers return, and the status code each case maps to. A
+//! message or reason can quote text from outside (an entry's field, a path, a URL
+//! segment), so each goes through `one_line` as the body is written, and none can
+//! pass for one of the server's fields (CODING_STANDARDS.md, Untrusted text).
 
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
+
+use crate::respond::one_line;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
@@ -9,14 +14,14 @@ pub enum AppError {
     Unauthorized,
     #[error("not found")]
     NotFound,
-    #[error("{0}")]
+    #[error("{}", one_line(.0))]
     Forbidden(String),
-    #[error("{0}")]
+    #[error("{}", one_line(.0))]
     Conflict(String),
-    #[error("{0}")]
+    #[error("{}", one_line(.0))]
     BadRequest(String),
     /// The entry or request is refused, with every reason.
-    #[error("refused:\n{}", .reasons.iter().map(|reason| format!("- {reason}")).collect::<Vec<_>>().join("\n"))]
+    #[error("refused:\n{}", .reasons.iter().map(|reason| format!("- {}", one_line(reason))).collect::<Vec<_>>().join("\n"))]
     Refused {
         status: StatusCode,
         reasons: Vec<String>,
@@ -26,7 +31,7 @@ pub enum AppError {
     #[error(
         "error: the screen failed it\n{}\n{}",
         crate::respond::DELIMITER,
-        .0.iter().map(|reason| format!("reason: {}", crate::respond::one_line(reason))).collect::<Vec<_>>().join("\n")
+        .0.iter().map(|reason| format!("reason: {}", one_line(reason))).collect::<Vec<_>>().join("\n")
     )]
     ScreenRejected(Vec<String>),
     /// A rate limit reached (design.md, Limits and abuse).

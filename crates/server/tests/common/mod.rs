@@ -94,14 +94,45 @@ const INSTRUCTION_PREFIXES: &[&str] = &[
     "Cite it in each entry's front matter as",
 ];
 
-/// Checks the part of a plain-text reply above its first delimiter
-/// (CODING_STANDARDS.md, Untrusted text): only the server's own `key: value` lines,
-/// with keys from the lists above, no single key twice, and no blank line, so author
-/// text can't pass for a field. Panics with the reply when a line breaks the rule.
-fn check_server_fields(body: &str) {
-    let Some((above, _)) = body.split_once(DELIMITER) else {
-        return;
-    };
+/// Checks a plain-text reply (CODING_STANDARDS.md, Untrusted text), so text quoted
+/// from outside can't pass for a server field: the part above its first delimiter by
+/// `check_server_fields`, or, for an error with no delimiter, its whole body by
+/// `check_error_body`.
+fn check_plain_text(status: StatusCode, body: &str) {
+    match body.split_once(DELIMITER) {
+        Some((above, _)) => check_server_fields(above, body),
+        None if status.is_client_error() || status.is_server_error() => check_error_body(body),
+        None => {}
+    }
+}
+
+/// Checks an error body with no author-text delimiter: a refusal is `refused:` and
+/// then one `- ` line per reason, and any other error is one line. Panics with the
+/// body when it breaks the rule.
+fn check_error_body(body: &str) {
+    let mut lines = body.lines();
+    if body.starts_with("refused:\n") {
+        lines.next();
+        for line in lines {
+            assert!(
+                line.starts_with("- "),
+                "a refusal's line isn't a reason: {line:?}\n{body}"
+            );
+        }
+    } else {
+        assert_eq!(
+            lines.count(),
+            1,
+            "an error body runs past one line:\n{body}"
+        );
+    }
+}
+
+/// Checks `above`, the part of the plain-text reply `body` above its first
+/// delimiter: only the server's own `key: value` lines, with keys from the lists
+/// above, no single key twice, and no blank line. Panics with the reply when a line
+/// breaks the rule.
+fn check_server_fields(above: &str, body: &str) {
     let mut seen: Vec<&str> = Vec::new();
     for line in above.lines() {
         if INSTRUCTION_LINES.contains(&line)
@@ -246,7 +277,7 @@ impl TestApp {
             .and_then(|value| value.to_str().ok())
             .is_some_and(|value| value.starts_with("text/plain"));
         if plain_text {
-            check_server_fields(&body);
+            check_plain_text(status, &body);
         }
         Reply {
             status,
