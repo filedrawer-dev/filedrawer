@@ -238,12 +238,13 @@ run_wizard() {
 # to rerun, so rerunning the wizard repairs a half-finished setup.
 # `ops/provision-vps smoke` runs only the last stage, CI's two accounts (the smoke
 # test's and the screen check's) and their secrets, on a server the full wizard has
-# set up; `ops/provision-vps screening` only staging's API key and cap, and
+# set up; `ops/provision-vps screening` only staging's API key and cap;
+# `ops/provision-vps github` only the GitHub token the link checks use; and
 # `ops/provision-vps admin` only making your staging account the admin. `ops/provision-vps --only-new` reruns every stage, for
 # new stages and new logic, without asking for anything ops/.vps.env, the server or
 # GitHub already holds: no passwords or keys again, and no pauses.
 
-TOTAL_STAGES=12
+TOTAL_STAGES=13
 ENV_FILE="ops/.vps.env"
 REMOTE="$(dirname "$0")/remote"
 [[ -d "$REMOTE" ]] || { echo "run this from the repo: $REMOTE is missing" >&2; exit 1; }
@@ -377,6 +378,31 @@ screening_stage() {
   pause
 }
 
+# github_stage: the GitHub token the link checks call GitHub's API with (design.md,
+# Submission and screening, step 2), in one file that staging reads now and
+# production will at launch. Until it runs, staging gets 60 API calls an hour, and
+# most GitHub code links get "pin not verified".
+github_stage() {
+  stage "A GitHub token for the link checks"
+  if keep_existing "The GitHub token" /etc/filedrawer/github.env; then
+    return 0
+  fi
+  say "Submissions ask GitHub's API whether a code link's commit is on the repository's"
+  say "own branches. Without a token GitHub allows 60 calls an hour; with one, 5,000."
+  open_url "https://github.com/settings/personal-access-tokens/new"
+  step "Make a fine-grained token named such as 'filedrawer link checks'."
+  step "Repository access: 'Public repositories'. Add no permissions: it only reads."
+  step "Expiration: the longest offered. Put the date in your calendar to renew it."
+  ask_new_secret TOKEN "The token (github_pat_...):"
+  # The unit first, so it reads the file github-token.sh writes.
+  remote staging-service.sh
+  remote_with_secret github-token.sh TOKEN "$TOKEN"
+  unset TOKEN
+  note "The token is on the server only. Until it is there, journalctl -u"
+  note "filedrawer-staging logs 'no FILEDRAWER_GITHUB_TOKEN' at each start."
+  pause
+}
+
 # not_deployed_yet NAME WHAT: says staging has no server yet, and how to run the
 # stage NAME once it has.
 not_deployed_yet() {
@@ -470,7 +496,7 @@ keep_existing() {
 }
 
 case "${1:-}" in
-  smoke | screening | admin)
+  smoke | screening | admin | github)
     TOTAL_STAGES=1
     VPS_HOST=$(_existing VPS_HOST || true)
     [[ -n "$VPS_HOST" ]] || { warn "$ENV_FILE has no VPS_HOST. Run the whole wizard first."; exit 1; }
@@ -691,6 +717,7 @@ note "That happens on the next push to main once CI passes."
 pause
 
 screening_stage
+github_stage
 admin_stage
 smoke_stage
 

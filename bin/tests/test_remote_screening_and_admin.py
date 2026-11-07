@@ -1,7 +1,8 @@
-"""Tests for ops/remote/screening.sh and ops/remote/admin-grant.sh, which
-ops/provision-vps runs as root on the VPS: staging's screening settings, and making
-the owner's staging account the admin. Each runs as a process against a temp root,
-with fake systemctl and runuser first on PATH.
+"""Tests for ops/remote/screening.sh, ops/remote/github-token.sh and
+ops/remote/admin-grant.sh, which ops/provision-vps runs as root on the VPS:
+staging's screening settings, the GitHub token the link checks call GitHub's API
+with, and making the owner's staging account the admin. Each runs as a process
+against a temp root, with fake systemctl and runuser first on PATH.
 """
 
 import os
@@ -14,6 +15,7 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 SCREENING = REPO / "ops/remote/screening.sh"
+GITHUB_TOKEN = REPO / "ops/remote/github-token.sh"
 ADMIN_GRANT = REPO / "ops/remote/admin-grant.sh"
 KEY = "sk-ant-api03-" + "x" * 40
 
@@ -82,6 +84,30 @@ def test_screening_writes_the_settings_the_server_reads_and_restarts_staging(box
     assert f"chown root:filedrawer {env_file}" in log
     assert "systemctl try-restart filedrawer-staging.service" in log
     assert KEY not in result.stdout + result.stderr
+
+
+TOKEN = "github_pat_" + "t" * 70
+
+
+def test_github_token_writes_the_shared_file_and_restarts_staging(box):
+    result = run(box, GITHUB_TOKEN, TOKEN=TOKEN)
+    assert result.returncode == 0, result.stderr
+    env_file = box.root / "etc/filedrawer/github.env"
+    assert env_file.read_text() == f"FILEDRAWER_GITHUB_TOKEN='{TOKEN}'\n"
+    assert stat.S_IMODE(env_file.stat().st_mode) == 0o640
+    log = box.log.read_text()
+    assert f"chown root:filedrawer {env_file}" in log
+    assert "systemctl try-restart filedrawer-staging.service" in log
+    assert TOKEN not in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    "token", ["github_pat_it's", "github_pat_a\nb", "sk-ant-api03-xyz", ""]
+)
+def test_github_token_refuses_what_isnt_a_token_and_writes_nothing(box, token):
+    result = run(box, GITHUB_TOKEN, TOKEN=token)
+    assert result.returncode != 0
+    assert not (box.root / "etc/filedrawer/github.env").exists()
 
 
 def test_a_rerun_replaces_the_settings(box):

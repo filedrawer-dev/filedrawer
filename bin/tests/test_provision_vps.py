@@ -297,6 +297,31 @@ def test_screening_sends_the_key_on_stdin_and_saves_only_the_cap(stage):
         assert API_KEY not in where
 
 
+GITHUB_TOKEN = "github_pat_" + "g" * 70
+
+
+def test_github_sends_the_token_on_stdin_and_saves_nothing(stage):
+    result = stage.run("github", f"{GITHUB_TOKEN}\n{GITHUB_TOKEN}\n\n")
+    assert result.returncode == 0, result.stdout + result.stderr
+    # The unit first, so it reads the new file, then the token.
+    assert stage.sent(1) == (REPO / "ops/remote/staging-service.sh").read_text()
+    assert (
+        stage.sent(2)
+        == f"{GITHUB_TOKEN}\n" + (REPO / "ops/remote/github-token.sh").read_text()
+    )
+    assert "read -r TOKEN" in stage.log.read_text()
+    assert (
+        stage.opened.read_text()
+        == "https://github.com/settings/personal-access-tokens/new\n"
+    )
+    for where in (
+        stage.log.read_text(),
+        stage.env_file.read_text(),
+        result.stdout + result.stderr,
+    ):
+        assert GITHUB_TOKEN not in where
+
+
 def test_screening_stops_when_the_two_keys_differ(stage):
     result = stage.run("screening", f"1\n{API_KEY}\nsk-ant-other\n\n")
     assert result.returncode == 1
@@ -343,7 +368,11 @@ def rerun(tmp_path, fake_host):
         for path in paths:
             fake_host.answer(f"test -f {path}")
 
-    present("/etc/filedrawer/staging-mail.env", "/etc/filedrawer/staging-screening.env")
+    present(
+        "/etc/filedrawer/staging-mail.env",
+        "/etc/filedrawer/staging-screening.env",
+        "/etc/filedrawer/github.env",
+    )
     fake_host.answer("*os-release*", stdout="ID=debian\n")
     fake_host.answer(
         "*ssh_host_ed25519_key.pub*", stdout="ssh-ed25519 AAAAhost root@vps\n"
@@ -408,9 +437,10 @@ def test_only_new_reruns_every_stage_without_asking_for_anything_saved(rerun):
     assert script("base.sh") in sent
     # Caddy keeps the password hash on the server: no password, only the key.
     assert f"\t{STAGING_KEY}\n" + script("caddy.sh") in sent
-    # Mail and screening are in place already.
+    # Mail, screening and the GitHub token are in place already.
     assert script("mail.sh") not in sent
     assert not any(s.endswith(script("screening.sh")) for s in sent)
+    assert not any(s.endswith(script("github-token.sh")) for s in sent)
     # The deploy key stays; its scripts are reinstalled.
     log = rerun.log.read_text()
     assert "ssh-keygen" not in log

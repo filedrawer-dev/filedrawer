@@ -34,6 +34,9 @@ EnvironmentFile=-/etc/filedrawer/staging-screening.env
 # The smoke-test account, which ops/remote/smoke-env.sh names: its entries aren't
 # screened.
 EnvironmentFile=-/etc/filedrawer/staging-smoke.env
+# The GitHub token for the link checks, which ops/remote/github-token.sh writes;
+# production's unit will read the same file. Without it, 60 API calls an hour.
+EnvironmentFile=-/etc/filedrawer/github.env
 ExecStart=/srv/filedrawer/staging/bin/filedrawer serve
 Restart=on-failure
 RestartSec=2
