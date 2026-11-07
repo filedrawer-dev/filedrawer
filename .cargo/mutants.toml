@@ -1,6 +1,5 @@
-# cargo-mutants' settings, read by `cargo mutants` here and by
-# .github/workflows/mutants.yml, so a local run on one file
-# (`cargo mutants --file crates/analyzer/src/card.rs`) tests the way CI does.
+# cargo-mutants' settings, for .github/workflows/mutants.yml, which runs it only by
+# hand (a local `cargo mutants` reads them too).
 # The tests run under nextest, as in bin/agent-pre-commit, and stop at the first
 # failure: one failing test is enough to catch a mutant.
 test_tool = "nextest"
