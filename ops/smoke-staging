@@ -23,15 +23,20 @@ check, then a tally, and exits 1 when any check fails.
 It reads two settings from the environment and prints neither:
   FILEDRAWER_STAGING_KEY      the staging key, sent as X-Staging-Key
   FILEDRAWER_STAGING_API_KEY  an API token for the account that submits
-Exit status: 0 every check passed, 1 a check failed, 2 a usage or setting error.
+Exit status: 0 every check passed, 1 a check failed, 2 a usage or setting error,
+3 (screen only) the day's screening cap is spent, so nothing more was checked.
 
 screen checks that the server screens with the real model, which the plain smoke
 test can't: staging doesn't screen CI's smoke account. Run it by hand, now and then;
-no automated suite runs it, and each run spends a few Haiku calls. As the screen-test
-account (robocarver's mailbox), it submits a bland on-topic entry and expects it
-public with no "not screened" note, and an off-topic one (sourdough) and expects it
-rejected with its reasons. It never submits anything like a hazard: an entry in
-review would put the account under the review guard. Its settings, neither printed:
+no automated suite runs it, and each run spends a few Haiku calls. As the
+screen-test account (robocarver's mailbox), it submits a bland on-topic entry and
+expects it public with no "not screened" note, and an off-topic one (sourdough) and
+expects it rejected with its reasons. It never submits anything like a hazard: an
+entry in review would put the account under the review guard. When an entry is still
+being screened after the wait, it sends a bland series with POST /series, which the
+server screens at once, to learn why: a 429 means the day's cap is spent, and it
+exits 3, nothing more checked; anything else, such as a 503 when the model call
+fails, is a failure. Its settings, neither printed:
   the token   FILEDRAWER_STAGING_SCREEN_API_KEY, else SCREEN_TEST_TOKEN in
               ops/.screen-test.env
   the key     FILEDRAWER_STAGING_KEY, else STAGING_KEY in ops/.vps.env
@@ -45,7 +50,7 @@ under ops/screen-eval/<expected>/, <expected> being public, rejected or review,
 plus --field-test N (default 10; 0 for none) honest entries picked at random from
 field-test/, expected public (their contents are never printed). It prints PASS or
 FAIL per case and a tally per expectation, and exits 1 when any case misses. It
-stops at the first case left undecided, when the day's cap is spent. The
+stops at the first case left undecided, and says why as screen does. The
 owner then rejects the review cases on /admin, which guards the screen-test
 account; clear the guard there afterwards. Same settings as screen.
   --field-test N  how many field-test entries to add
@@ -181,17 +186,41 @@ screen_entry() {
 explain() {
   [[ $1 == "$2" ]] && return
   case "$1" in
-    review) echo "  it went to review, which puts the account under the review guard: clear it on $base/admin" ;;
-    screening) echo "  still screening after 2 minutes: an outage, or the day's cap is spent" ;;
+    review) echo "  it went to review: the screen saw a likely hazard, or the account is under the review guard; see $base/admin" ;;
     public) echo "  published unscreened: is staging still on FILEDRAWER_SCREENER=pass-all? (issue #7)" ;;
+  esac
+}
+
+# explain_undecided: says why a case was left undecided, from a bland series sent
+# with POST /series, which the server screens at once: a 429 saying the screening
+# budget is spent means the day's cap is, which sets DAY_SPENT to 1 (else 0); a 429
+# for the account's allowance doesn't. 503 means the model call fails. Of the reply
+# it prints only the first reason: a 201's body holds the new, hidden series' join
+# key.
+explain_undecided() {
+  DAY_SPENT=0
+  printf -- '---\ntitle: Screen check %s, refusal-rate setup\n---\n%s\n' "$tag" \
+    "Shared setup for refusal-rate evaluations of open-weight chat models: 500 prompts from a fixed benchmark at temperature 0, refusals counted by a keyword classifier checked by hand on 50 samples." \
+    > "$dir/series.md"
+  req POST /series "$dir/series.md"
+  local reason
+  # A refusal's first `- ` line, or a screen's rejection's `error: ` line: the
+  # model's reasons below the delimiter aren't printed.
+  reason=$(printf '%s\n' "$BODY" | sed -n 's/^- //p; s/^error: //p' | head -1)
+  case "$CODE:$reason" in
+    "429:the day's screening budget is spent"*)
+      echo "  the day's screening cap is spent: rerun after 00:00 UTC"; DAY_SPENT=1 ;;
+    503:*) echo "  screening fails; the server's log says why" ;;
+    201:*) echo "  the screen answers now, so the case was only slow: rerun" ;;
+    *) echo "  POST /series answered $CODE${reason:+: $reason}" ;;
   esac
 }
 
 if [[ $mode == eval ]]; then
   declare -A wanted=() met=()
-  # Set once a case is left undecided: most likely the day's cap is spent, or the
-  # model is unreachable, and every later case would wait out its time for nothing.
-  spent=0
+  # Set once a case is left undecided: the day's cap is spent, or screening fails,
+  # and every later case would wait out its time for nothing.
+  stopped=0
   # judge NAME EXPECTED: the entry just screened against EXPECTED.
   judge() {
     local status
@@ -203,7 +232,7 @@ if [[ $mode == eval ]]; then
     elif [[ $status == screening ]]; then
       echo "WAIT $2 $1 ($ID): not decided yet"
       fail=$((fail + 1))
-      spent=1
+      stopped=1
     else
       echo "FAIL $2 $1 ($ID): got $status"
       fail=$((fail + 1))
@@ -216,7 +245,7 @@ if [[ $mode == eval ]]; then
       name=$(basename "$file" .md)
       screen_entry "$file" > "$dir/case.md"
       screened "$dir/case.md" && judge "$name" "$expected"
-      (( spent )) && break 2
+      (( stopped )) && break 2
     done
   done
   # Field-test entries: one per name, since the rounds hold near-copies. One the
@@ -225,7 +254,7 @@ if [[ $mode == eval ]]; then
   taken=0
   declare -A picked=()
   field_test_dir="${FILEDRAWER_FIELD_TEST_DIR:-$(dirname "$0")/../field-test}"
-  while IFS= read -r file && (( taken < field_tests && ! spent )); do
+  while IFS= read -r file && (( taken < field_tests && ! stopped )); do
     name=$(basename "$file")
     [[ -n "${picked[$name]:-}" ]] && continue
     picked[$name]=1
@@ -234,11 +263,11 @@ if [[ $mode == eval ]]; then
     taken=$((taken + 1))
     judge "field-test-$taken" public
   done < <(find "$field_test_dir" -name '*.md' 2>/dev/null | shuf)
-  (( field_tests > 0 && taken < field_tests && ! spent )) && echo "  only $taken field-test entries found"
-  if (( spent )); then
-    echo "Stopped: a case wasn't decided in time. The day's screening cap may be spent"
-    echo "  (rerun after 00:00 UTC), or the model unreachable (rerun later). Entries"
-    echo "  already sent wait in the queue and are screened then."
+  (( field_tests > 0 && taken < field_tests && ! stopped )) && echo "  only $taken field-test entries found"
+  if (( stopped )); then
+    echo "Stopped: a case wasn't decided in time. Entries already sent wait in the"
+    echo "  queue, and are screened once the screen answers."
+    explain_undecided
   fi
   for expected in public rejected review; do
     echo "$expected: ${met[$expected]:-0} of ${wanted[$expected]:-0}"
@@ -251,8 +280,22 @@ if [[ $mode == eval ]]; then
 fi
 
 if [[ $mode == screen ]]; then
+  # stop_if_undecided NAME: returns when the entry just screened was decided; else
+  # exits, with 3 when the day's cap is spent and nothing failed before, or 1.
+  stop_if_undecided() {
+    [[ $(field status) != screening ]] && return
+    echo "WAIT $1 ($ID): not decided within ${screen_wait}s"
+    explain_undecided
+    if (( DAY_SPENT && fail == 0 )); then
+      echo "screen $tag: $pass passed, the rest not checked"
+      exit 3
+    fi
+    echo "screen $tag: $pass passed, $((fail + 1)) failed"
+    exit 1
+  }
   screen_entry "$fixture" > "$dir/on.md"
   if screened "$dir/on.md"; then
+    stop_if_undecided "on-topic entry"
     status=$(field status)
     check "on-topic entry: public" '[[ $status == public ]]'
     check "on-topic entry: screened, not passed unscreened" '[[ $BODY != *"not screened"* ]]'
@@ -260,6 +303,7 @@ if [[ $mode == screen ]]; then
   fi
   screen_entry "$(dirname "$0")/screen-eval/rejected/sourdough.md" > "$dir/off.md"
   if screened "$dir/off.md"; then
+    stop_if_undecided "off-topic entry"
     status=$(field status)
     check "off-topic entry: rejected" '[[ $status == rejected ]]'
     check "off-topic entry: gives its reasons" '[[ $BODY == *"reason: "* ]]'

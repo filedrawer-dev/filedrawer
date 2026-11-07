@@ -328,37 +328,98 @@ fn every_eval_case_is_an_entry_the_analyzer_accepts() {
     assert!(seen >= 9, "{seen}");
 }
 
-#[test]
-fn eval_stops_at_the_first_undecided_case_when_the_day_is_spent() {
-    // A real screener with no budget: nothing is ever screened, and no model called.
-    let database = scratch_database("eval-spent");
+/// A server with a real screener (`FILEDRAWER_SCREENER=anthropic`, a made-up key) and
+/// these extra settings, and an account's token. No test lets it reach the API: the
+/// cap is $0, or its calls go to a proxy that isn't there.
+fn screening_server(name: &str, settings: &[(&str, &str)]) -> (Server, String) {
+    let database = scratch_database(name);
     let account = admin(&database, &["create-account", "--display-name", "Screen"]);
     let token = admin(
         &database,
         &["create-token", "--account", &account, "--name", "t"],
     );
-    let server = serve_with(
-        database,
-        &[
-            ("FILEDRAWER_SCREENER", "anthropic"),
-            ("FILEDRAWER_ANTHROPIC_API_KEY", "sk-ant-not-real"),
-            ("FILEDRAWER_SCREENING_DAILY_USD", "0"),
-        ],
-    );
-    let mut command = script(
-        &["eval", "--field-test", "0", "--wait", "30", &server.url],
-        Some("unused"),
-    );
-    let empty = scratch_database("eval-spent-settings");
+    let real = [
+        ("FILEDRAWER_SCREENER", "anthropic"),
+        ("FILEDRAWER_ANTHROPIC_API_KEY", "sk-ant-not-real"),
+    ];
+    (serve_with(database, &[&real[..], settings].concat()), token)
+}
+
+/// Nothing is ever screened, and no model called.
+const SPENT: &[(&str, &str)] = &[("FILEDRAWER_SCREENING_DAILY_USD", "0")];
+
+/// Every model call fails at once: the proxy it goes through isn't there.
+const FAILING: &[(&str, &str)] = &[
+    ("FILEDRAWER_SCREENING_DAILY_USD", "1"),
+    ("HTTPS_PROXY", "http://127.0.0.1:9"),
+];
+
+/// Runs a screen-test mode of the script against `server` without waiting for a
+/// verdict, so a case not decided at once is left undecided.
+fn without_waiting(mode_and_args: &[&str], server: &Server, token: &str) -> Output {
+    let mut command = script(&[mode_and_args, &[&server.url]].concat(), Some("unused"));
+    let empty = scratch_database(&format!("{}-nowait-settings", mode_and_args[0]));
     command
         .env("FILEDRAWER_OPS_DIR", empty.parent().unwrap())
-        .env("FILEDRAWER_STAGING_SCREEN_API_KEY", &token)
+        .env("FILEDRAWER_STAGING_SCREEN_API_KEY", token)
         .env("FILEDRAWER_SCREEN_WAIT_SECONDS", "0");
-    let output = command.output().unwrap();
+    command.output().unwrap()
+}
+
+#[test]
+fn eval_stops_at_the_first_undecided_case_and_says_the_day_is_spent() {
+    let (server, token) = screening_server("eval-spent", SPENT);
+    let output = without_waiting(&["eval", "--field-test", "0"], &server, &token);
     let printed = text(&output);
     assert_eq!(output.status.code(), Some(1), "{printed}");
     assert_eq!(printed.matches("WAIT ").count(), 1, "{printed}");
-    assert!(printed.contains("rerun after 00:00 UTC"), "{printed}");
-    assert!(printed.contains("may be spent"), "{printed}");
+    assert!(
+        printed.contains("the day's screening cap is spent: rerun after 00:00 UTC"),
+        "{printed}"
+    );
+    assert!(!printed.contains("screening fails"), "{printed}");
     assert!(printed.contains("public: 0 of 1"), "{printed}");
+}
+
+#[test]
+fn eval_says_when_screening_fails() {
+    let (server, token) = screening_server("eval-failing", FAILING);
+    let output = without_waiting(&["eval", "--field-test", "0"], &server, &token);
+    let printed = text(&output);
+    assert_eq!(output.status.code(), Some(1), "{printed}");
+    assert_eq!(printed.matches("WAIT ").count(), 1, "{printed}");
+    assert!(
+        printed.contains("screening fails; the server's log says why"),
+        "{printed}"
+    );
+    assert!(!printed.contains("cap is spent"), "{printed}");
+}
+
+#[test]
+fn screen_exits_3_when_the_days_cap_is_spent() {
+    let (server, token) = screening_server("screen-spent", SPENT);
+    let output = without_waiting(&["screen"], &server, &token);
+    let printed = text(&output);
+    assert_eq!(output.status.code(), Some(3), "{printed}");
+    assert!(
+        printed.contains("the day's screening cap is spent"),
+        "{printed}"
+    );
+    // The off-topic case would wait for nothing.
+    assert!(!printed.contains("off-topic"), "{printed}");
+    assert!(!printed.contains(&token), "{printed}");
+}
+
+#[test]
+fn screen_fails_when_screening_fails() {
+    let (server, token) = screening_server("screen-failing", FAILING);
+    let output = without_waiting(&["screen"], &server, &token);
+    let printed = text(&output);
+    assert_eq!(output.status.code(), Some(1), "{printed}");
+    assert!(
+        printed.contains("screening fails; the server's log says why"),
+        "{printed}"
+    );
+    assert!(!printed.contains("off-topic"), "{printed}");
+    assert!(!printed.contains(&token), "{printed}");
 }
