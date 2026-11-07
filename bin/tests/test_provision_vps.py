@@ -153,6 +153,33 @@ def test_smoke_also_names_the_screen_test_account_it_finds_in_ops(smoke):
     assert "fdt_secret" not in smoke.log.read_text() + result.stdout + result.stderr
 
 
+def test_smoke_stores_the_screen_test_token_for_ci_and_shows_it_nowhere(smoke):
+    (smoke.tmp / "ops/.screen-test.env").write_text(
+        "SCREEN_TEST_ACCOUNT='a-screen1'\nSCREEN_TEST_TOKEN='fdt_screen9'\n"
+    )
+    result = smoke.run()
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (smoke.secrets / "SCREEN_TEST_TOKEN").read_text() == "fdt_screen9"
+    assert "fdt_screen9" not in smoke.log.read_text() + result.stdout + result.stderr
+
+
+def test_smoke_replaces_a_screen_test_token_github_holds(smoke):
+    (smoke.tmp / "ops/.screen-test.env").write_text(
+        "SCREEN_TEST_ACCOUNT='a-screen1'\nSCREEN_TEST_TOKEN='fdt_rotated'\n"
+    )
+    (smoke.secrets / "SCREEN_TEST_TOKEN").write_text("fdt_old")
+    result = smoke.run()
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (smoke.secrets / "SCREEN_TEST_TOKEN").read_text() == "fdt_rotated"
+
+
+def test_smoke_without_a_screen_test_account_stores_no_screen_token(smoke):
+    result = smoke.run()
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not (smoke.secrets / "SCREEN_TEST_TOKEN").exists()
+    assert "holds no screen-test token" in result.stdout
+
+
 def test_smoke_names_the_account_to_staging_so_its_entries_arent_rejected(smoke):
     result = smoke.run()
     assert result.returncode == 0, result.stdout + result.stderr
@@ -333,6 +360,8 @@ def rerun(tmp_path, fake_host):
 
     return SimpleNamespace(
         run=run,
+        tmp=tmp_path,
+        secrets=fake_host.secrets,
         log=fake_host.log,
         present=present,
         sent=sent_scripts,
@@ -342,6 +371,19 @@ def rerun(tmp_path, fake_host):
 
 def script(name: str) -> str:
     return (REPO / "ops/remote" / name).read_text()
+
+
+def test_only_new_stores_a_new_screen_test_token_and_keeps_one_github_holds(rerun):
+    (rerun.tmp / "ops/.screen-test.env").write_text(
+        "SCREEN_TEST_ACCOUNT='a-screen1'\nSCREEN_TEST_TOKEN='fdt_screen9'\n"
+    )
+    first = rerun.run()
+    assert first.returncode == 0, first.stdout + first.stderr
+    assert (rerun.secrets / "SCREEN_TEST_TOKEN").read_text() == "fdt_screen9"
+    (rerun.secrets / "SCREEN_TEST_TOKEN").write_text("kept")
+    again = rerun.run()
+    assert again.returncode == 0, again.stdout + again.stderr
+    assert (rerun.secrets / "SCREEN_TEST_TOKEN").read_text() == "kept"
 
 
 def test_only_new_reruns_every_stage_without_asking_for_anything_saved(rerun):
