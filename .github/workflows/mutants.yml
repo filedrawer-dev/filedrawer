@@ -60,7 +60,15 @@ jobs:
         # than a run of consecutive files. Exit status 2 (some mutants missed) and 3
         # (some timed out) are results; any other failure, such as 4 (the tests fail
         # before any mutation), fails the shard.
+        #
+        # Each process gets at most 3 GiB of data. Some mutants make a loop grow a
+        # buffer without end (`i += 1` to `i *= 1` in encoded.rs's decode_url), which
+        # fills a runner's 16 GB before the test timeout and kills the runner; under
+        # the cap the test's allocation fails, and the mutant counts as caught. A
+        # rebuild needs under 1.5 GiB, the tests under 100 MB, and four runaway tests
+        # at once still leave the runner 4 GB.
         run: |
+          ulimit -d 3145728
           status=0
           cargo mutants --shard "$SHARD/$SHARDS" --sharding round-robin || status=$?
           case "$status" in
