@@ -992,7 +992,8 @@ pub async fn store_verdict(
         ),
         Verdict::Review { why } => {
             // `why` names a hazard's kind, never its passage, so it may go in the log
-            // and on the owner's page.
+            // and on the owner's page. It may quote an attached file's path or an
+            // archive member's name, cut short; the page escapes it.
             tracing::info!(seq, why, "an entry goes to review");
             ("review", None, None, None, Some(why.clone()))
         }

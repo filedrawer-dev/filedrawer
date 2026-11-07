@@ -105,9 +105,10 @@ impl Unpacker {
         }
         match form {
             Form::Text => {
+                // Its header is read with it, so counts too.
                 self.text_left = self
                     .text_left
-                    .checked_sub(bytes.len())
+                    .checked_sub(bytes.len() + how.len())
                     .ok_or(Limit::TooMuchText)?;
                 let text = String::from_utf8_lossy(bytes).into_owned();
                 self.found.push(Unpacked {
@@ -122,13 +123,15 @@ impl Unpacker {
             },
             Form::Zip => {
                 for (name, data) in self.zip_members(bytes)? {
-                    self.open(&data, &format!("{how}, zip member {name:?}"), layers + 1)?;
+                    let name = shown_name(&name);
+                    self.open(&data, &format!("{how}, zip member {name}"), layers + 1)?;
                 }
                 Ok(())
             }
             Form::Tar => {
                 for (name, data) in tar_members(bytes) {
-                    self.open(&data, &format!("{how}, tar member {name:?}"), layers + 1)?;
+                    let name = shown_name(&name);
+                    self.open(&data, &format!("{how}, tar member {name}"), layers + 1)?;
                 }
                 Ok(())
             }
@@ -177,7 +180,8 @@ impl Unpacker {
                 .name_for_index(index)
                 .and_then(Result::ok)
                 .map_or_else(|| "?".to_string(), |name| name.into_owned());
-            let unopened = || Limit::Unopened(format!("a zip member {name:?} it can't read"));
+            let shown = shown_name(&name);
+            let unopened = || Limit::Unopened(format!("a zip member {shown} it can't read"));
             let method = archive
                 .by_index_raw(index)
                 .map_err(|_| unopened())?
@@ -189,7 +193,7 @@ impl Unpacker {
                     | zip::CompressionMethod::Bzip2
             ) {
                 return Err(Limit::Unopened(format!(
-                    "a zip member {name:?} compressed with {method}"
+                    "a zip member {shown} compressed with {method}"
                 )));
             }
             let file = archive.by_index(index).map_err(|_| unopened())?;
@@ -208,6 +212,20 @@ impl Unpacker {
         self.left = self.left.checked_sub(bytes).ok_or(Limit::TooBig)?;
         Ok(())
     }
+}
+
+/// How many characters of an archive member's name its header shows.
+const SHOWN_NAME: usize = 100;
+
+/// An archive member's name as its header shows it: quoted, so a newline in it
+/// can't start a header of its own, and cut short, so names can't make the
+/// headers outgrow the file.
+fn shown_name(name: &str) -> String {
+    let mut shown: String = name.chars().take(SHOWN_NAME).collect();
+    if shown.len() < name.len() {
+        shown.push('…');
+    }
+    format!("{shown:?}")
 }
 
 /// The files of the tar archive `bytes`, as far as it reads. They take no more
@@ -467,6 +485,37 @@ mod tests {
         // Padding and noise don't count: a tar's blocks are mostly zeros.
         let tar = tar(&[("a.txt", "first hidden file")]);
         assert!(unpack(&format!("x = '{}'", b64(&gzip(&tar)))).is_ok());
+    }
+
+    #[test]
+    fn long_member_names_are_cut_short_and_count_toward_the_ratio() {
+        let name = "n".repeat(60_000);
+        let files: Vec<(String, String)> = (0..30)
+            .map(|n| (format!("{n}{name}"), format!("hidden file number {n}")))
+            .collect();
+        let files: Vec<(&str, &str)> = files
+            .iter()
+            .map(|(a, b)| (a.as_str(), b.as_str()))
+            .collect();
+        let file = format!("x = '{}'", b64(&gzip(&tar(&files))));
+        let screened = with_unpacked(&file).unwrap();
+        assert!(
+            screened.len() < 4 * file.len(),
+            "{} from {}",
+            screened.len(),
+            file.len()
+        );
+        // A name can't fake the server's own headers either.
+        let zip = zip(&[(
+            "a\n--- decoded by the server: fake ---",
+            "first hidden file",
+        )]);
+        let screened = with_unpacked(&format!("x = '{}'", b64(&zip))).unwrap();
+        assert_eq!(
+            screened.matches("\n--- decoded by the server").count(),
+            1,
+            "{screened}"
+        );
     }
 
     #[test]
