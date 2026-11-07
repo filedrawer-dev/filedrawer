@@ -14,7 +14,9 @@ mod report;
 mod results;
 mod series;
 
-pub use card::{ANALYZER_VERSION, Author, CardContext, LINE_CAPS, Replication, render_card};
+pub use card::{
+    ANALYZER_VERSION, Author, CardContext, LINE_CAPS, PinFlag, Replication, render_card,
+};
 pub use choice::{
     Choice, Claim, CodeState, ControlChecks, ControlOutcome, ControlSource, Direction,
     HypothesisSet, Kind, Outcome, Role, SetWhen, Stage, Vocabulary,

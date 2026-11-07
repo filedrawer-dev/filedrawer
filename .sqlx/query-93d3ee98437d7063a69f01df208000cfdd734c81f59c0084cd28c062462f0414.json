@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT OR IGNORE INTO github_commits_confirmed (repo, sha, checked_at)\n         VALUES (?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "93d3ee98437d7063a69f01df208000cfdd734c81f59c0084cd28c062462f0414"
+}

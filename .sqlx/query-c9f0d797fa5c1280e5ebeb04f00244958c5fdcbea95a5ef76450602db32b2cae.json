@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT e.seq AS \"seq!: i64\", e.id, e.source, e.account_id,\n                  a.display_name AS \"display_name?: String\", e.submitted_at, e.published_at,\n                  (SELECT p.id FROM entries p WHERE p.seq = e.previous_seq AND p.status = 'public') AS \"previous_id?\",\n                  (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS \"superseded_by?\",\n                  e.screening_note,\n                  e.attachment_set_seq IS NOT NULL AS \"code_attached!: bool\",\n                  IFNULL(f.code_link_dead, 0) AS \"code_link_dead!: bool\",\n                  IFNULL(f.logs_link_dead, 0) AS \"logs_link_dead!: bool\",\n                  IFNULL(f.pin_not_verified, 0) AS \"pin_not_verified!: bool\",\n                  IFNULL(f.pin_failed, 0) AS \"pin_failed!: bool\"\n         FROM entries e JOIN authors a ON a.id = e.account_id\n         LEFT JOIN link_flags f ON f.entry_seq = e.seq\n         WHERE e.id = ? AND e.status = 'public'",
+  "query": "SELECT e.seq AS \"seq!: i64\", e.id, e.source, e.account_id,\n                  a.display_name AS \"display_name?: String\", e.submitted_at, e.published_at,\n                  (SELECT p.id FROM entries p WHERE p.seq = e.previous_seq AND p.status = 'public') AS \"previous_id?\",\n                  (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS \"superseded_by?\",\n                  e.screening_note,\n                  e.attachment_set_seq IS NOT NULL AS \"code_attached!: bool\",\n                  IFNULL(f.code_link_dead, 0) AS \"code_link_dead!: bool\",\n                  IFNULL(f.logs_link_dead, 0) AS \"logs_link_dead!: bool\",\n                  f.pin_flag AS \"pin_flag?: String\"\n         FROM entries e JOIN authors a ON a.id = e.account_id\n         LEFT JOIN link_flags f ON f.entry_seq = e.seq\n         WHERE e.status = 'public'\n           AND NOT EXISTS (SELECT 1 FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public')\n         ORDER BY e.seq",
   "describe": {
     "columns": [
       {
@@ -127,20 +127,14 @@
         "origin": "Expression"
       },
       {
-        "name": "pin_not_verified!: bool",
+        "name": "pin_flag?: String",
         "ordinal": 13,
-        "type_info": "Integer",
-        "origin": "Expression"
-      },
-      {
-        "name": "pin_failed!: bool",
-        "ordinal": 14,
-        "type_info": "Integer",
+        "type_info": "Text",
         "origin": "Expression"
       }
     ],
     "parameters": {
-      "Right": 1
+      "Right": 0
     },
     "nullable": [
       false,
@@ -156,9 +150,8 @@
       false,
       false,
       false,
-      false,
-      false
+      true
     ]
   },
-  "hash": "81db998b6cdff111995803e136e4b09910150d643d088b431017853be5ba152e"
+  "hash": "c9f0d797fa5c1280e5ebeb04f00244958c5fdcbea95a5ef76450602db32b2cae"
 }

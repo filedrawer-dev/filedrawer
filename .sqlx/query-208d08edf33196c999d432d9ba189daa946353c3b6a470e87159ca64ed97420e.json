@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT 1 FROM github_commits_on_branches WHERE repo = ? AND sha = ?",
+  "query": "SELECT 1 FROM github_commits_confirmed WHERE repo = ? AND sha = ?",
   "describe": {
     "columns": [
       {
@@ -17,5 +17,5 @@
       false
     ]
   },
-  "hash": "b90972751bde1449f3c00a726ab5ef1fdfb63bb856e1f8c0ccf32940eae59e48"
+  "hash": "208d08edf33196c999d432d9ba189daa946353c3b6a470e87159ca64ed97420e"
 }

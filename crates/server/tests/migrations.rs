@@ -317,3 +317,69 @@ async fn migration_21_times_the_next_check_of_every_link_staging_has_checked() {
         ]
     );
 }
+
+#[tokio::test]
+async fn migration_22_keeps_every_link_check_and_allows_a_commit_on_no_branch() {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            SqliteConnectOptions::from_str("sqlite::memory:")
+                .unwrap()
+                .foreign_keys(true),
+        )
+        .await
+        .unwrap();
+    let mut first = sqlx::migrate!("./migrations");
+    first.migrations = Cow::Owned(first.migrations[..21].to_vec());
+    first.run(&pool).await.unwrap();
+    for statement in [
+        "INSERT INTO accounts (id, display_name, created_at) VALUES ('a1', 'A', 't')",
+        "INSERT INTO entries (id, account_id, status, source, submitted_at, first_submitted_at,
+             analyzer_version) VALUES ('e1', 'a1', 'public', 'x', 't', 't', 1)",
+        "INSERT INTO link_checks (entry_seq, field, url, reach, reach_detail, pin, pin_detail,
+             checked_at, next_check_at, retries) VALUES
+             (1, 'logs', 'l', 'retry', 'busy', NULL, NULL, 'c2', 'n2', 1),
+             (1, 'code', 'u', 'live', 'rd', 'not_verified', 'why', 'c', 'n', 3),
+             (1, 'code', 'https://github.com/a/b/tree/x', 'live', NULL, 'failed', 'fork', 'c3',
+              '2099-01-01T00:00:00Z', 0)",
+    ] {
+        sqlx::query(statement).execute(&pool).await.unwrap();
+    }
+
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+
+    let kept: Vec<(String,)> = sqlx::query_as(
+        "SELECT field || '|' || url || '|' || reach || '|' || IFNULL(reach_detail, '-') || '|'
+             || IFNULL(pin, '-') || '|' || IFNULL(pin_detail, '-') || '|' || checked_at || '|'
+             || IFNULL(next_check_at, '-') || '|' || retries
+         FROM link_checks WHERE url != 'https://github.com/a/b/tree/x' ORDER BY rowid",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        kept,
+        vec![
+            ("logs|l|retry|busy|-|-|c2|n2|1".to_string(),),
+            ("code|u|live|rd|not_verified|why|c|n|3".to_string(),),
+        ]
+    );
+    // A GitHub commit an earlier recheck called a bad pin is checked again at once,
+    // so its card takes the new flag.
+    let due: (String,) = sqlx::query_as(
+        "SELECT next_check_at FROM link_checks WHERE url = 'https://github.com/a/b/tree/x'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(due.0.as_str() < "2099", "{due:?}");
+    sqlx::query("UPDATE link_checks SET pin = 'no_branch'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let flagged: (String,) = sqlx::query_as("SELECT pin_flag FROM link_flags")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(flagged, ("no_branch".to_string(),));
+}

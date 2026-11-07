@@ -1,10 +1,12 @@
-//! The link checks' rows (`link_checks`, migrations 0020 and 0021), and the recheck
+//! The link checks' rows (`link_checks`, migrations 0020 to 0022), and the recheck
 //! of the links that are due.
 
 use std::collections::HashMap;
 
 use sqlx::{SqliteConnection, SqlitePool};
 use time::{Duration, OffsetDateTime};
+
+use analyzer::PinFlag;
 
 use super::{CheckedLink, Field, PinCheck, Reach, check};
 use crate::AppState;
@@ -36,10 +38,13 @@ struct NextCheck {
 fn next_check(link: &CheckedLink, retries_before: i64, now: OffsetDateTime) -> NextCheck {
     let week = Duration::days(RECHECK_DAYS);
     match (&link.reach, &link.pin) {
-        (Reach::Dead(_), _) | (_, Some(PinCheck::Failed(_))) => NextCheck {
-            at: Some(now + week),
-            retries: 0,
-        },
+        // Definite answers: a week, without the hourly retries.
+        (Reach::Dead(_), _) | (_, Some(PinCheck::Failed(_) | PinCheck::OnNoBranch(_))) => {
+            NextCheck {
+                at: Some(now + week),
+                retries: 0,
+            }
+        }
         (Reach::RetryLater(_), _) | (_, Some(PinCheck::NotVerified(_))) => {
             // 2^8 hours is past a week, so the doubling stops there.
             let doublings = u32::try_from(retries_before.clamp(0, 8)).unwrap_or(8);
@@ -94,6 +99,7 @@ impl PinCheck {
         match self {
             PinCheck::Verified => ("verified", None),
             PinCheck::Failed(why) => ("failed", Some(why)),
+            PinCheck::OnNoBranch(why) => ("no_branch", Some(why)),
             PinCheck::NotVerified(why) => ("not_verified", Some(why)),
         }
     }
@@ -103,9 +109,15 @@ impl PinCheck {
         match pin {
             "verified" => PinCheck::Verified,
             "failed" => PinCheck::Failed(detail),
+            "no_branch" => PinCheck::OnNoBranch(detail),
             _ => PinCheck::NotVerified(detail),
         }
     }
+}
+
+/// The card's pin flag from the `link_flags` view's `pin_flag` column.
+pub fn pin_flag(column: Option<&str>) -> Option<PinFlag> {
+    column.and_then(|pin| PinCheck::from_columns(pin, None).flag())
 }
 
 /// Stores entry `seq`'s links as its submission checked them at `now`, replacing

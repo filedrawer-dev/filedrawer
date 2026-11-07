@@ -6,7 +6,7 @@ use analyzer::{
 };
 use sqlx::SqlitePool;
 
-use crate::link_checks::LinkFlags;
+use crate::link_checks::{self, LinkFlags};
 use crate::screening::Verdict;
 use crate::series::Cited;
 use crate::{allowance, ids, time::now};
@@ -32,8 +32,8 @@ pub struct PublicEntry {
     /// The link checks' flags (`link_checks::LinkFlags`).
     pub code_link_dead: bool,
     pub logs_link_dead: bool,
-    pub pin_not_verified: bool,
-    pub pin_failed: bool,
+    /// The `link_flags` view's `pin_flag` (`link_checks::pin_flag`).
+    pub pin_flag: Option<String>,
 }
 
 /// The card context only the server knows: the entry's ID and its author, whose
@@ -84,8 +84,7 @@ impl PublicEntry {
         let flags = LinkFlags {
             code_link_dead: self.code_link_dead,
             logs_link_dead: self.logs_link_dead,
-            pin_not_verified: self.pin_not_verified,
-            pin_failed: self.pin_failed,
+            pin: link_checks::pin_flag(self.pin_flag.as_deref()),
         };
         let context = flags.on(CardContext {
             superseded_by_version: superseded_by,
@@ -576,8 +575,7 @@ pub async fn public_entry(pool: &SqlitePool, id: &str) -> Result<Option<PublicEn
                   e.attachment_set_seq IS NOT NULL AS "code_attached!: bool",
                   IFNULL(f.code_link_dead, 0) AS "code_link_dead!: bool",
                   IFNULL(f.logs_link_dead, 0) AS "logs_link_dead!: bool",
-                  IFNULL(f.pin_not_verified, 0) AS "pin_not_verified!: bool",
-                  IFNULL(f.pin_failed, 0) AS "pin_failed!: bool"
+                  f.pin_flag AS "pin_flag?: String"
          FROM entries e JOIN authors a ON a.id = e.account_id
          LEFT JOIN link_flags f ON f.entry_seq = e.seq
          WHERE e.id = ? AND e.status = 'public'"#,
@@ -624,8 +622,7 @@ pub async fn search(
                   e.attachment_set_seq IS NOT NULL AS "code_attached!: bool",
                   IFNULL(f.code_link_dead, 0) AS "code_link_dead!: bool",
                   IFNULL(f.logs_link_dead, 0) AS "logs_link_dead!: bool",
-                  IFNULL(f.pin_not_verified, 0) AS "pin_not_verified!: bool",
-                  IFNULL(f.pin_failed, 0) AS "pin_failed!: bool"
+                  f.pin_flag AS "pin_flag?: String"
            FROM entries e JOIN authors a ON a.id = e.account_id
            LEFT JOIN link_flags f ON f.entry_seq = e.seq
            WHERE e.status = 'public'
@@ -675,8 +672,7 @@ pub async fn all_public(pool: &SqlitePool) -> Result<Vec<PublicEntry>, sqlx::Err
                   e.attachment_set_seq IS NOT NULL AS "code_attached!: bool",
                   IFNULL(f.code_link_dead, 0) AS "code_link_dead!: bool",
                   IFNULL(f.logs_link_dead, 0) AS "logs_link_dead!: bool",
-                  IFNULL(f.pin_not_verified, 0) AS "pin_not_verified!: bool",
-                  IFNULL(f.pin_failed, 0) AS "pin_failed!: bool"
+                  f.pin_flag AS "pin_flag?: String"
          FROM entries e JOIN authors a ON a.id = e.account_id
          LEFT JOIN link_flags f ON f.entry_seq = e.seq
          WHERE e.status = 'public'

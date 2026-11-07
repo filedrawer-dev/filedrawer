@@ -3,7 +3,7 @@
 mod common;
 
 use analyzer::{
-    Author, CardContext, Choice, LINE_CAPS, Outcome, Replication, analyze, render_card,
+    Author, CardContext, Choice, LINE_CAPS, Outcome, PinFlag, Replication, analyze, render_card,
 };
 use common::{EXAMPLE, example_with, with_results};
 use proptest::prelude::*;
@@ -61,8 +61,7 @@ fn the_server_context_fills_the_id_flags_and_author() {
         code_attached: true,
         code_link_dead: false,
         logs_link_dead: true,
-        pin_not_verified: false,
-        pin_failed: false,
+        pin: None,
         superseded_by_version: Some("fd-9zz1".into()),
         replications: vec![
             Replication {
@@ -100,17 +99,19 @@ fn the_server_flags_a_pin_it_couldnt_verify_or_found_bad() {
             .unwrap()
             .to_string()
     };
-    let not_verified = CardContext {
-        pin_not_verified: true,
+    let with = |pin| CardContext {
+        pin: Some(pin),
         ..CardContext::default()
     };
-    assert_eq!(flags(not_verified), "analyzer v1; pin not verified");
-    let failed = CardContext {
-        pin_not_verified: true,
-        pin_failed: true,
-        ..CardContext::default()
-    };
-    assert_eq!(flags(failed), "analyzer v1; code pin failed");
+    assert_eq!(
+        flags(with(PinFlag::NotVerified)),
+        "analyzer v1; pin not verified"
+    );
+    assert_eq!(flags(with(PinFlag::Failed)), "analyzer v1; code pin failed");
+    assert_eq!(
+        flags(with(PinFlag::OnNoBranch)),
+        "analyzer v1; commit on no branch"
+    );
 }
 
 #[test]

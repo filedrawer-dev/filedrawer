@@ -312,7 +312,13 @@ Choices the docs left open, made while building the analyzer. Once the owner set
 
 - Options: the first 10 other branches in GitHub's list (alphabetical), or the 10 most recently pushed, which needs a call per branch to learn.
 - Chosen: the first 10 in the list, skipping the one whose head is the default branch's. One call lists up to 100.
-- Against: in a repository with many branches, the commit's branch may sort late, and an honest entry is refused; the reason says how many branches the server checked.
+- Against: in a repository with many branches, the commit's branch may sort late, and an honest entry is flagged "commit on no branch"; the warning says how many branches the server checked.
+
+## A commit on no branch: the order of the calls, and when it is checked again
+
+- Options: list the tags before or after comparing the commit with the other branches; check every tag, or the first 100; recheck a no-branch commit within the hour, as an unconfirmed pin is, or weekly.
+- Chosen: tags right after the default branch, so a commit its author tagged costs 2 calls, not 12; the first 100 tags, in one call, matched by the commit each points at; weekly, since "on no branch" is an answer, not a failed check. An author who tags the commit can PUT a pending entry to have it checked at once.
+- Against: a repository with over 100 tags may hold the one that matters further down, and a public entry whose author tags the commit keeps its flag for up to a week.
 
 ## What a recheck covers, and when
 

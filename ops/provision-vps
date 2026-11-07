@@ -387,8 +387,9 @@ github_stage() {
   if keep_existing "The GitHub token" /etc/filedrawer/github.env; then
     return 0
   fi
-  say "Submissions ask GitHub's API whether a code link's commit is on the repository's"
-  say "own branches. Without a token GitHub allows 60 calls an hour; with one, 5,000."
+  say "Submissions ask GitHub's API whether a code link's commit is on one of the"
+  say "repository's own branches or tags. Without a token GitHub allows 60 calls an"
+  say "hour; with one, 5,000. The server spends at most half, and leaves the rest to you."
   open_url "https://github.com/settings/personal-access-tokens/new"
   step "Make a fine-grained token named such as 'filedrawer link checks'."
   step "Repository access: 'Public repositories'. Add no permissions: it only reads."

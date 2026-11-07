@@ -26,14 +26,25 @@ pub struct CardContext {
     pub code_attached: bool,
     pub code_link_dead: bool,
     pub logs_link_dead: bool,
-    /// The server couldn't confirm the `code` link's pin online.
-    pub pin_not_verified: bool,
-    /// A check after submission found the `code` link's pin bad: a fork's commit
-    /// under its parent's URL, or a Zenodo concept record.
-    pub pin_failed: bool,
+    /// What the server's online check of the `code` link's pin flags, if anything.
+    pub pin: Option<PinFlag>,
     /// The ID of the version that superseded this one.
     pub superseded_by_version: Option<String>,
     pub replications: Vec<Replication>,
+}
+
+/// What the server's online check of a `code` link's pin puts on card line 10
+/// (entry-format.md, The card). A link has one pin state, so one flag at most.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PinFlag {
+    /// "pin not verified": the server couldn't confirm the pin.
+    NotVerified,
+    /// "code pin failed": a check after submission found a Zenodo concept record.
+    Failed,
+    /// "commit on no branch": the GitHub commit is on no branch or tag of the
+    /// repository it names, a fork's or one whose branch was squashed or rebased
+    /// away.
+    OnNoBranch,
 }
 
 /// The account behind an entry, for card line 11 (entry-format.md, The card).
@@ -485,15 +496,18 @@ fn flags(analysis: &Analysis, context: &CardContext) -> Vec<Part> {
     if context.logs_link_dead {
         parts.push(server("; logs link dead"));
     }
-    if context.pin_failed {
-        parts.push(server("; code pin failed"));
-    } else if context.pin_not_verified
-        || fields
+    let unlisted = || {
+        fields
             .code
             .as_deref()
             .is_some_and(|url| code_pin(url) == Pin::HostNotListed)
-    {
-        parts.push(server("; pin not verified"));
+    };
+    match context.pin {
+        Some(PinFlag::Failed) => parts.push(server("; code pin failed")),
+        Some(PinFlag::OnNoBranch) => parts.push(server("; commit on no branch")),
+        Some(PinFlag::NotVerified) => parts.push(server("; pin not verified")),
+        None if unlisted() => parts.push(server("; pin not verified")),
+        None => {}
     }
     if fields.data.is_empty() && reanalyses_stored_data(analysis) {
         parts.push(server("; no data"));

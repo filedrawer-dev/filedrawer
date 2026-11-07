@@ -42,8 +42,9 @@ FILEDRAWER_SMTP_PASSWORD and FILEDRAWER_MAIL_FROM are all set (FILEDRAWER_SMTP_P
 defaults to 465), and to the log otherwise. Production refuses to start without them.
 
 Submissions fetch their code and logs links on github.com, huggingface.co and
-zenodo.org, and ask GitHub's API whether a code commit is on the repository's own
-branches. FILEDRAWER_GITHUB_TOKEN, a token with no repository access, raises GitHub's
+zenodo.org, and ask GitHub's API whether a code commit is on one of the repository's
+own branches or tags, spending at most half of the token's hourly allowance.
+FILEDRAWER_GITHUB_TOKEN, a token with no repository access, raises GitHub's
 allowance from 60 calls an hour to 5,000; production refuses to start without it.
 FILEDRAWER_LINK_CHECKS=off fetches nothing, for tests that run this binary;
 production refuses it.

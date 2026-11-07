@@ -1,8 +1,8 @@
 //! GitHub's fork check (design.md, Submission and screening, step 2): whether a
-//! `code` commit is on one of the named repository's own branches, since GitHub
-//! serves a fork's commits under its parent's URL. And the API calls it spends: at
-//! most half of the hour's, each account a tenth of that half, and none while GitHub
-//! asks the server to wait.
+//! `code` commit is on one of the named repository's own branches or at one of its
+//! tags, since GitHub serves a fork's commits under its parent's URL. And the API
+//! calls it spends: at most half of the hour's, each account a tenth of that half,
+//! and none while GitHub asks the server to wait.
 
 use std::time::Duration;
 
@@ -18,8 +18,14 @@ use crate::limits::Rate;
 /// (the owner's decision, 2026-11-07).
 const MAX_OTHER_BRANCHES: usize = 10;
 
-/// What a refusal for a fork's commit tells its author to do.
-const FORK_ADVICE: &str = "GitHub shows a fork's commits under its parent's URL too, so link the repository whose branch holds it";
+/// What the warning for a commit on no branch says it may be, and how to clear it
+/// (the owner, 2026-11-07: "warn that the commit could be pruned, and encourage the
+/// agent to tag it").
+fn no_branch_advice(sha: &str) -> String {
+    format!(
+        "it may be a fork's commit, which GitHub shows under its parent's URL too, and GitHub may prune a commit that no branch or tag holds. If it is yours, push a tag at it (`git tag NAME {sha} && git push origin NAME`) and a recheck clears the flag; if it is a fork's, link the fork"
+    )
+}
 
 /// The pause key for GitHub's API.
 const API_HOST: &str = "api.github.com";
@@ -86,15 +92,19 @@ impl LinkChecker {
     }
 }
 
-/// Whether `commit` is on one of its repository's own branches: the default one,
-/// then up to [`MAX_OTHER_BRANCHES`] others. `account` is charged for the calls.
+/// Whether `commit` is its repository's own: on its default branch, or at one of its
+/// tags, or on up to [`MAX_OTHER_BRANCHES`] other branches. Only the repository's
+/// writers can push a tag, so one at the commit proves it, and keeps GitHub from
+/// pruning it. On none of them, the commit is a fork's or its branch was squashed
+/// or rebased away, which GitHub can't tell apart, so it is flagged and never
+/// refused (the owner's decision, 2026-11-07). `account` is charged for the calls.
 pub(super) async fn github_pin(
     state: &AppState,
     commit: &GithubCommit,
     account: Option<&str>,
 ) -> PinCheck {
     let GithubCommit { repo, sha } = commit;
-    if known_on_branch(&state.pool, commit).await {
+    if known_confirmed(&state.pool, commit).await {
         return PinCheck::Verified;
     }
     let head = match compare(state, account, repo, "HEAD", sha).await {
@@ -102,51 +112,110 @@ pub(super) async fn github_pin(
         Err(why) => return PinCheck::NotVerified(why),
     };
     if head.on_branch {
-        return record_on_branch(&state.pool, commit).await;
+        return record_confirmed(&state.pool, commit).await;
     }
-    let branches = match github_call(
-        state,
-        account,
-        &format!("/repos/{repo}/branches?per_page=100"),
-    )
-    .await
+    // A tag list that can't be read still leaves the branches to try.
+    let tags = list(state, account, repo, Listing::Tags).await;
+    if let Ok(tags) = &tags
+        && targets(tags).any(|tagged| tagged.eq_ignore_ascii_case(sha))
     {
-        Ok(answer) if answer.status == 200 => answer.body.unwrap_or_default(),
-        Ok(answer) => {
-            return PinCheck::NotVerified(format!(
-                "GitHub's API answered {} for the branches of {repo}",
-                answer.status
-            ));
-        }
+        return record_confirmed(&state.pool, commit).await;
+    }
+    let branches = match list(state, account, repo, Listing::Branches).await {
+        Ok(branches) => branches,
         Err(why) => return PinCheck::NotVerified(why),
     };
-    // Only commit hashes go into the next calls' paths.
-    let others: Vec<&str> = branches
-        .as_array()
-        .map(Vec::as_slice)
-        .unwrap_or_default()
-        .iter()
-        .filter_map(|branch| branch["commit"]["sha"].as_str())
-        .filter(|branch_head| is_commit_hash(branch_head))
+    let others: Vec<&str> = targets(&branches)
         .filter(|branch_head| Some(*branch_head) != head.base.as_deref())
         .collect();
     for branch_head in others.iter().take(MAX_OTHER_BRANCHES) {
         match compare(state, account, repo, branch_head, sha).await {
             Ok(comparison) if comparison.on_branch => {
-                return record_on_branch(&state.pool, commit).await;
+                return record_confirmed(&state.pool, commit).await;
             }
             Ok(_) => {}
             Err(why) => return PinCheck::NotVerified(why),
         }
     }
-    PinCheck::Failed(if others.len() <= MAX_OTHER_BRANCHES {
-        format!("commit {sha} isn't on any branch of {repo}; {FORK_ADVICE}")
-    } else {
-        format!(
-            "commit {sha} isn't on {repo}'s default branch or the {MAX_OTHER_BRANCHES} other branches the server checked, of {}; {FORK_ADVICE}",
-            others.len()
-        )
+    let tags = match tags {
+        Ok(tags) => tags,
+        Err(why) => return PinCheck::NotVerified(why),
+    };
+    let advice = no_branch_advice(sha);
+    let every_branch = others.len() <= MAX_OTHER_BRANCHES;
+    let every_tag = tags.as_array().map_or(0, Vec::len) < LISTED;
+    PinCheck::OnNoBranch(match (every_branch, every_tag) {
+        (true, true) => format!("commit {sha} is on no branch or tag of {repo}: {advice}"),
+        (true, false) => format!(
+            "commit {sha} is on no branch of {repo}, nor at any of the first {LISTED} of its tags, the ones the server checked: {advice}"
+        ),
+        (false, every_tag) => {
+            let tags = if every_tag {
+                "no tag".to_string()
+            } else {
+                format!("none of the first {LISTED} tags")
+            };
+            format!(
+                "commit {sha} is on {tags} of {repo}, nor on its default branch or the {MAX_OTHER_BRANCHES} other branches the server checked, of {}: {advice}",
+                others.len()
+            )
+        }
     })
+}
+
+/// How many tags or branches one call lists.
+const LISTED: usize = 100;
+
+/// What `list` lists.
+#[derive(Clone, Copy)]
+enum Listing {
+    Tags,
+    Branches,
+}
+
+impl Listing {
+    /// Its name in GitHub's API paths, and in messages.
+    fn name(self) -> &'static str {
+        match self {
+            Listing::Tags => "tags",
+            Listing::Branches => "branches",
+        }
+    }
+}
+
+/// The first [`LISTED`] of `repo`'s tags or branches, as GitHub's API lists them.
+async fn list(
+    state: &AppState,
+    account: Option<&str>,
+    repo: &str,
+    listing: Listing,
+) -> Result<serde_json::Value, String> {
+    let what = listing.name();
+    let answer = github_call(
+        state,
+        account,
+        &format!("/repos/{repo}/{what}?per_page={LISTED}"),
+    )
+    .await?;
+    if answer.status != 200 {
+        return Err(format!(
+            "GitHub's API answered {} for the {what} of {repo}",
+            answer.status
+        ));
+    }
+    Ok(answer.body.unwrap_or_default())
+}
+
+/// The commit each listed tag or branch points at. Only commit hashes, which go
+/// into later calls' paths.
+fn targets(listed: &serde_json::Value) -> impl Iterator<Item = &str> {
+    listed
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|item| item["commit"]["sha"].as_str())
+        .filter(|target| is_commit_hash(target))
 }
 
 fn is_commit_hash(text: &str) -> bool {
@@ -257,10 +326,10 @@ async fn github_call(
     }
 }
 
-/// Whether GitHub's API already confirmed `commit` on a branch.
-async fn known_on_branch(pool: &SqlitePool, commit: &GithubCommit) -> bool {
+/// Whether GitHub's API already confirmed `commit` on a branch or at a tag.
+async fn known_confirmed(pool: &SqlitePool, commit: &GithubCommit) -> bool {
     sqlx::query_scalar!(
-        "SELECT 1 FROM github_commits_on_branches WHERE repo = ? AND sha = ?",
+        "SELECT 1 FROM github_commits_confirmed WHERE repo = ? AND sha = ?",
         commit.repo,
         commit.sha
     )
@@ -269,12 +338,12 @@ async fn known_on_branch(pool: &SqlitePool, commit: &GithubCommit) -> bool {
     .is_ok_and(|row| row.is_some())
 }
 
-/// Records that `commit` is on a branch, so it isn't asked about again, and says it
-/// is verified.
-async fn record_on_branch(pool: &SqlitePool, commit: &GithubCommit) -> PinCheck {
+/// Records that `commit` is on a branch or at a tag, so it isn't asked about again,
+/// and says it is verified.
+async fn record_confirmed(pool: &SqlitePool, commit: &GithubCommit) -> PinCheck {
     let now = crate::time::now();
     let recorded = sqlx::query!(
-        "INSERT OR IGNORE INTO github_commits_on_branches (repo, sha, checked_at)
+        "INSERT OR IGNORE INTO github_commits_confirmed (repo, sha, checked_at)
          VALUES (?, ?, ?)",
         commit.repo,
         commit.sha,

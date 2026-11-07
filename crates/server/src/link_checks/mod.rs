@@ -1,7 +1,7 @@
 //! The online half of the link checks (design.md, Submission and screening, step 2):
 //! whether each `code` and `logs` link on a listed host answers, whether a GitHub
-//! `code` commit is on one of the named repository's own branches, and whether a
-//! Zenodo `code` link names a version record. The offline half, by the URL's shape,
+//! `code` commit is on one of the named repository's own branches or at one of its
+//! tags, and whether a Zenodo `code` link names a version record. The offline half, by the URL's shape,
 //! is the analyzer's. Only a pin found bad at submission refuses an entry; anything
 //! else becomes a warning and a flag on the card (the owner's decisions, 2026-11-07).
 
@@ -15,7 +15,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use analyzer::{
-    CardContext, Fields, LISTED_HOSTS, Pin, code_pin, github_commit, listed_host, zenodo_record,
+    CardContext, Fields, LISTED_HOSTS, Pin, PinFlag, code_pin, github_commit, listed_host,
+    zenodo_record,
 };
 use futures::StreamExt;
 use reqwest::Url;
@@ -24,7 +25,7 @@ pub use fetch::{
     Answer, ApiAnswer, Fetcher, Fetching, GITHUB_HOURLY_WITH_TOKEN, GITHUB_HOURLY_WITHOUT_TOKEN,
     HttpFetcher,
 };
-pub use stored::{RECHECK_DAYS, recheck_due, store, stored};
+pub use stored::{RECHECK_DAYS, pin_flag, recheck_due, store, stored};
 
 use crate::AppState;
 use crate::respond::one_line;
@@ -128,8 +129,13 @@ pub enum PinCheck {
     Verified,
     /// With why the server couldn't tell.
     NotVerified(String),
-    /// With what's wrong: a fork's commit, or a Zenodo concept record.
+    /// With what's wrong: a Zenodo concept record.
     Failed(String),
+    /// A GitHub commit on no branch or tag of the repository the link names: a
+    /// fork's, or one whose branch was squashed or rebased away. With what the server
+    /// checked and how to clear it. Flagged, never refused (the owner's decision,
+    /// 2026-11-07).
+    OnNoBranch(String),
 }
 
 /// One link as the server last checked it.
@@ -494,6 +500,9 @@ pub fn warnings(links: &[CheckedLink]) -> Vec<String> {
             Some(PinCheck::Failed(why)) => warnings.push(format!(
                 "`{field}: {url}`: {why}; the card says \"code pin failed\""
             )),
+            Some(PinCheck::OnNoBranch(why)) => warnings.push(format!(
+                "`{field}: {url}`: {why}; the card says \"commit on no branch\""
+            )),
         }
     }
     warnings
@@ -504,8 +513,19 @@ pub fn warnings(links: &[CheckedLink]) -> Vec<String> {
 pub struct LinkFlags {
     pub code_link_dead: bool,
     pub logs_link_dead: bool,
-    pub pin_not_verified: bool,
-    pub pin_failed: bool,
+    pub pin: Option<PinFlag>,
+}
+
+impl PinCheck {
+    /// What the card flags for this pin state.
+    fn flag(&self) -> Option<PinFlag> {
+        match self {
+            PinCheck::Verified => None,
+            PinCheck::NotVerified(_) => Some(PinFlag::NotVerified),
+            PinCheck::Failed(_) => Some(PinFlag::Failed),
+            PinCheck::OnNoBranch(_) => Some(PinFlag::OnNoBranch),
+        }
+    }
 }
 
 impl LinkFlags {
@@ -515,16 +535,12 @@ impl LinkFlags {
                 .iter()
                 .any(|link| link.field == field && matches!(link.reach, Reach::Dead(_)))
         };
-        let pin = |wanted: fn(&PinCheck) -> bool| {
-            links
-                .iter()
-                .any(|link| link.pin.as_ref().is_some_and(wanted))
-        };
         LinkFlags {
             code_link_dead: dead(Field::Code),
             logs_link_dead: dead(Field::Logs),
-            pin_not_verified: pin(|pin| matches!(pin, PinCheck::NotVerified(_))),
-            pin_failed: pin(|pin| matches!(pin, PinCheck::Failed(_))),
+            pin: links
+                .iter()
+                .find_map(|link| link.pin.as_ref().and_then(PinCheck::flag)),
         }
     }
 
@@ -533,8 +549,7 @@ impl LinkFlags {
         CardContext {
             code_link_dead: self.code_link_dead,
             logs_link_dead: self.logs_link_dead,
-            pin_not_verified: self.pin_not_verified,
-            pin_failed: self.pin_failed,
+            pin: self.pin,
             ..context
         }
     }

@@ -255,6 +255,15 @@ fn compare_path(base: &str, sha: &str) -> String {
 
 const BRANCHES: &str = "/repos/ada/steering/branches?per_page=100";
 
+const TAGS: &str = "/repos/ada/steering/tags?per_page=100";
+
+/// The advice a no-branch commit's warning gives, after what the server checked.
+fn no_branch_advice() -> String {
+    format!(
+        ": it may be a fork's commit, which GitHub shows under its parent's URL too, and GitHub may prune a commit that no branch or tag holds. If it is yours, push a tag at it (`git tag NAME {SHA} && git push origin NAME`) and a recheck clears the flag; if it is a fork's, link the fork; the card says \"commit on no branch\""
+    )
+}
+
 /// A 40-character hash made of `digit`.
 fn hash(digit: char) -> String {
     digit.to_string().repeat(40)
@@ -310,6 +319,7 @@ async fn a_commit_on_another_branch_is_verified() {
         app.web.api_calls(),
         [
             compare_path("HEAD", SHA),
+            TAGS.to_string(),
             BRANCHES.to_string(),
             compare_path(&format!("{:040}", 0), SHA),
             compare_path(&format!("{:040}", 1), SHA),
@@ -318,7 +328,7 @@ async fn a_commit_on_another_branch_is_verified() {
 }
 
 #[tokio::test]
-async fn a_commit_on_none_of_the_repositorys_branches_is_refused() {
+async fn a_commit_on_no_branch_is_accepted_with_a_flag_and_the_way_to_clear_it() {
     let app = test_app().await;
     not_on_default(&app, 12);
     for n in 0..12 {
@@ -330,22 +340,22 @@ async fn a_commit_on_none_of_the_repositorys_branches_is_refused() {
         );
     }
     let reply = app.post("/entries", with_code(&github_code())).await;
+    assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
     assert_eq!(
-        reply.status,
-        StatusCode::UNPROCESSABLE_ENTITY,
-        "{}",
-        reply.body
+        warnings(&reply.body),
+        [format!(
+            "`code: {}`: commit {SHA} is on no tag of ada/steering, nor on its default branch or the 10 other branches the server checked, of 12{}",
+            github_code(),
+            no_branch_advice()
+        )]
     );
     assert!(
-        reply.body.contains(&format!(
-            "`code: {}`: commit {SHA} isn't on ada/steering's default branch or the 10 other branches the server checked, of 12; GitHub shows a fork's commits under its parent's URL too, so link the repository whose branch holds it",
-            github_code()
-        )),
+        flags(&reply.body).ends_with("; commit on no branch"),
         "{}",
         reply.body
     );
-    // The default branch, the list, and 10 others.
-    assert_eq!(app.web.api_calls().len(), 12);
+    // The default branch, the tags, the branch list, and 10 others.
+    assert_eq!(app.web.api_calls().len(), 13);
 }
 
 #[tokio::test]
@@ -361,19 +371,143 @@ async fn a_small_repositorys_branches_are_all_checked() {
         );
     }
     let reply = app.post("/entries", with_code(&github_code())).await;
+    assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
     assert_eq!(
-        reply.status,
-        StatusCode::UNPROCESSABLE_ENTITY,
-        "{}",
-        reply.body
+        warnings(&reply.body),
+        [format!(
+            "`code: {}`: commit {SHA} is on no branch or tag of ada/steering{}",
+            github_code(),
+            no_branch_advice()
+        )]
     );
+}
+
+#[tokio::test]
+async fn a_tag_at_the_commit_verifies_it_in_two_calls() {
+    let app = test_app().await;
+    not_on_default(&app, 3);
+    app.web.api(
+        TAGS,
+        200,
+        serde_json::json!([{"name": "v1", "commit": {"sha": SHA}}]),
+        4000,
+    );
+    let reply = app.post("/entries", with_code(&github_code())).await;
+    assert_eq!(warnings(&reply.body), Vec::<&str>::new(), "{}", reply.body);
+    assert_eq!(
+        app.web.api_calls(),
+        [compare_path("HEAD", SHA), TAGS.to_string()]
+    );
+}
+
+#[tokio::test]
+async fn a_tag_at_another_commit_doesnt_verify_it() {
+    let app = test_app().await;
+    not_on_default(&app, 0);
+    app.web.api(
+        TAGS,
+        200,
+        serde_json::json!([{"name": "v1", "commit": {"sha": hash('b')}}]),
+        4000,
+    );
+    let reply = app.post("/entries", with_code(&github_code())).await;
     assert!(
-        reply.body.contains(&format!(
-            "commit {SHA} isn't on any branch of ada/steering; GitHub shows a fork's commits"
-        )),
+        flags(&reply.body).ends_with("; commit on no branch"),
         "{}",
         reply.body
     );
+}
+
+#[tokio::test]
+async fn a_batch_member_on_no_branch_is_accepted_with_the_flag() {
+    let app = test_app().await;
+    not_on_default(&app, 0);
+    let front = format!("code: {}\n", github_code());
+    let (status, json) = batch(&app, &[member("a", ""), member("b", &front)]).await;
+    assert_eq!(status, StatusCode::CREATED, "{json}");
+    let card = json["entries"][1]["card"].as_str().unwrap();
+    assert!(card.contains("; commit on no branch"), "{card}");
+    assert_eq!(
+        json["entries"][1]["warnings"],
+        serde_json::json!([format!(
+            "`code: {}`: commit {SHA} is on no branch or tag of ada/steering{}",
+            github_code(),
+            no_branch_advice()
+        )])
+    );
+}
+
+#[tokio::test]
+async fn a_commit_a_tag_verified_costs_no_calls_the_next_time() {
+    let app = test_app().await;
+    not_on_default(&app, 3);
+    app.web.api(
+        TAGS,
+        200,
+        serde_json::json!([{"name": "v1", "commit": {"sha": SHA}}]),
+        4000,
+    );
+    app.submit_held(&with_code(&github_code())).await;
+    app.submit_held(&with_code(&github_code())).await;
+    assert_eq!(app.web.api_calls().len(), 2);
+}
+
+#[tokio::test]
+async fn with_100_tags_the_warning_says_only_those_were_checked() {
+    let app = test_app().await;
+    not_on_default(&app, 0);
+    let tags: Vec<_> = (0..100)
+        .map(|n| serde_json::json!({"name": format!("t{n}"), "commit": {"sha": hash('c')}}))
+        .collect();
+    app.web.api(TAGS, 200, serde_json::json!(tags), 4000);
+    let reply = app.post("/entries", with_code(&github_code())).await;
+    assert_eq!(
+        warnings(&reply.body),
+        [format!(
+            "`code: {}`: commit {SHA} is on no branch of ada/steering, nor at any of the first 100 of its tags, the ones the server checked{}",
+            github_code(),
+            no_branch_advice()
+        )]
+    );
+}
+
+#[tokio::test]
+async fn a_recheck_that_finds_a_zenodo_concept_record_flags_code_pin_failed() {
+    let app = test_app().await;
+    app.web.fail("https://zenodo.org/api/records/122");
+    let id = app
+        .submit(&with_code("https://zenodo.org/records/122"))
+        .await;
+    assert!(public_card(&app, &id).await.ends_with("; pin not verified"));
+    app.web.redirect(
+        "https://zenodo.org/api/records/122",
+        302,
+        "https://zenodo.org/api/records/123",
+    );
+    assert_eq!(recheck_after_minutes(&app, 61).await, 1);
+    assert_eq!(public_card(&app, &id).await, "analyzer v1; code pin failed");
+}
+
+#[tokio::test]
+async fn a_commit_tagged_later_is_cleared_by_the_weekly_recheck() {
+    let app = test_app().await;
+    not_on_default(&app, 0);
+    let id = app.submit(&with_code(&github_code())).await;
+    assert!(
+        public_card(&app, &id)
+            .await
+            .ends_with("; commit on no branch")
+    );
+    app.web.api(
+        TAGS,
+        200,
+        serde_json::json!([{"name": "filedrawer", "commit": {"sha": SHA}}]),
+        4000,
+    );
+    // A definite answer, so a week, not an hour.
+    assert_eq!(recheck_after_minutes(&app, 61).await, 0);
+    assert_eq!(recheck(&app, 8).await, 1);
+    assert_eq!(public_card(&app, &id).await, "analyzer v1");
 }
 
 #[tokio::test]
@@ -690,13 +824,17 @@ async fn a_link_that_said_retry_later_is_checked_again_in_an_hour_then_less_ofte
 }
 
 #[tokio::test]
-async fn a_pin_that_couldnt_be_checked_is_checked_again_in_an_hour_and_a_bad_one_flagged() {
+async fn a_pin_that_couldnt_be_checked_is_checked_again_in_an_hour_and_a_commit_on_no_branch_flagged()
+ {
     let app = test_app().await;
     app.web.api_fails(&compare_path("HEAD", SHA));
     let id = app.submit(&with_code(&github_code())).await;
     not_on_default(&app, 0);
     assert_eq!(recheck_after_minutes(&app, 61).await, 1);
-    assert_eq!(public_card(&app, &id).await, "analyzer v1; code pin failed");
+    assert_eq!(
+        public_card(&app, &id).await,
+        "analyzer v1; commit on no branch"
+    );
 }
 
 #[tokio::test]
@@ -736,18 +874,21 @@ async fn a_link_still_dead_is_checked_again_a_week_after_its_last_check() {
 }
 
 #[tokio::test]
-async fn a_recheck_that_finds_a_bad_pin_flags_the_card_and_never_rejects() {
+async fn a_recheck_that_finds_a_commit_on_no_branch_flags_the_card_and_never_rejects() {
     let app = test_app().await;
     app.web.api_fails(&compare_path("HEAD", SHA));
     let id = app.submit(&with_code(&github_code())).await;
     assert!(public_card(&app, &id).await.ends_with("; pin not verified"));
     not_on_default(&app, 0);
     assert_eq!(recheck(&app, 8).await, 1);
-    assert_eq!(public_card(&app, &id).await, "analyzer v1; code pin failed");
+    assert_eq!(
+        public_card(&app, &id).await,
+        "analyzer v1; commit on no branch"
+    );
 }
 
 #[tokio::test]
-async fn a_recheck_that_finds_a_bad_pin_leaves_an_embargoed_entry_embargoed() {
+async fn a_recheck_that_finds_a_commit_on_no_branch_leaves_an_embargoed_entry_embargoed() {
     let app = test_app().await;
     app.web.api_fails(&compare_path("HEAD", SHA));
     let text = entry(
@@ -769,16 +910,19 @@ async fn a_recheck_that_finds_a_bad_pin_leaves_an_embargoed_entry_embargoed() {
     );
     let own = app.get_as_author(&format!("/e/{id}")).await;
     assert!(
-        flags(&own.body).ends_with("; code pin failed"),
+        flags(&own.body).ends_with("; commit on no branch"),
         "{}",
         own.body
     );
     assert!(
-        warnings(&own.body).contains(&format!(
-            "`code: {}`: commit {SHA} isn't on any branch of ada/steering; GitHub shows a fork's commits under its parent's URL too, so link the repository whose branch holds it; the card says \"code pin failed\"",
-            github_code()
-        )
-        .as_str()),
+        warnings(&own.body).contains(
+            &format!(
+                "`code: {}`: commit {SHA} is on no branch or tag of ada/steering{}",
+                github_code(),
+                no_branch_advice()
+            )
+            .as_str()
+        ),
         "{}",
         own.body
     );
