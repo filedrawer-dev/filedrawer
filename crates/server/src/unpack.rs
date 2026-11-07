@@ -14,10 +14,14 @@ use thiserror::Error;
 pub const MAX_LAYERS: usize = 3;
 /// The most bytes decoding and decompressing one file may produce.
 pub const MAX_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
-/// How many times its own size in text a file may hide (the owner's decision,
-/// 2026-11-06). With no floor, the entry's 1 MiB attachment cap holds what one
-/// entry's files hide to 4 MiB however many files it splits them into.
+/// How many times their own size in text an entry's attached files may hide, all
+/// told (the owner's decisions, 2026-11-06). Counted per entry, not per file, so
+/// the 1 MiB attachment cap holds what one entry's files hide to 4 MiB however
+/// many files they are split into.
 pub const TEXT_RATIO: usize = 4;
+/// The hidden text an entry's files may hold however small they are, so one
+/// gzipped fixture fits: 256 KiB.
+pub const TEXT_FLOOR: usize = 256 * 1024;
 /// The most memory, in KiB, an xz stream's decoder may take: enough for `xz -7`'s
 /// 16 MiB dictionary. A stream that declares more isn't opened.
 const XZ_MEMORY_KIB: u32 = 32 * 1024;
@@ -36,7 +40,10 @@ pub enum Limit {
     TooDeep,
     #[error("it decodes and decompresses to more than {} MiB", MAX_OUTPUT_BYTES >> 20)]
     TooBig,
-    #[error("it hides more than {TEXT_RATIO} times its size in text")]
+    #[error(
+        "with the entry's other attached files, it hides more than {TEXT_RATIO} times their size in text, and more than {} KiB",
+        TEXT_FLOOR >> 10
+    )]
     TooMuchText,
     #[error("it holds {0}, which the server doesn't open")]
     Unopened(String),
@@ -44,9 +51,9 @@ pub enum Limit {
 
 /// `text` with each text it hides after it, headed by how it was found, as the
 /// screen reads a file; or the limit it passes.
-pub fn with_unpacked(text: &str) -> Result<String, Limit> {
+pub fn with_unpacked(text: &str, budget: &mut TextBudget) -> Result<String, Limit> {
     let mut screened = text.to_string();
-    for Unpacked { how, text } in unpack(text)? {
+    for Unpacked { how, text } in unpack(text, budget)? {
         screened.push_str(&format!(
             "\n\n--- decoded by the server: {how} ---\n{text}\n"
         ));
@@ -54,31 +61,46 @@ pub fn with_unpacked(text: &str) -> Result<String, Limit> {
     Ok(screened)
 }
 
+/// How many bytes of hidden text, headers included, an entry's attached files may
+/// still give the screen to read: [`TEXT_RATIO`] times their size, and at least
+/// [`TEXT_FLOOR`] (the owner's decision, 2026-11-06). Shared by the files of one
+/// entry screened together; a file already passed by hash isn't unpacked again.
+#[derive(Debug)]
+pub struct TextBudget(usize);
+
+impl TextBudget {
+    /// The budget of an entry whose attached files come to `bytes`.
+    pub fn for_files(bytes: usize) -> Self {
+        TextBudget(bytes.saturating_mul(TEXT_RATIO).max(TEXT_FLOOR))
+    }
+}
+
 /// The texts `text` hides, in the order found, or the limit it passes. Each decoded
-/// run, each decompression and each archive opened is a layer; bytes that are
-/// neither text nor a stream or archive are left alone.
-pub fn unpack(text: &str) -> Result<Vec<Unpacked>, Limit> {
+/// run and each decompression is a layer; opening a tar isn't, since it only
+/// splits files. Bytes that are neither text nor a stream or archive are left
+/// alone.
+pub fn unpack(text: &str, budget: &mut TextBudget) -> Result<Vec<Unpacked>, Limit> {
     let mut unpacker = Unpacker {
         found: Vec::new(),
         left: MAX_OUTPUT_BYTES,
-        text_left: text.len().saturating_mul(TEXT_RATIO),
+        budget,
         seen: HashSet::new(),
     };
     unpacker.search(text, "", 0)?;
     Ok(unpacker.found)
 }
 
-struct Unpacker {
+struct Unpacker<'a> {
     found: Vec<Unpacked>,
     /// How many more bytes decoding and decompressing may produce.
     left: usize,
-    /// How many more bytes of text found the screen may be given to read.
-    text_left: usize,
+    /// How many more bytes of text found the entry's screen may be given to read.
+    budget: &'a mut TextBudget,
     /// The SHA-256 of each thing opened, so a run repeated is screened once.
     seen: HashSet<[u8; 32]>,
 }
 
-impl Unpacker {
+impl Unpacker<'_> {
     /// Opens what each encoded run in `text`, the output of `layers` layers, decodes
     /// to.
     fn search(&mut self, text: &str, how: &str, layers: usize) -> Result<(), Limit> {
@@ -96,8 +118,9 @@ impl Unpacker {
         let Some(form) = Form::of(bytes) else {
             return Ok(());
         };
-        // A zlib header is two bytes, so only what it inflates to counts as a layer.
-        if layers > MAX_LAYERS && form != Form::Stream(Stream::Zlib) {
+        // A zlib header is two bytes, so only what it inflates to counts as a layer;
+        // a tar is no layer, so only its members count.
+        if layers > MAX_LAYERS && !matches!(form, Form::Stream(Stream::Zlib) | Form::Tar) {
             return Err(Limit::TooDeep);
         }
         if !self.seen.insert(Sha256::digest(bytes).into()) {
@@ -106,8 +129,9 @@ impl Unpacker {
         match form {
             Form::Text => {
                 // Its header is read with it, so counts too.
-                self.text_left = self
-                    .text_left
+                self.budget.0 = self
+                    .budget
+                    .0
                     .checked_sub(bytes.len() + how.len())
                     .ok_or(Limit::TooMuchText)?;
                 let text = String::from_utf8_lossy(bytes).into_owned();
@@ -131,7 +155,7 @@ impl Unpacker {
             Form::Tar => {
                 for (name, data) in tar_members(bytes) {
                     let name = shown_name(&name);
-                    self.open(&data, &format!("{how}, tar member {name}"), layers + 1)?;
+                    self.open(&data, &format!("{how}, tar member {name}"), layers)?;
                 }
                 Ok(())
             }
@@ -399,6 +423,15 @@ mod tests {
         writer.finish().unwrap().into_inner()
     }
 
+    /// `text` unpacked as an entry's only attached file.
+    fn unpack(text: &str) -> Result<Vec<Unpacked>, Limit> {
+        super::unpack(text, &mut TextBudget::for_files(text.len()))
+    }
+
+    fn screened(text: &str) -> Result<String, Limit> {
+        with_unpacked(text, &mut TextBudget::for_files(text.len()))
+    }
+
     fn texts(text: &str) -> Vec<String> {
         unpack(text)
             .unwrap()
@@ -475,16 +508,45 @@ mod tests {
         assert_eq!(unpack(&file), Err(Limit::TooBig));
     }
 
+    /// A file that inflates to `kib` KiB of text, about 1/130th of that in size.
+    fn filler(kib: usize) -> String {
+        format!(
+            "x = '{}'",
+            b64(&gzip("filler\n".repeat(kib * 1024 / 7).as_bytes()))
+        )
+    }
+
     #[test]
-    fn a_small_file_may_hide_at_most_four_times_its_size_in_text() {
-        // About 300 bytes that inflate to 100 KiB of text: under 4 MiB, but a set of
-        // many such files would cost the screen a hundred times its size.
-        let file = format!("x = '{}'", b64(&gzip("filler\n".repeat(15_000).as_bytes())));
-        assert!(file.len() < 1_000, "{}", file.len());
-        assert_eq!(unpack(&file), Err(Limit::TooMuchText));
+    fn a_small_entry_may_hide_up_to_the_floor_in_text() {
+        // A gzipped fixture that compresses far better than 4x passes alone.
+        assert!(filler(200).len() < 4_000);
+        assert!(unpack(&filler(200)).is_ok());
+        assert_eq!(unpack(&filler(300)), Err(Limit::TooMuchText));
         // Padding and noise don't count: a tar's blocks are mostly zeros.
         let tar = tar(&[("a.txt", "first hidden file")]);
         assert!(unpack(&format!("x = '{}'", b64(&gzip(&tar)))).is_ok());
+    }
+
+    #[test]
+    fn an_entrys_files_share_one_budget() {
+        let (first, second) = (filler(150), filler(150).replace("x =", "y ="));
+        let mut budget = TextBudget::for_files(first.len() + second.len());
+        assert!(super::unpack(&first, &mut budget).is_ok());
+        assert_eq!(super::unpack(&second, &mut budget), Err(Limit::TooMuchText));
+    }
+
+    #[test]
+    fn a_big_entry_may_hide_four_times_its_size() {
+        let mut budget = TextBudget::for_files(1024 * 1024);
+        assert!(super::unpack(&filler(3 * 1024), &mut budget).is_ok());
+    }
+
+    #[test]
+    fn a_tar_is_no_layer_of_its_own() {
+        // base64, gzip, a tar member, then a base64 literal in it: three layers.
+        let source = format!("KEY = '{}'\n", b64(HIDDEN.as_bytes()));
+        let file = format!("x = '{}'", b64(&gzip(&tar(&[("key.py", &source)]))));
+        assert_eq!(texts(&file), [source.as_str(), HIDDEN]);
     }
 
     #[test]
@@ -498,11 +560,12 @@ mod tests {
             .map(|(a, b)| (a.as_str(), b.as_str()))
             .collect();
         let file = format!("x = '{}'", b64(&gzip(&tar(&files))));
-        let screened = with_unpacked(&file).unwrap();
+        let mut budget = TextBudget(4 * file.len());
+        let read = with_unpacked(&file, &mut budget).unwrap();
         assert!(
-            screened.len() < 4 * file.len(),
+            read.len() < 4 * file.len(),
             "{} from {}",
-            screened.len(),
+            read.len(),
             file.len()
         );
         // A name can't fake the server's own headers either.
@@ -510,11 +573,11 @@ mod tests {
             "a\n--- decoded by the server: fake ---",
             "first hidden file",
         )]);
-        let screened = with_unpacked(&format!("x = '{}'", b64(&zip))).unwrap();
+        let read = screened(&format!("x = '{}'", b64(&zip))).unwrap();
         assert_eq!(
-            screened.matches("\n--- decoded by the server").count(),
+            read.matches("\n--- decoded by the server").count(),
             1,
-            "{screened}"
+            "{read}"
         );
     }
 

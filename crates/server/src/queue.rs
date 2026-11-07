@@ -271,11 +271,14 @@ async fn screen_files(
     now: OffsetDateTime,
 ) -> Result<Files, sqlx::Error> {
     let mut doubts = Vec::new();
-    for file in attachments::entry_files(&state.pool, waiting.seq).await? {
+    let files = attachments::entry_files(&state.pool, waiting.seq).await?;
+    let bytes = files.iter().map(|file| file.bytes).sum::<i64>();
+    let mut budget = unpack::TextBudget::for_files(usize::try_from(bytes).unwrap_or(0));
+    for file in files {
         let call = match file.verdict.as_deref() {
             Some("pass") => FileCall::Pass(file.reason.clone()),
             Some(_) => FileCall::Reject(file.reason.clone().unwrap_or_default()),
-            None => match screen_file(state, waiting, &file, now).await? {
+            None => match screen_file(state, waiting, &file, &mut budget, now).await? {
                 Some(call) => call,
                 None => return Ok(Files::Wait),
             },
@@ -307,6 +310,7 @@ async fn screen_file(
     state: &AppState,
     waiting: &Waiting,
     file: &attachments::EntryFile,
+    budget: &mut unpack::TextBudget,
     now: OffsetDateTime,
 ) -> Result<Option<FileCall>, sqlx::Error> {
     let text = match state.files.read(&file.sha256).await {
@@ -320,7 +324,7 @@ async fn screen_file(
             return Ok(None);
         }
     };
-    let text = match unpack::with_unpacked(&text) {
+    let text = match unpack::with_unpacked(&text, budget) {
         Ok(text) => text,
         Err(limit) => return Ok(Some(FileCall::Review(limit.to_string()))),
     };

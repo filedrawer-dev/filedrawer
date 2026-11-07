@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT af.sha256, af.path, f.screen_verdict AS verdict, f.screen_reason AS reason\n           FROM entries e\n           JOIN attachment_files af ON af.set_seq = e.attachment_set_seq\n           JOIN files f ON f.sha256 = af.sha256\n           WHERE e.seq = ? ORDER BY af.path",
+  "query": "SELECT af.sha256, af.path, f.bytes, f.screen_verdict AS verdict, f.screen_reason AS reason\n           FROM entries e\n           JOIN attachment_files af ON af.set_seq = e.attachment_set_seq\n           JOIN files f ON f.sha256 = af.sha256\n           WHERE e.seq = ? ORDER BY af.path",
   "describe": {
     "columns": [
       {
@@ -26,8 +26,19 @@
         }
       },
       {
-        "name": "verdict",
+        "name": "bytes",
         "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "files",
+            "name": "bytes"
+          }
+        }
+      },
+      {
+        "name": "verdict",
+        "ordinal": 3,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -38,7 +49,7 @@
       },
       {
         "name": "reason",
-        "ordinal": 3,
+        "ordinal": 4,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -54,9 +65,10 @@
     "nullable": [
       false,
       false,
+      false,
       true,
       true
     ]
   },
-  "hash": "212f07b9ae6ed82b1297905b89e65f8db1bd52aa238735ed068766121bc8cc13"
+  "hash": "1da283b15e71c675b983a881ffaa7f30649feee91b86d828e98fd1248b20ac72"
 }

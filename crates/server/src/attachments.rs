@@ -455,6 +455,7 @@ pub const CHUNK_BYTES: usize = 256 * 1024;
 pub struct EntryFile {
     pub sha256: String,
     pub path: String,
+    pub bytes: i64,
     pub verdict: Option<String>,
     pub reason: Option<String>,
 }
@@ -463,7 +464,7 @@ pub struct EntryFile {
 pub async fn entry_files(pool: &SqlitePool, seq: i64) -> Result<Vec<EntryFile>, sqlx::Error> {
     sqlx::query_as!(
         EntryFile,
-        r#"SELECT af.sha256, af.path, f.screen_verdict AS verdict, f.screen_reason AS reason
+        r#"SELECT af.sha256, af.path, f.bytes, f.screen_verdict AS verdict, f.screen_reason AS reason
            FROM entries e
            JOIN attachment_files af ON af.set_seq = e.attachment_set_seq
            JOIN files f ON f.sha256 = af.sha256

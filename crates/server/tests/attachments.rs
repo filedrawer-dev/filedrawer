@@ -878,6 +878,26 @@ mod screened {
     }
 
     #[tokio::test]
+    async fn an_entrys_files_share_one_hidden_text_budget() {
+        let models = FakeModels::default();
+        let app = app_with(&models, 1_000_000_000).await;
+        // Each hides 150 KiB, under the 256 KiB floor alone but not together.
+        let hidden = |n: u8| {
+            let text = format!("fixture {n}\n").repeat(150 * 1024 / 10);
+            format!("DATA = '{}'\n", gzip_base64(text.as_bytes()))
+        };
+        let set = set_of(
+            &app,
+            json!([
+                file("author:a.py", &hidden(1)),
+                file("author:b.py", &hidden(2))
+            ]),
+        )
+        .await;
+        assert_eq!(publish(&app, &set, "a").await.1, "review");
+    }
+
+    #[tokio::test]
     async fn a_lock_file_with_hashes_passes_with_nothing_decoded() {
         let models = FakeModels::default();
         let app = app_with(&models, 1_000_000_000).await;
