@@ -40,8 +40,9 @@ async fn placed(app: &TestApp, token: &str, title: &str, set: &str) -> String {
 }
 
 async fn status_with(app: &TestApp, token: &str, id: &str) -> String {
-    let own = app.get_with_token(&format!("/e/{id}"), token).await;
-    field(&own.body, "status").unwrap_or_default().to_string()
+    common::author_status(app, token, id)
+        .await
+        .unwrap_or_default()
 }
 
 /// The owner's POST of `action` (`remove` or `remove-hazard`) on file `sha`.

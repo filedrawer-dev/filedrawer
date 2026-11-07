@@ -387,13 +387,7 @@ async fn a_batch_waits_as_a_whole_on_a_hidden_series() {
         )
         .await;
     assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
-    let batch: serde_json::Value = serde_json::from_str(&reply.body).unwrap();
-    let ids: Vec<String> = batch["entries"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|member| member["id"].as_str().unwrap().to_string())
-        .collect();
+    let ids = common::batch_member_ids(&serde_json::from_str(&reply.body).unwrap());
 
     publish_due(
         &app.state,

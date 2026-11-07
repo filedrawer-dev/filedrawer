@@ -35,9 +35,9 @@ async fn in_review(app: &TestApp, front: &str) -> String {
 
 /// The status the author's token reads for `id`.
 async fn author_status(app: &TestApp, id: &str) -> String {
-    let own = app.get_as_author(&format!("/e/{id}")).await;
-    assert_eq!(own.status, StatusCode::OK, "{}", own.body);
-    field(&own.body, "status").unwrap().to_string()
+    common::author_status(app, &app.token, id)
+        .await
+        .expect("the author's view gives a status")
 }
 
 /// Posts an admin form and checks it went back to the queue.
@@ -243,12 +243,7 @@ async fn batch_body(app: &TestApp, body: serde_json::Value) -> Vec<String> {
     let id = reply["id"].as_str().unwrap();
     let published = app.post(&format!("/batches/{id}/publish"), "").await;
     assert_eq!(published.status, StatusCode::OK, "{}", published.body);
-    reply["entries"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|member| member["id"].as_str().unwrap().to_string())
-        .collect()
+    common::batch_member_ids(&reply)
 }
 
 #[tokio::test]

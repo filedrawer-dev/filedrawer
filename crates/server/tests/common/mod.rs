@@ -4,6 +4,7 @@
 pub mod attachments;
 pub mod fake_models;
 pub mod series;
+pub mod through_caddy;
 
 use axum::Router;
 use axum::body::Body;
@@ -492,6 +493,23 @@ pub async fn browser_account(app: &TestApp, email: &str) -> (String, String) {
     let cookie = logged_in(app, email, PASSWORD).await;
     let token = new_token(app, &cookie).await;
     (cookie, token)
+}
+
+/// The `status` an entry's author reads with `token`; `None` when the reply has no
+/// status line, as a public entry's page hasn't.
+pub async fn author_status(app: &TestApp, token: &str, id: &str) -> Option<String> {
+    let own = app.get_with_token(&format!("/e/{id}"), token).await;
+    field(&own.body, "status").map(str::to_string)
+}
+
+/// The member IDs in a JSON reply from `POST /entries/batch`, in order.
+pub fn batch_member_ids(reply: &serde_json::Value) -> Vec<String> {
+    reply["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|member| member["id"].as_str().unwrap().to_string())
+        .collect()
 }
 
 /// The value of the `id: ` line in a plain-text reply.

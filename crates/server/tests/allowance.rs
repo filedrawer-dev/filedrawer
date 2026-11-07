@@ -63,8 +63,9 @@ async fn backdate(app: &TestApp, days: i64) {
 }
 
 async fn status(app: &TestApp, id: &str) -> String {
-    let own = app.get_as_author(&format!("/e/{id}")).await;
-    field(&own.body, "status").unwrap_or_default().to_string()
+    common::author_status(app, &app.token, id)
+        .await
+        .unwrap_or_default()
 }
 
 #[tokio::test]

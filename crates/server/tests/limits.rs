@@ -8,37 +8,11 @@ use std::time::Duration;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use common::through_caddy::{
+    CADDY, get_from, hourly, per_minute, reset_from, retry_after, sign_up_from, wide,
+};
 use common::{Reply, TestApp, test_app};
-use filedrawer_server::limits::{Limits, Rate, Window};
-
-/// Caddy on the same host, as staging and production run.
-const CADDY: &str = "127.0.0.1:50000";
-
-fn per_minute(count: u32) -> Rate {
-    Rate {
-        count,
-        per: Duration::from_secs(60),
-    }
-}
-
-fn hourly(count: i64) -> Vec<Window> {
-    vec![Window {
-        seconds: 3600,
-        count,
-    }]
-}
-
-/// Limits wide enough that only the one a test sets small trips.
-fn wide() -> Limits {
-    Limits {
-        per_ip: per_minute(10_000),
-        writes_per_account: per_minute(10_000),
-        signups_per_ip: hourly(10_000),
-        emails_per_address: hourly(10_000),
-        emails_per_ip: hourly(10_000),
-        failed_logins_per_address: hourly(10_000),
-    }
-}
+use filedrawer_server::limits::Limits;
 
 async fn log_in(app: &TestApp, email: &str, password: &str) -> Reply {
     app.form("/login", &[("email", email), ("password", password)], None)
@@ -124,22 +98,7 @@ async fn an_address_with_no_account_locks_the_same_way() {
 
 /// GETs /tags from `forwarded` through Caddy.
 async fn read_as(app: &TestApp, forwarded: &str) -> Reply {
-    let request = Request::get("/tags")
-        .header("x-forwarded-for", forwarded)
-        .body(Body::empty())
-        .unwrap();
-    app.send_from(CADDY, request).await
-}
-
-fn retry_after(reply: &Reply) -> u64 {
-    reply
-        .headers
-        .get("retry-after")
-        .expect("a 429 says when to try again")
-        .to_str()
-        .unwrap()
-        .parse()
-        .unwrap()
+    get_from(app, forwarded, "/tags").await
 }
 
 #[tokio::test]
@@ -271,18 +230,6 @@ async fn an_accounts_writes_are_limited_refused_ones_included() {
     );
 }
 
-/// POSTs the signup form from `forwarded` through Caddy.
-async fn sign_up_as(app: &TestApp, forwarded: &str, email: &str) -> Reply {
-    let body = format!("email={email}&password=correct-horse-battery-9&display_name=Ada");
-    let request = Request::post("/signup")
-        .header("x-forwarded-for", forwarded)
-        .header("content-type", "application/x-www-form-urlencoded")
-        .header("origin", common::PUBLIC_URL)
-        .body(Body::from(body))
-        .unwrap();
-    app.send_from(CADDY, request).await
-}
-
 #[tokio::test]
 async fn signups_are_limited_per_ip_and_survive_a_restart() {
     let app = test_app().await.with_limits(Limits {
@@ -290,14 +237,14 @@ async fn signups_are_limited_per_ip_and_survive_a_restart() {
         ..wide()
     });
     for n in 0..2 {
-        let reply = sign_up_as(&app, "203.0.113.5", &format!("a{n}%40example.com")).await;
+        let reply = sign_up_from(&app, "203.0.113.5", &format!("a{n}@example.com"), None).await;
         assert!(
             reply.status.is_success() || reply.status.is_redirection(),
             "{}",
             reply.body
         );
     }
-    let limited = sign_up_as(&app, "203.0.113.5", "a9%40example.com").await;
+    let limited = sign_up_from(&app, "203.0.113.5", "a9@example.com", None).await;
     assert_eq!(
         limited.status,
         StatusCode::TOO_MANY_REQUESTS,
@@ -310,26 +257,15 @@ async fn signups_are_limited_per_ip_and_survive_a_restart() {
         signups_per_ip: hourly(2),
         ..wide()
     });
-    let again = sign_up_as(&restarted, "203.0.113.5", "a8%40example.com").await;
+    let again = sign_up_from(&restarted, "203.0.113.5", "a8@example.com", None).await;
     assert_eq!(
         again.status,
         StatusCode::TOO_MANY_REQUESTS,
         "{}",
         again.body
     );
-    let elsewhere = sign_up_as(&restarted, "203.0.113.6", "a7%40example.com").await;
+    let elsewhere = sign_up_from(&restarted, "203.0.113.6", "a7@example.com", None).await;
     assert!(elsewhere.status.is_success() || elsewhere.status.is_redirection());
-}
-
-/// POSTs the password-reset form for `email` from `forwarded` through Caddy.
-async fn reset_as(app: &TestApp, forwarded: &str, email: &str) -> Reply {
-    let request = Request::post("/reset")
-        .header("x-forwarded-for", forwarded)
-        .header("content-type", "application/x-www-form-urlencoded")
-        .header("origin", common::PUBLIC_URL)
-        .body(Body::from(format!("email={email}")))
-        .unwrap();
-    app.send_from(CADDY, request).await
 }
 
 #[tokio::test]
@@ -338,15 +274,15 @@ async fn account_emails_are_limited_per_address_whether_or_not_it_has_an_account
         emails_per_address: hourly(2),
         ..wide()
     });
-    let nobody = "nobody%40example.com";
+    let nobody = "nobody@example.com";
     for forwarded in ["203.0.113.5", "203.0.113.6"] {
         assert_eq!(
-            reset_as(&app, forwarded, nobody).await.status,
+            reset_from(&app, forwarded, nobody).await.status,
             StatusCode::OK
         );
     }
     // From a third IP, the address is still full.
-    let limited = reset_as(&app, "203.0.113.7", nobody).await;
+    let limited = reset_from(&app, "203.0.113.7", nobody).await;
     assert_eq!(
         limited.status,
         StatusCode::TOO_MANY_REQUESTS,
@@ -354,7 +290,7 @@ async fn account_emails_are_limited_per_address_whether_or_not_it_has_an_account
         limited.body
     );
     assert_eq!(
-        reset_as(&app, "203.0.113.7", "other%40example.com")
+        reset_from(&app, "203.0.113.7", "other@example.com")
             .await
             .status,
         StatusCode::OK
@@ -368,10 +304,10 @@ async fn account_emails_are_limited_per_ip() {
         ..wide()
     });
     for n in 0..2 {
-        let reply = reset_as(&app, "203.0.113.5", &format!("p{n}%40example.com")).await;
+        let reply = reset_from(&app, "203.0.113.5", &format!("p{n}@example.com")).await;
         assert_eq!(reply.status, StatusCode::OK);
     }
-    let limited = reset_as(&app, "203.0.113.5", "p9%40example.com").await;
+    let limited = reset_from(&app, "203.0.113.5", "p9@example.com").await;
     assert_eq!(
         limited.status,
         StatusCode::TOO_MANY_REQUESTS,
@@ -412,12 +348,12 @@ async fn a_signup_the_email_limit_stops_says_so() {
         ..wide()
     });
     assert_eq!(
-        reset_as(&app, "203.0.113.5", "ada%40example.com")
+        reset_from(&app, "203.0.113.5", "ada@example.com")
             .await
             .status,
         StatusCode::OK
     );
-    let limited = sign_up_as(&app, "203.0.113.6", "ada%40example.com").await;
+    let limited = sign_up_from(&app, "203.0.113.6", "ada@example.com", None).await;
     assert_eq!(
         limited.status,
         StatusCode::TOO_MANY_REQUESTS,

@@ -126,7 +126,7 @@ async fn the_smoke_accounts_batches_and_series_skip_the_model_too() {
     let batch_id = reply["id"].as_str().unwrap();
     let published = app.post(&format!("/batches/{batch_id}/publish"), "").await;
     assert_eq!(published.status, StatusCode::OK, "{}", published.body);
-    for id in member_ids(&reply) {
+    for id in common::batch_member_ids(&reply) {
         let page = app.get(&format!("/e/{id}")).await;
         assert_eq!(page.status, StatusCode::OK, "{id} isn't public");
         assert!(
@@ -347,15 +347,6 @@ async fn batch_with(
     serde_json::from_str(&reply.body).unwrap()
 }
 
-fn member_ids(reply: &serde_json::Value) -> Vec<String> {
-    reply["entries"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|member| member["id"].as_str().unwrap().to_string())
-        .collect()
-}
-
 #[tokio::test]
 async fn one_failing_member_sends_the_whole_batch_back() {
     let models = FakeModels::default();
@@ -369,7 +360,7 @@ async fn one_failing_member_sends_the_whole_batch_back() {
         ],
     )
     .await;
-    let ids = member_ids(&reply);
+    let ids = common::batch_member_ids(&reply);
     let batch_id = reply["id"].as_str().unwrap();
     let published = app.post(&format!("/batches/{batch_id}/publish"), "").await;
     assert_eq!(published.status, StatusCode::OK, "{}", published.body);
@@ -413,7 +404,7 @@ async fn a_member_failing_after_one_went_to_review_leaves_that_one_to_the_owner(
         ],
     )
     .await;
-    let ids = member_ids(&reply);
+    let ids = common::batch_member_ids(&reply);
     let batch_id = reply["id"].as_str().unwrap();
     let published = app.post(&format!("/batches/{batch_id}/publish"), "").await;
     assert_eq!(published.status, StatusCode::OK, "{}", published.body);
@@ -458,7 +449,7 @@ async fn a_batch_waits_while_a_member_is_in_review() {
         ],
     )
     .await;
-    let ids = member_ids(&reply);
+    let ids = common::batch_member_ids(&reply);
     let batch_id = reply["id"].as_str().unwrap();
     let published = app.post(&format!("/batches/{batch_id}/publish"), "").await;
     assert!(
