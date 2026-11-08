@@ -617,3 +617,24 @@ async fn slug_links_go_to_the_entry_they_name_or_stay_text_without_a_notice() {
     assert!(below.contains("and the next one."), "{below}");
     assert!(!below.contains(&format!("href=\"/e/{id}.txt\"")), "{below}");
 }
+
+#[tokio::test]
+async fn a_bare_slug_in_the_text_links_to_its_entry_but_not_in_code_or_unresolved() {
+    let app = test_app().await;
+    let earlier = app.submit(&entry("Baseline", "slug: base_line-2\n")).await;
+    let (_, page) = entry_page_with(
+        &app,
+        "Its own entry: slug:base_line-2. Not `slug:base_line-2` in code, \
+         nor slug:not-yet.\n\n```\nslug:base_line-2\n```",
+    )
+    .await;
+    let below = below_delimiter(&page);
+    let link = format!(r#"<a href="/e/{earlier}" rel="nofollow ugc">slug:base_line-2</a>"#);
+    assert!(
+        below.contains(&format!("Its own entry: {link}. Not")),
+        "{below}"
+    );
+    assert_eq!(below.matches(&link).count(), 1, "{below}");
+    assert!(below.contains("<code>slug:base_line-2</code>"), "{below}");
+    assert!(below.contains("nor slug:not-yet."), "{below}");
+}

@@ -788,6 +788,7 @@ The backup look is "Phosphor": one column, green on charcoal, in the system's mo
 - The home and search pages show cards with no delimiter line, as the plain-text search does (the owner's decision, 2026-11-08).
 - The entry's markdown renders through pulldown-cmark with the analyzer's options.
   Raw HTML in it is dropped, links keep only `http` and `https` once resolved, and an image shows as a link to its URL, so a reader's browser never fetches it.
+  A `slug:<name>` that resolves links to its entry, whether written as a link's target or bare in the text, but not inside code (the owner's decision, 2026-11-08).
   When anything was dropped, the page says so and links to `/e/<id>.txt` (the owner's decision, 2026-11-08).
   Author headings sit below the page's own, in a box of their own, so author text can't pass for the server's.
 

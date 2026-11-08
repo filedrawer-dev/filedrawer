@@ -239,14 +239,25 @@ pub fn is_valid_slug(slug: &str) -> bool {
 /// Every `slug:<name>` an entry's text refers to (design.md, Agent interface), in
 /// its fields or its body.
 pub fn slug_references(text: &str) -> std::collections::BTreeSet<String> {
+    slug_mentions(text)
+        .into_iter()
+        .map(|(_, name)| name.to_string())
+        .collect()
+}
+
+/// Each `slug:<name>` in `text`, in order, as the byte range of the whole mention and
+/// the name (entry-format.md, Fields: `slug`; design.md, Agent interface). A name runs
+/// over letters, digits, `-`, `_` and `.`, less any final `.`, which ends a sentence.
+pub fn slug_mentions(text: &str) -> Vec<(std::ops::Range<usize>, &str)> {
     text.match_indices("slug:")
-        .map(|(at, _)| {
-            let name: String = text[at + 5..]
-                .chars()
-                .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
-                .collect();
-            name.trim_end_matches('.').to_string()
+        .filter_map(|(at, prefix)| {
+            let start = at + prefix.len();
+            let rest = &text[start..];
+            let length = rest
+                .find(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')))
+                .unwrap_or(rest.len());
+            let name = rest[..length].trim_end_matches('.');
+            is_valid_slug(name).then(|| (at..start + name.len(), name))
         })
-        .filter(|name| is_valid_slug(name))
         .collect()
 }
