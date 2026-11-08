@@ -107,6 +107,8 @@ def main() -> int:
     if args.if_stale and not is_stale(repo, database):
         return 0
     delete_database(database)
+    # A fresh worktree has no target/ until cargo builds there.
+    database.parent.mkdir(parents=True, exist_ok=True)
     env = {**os.environ, "DATABASE_URL": url}
     steps = [
         ["sqlx", "database", "create"],

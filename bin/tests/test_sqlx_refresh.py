@@ -144,3 +144,12 @@ def test_if_stale_does_nothing_without_an_env_file_or_sqlx(repo):
     done = run(root, bare, "--if-stale")
     assert done.returncode == 0 and done.stdout == "", done.stderr
     assert log.read_text() == ""
+
+
+def test_creates_the_database_folder_in_a_fresh_checkout(repo):
+    # A new worktree has no target/ until cargo builds there.
+    root, env, log = repo
+    (root / "target").rmdir()
+    done = run(root, env)
+    assert done.returncode == 0, done.stderr
+    assert (root / "target/dev.db").exists()
