@@ -11,6 +11,7 @@ The owner and an agent settled the design on 2026-11-03 and 2026-11-04, and the 
 
 Plans and open work are GitHub issues on `filedrawer-dev/filedrawer`, not these docs: `issue-todo open --repo filedrawer-dev/filedrawer` lists every open item, and each build step's plan is an issue of its own (#16 for step 4).
 Read them before you plan work, and file new work there.
+To check whether an issue already covers something, `issue-todo open --titles` lists the open issues one a line, by number and title.
 When a commit finishes an issue, end its message with `Closes #N`, so the owner's push closes it; when a slice of a plan lands, tick it with `issue-todo tick N MATCH --note <sha>`.
 `uncertainties.md` holds the choices made while building that the owner hasn't settled yet.
 
@@ -80,10 +81,13 @@ When the owner settles a question, move it from Open questions into its section 
 
 Date a decision by the owner's local date, as `date +%F` prints it in the sandbox (America/Los_Angeles), not UTC: git, GitHub and the server's stored times are UTC and run a day ahead each evening.
 
+Markdown here breaks after each sentence end, so grep, diffs and merge conflicts show sentences rather than whole paragraphs.
+The commit hook's `bin/sentence-lines` keeps it that way and leaves entries as their authors wrote them: the analyzer's fixtures, `ops/screen-eval/` and `ops/smoke-fixture.md`.
+
 ## Checks
 
 Committing runs the checks, so commit and read the hook's output instead of running them first.
-Every commit runs `bin/slop-lint` on staged markdown, lychee (links and anchors, offline) over every markdown file, actionlint with shellcheck (when a workflow is staged), and ruff and `cargo fmt` (when a `.rs` file is staged), which write: a person's commit that needs formatting is refused with the files rewritten, to stage, and `bin/pre-commit-run` stages an agent's and checks again.
+Every commit runs `bin/slop-lint` on staged markdown, lychee (links and anchors, offline) over every markdown file, actionlint with shellcheck (when a workflow is staged), and `bin/sentence-lines` on staged markdown, ruff, and `cargo fmt` (when a `.rs` file is staged), which write: a person's commit that needs formatting is refused with the files rewritten, to stage, and `bin/pre-commit-run` stages an agent's and checks again.
 Agents' commits add the tests in `bin/tests`, clippy and the Rust tests (`bin/agent-pre-commit`), each only when the commit stages what it covers.
 The Rust checks run for a build input: anything in `crates/`, the Cargo files, `.sqlx/`, `.cargo/` and `.config/`, and the files the crates embed or their tests read, such as `docs/entry-format.md` and `ops/smoke-staging`.
 `bin/tests` runs for a change in `bin/`, `ops/` or a crate (one of its tests reads the crates' references), or to a file those tests read, such as `.pre-commit-config.yaml`.
