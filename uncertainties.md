@@ -429,9 +429,3 @@ Once the owner settles one, move the answer into `docs/entry-format.md` or `docs
 - Options: link `/terms` and `/privacy` from every page now, as the mockups do, or leave them out until build step 5 writes them.
 - Chosen: leave them out, since the links would answer 404.
 - Against: the footer then changes again at step 5, and a page that names the licences without the privacy terms may read as complete.
-
-## `/` on `NOT_FOR_AGENTS`
-
-- Options: name `GET /` in `/skill.md`, or list it in `NOT_FOR_AGENTS` in `crates/server/tests/skill.rs`.
-- Chosen: `NOT_FOR_AGENTS`, since its plain text is for an agent that arrived without `/skill.md`, which then points it there, and another agent was rewriting `/skill.md` at the time.
-- Against: `CODING_STANDARDS.md` puts there only routes a browser alone uses, and `/` answers agents too.

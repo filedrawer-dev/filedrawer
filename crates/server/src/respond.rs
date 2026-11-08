@@ -80,15 +80,16 @@ pub fn wants_json(headers: &HeaderMap) -> bool {
 /// Whether the request is a browser opening a page for a person: it sends
 /// `Sec-Fetch-Dest: document` and doesn't ask for JSON (design.md, Agent interface).
 /// Agents' fetch tools send no fetch metadata, so they get plain text even when they
-/// copy a browser's Accept header. A request with a token is an agent's, since a
-/// browser opening a page sends none.
+/// copy a browser's Accept header. A request with an API token is an agent's, since
+/// a browser opening a page sends none; staging's password, which a browser sends as
+/// `Authorization: Basic`, isn't one.
 pub fn wants_page(headers: &HeaderMap) -> bool {
     let document = headers
         .get_all("sec-fetch-dest")
         .iter()
         .filter_map(|value| value.to_str().ok())
         .any(|value| value.trim().eq_ignore_ascii_case("document"));
-    document && !wants_json(headers) && !headers.contains_key(header::AUTHORIZATION)
+    document && !wants_json(headers) && crate::auth::bearer_token(headers).is_none()
 }
 
 /// How to answer a read of an entry or a series at `path`: as a page for a browser,

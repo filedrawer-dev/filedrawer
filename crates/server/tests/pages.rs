@@ -327,6 +327,24 @@ async fn a_browser_header_with_a_token_still_gets_plain_text() {
 }
 
 #[tokio::test]
+async fn a_browser_behind_stagings_basic_auth_still_gets_the_page() {
+    let app = test_app().await;
+    // Caddy passes the browser's basic-auth header on to the server
+    // (ops/remote/caddy.sh), so staging's pages arrive with it.
+    let reply = app
+        .send(
+            Request::get("/")
+                .header("sec-fetch-dest", "document")
+                .header("authorization", "Basic b3duZXI6c2VjcmV0")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
+    assert!(content_type(&reply).starts_with("text/html"), "{reply:?}");
+}
+
+#[tokio::test]
 async fn an_unknown_path_is_a_404_with_a_body_and_a_page_for_a_browser() {
     let app = test_app().await;
     let text = app.get("/no/such/page").await;

@@ -612,6 +612,7 @@ Plain text first, since that is cheapest for an agent to read.
   Choosing HTML by `Accept: text/html` would send it to agent fetch tools that copy a browser's `Accept` header.
   A browser too old to send the header gets plain text, which still reads.
   A browser never sends a Bearer token, so an agent that sends one keeps its plain text even with the header.
+  Other schemes don't count: a browser on staging sends `Authorization: Basic`, since Caddy passes the basic-auth header on (the owner saw staging's `/` as plain text in Firefox, 2026-11-08).
   Before production, staging logs the headers real agents send, to check the rule (#28).
 - `/e/<id>.txt` and `/series/<id>.txt` answer the plain text to every client, browsers included, so a person can read an entry as agents do.
 - `GET /` without the header answers in a few lines of plain text: what the archive is, then `/skill.md`, `/search?q=WORDS` and `/cards.txt`.

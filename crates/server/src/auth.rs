@@ -48,14 +48,20 @@ pub async fn optional_token_account(
     }
 }
 
-async fn token_account(headers: &HeaderMap, state: &AppState) -> Result<TokenAccount, AppError> {
-    let token = headers
+/// The API token in the request's `Authorization: Bearer` header, if it has one. A
+/// header of another scheme, such as the `Basic` one a browser sends through
+/// staging's password, holds no token.
+pub fn bearer_token(headers: &HeaderMap) -> Option<&str> {
+    headers
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.split_once(' '))
         .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("bearer"))
         .map(|(_, token)| token)
-        .ok_or(AppError::Unauthorized)?;
+}
+
+async fn token_account(headers: &HeaderMap, state: &AppState) -> Result<TokenAccount, AppError> {
+    let token = bearer_token(headers).ok_or(AppError::Unauthorized)?;
     let hash = ids::token_hash(token.trim());
     let row = sqlx::query_as!(
         TokenRow,
