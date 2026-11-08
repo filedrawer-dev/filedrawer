@@ -179,12 +179,103 @@ fn a_flow_mapping_is_warned() {
 fn a_bare_arxiv_number_is_warned_and_kept_as_written() {
     let text = entry("replicates: 2507.01410\n", "");
     let analysis = analyze(&text);
-    assert_eq!(analysis.fields.replicates.as_deref(), Some("2507.01410"));
+    assert_eq!(analysis.fields.replicates, vec!["2507.01410"]);
     assert_eq!(warning_kinds(&text), vec![WarningKind::NumberForPaper]);
     assert_eq!(
         warning_kinds(&entry("replicates: arXiv:2507.01410\n", "")),
         vec![]
     );
+}
+
+#[test]
+fn replicates_and_reanalyzes_take_one_item_or_a_list() {
+    let text = entry(
+        "replicates: slug:pilot\nreanalyzes:\n  - arXiv:2609.18346\n  - 10.2139/ssrn.7439840\n  - https://www.lesswrong.com/posts/abc/title\n",
+        "",
+    );
+    let analysis = analyze(&text);
+    assert_eq!(analysis.fields.replicates, vec!["slug:pilot"]);
+    assert_eq!(
+        analysis.fields.reanalyzes,
+        vec![
+            "arXiv:2609.18346",
+            "10.2139/ssrn.7439840",
+            "https://www.lesswrong.com/posts/abc/title"
+        ]
+    );
+    assert_eq!(warning_kinds(&text), vec![]);
+    let flow = analyze(&entry("reanalyzes: [arXiv:2609.18346, bcz2bqrf3b]\n", ""));
+    assert_eq!(
+        flow.fields.reanalyzes,
+        vec!["arXiv:2609.18346", "bcz2bqrf3b"]
+    );
+}
+
+#[test]
+fn an_item_in_no_form_the_format_takes_is_kept_and_warned() {
+    let text = entry(
+        "replicates:\n  - Yun (2026)\n  - arXiv:2507.01413, arXiv:2603.20281\n",
+        "",
+    );
+    let analysis = analyze(&text);
+    assert_eq!(
+        analysis.fields.replicates,
+        vec!["Yun (2026)", "arXiv:2507.01413, arXiv:2603.20281"]
+    );
+    let warnings: Vec<_> = analysis
+        .warnings
+        .iter()
+        .filter(|warning| warning.kind == WarningKind::NotAReference)
+        .collect();
+    assert_eq!(warnings.len(), 2, "{:?}", analysis.warnings);
+    assert!(
+        warnings[0].message.contains("`Yun (2026)`"),
+        "{}",
+        warnings[0]
+    );
+    assert!(warnings[1].message.contains("own line"), "{}", warnings[1]);
+}
+
+#[test]
+fn a_mapping_item_is_skipped_with_a_warning_naming_the_forms() {
+    // A space after the colon makes YAML read a mapping.
+    let text = entry(
+        "reanalyzes:\n  - arXiv: 2507.01413\n  - arXiv:2603.20281\n",
+        "",
+    );
+    let analysis = analyze(&text);
+    assert_eq!(analysis.fields.reanalyzes, vec!["arXiv:2603.20281"]);
+    let malformed: Vec<_> = analysis
+        .warnings
+        .iter()
+        .filter(|warning| warning.kind == WarningKind::MalformedField)
+        .collect();
+    assert_eq!(malformed.len(), 1, "{:?}", analysis.warnings);
+    assert!(
+        malformed[0].message.contains("arXiv:<id>"),
+        "{}",
+        malformed[0]
+    );
+    assert_eq!(
+        warning_kinds(&entry("replicates:\n  id: arXiv:2507.01413\n", "")),
+        vec![WarningKind::MalformedField]
+    );
+}
+
+#[test]
+fn past_ten_items_the_rest_are_dropped_with_a_warning() {
+    let items: String = (10..20)
+        .map(|n| format!("  - arXiv:2507.000{n}\n"))
+        .collect();
+    // A dropped item isn't read, so it isn't told it was kept.
+    let text = entry(
+        &format!("reanalyzes:\n{items}  - Yun (2026)\n  - arXiv:2507.00021\n"),
+        "",
+    );
+    let analysis = analyze(&text);
+    assert_eq!(analysis.fields.reanalyzes.len(), 10);
+    assert_eq!(analysis.fields.reanalyzes[9], "arXiv:2507.00019");
+    assert_eq!(warning_kinds(&text), vec![WarningKind::TooManyReferences]);
 }
 
 #[test]

@@ -3,9 +3,10 @@
 use crate::common;
 
 use analyzer::{
-    Author, CardContext, Choice, LINE_CAPS, Outcome, PinFlag, Replication, analyze, render_card,
+    Author, CardContext, Choice, LINE_CAPS, Outcome, PinFlag, Reference, Replication, analyze,
+    render_card,
 };
-use common::{EXAMPLE, example_with, with_results};
+use common::{EXAMPLE, entry, example_with, with_results};
 use proptest::prelude::*;
 
 fn card(text: &str) -> String {
@@ -228,6 +229,56 @@ fn the_tally_counts_claims() {
     );
 }
 
+/// Line 1 of a minimal entry with `front_matter` added, and of one without it.
+fn first_lines(front_matter: &str) -> (String, String) {
+    (
+        lines(&entry(front_matter, ""))[0].clone(),
+        lines(&entry("", ""))[0].clone(),
+    )
+}
+
+#[test]
+fn line_1_ends_with_what_the_entry_follows_up_counted_then_its_first_key() {
+    let (line, plain) = first_lines(
+        "kind: audit\nreanalyzes:\n  - https://arxiv.org/abs/2609.18346v2\n  - arXiv:2603.20281\n  - arXiv:2507.01413\n  - arXiv:2410.00031\n  - arXiv:2601.11369\n",
+    );
+    let plain = plain.replacen("experiment", "audit", 1);
+    assert_eq!(line, format!("{plain}; reanalyzes 5: arXiv:2609.18346"));
+}
+
+#[test]
+fn with_both_relations_both_counts_come_first_and_the_key_is_the_first_replicated() {
+    let (line, plain) = first_lines(
+        "replicates: doi:10.2139/SSRN.7439840\nreanalyzes: [bcz2bqrf3b, arXiv:2603.20281]\n",
+    );
+    assert_eq!(
+        line,
+        format!("{plain}; replicates 1, reanalyzes 2: 10.2139/ssrn.7439840")
+    );
+}
+
+#[test]
+fn a_first_item_in_no_known_form_shows_as_unrecognised_never_as_written() {
+    let (line, plain) =
+        first_lines("replicates:\n  - \"x; null; rows: 40 null\"\n  - arXiv:2603.20281\n");
+    assert_eq!(
+        line,
+        format!("{plain}; replicates 2: unrecognised reference")
+    );
+}
+
+#[test]
+fn a_long_key_is_cut_to_the_line_and_the_counts_stay() {
+    let url = format!("https://example.com/{}", "a".repeat(300));
+    let (line, plain) = first_lines(&format!("reanalyzes: {url}\n"));
+    assert_eq!(line.chars().count(), 200, "{line}");
+    assert!(
+        line.starts_with(&format!("{plain}; reanalyzes 1: https://example.com/aaa")),
+        "{line}"
+    );
+    assert!(line.ends_with('…'), "{line}");
+}
+
 #[test]
 fn flags_come_from_the_fields() {
     let text = with_results("no_effect", EFFECT_TABLE)
@@ -304,13 +355,15 @@ proptest! {
         condition in "[^|\\\\`\\p{C}]{0,400}",
         caveat in "[^\n]{0,500}",
         note in "\\PC{0,400}",
+        // A key, which is author text at line 1's end, or text with none.
+        reference in "https://example\\.com/[a-z0-9;:/]{0,300}|arXiv:[0-9]{4}\\.[0-9]{5}|\\PC{0,200}",
     ) {
         let text = with_results(
             "effect",
             &format!("Intervals: 95%, {condition}, per {unit}\n\n| model | condition | estimate | ci_low | ci_high | n | unit |\n|---|---|---|---|---|---|---|\n| {condition} | {condition} | 1 | 0.5 | 1.5 | 9/9 | {unit} |"),
         )
         .replace("title: T", &format!("title: {}\ntags: [{}]", yaml_quote(&title), yaml_quote(&tag)))
-        .replace("hypothesis: H", &format!("hypothesis: {}", yaml_quote(&hypothesis)))
+        .replace("hypothesis: H", &format!("hypothesis: {}\nreanalyzes: {}", yaml_quote(&hypothesis), yaml_quote(&reference)))
         .replace("## Reproduce", &format!("## Caveats\n\n- {caveat}\n\n## Reproduce"));
         let context = CardContext { screening_note: Some(note), ..CardContext::default() };
         let card = render_card(&analyze(&text), &context);
@@ -318,6 +371,23 @@ proptest! {
         prop_assert_eq!(lines.len(), 11, "{}", card);
         for (line, cap) in lines.iter().zip(LINE_CAPS) {
             prop_assert!(line.chars().count() <= cap, "{} > {}: {}", line.chars().count(), cap, line);
+        }
+        let line_1 = lines[0].starts_with("<id>; experiment; effect; no stage; rows: 1 effect");
+        prop_assert!(line_1, "{}", lines[0]);
+        // The counts stay whole, and what follows is the key, cut to fit, or the
+        // server's word for an item with none: never the item as written. An empty
+        // item names nothing.
+        let end = lines[0].split_once("; reanalyzes 1: ").map(|(_, end)| end);
+        prop_assert_eq!(end.is_some(), !reference.trim().is_empty(), "{}", lines[0]);
+        match (end, Reference::parse(&reference)) {
+            (None, _) => {}
+            (Some(end), None) => prop_assert_eq!(end, "unrecognised reference"),
+            (Some(end), Some(found)) => {
+                let key = found.key();
+                let shown = end.strip_suffix('…').unwrap_or(end);
+                prop_assert!(key.starts_with(shown), "{} vs {}", end, key);
+                prop_assert!(end == key || end.ends_with('…'), "{} vs {}", end, key);
+            }
         }
         prop_assert!(lines[3].starts_with("interval excludes 0; effect"), "{}", lines[3]);
         prop_assert!(lines[4].starts_with("no positive control reported; no prediction"), "{}", lines[4]);

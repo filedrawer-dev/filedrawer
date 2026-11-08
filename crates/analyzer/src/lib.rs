@@ -10,6 +10,7 @@ mod encoded;
 mod fields;
 mod front_matter;
 mod links;
+mod references;
 mod report;
 mod results;
 mod series;
@@ -29,7 +30,8 @@ pub use fields::{DataItem, Fields, Model, PositiveControl, SmallestEffect, Write
 pub use links::{
     GithubCommit, LISTED_HOSTS, Pin, code_pin, github_commit, listed_host, zenodo_record,
 };
-pub use report::{MAX_ENTRY_BYTES, MAX_LOGS, Refusal, Warning, WarningKind};
+pub use references::{MAX_REFERENCES, REFERENCE_KEYS_VERSION, Reference};
+pub use report::{MAX_ENTRY_BYTES, MAX_LOGS, Refusal, WARNING_FEEDBACK, Warning, WarningKind};
 pub use results::{
     CORE_COLUMNS, Interval, Intervals, NoEffect, Reading, Results, ResultsTable, Row, Tally,
     row_note,

@@ -8,6 +8,7 @@ mod cli;
 mod common;
 mod encoded;
 mod front_matter;
+mod references;
 mod results;
 
 /// Cargo builds only the files `main.rs` reaches, so a test file here without a `mod`

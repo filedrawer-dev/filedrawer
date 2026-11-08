@@ -32,8 +32,10 @@ pub struct Fields {
     pub code_license: Option<String>,
     pub data: Vec<DataItem>,
     pub logs: Vec<String>,
-    pub replicates: Option<String>,
-    pub reanalyzes: Option<String>,
+    /// What the entry re-ran, and what it re-examined, as written, at most
+    /// [`crate::MAX_REFERENCES`] each.
+    pub replicates: Vec<String>,
+    pub reanalyzes: Vec<String>,
     pub uses_runs: Vec<String>,
     pub published_in: Option<String>,
     pub slug: Option<String>,
@@ -43,6 +45,17 @@ pub struct Fields {
     pub attachments: Option<String>,
     pub written_by: Vec<Writer>,
     pub embargo_until: Option<String>,
+}
+
+impl Fields {
+    /// The works the entry follows up (entry-format.md, Fields): `replicates` and then
+    /// `reanalyzes`, each by its field's name.
+    pub fn follow_ups(&self) -> [(&'static str, &[String]); 2] {
+        [
+            ("replicates", &self.replicates),
+            ("reanalyzes", &self.reanalyzes),
+        ]
+    }
 }
 
 /// One item of `models`: a model with its role and route (entry-format.md, Fields).

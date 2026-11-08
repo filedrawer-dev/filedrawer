@@ -7,6 +7,7 @@ use crate::choice::{
 };
 use crate::fields::Fields;
 use crate::links::{Pin, code_pin};
+use crate::references::Reference;
 use crate::results::{Reading, Results, Row};
 
 /// The analyzer version every card names.
@@ -190,13 +191,34 @@ fn header(analysis: &Analysis, context: &CardContext) -> Vec<Part> {
             format!("rows: {}", counts.join(", "))
         }
     };
-    vec![server(format!(
+    let mut parts = vec![server(format!(
         "{}; {}; {}; {}; {rows}",
         context.id.as_deref().unwrap_or("<id>"),
         label(&fields.kind, Kind::Experiment.name(), Kind::name),
         label(&fields.outcome, "no outcome", Outcome::card_word),
         label(&fields.stage, "no stage", Stage::name),
-    ))]
+    ))];
+    parts.extend(followed_up(fields));
+    parts
+}
+
+/// Line 1's end: how many works the entry replicates and re-examines, then the key of
+/// the first, so the line's only author text comes last.
+fn followed_up(fields: &Fields) -> Vec<Part> {
+    let relations = fields.follow_ups();
+    let Some(first) = relations.iter().find_map(|(_, items)| items.first()) else {
+        return Vec::new();
+    };
+    let counts: Vec<String> = relations
+        .iter()
+        .filter(|(_, items)| !items.is_empty())
+        .map(|(name, items)| format!("{name} {}", items.len()))
+        .collect();
+    let counts = format!("; {}: ", counts.join(", "));
+    match Reference::parse(first) {
+        Some(reference) => vec![server(counts), author(reference.key())],
+        None => vec![server(format!("{counts}unrecognised reference"))],
+    }
 }
 
 /// Line 4: the server's note on the primary row, its claim and how many rows follow,

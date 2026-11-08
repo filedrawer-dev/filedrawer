@@ -7,6 +7,7 @@ use yaml_rust2::{Yaml, YamlLoader};
 
 use crate::choice::{Choice, Vocabulary};
 use crate::fields::{DataItem, Fields, Model, PositiveControl, SmallestEffect, Writer};
+use crate::references::{MAX_REFERENCES, Reference};
 use crate::report::{Refusal, Warning, WarningKind};
 
 /// The front matter's fields, the names it didn't recognise, and what it found wrong.
@@ -273,8 +274,8 @@ impl Reader {
             "code_license" => self.fields.code_license = self.text(name, value),
             "data" => self.fields.data = self.mapping_list(name, value, Self::data_item),
             "logs" => self.fields.logs = self.list(name, value),
-            "replicates" => self.fields.replicates = self.paper(name, value),
-            "reanalyzes" => self.fields.reanalyzes = self.paper(name, value),
+            "replicates" => self.fields.replicates = self.references(name, value),
+            "reanalyzes" => self.fields.reanalyzes = self.references(name, value),
             "uses_runs" => self.fields.uses_runs = self.list(name, value),
             "published_in" => self.fields.published_in = self.published_in(value),
             "slug" => self.fields.slug = self.text(name, value),
@@ -342,6 +343,64 @@ impl Reader {
             );
         }
         self.text(name, value)
+    }
+
+    /// `replicates` or `reanalyzes`: one item or a list (entry-format.md, Fields), each
+    /// kept as written. An item in no form the format takes is kept, and warned, since
+    /// the card and search can't read it.
+    fn references(&mut self, name: &str, value: &Yaml) -> Vec<String> {
+        const FORMS: &str =
+            "an entry ID, `slug:<name>`, `arXiv:<id>` (no space after the colon), a DOI or a URL";
+        let mut items: Vec<&Yaml> = match value {
+            Yaml::Null => return Vec::new(),
+            Yaml::Array(items) => items.iter().collect(),
+            Yaml::Hash(_) => {
+                self.warn(
+                    WarningKind::MalformedField,
+                    format!("`{name}` should be one item or a list of them, each {FORMS}"),
+                );
+                return Vec::new();
+            }
+            scalar => vec![scalar],
+        };
+        if items.len() > MAX_REFERENCES {
+            self.warn(
+                WarningKind::TooManyReferences,
+                format!(
+                    "`{name}` lists {} items; only the first {MAX_REFERENCES} were read",
+                    items.len()
+                ),
+            );
+            items.truncate(MAX_REFERENCES);
+        }
+        let mut kept = Vec::new();
+        for item in items {
+            if matches!(item, Yaml::Array(_) | Yaml::Hash(_)) {
+                self.warn(
+                    WarningKind::MalformedField,
+                    format!("an item of `{name}` is a list or mapping, so it was skipped; write each item as {FORMS}"),
+                );
+                continue;
+            }
+            let Some(text) = self.paper(name, item) else {
+                continue;
+            };
+            let text = text.trim().to_string();
+            if text.is_empty() {
+                continue;
+            }
+            let number = matches!(item, Yaml::Real(_) | Yaml::Integer(_));
+            if !number && Reference::parse(&text).is_none() {
+                self.warn(
+                    WarningKind::NotAReference,
+                    format!(
+                        "`{name}` item `{text}` isn't {FORMS}, so search's `cites` filter can't find it and the card can't show it; it's kept as written. Write each item on its own line"
+                    ),
+                );
+            }
+            kept.push(text);
+        }
+        kept
     }
 
     /// `embargo_until`, which must be a YYYY-MM-DD date. Anything else is refused

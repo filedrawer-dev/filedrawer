@@ -104,6 +104,8 @@ pub enum WarningKind {
     FlowMapping,
     NumberForPaper,
     NotAPaper,
+    NotAReference,
+    TooManyReferences,
     UnrecognisedValue,
     UnrecognisedField,
     StrippedField,
@@ -144,12 +146,13 @@ impl Warning {
     }
 }
 
+/// What every warning ends with (entry-format.md, Accept, warn, and re-render), the
+/// server's own as well as the analyzer's.
+pub const WARNING_FEEDBACK: &str =
+    "(if the server should read this kind of submission, say so through POST /feedback)";
+
 impl fmt::Display for Warning {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{} (if the server should read this kind of submission, say so through POST /feedback)",
-            self.message
-        )
+        write!(f, "{} {WARNING_FEEDBACK}", self.message)
     }
 }

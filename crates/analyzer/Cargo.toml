@@ -13,6 +13,8 @@ name = "entry-check"
 path = "src/bin/entry-check.rs"
 
 [dependencies]
+# DOIs in doi.org links arrive percent-encoded.
+percent-encoding = "2.3.2"
 pulldown-cmark = { version = "0.13.6", default-features = false }
 # Hosts read as browsers read them (WHATWG), so a link can't show one host to the
 # checks and open another.
