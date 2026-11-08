@@ -43,8 +43,16 @@ pub async fn entry(
         format,
         as_page,
     } = Reading::of(id, format, &headers);
+    // The author's held entry first, then the public one. An entry only moves from a
+    // held status to public, so this order can't miss one that publishes between the
+    // two reads; the other order answered 404 for it, seen as smoke.rs's eval tests
+    // failing when the screen published an entry they were polling.
+    match own_entry(&state, &id, &headers, format).await {
+        Err(AppError::NotFound) => {}
+        shown => return shown,
+    }
     let Some(entry) = entries::public_entry(&state.pool, &id).await? else {
-        return own_entry(&state, &id, &headers, format).await;
+        return Err(AppError::NotFound);
     };
     let analysis = analyze(&entry.source);
     let notes: Vec<String> = match &analysis.results {
