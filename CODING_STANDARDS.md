@@ -64,7 +64,7 @@ Entry text, series descriptions, feedback and screening notes are written by str
 - Each script runs with plain `python3` or through `uvx`. A script that needs packages declares them in an inline `# /// script` block with pinned versions. Never call `.venv/bin/...`, since the hooks also run on the host.
 - `-h` prints what the script does and its options. The module docstring says the same.
 - Tests live in `bin/tests` and run under `uvx --with pytest-timeout==2.4.0 pytest@9.2.0 bin/tests`, as `bin/agent-pre-commit` does; `bin/tests/pytest.ini` sets the timeout, so name a path under `bin/tests` for pytest to find it. Each script has tests, and they don't touch the network: they serve fakes over `file://` or set an override variable, as `bin/tests/test_lychee.py` does.
-- `uvx ruff check` and `uvx ruff format --check` pass.
+- `uvx ruff@0.14.4 check` and `uvx ruff@0.14.4 format --check` pass. 0.14.4 is the version `.pre-commit-config.yaml` pins; a newer ruff checks more rules than the hook does.
 - A failure prints one line saying what failed and what to do, and exits non-zero. A hook's refusal ends with a `COMMIT REFUSED:` line.
 - `bin/pre-commit-run` and `bin/slop-lint` are copies of llm-toolbox's tools. Change them there and copy them back, not here.
 
