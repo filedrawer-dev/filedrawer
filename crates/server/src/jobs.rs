@@ -4,6 +4,7 @@
 use time::{Duration, OffsetDateTime};
 
 use crate::attachments::{self, StoreError};
+use crate::entries::{Due, Released};
 use crate::{AppState, entries, queue, series, time::stamp};
 
 /// How long an accepted submission is held so its author can fix it. Each
@@ -76,6 +77,38 @@ pub async fn publish_due(state: &AppState, now: OffsetDateTime) -> Result<usize,
         }
     }
     Ok(done)
+}
+
+/// Releases every entry due at `now` (design.md, Embargo; Series): an `embargoed`
+/// entry once its chain's date has come, and one `waiting_on_series` at the
+/// 12-month cap. Returns how many it moved.
+pub async fn release_due(state: &AppState, now: OffsetDateTime) -> Result<usize, sqlx::Error> {
+    let mut releases = Vec::new();
+    for held in entries::held_back(&state.pool).await? {
+        let to = match held.due(now) {
+            None => continue,
+            Some(Due::Cap) => Released::Public,
+            Some(Due::Embargo) if series::waits(&state.pool, held.seq).await? => {
+                Released::WaitingOnSeries
+            }
+            Some(Due::Embargo) => Released::Public,
+        };
+        releases.push((held.seq, to));
+    }
+    entries::release(&state.pool, &releases, now).await
+}
+
+/// Runs `release_due` every minute, for `filedrawer serve`, so an embargo ends
+/// within a minute of 23:59 at UTC−12 on its date. An error is logged and the loop
+/// goes on.
+pub async fn run_releaser(state: AppState) {
+    let mut ticks = tokio::time::interval(std::time::Duration::from_secs(60));
+    loop {
+        ticks.tick().await;
+        if let Err(error) = release_due(&state, OffsetDateTime::now_utc()).await {
+            tracing::error!(%error, "releasing embargoed entries failed");
+        }
+    }
 }
 
 /// How long a set may wait for an entry to cite it (design.md, Attached code).

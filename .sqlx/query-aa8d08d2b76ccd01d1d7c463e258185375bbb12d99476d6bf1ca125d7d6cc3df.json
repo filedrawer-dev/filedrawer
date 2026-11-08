@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE link_checks SET next_check_at = ? WHERE entry_seq = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "aa8d08d2b76ccd01d1d7c463e258185375bbb12d99476d6bf1ca125d7d6cc3df"
+}

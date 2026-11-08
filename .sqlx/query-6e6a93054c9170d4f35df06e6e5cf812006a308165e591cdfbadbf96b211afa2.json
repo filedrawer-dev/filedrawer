@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH RECURSIVE chain(seq) AS (\n               SELECT ?1\n               UNION ALL\n               SELECT n.seq FROM entries n JOIN chain c ON n.previous_seq = c.seq\n               WHERE n.status NOT IN ('rejected', 'withdrawn', 'removed')\n           )\n           SELECT embargo_until AS \"embargo_until?: String\" FROM entries\n           WHERE seq = (SELECT MAX(seq) FROM chain)",
+  "describe": {
+    "columns": [
+      {
+        "name": "embargo_until?: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "embargo_until"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "6e6a93054c9170d4f35df06e6e5cf812006a308165e591cdfbadbf96b211afa2"
+}

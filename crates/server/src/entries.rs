@@ -547,6 +547,19 @@ pub async fn publish(
     else {
         return Ok(None);
     };
+    index(&mut transaction, seq, fields, &source).await?;
+    crate::series::mark_readable(&mut transaction).await?;
+    transaction.commit().await?;
+    Ok(Some(Placed::Public))
+}
+
+/// Adds public entry `seq` to the search index.
+async fn index(
+    connection: &mut sqlx::SqliteConnection,
+    seq: i64,
+    fields: &analyzer::Fields,
+    source: &str,
+) -> Result<(), sqlx::Error> {
     sqlx::query!(
         "INSERT INTO entries_fts (rowid, title, hypothesis, safety_motivation, body)
          VALUES (?, ?, ?, ?, ?)",
@@ -556,11 +569,150 @@ pub async fn publish(
         fields.safety_motivation,
         source
     )
-    .execute(&mut *transaction)
+    .execute(&mut *connection)
     .await?;
+    Ok(())
+}
+
+/// An entry held back that a release may move (design.md, Embargo; Series).
+pub struct HeldBack {
+    pub seq: i64,
+    /// `embargoed` or `waiting_on_series`.
+    pub status: String,
+    /// The 12-month cap counts from here.
+    pub first_submitted_at: String,
+    /// The date its chain releases on ([`chain_embargo`]).
+    pub chain_embargo: Option<String>,
+}
+
+/// Why a held-back entry is due for release.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Due {
+    /// Its chain's date has come.
+    Embargo,
+    /// The 12-month cap from its first submission has come, which releases it even
+    /// while a hidden series holds it back (design.md, Series).
+    Cap,
+}
+
+impl HeldBack {
+    /// Why it is due at `now`, if it is.
+    pub fn due(&self, now: time::OffsetDateTime) -> Option<Due> {
+        let at_cap = crate::time::parse(&self.first_submitted_at)
+            .is_some_and(|first| now >= crate::embargo::cap_time(first));
+        let embargo_over = self.status == "embargoed"
+            && crate::embargo::embargoed_until(self.chain_embargo.as_deref(), now).is_none();
+        if at_cap {
+            Some(Due::Cap)
+        } else {
+            embargo_over.then_some(Due::Embargo)
+        }
+    }
+}
+
+/// Every entry in `embargoed` or `waiting_on_series`, oldest first.
+pub async fn held_back(pool: &SqlitePool) -> Result<Vec<HeldBack>, sqlx::Error> {
+    let rows = sqlx::query!(
+        r#"SELECT seq AS "seq!: i64", status, first_submitted_at FROM entries
+           WHERE status IN ('embargoed', 'waiting_on_series') ORDER BY seq"#
+    )
+    .fetch_all(pool)
+    .await?;
+    let mut held = Vec::with_capacity(rows.len());
+    for row in rows {
+        held.push(HeldBack {
+            seq: row.seq,
+            status: row.status,
+            first_submitted_at: row.first_submitted_at,
+            chain_embargo: chain_embargo(pool, row.seq).await?,
+        });
+    }
+    Ok(held)
+}
+
+/// The date entry `seq`'s chain releases on (design.md, Entry lifecycle: the
+/// versions "release together"): the `embargo_until` of the latest version reached
+/// from it through versions that aren't rejected, withdrawn or removed.
+pub async fn chain_embargo(pool: &SqlitePool, seq: i64) -> Result<Option<String>, sqlx::Error> {
+    let date = sqlx::query_scalar!(
+        r#"WITH RECURSIVE chain(seq) AS (
+               SELECT ?1
+               UNION ALL
+               SELECT n.seq FROM entries n JOIN chain c ON n.previous_seq = c.seq
+               WHERE n.status NOT IN ('rejected', 'withdrawn', 'removed')
+           )
+           SELECT embargo_until AS "embargo_until?: String" FROM entries
+           WHERE seq = (SELECT MAX(seq) FROM chain)"#,
+        seq
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(date.flatten())
+}
+
+/// Where a release moves an entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Released {
+    Public,
+    /// Its embargo is over, but a series it waits for is hidden.
+    WaitingOnSeries,
+}
+
+/// Moves each entry in `releases` from `embargoed` or `waiting_on_series` to where
+/// it says, all in one transaction, so no read sees one version of a chain public
+/// while another is held back. Every stored link of each is due for a recheck at
+/// `now` (design.md, Embargo: "At release the server checks the `code` and `logs`
+/// links again"). Returns how many it moved.
+pub async fn release(
+    pool: &SqlitePool,
+    releases: &[(i64, Released)],
+    now: time::OffsetDateTime,
+) -> Result<usize, sqlx::Error> {
+    // Nothing is due most minutes: don't take the write lock for nothing.
+    if releases.is_empty() {
+        return Ok(0);
+    }
+    let at = crate::time::stamp(now);
+    let mut transaction = crate::db::write_tx(pool).await?;
+    let mut moved = 0;
+    for (seq, to) in releases {
+        let moved_now = match to {
+            Released::Public => {
+                let source = sqlx::query_scalar!(
+                    "UPDATE entries SET status = 'public', published_at = ?
+                     WHERE seq = ? AND status IN ('embargoed', 'waiting_on_series')
+                     RETURNING source",
+                    at,
+                    seq
+                )
+                .fetch_optional(&mut *transaction)
+                .await?;
+                if let Some(source) = &source {
+                    let fields = analyze(source).fields;
+                    index(&mut transaction, *seq, &fields, source).await?;
+                }
+                source.is_some()
+            }
+            Released::WaitingOnSeries => {
+                sqlx::query!(
+                    "UPDATE entries SET status = 'waiting_on_series'
+                     WHERE seq = ? AND status = 'embargoed'",
+                    seq
+                )
+                .execute(&mut *transaction)
+                .await?
+                .rows_affected()
+                    == 1
+            }
+        };
+        if moved_now {
+            link_checks::make_due(&mut transaction, *seq, now).await?;
+            moved += 1;
+        }
+    }
     crate::series::mark_readable(&mut transaction).await?;
     transaction.commit().await?;
-    Ok(Some(Placed::Public))
+    Ok(moved)
 }
 
 /// A public entry by ID.

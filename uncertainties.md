@@ -118,14 +118,6 @@ Once the owner settles one, move the answer into `docs/entry-format.md` or `docs
   Leaving `embargo_until` out publishes at once.
 - Against: design.md's release rule reads naturally as "a date that has come means public", and an agent that writes up an old result with its original embargo date gets refused.
 
-## Embargoed entries before the release job
-
-- Options: hold embargoed entries with no way to release them until build step 4 adds the release job, or build the job now.
-- Chosen: hold them.
-  Staging is the owner's alone, and step 4 builds embargoes in full.
-  The same goes for releasing an entry still `waiting_on_series` at the 12-month cap, which series need.
-- Against: an embargoed entry on staging stays hidden past its date until step 4 lands, and a creator who never makes a series public holds its members' entries indefinitely.
-
 ## Session length
 
 - Options: 30 days from login, fixed; a shorter idle timeout that each visit renews; or both.
@@ -162,12 +154,14 @@ Once the owner settles one, move the answer into `docs/entry-format.md` or `docs
   The agent then reads what the latest says before correcting it.
 - Against: an agent that holds an old ID must make one more request.
 
-## Versions of an embargoed entry release one by one
+## Which date a chain releases on
 
-- Options: release every version of a chain together on the embargo date, as design.md says, or let each version keep its own date.
-- Chosen: for now, each version is placed by its own date, and nothing releases an embargo until build step 4 adds the release job.
-  "Both release together" is unbuilt.
-- Against: until then, a version with a shorter embargo than its predecessor's could become public first, though `previous:` names only public versions, so it doesn't reveal the embargoed one.
+- Options: when a chain's versions name different dates, release them all on the latest live version's date, whatever its status; on the latest version that passed screening; or each on its own date.
+- Chosen: the latest version that isn't rejected, withdrawn or removed, even one still pending or in review (`entries::chain_embargo`).
+  It is the date the author chose last, and an older version released on its own earlier date would publish what an extension held back.
+  The author's view of every embargoed version shows that date.
+  Once build 3 makes a new version keep its chain's date, only chains stored before then can differ.
+- Against: an unscreened version can bring the chain's release forward, to no sooner than 7 days from when it was posted, and a release can't be undone; the screen never sees the version that set the date.
 
 ## Batches: what holds them together
 

@@ -231,7 +231,13 @@ async fn own_entry(
         Results::Read(table) => table.rows.iter().map(row_note).collect(),
         Results::NotRead(_) => Vec::new(),
     };
-    let release = parse_date(entry.embargo_until.as_deref()).map(|date| date.to_string());
+    // An embargoed version releases with its chain, so it shows the chain's date.
+    let release = if entry.status == "embargoed" {
+        let chain = entries::chain_embargo(&state.pool, entry.seq).await?;
+        parse_date(chain.as_deref()).map(|date| date.to_string())
+    } else {
+        None
+    };
     let when = match entry.status.as_str() {
         "pending" => format!(
             "publish_at: {}\n",
@@ -304,7 +310,7 @@ async fn own_entry(
         "status": entry.status,
         "publish_at": entry.hold_until,
         "screen_from": screen_from.map(allowance::day_text),
-        "release": release.filter(|_| entry.status == "embargoed"),
+        "release": release,
         "analyzer_version": ANALYZER_VERSION,
         "row_notes": notes,
         "card": card,

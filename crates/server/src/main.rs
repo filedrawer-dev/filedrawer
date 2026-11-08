@@ -258,6 +258,7 @@ async fn serve() -> ExitCode {
     ));
     tokio::spawn(filedrawer_server::jobs::run_tidier(state.clone()));
     tokio::spawn(filedrawer_server::jobs::run_link_rechecker(state.clone()));
+    tokio::spawn(filedrawer_server::jobs::run_releaser(state.clone()));
     let router = app(state);
     let shutdown = async {
         // systemd stops a service with SIGTERM; Ctrl-C is for a terminal. A failure

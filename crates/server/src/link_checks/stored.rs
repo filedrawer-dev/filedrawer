@@ -132,6 +132,25 @@ pub async fn store(
     store_with(transaction, seq, links, now, HashMap::new()).await
 }
 
+/// Makes every stored link of entry `seq` due for a recheck at `now`, as a release
+/// does (design.md, Embargo: "At release the server checks the `code` and `logs`
+/// links again").
+pub async fn make_due(
+    connection: &mut SqliteConnection,
+    seq: i64,
+    now: OffsetDateTime,
+) -> Result<(), sqlx::Error> {
+    let at = stamp(now);
+    sqlx::query!(
+        "UPDATE link_checks SET next_check_at = ? WHERE entry_seq = ?",
+        at,
+        seq
+    )
+    .execute(&mut *connection)
+    .await?;
+    Ok(())
+}
+
 /// Stores entry `seq`'s links as a recheck found them at `now`, carrying on each
 /// link's retries in a row.
 async fn store_rechecked(

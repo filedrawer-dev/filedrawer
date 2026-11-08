@@ -42,6 +42,16 @@ pub fn release_time(date: Date) -> OffsetDateTime {
         .assume_offset(utc_minus_12)
 }
 
+/// When the 12-month cap ends for a chain first submitted at `first_submitted`: the
+/// release time of the date 12 months later (UTC), so the cap counts as an embargo
+/// date does (design.md, Embargo; Series).
+pub fn cap_time(first_submitted: OffsetDateTime) -> OffsetDateTime {
+    release_time(months_later(
+        first_submitted.to_offset(UtcOffset::UTC).date(),
+        12,
+    ))
+}
+
 /// Reads `embargo_until` at `now`, for an entry first submitted at `first_submitted`.
 /// A date more than 3 months after the first submission (UTC), or one whose release
 /// time has passed, is refused. Reason for counting from the first submission:
