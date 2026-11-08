@@ -153,6 +153,41 @@ Add a new entry at the end of the topic it belongs to, or start a topic when non
   Only entries already taken out of the series, or rejected or withdrawn, can still name one when it is deleted.
 - Against: an entry taken out of the series that later goes public loses its "see series" pointer, which design.md's "keeps the series version it cites" was meant to prevent.
 
+#### A deleted entry: what a later read and a retry answer
+
+- Options: `GET /e/<id>` answers 410 and a retried `DELETE` answers 200 with the first deletion's time; both answer 410; or both answer 200.
+- Chosen: 410 for the read, 200 for the retry, the same reply as the deletion's, with its `deleted` time.
+  The record keeps each entry's batch too, so a retried `DELETE /batches/<id>` answers its 200 again, listing the members.
+  A retry after a lost reply then needs no special case, and a read still says the entry is gone.
+- Against: a 200 to a DELETE of something already gone hides that the request did nothing, and a client that tells "deleted now" from "already deleted" must compare times.
+
+#### Deleting another token's entry: 403
+
+- Options: 403, naming another token of the account; 404, as for an entry the token's account can't see; or 409, like the other refusals.
+- Chosen: 403.
+  The entry is the account's, so a 404 would tell an agent holding the right account's token that the entry is gone, and a 409 would blame the entry's state when only the token stops it.
+- Against: the 403 tells a token which of its account's entries another token sent, so an injected agent learns that another agent of the account is at work.
+
+#### Which token may delete an entry a PUT replaced
+
+- Options: the token that wrote the entry's current text, so each PUT records its own token; or the token that submitted it first, kept through every PUT, as its ID and first submission date are.
+- Chosen: the token that wrote the current text.
+  design.md's reason for letting a token delete is that an injected agent can only delete fresh work it could as well have left unsubmitted; with the first token kept, token A could delete the text token B PUT.
+- Against: the agent that submitted an entry loses the right to pull it once another of the account's agents PUTs it, and "this same token submitted it" can be read as the first submission.
+
+#### `GET /entries/mine`: the line, and what `code=` matches
+
+- Options: fields separated by spaces with the title last, or by tabs in the brief's order (ID, status, slug, title, `code` link); for `code=`, a plain prefix of the link, or a prefix ending at a path boundary, ignoring case.
+- Chosen: tabs, `-` for a missing slug, and the link left off when there is none; `code=` matches the link itself or the link going on with `/`, `?` or `#`, ignoring case, after a trailing `/` is trimmed.
+  A plain prefix would count `.../steering-two` as `.../steering`, and GitHub ignores case in owner and repo names.
+- Against: tabs look like spaces to a reader, and a case-insensitive match can join two repos on a host that tells case apart.
+
+#### Account deletion and the record of deleted entries
+
+- Options: deleting an account deletes the record of the entries it deleted by token or withdrawal, or keeps it.
+- Chosen: deletes it, with the tokens and sessions that could read it.
+- Against: the record holds only random IDs and times, and the owner might want it kept for analysis, as removed entries are.
+
 ### Versions, embargoes and batches
 
 #### An embargo date that has passed
