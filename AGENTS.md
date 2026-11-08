@@ -94,10 +94,11 @@ Agents' commits add the tests in `bin/tests`, clippy and the Rust tests (`bin/ag
 The change is what differs from `$CHECK_BASE`, which llm-toolbox's `agent-commit-gate` sets to the nearest commit that passed them: at a commit, usually HEAD, so what's staged; on a recheck by wt-ship or `build-state finish`, the commit it was rebased or folded onto.
 The Rust checks run for a build input: anything in `crates/`, the Cargo files, `.sqlx/`, `.cargo/` and `.config/`, and the files the crates embed or their tests read, such as `docs/entry-format.md` and `ops/smoke-staging`.
 `bin/tests` runs for a change in `bin/`, `ops/` or a crate (one of its tests reads the crates' references), or to a file those tests read, such as `.pre-commit-config.yaml`.
-A commit of other docs runs neither.
+A commit of other docs runs neither, and doesn't wait in heavy's queue either.
+Each check asks `agent-commit-gate` for a place there only as it starts (`$CHECK_QUEUE_EXIT`, `agent-commit-gate -h`), so a commit that needs none passes in seconds.
 `bin/checks-needed` finds the embeds and reads in the sources on each commit, so a new `include_str!` needs no list kept by hand; its `-h` gives the rules.
 Every check runs without `CHECK_BASE` (CI, an agent without llm-toolbox, or no commit known to pass), when nothing differs from it, when the change touches those rules, when git can't diff against it, and when `bin/checks-needed` is missing, fails or runs past 60 s.
-A small fix commit gets only clippy (`bin/agent-quick-check`, run by `agent-commit-gate`), and only for a build input; `build-state finish` runs the rest.
+A small fix commit gets only clippy (`bin/agent-quick-check`, run by `agent-commit-gate`), and only for a build input, which waits its turn in heavy's queue; `build-state finish` runs the rest.
 CI runs all of them.
 Run `cargo fmt` after each batch of edits to `.rs` files: otherwise the hook reformats them at commit, and edits you make after that no longer match the text you hold.
 `python3 install.py` links the hooks once per clone and installs cargo-nextest and sqlx-cli; sandbox-setup runs it after a recreate.
