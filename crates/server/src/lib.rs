@@ -20,6 +20,7 @@ pub mod limits;
 pub mod link_checks;
 mod links;
 pub mod mail;
+mod markdown;
 mod pages;
 mod passwords;
 mod queue;

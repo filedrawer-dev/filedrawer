@@ -91,6 +91,33 @@ pub fn wants_page(headers: &HeaderMap) -> bool {
     document && !wants_json(headers) && !headers.contains_key(header::AUTHORIZATION)
 }
 
+/// How to answer a read of an entry or a series at `path`: as a page for a browser,
+/// or in `format`. `<path>.txt` is the plain text for every client, so a person can
+/// read it as agents do.
+pub struct Reading {
+    /// The path without `.txt`.
+    pub path: String,
+    pub format: Format,
+    pub as_page: bool,
+}
+
+impl Reading {
+    pub fn of(path: String, format: Format, headers: &HeaderMap) -> Reading {
+        match path.strip_suffix(".txt") {
+            Some(bare) => Reading {
+                path: bare.to_string(),
+                format: Format::Text,
+                as_page: false,
+            },
+            None => Reading {
+                path,
+                format,
+                as_page: wants_page(headers),
+            },
+        }
+    }
+}
+
 /// What every answer says it depends on, so no cache hands one client's form to
 /// another.
 const VARY: &str = "Sec-Fetch-Dest, Accept";

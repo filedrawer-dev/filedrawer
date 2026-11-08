@@ -129,10 +129,7 @@ pub fn analyze(text: &str) -> Analysis {
     if text.len() > MAX_ENTRY_BYTES {
         refusals.push(Refusal::TooLarge { bytes: text.len() });
     }
-    let text = text
-        .strip_prefix('\u{feff}')
-        .unwrap_or(text)
-        .replace("\r\n", "\n");
+    let text = normalised(text);
     let Some((yaml, body)) = front_matter::split(&text) else {
         refusals.push(Refusal::FrontMatterUnreadable(
             "the entry must start with a `---` line, the YAML fields, and another `---` line"
@@ -206,6 +203,27 @@ pub fn stored_text(text: &str) -> String {
 /// The card: author text can't forge lines).
 pub fn is_bidi_control(c: char) -> bool {
     matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+}
+
+/// The entry's front matter and body, split as [`analyze`] splits them, or `None`
+/// when it doesn't start with front matter (entry-format.md, Front matter).
+pub fn front_matter_and_body(text: &str) -> Option<(String, String)> {
+    let text = normalised(text);
+    front_matter::split(&text).map(|(yaml, body)| (yaml.to_string(), body.to_string()))
+}
+
+/// `text` without a leading byte-order mark and with `\r\n` line ends as `\n`, as
+/// the analyzer reads every entry.
+fn normalised(text: &str) -> String {
+    text.strip_prefix('\u{feff}')
+        .unwrap_or(text)
+        .replace("\r\n", "\n")
+}
+
+/// The markdown options the analyzer reads bodies with, for anything else that
+/// renders them, so both see the same document (entry-format.md, Body).
+pub fn markdown_options() -> pulldown_cmark::Options {
+    body::options()
 }
 
 /// Whether `slug` is a slug the format takes (entry-format.md, Fields): 1 to 64 of

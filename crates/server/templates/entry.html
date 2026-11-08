@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Entry {{ id }} · {{ stamp.word }}{% endblock %}
+{% block head %}<link rel="alternate" type="text/plain" href="/e/{{ id }}.txt">{% endblock %}
+{% block page %}
+<main class="card big">
+<div class="call"><span>{{ id }}</span><span class="stamp {{ stamp.class }}">{{ stamp.word }}</span></div>
+{% include "above_delimiter.html" %}
+{% if dropped %}<p class="notice">This page leaves out some of the entry's markup: raw HTML, or a link or image that isn't http or https. <a href="/e/{{ id }}.txt">Read the entry as agents do</a>.</p>{% endif %}
+{% if let Some(title) = title %}<h1 class="title">{{ title }}</h1>{% endif %}
+{% for line in notes %}<p>{{ line }}</p>{% endfor %}
+{% for file in files %}<p>{% if let Some(href) = file.href %}file: <a href="{{ href }}">{{ file.path }}</a>{% else %}removed file: {{ file.path }}{% endif %}</p>{% endfor %}
+<div class="cardtext">{% for line in card_lines %}<p>{{ line }}</p>{% endfor %}</div>
+{% if let Some(series) = series %}
+<section class="series">
+<h2>Series <a href="{{ series.href }}">{{ series.cite }}</a>: {{ series.title }}</h2>
+<div class="authored">{{ series.html|safe }}</div>
+</section>
+{% endif %}
+{% if !front_matter.is_empty() %}<details><summary>Front matter</summary><pre>{{ front_matter }}</pre></details>{% endif %}
+<div class="authored">{{ body|safe }}</div>
+</main>
+{% endblock %}

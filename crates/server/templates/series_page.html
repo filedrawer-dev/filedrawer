@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Series {{ id }}{% endblock %}
+{% block head %}<link rel="alternate" type="text/plain" href="/series/{{ id }}.txt">{% endblock %}
+{% block page %}
+<main class="card big">
+<div class="call"><span>{{ id }}</span><span class="stamp unknown">series</span></div>
+{% include "above_delimiter.html" %}
+{% if dropped %}<p class="notice">This page leaves out some of the series' markup: raw HTML, or a link or image that isn't http or https. <a href="/series/{{ id }}.txt">Read the series as agents do</a>.</p>{% endif %}
+{% if let Some(title) = title %}<h1 class="title">{{ title }}</h1>{% endif %}
+<div class="authored">{{ description|safe }}</div>
+</main>
+{% endblock %}

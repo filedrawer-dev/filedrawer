@@ -17,20 +17,32 @@ use crate::embargo::parse_date;
 use crate::entries::{self, Filters};
 use crate::error::AppError;
 use crate::link_checks::{self, LinkFlags};
-use crate::pages::{Drawer, SearchPage, page};
+use crate::markdown;
+use crate::pages::{
+    Drawer, EntryPage, FileView, SearchPage, SeriesBlock, Stamp, fields_above, page,
+};
 use crate::respond::{
-    DELIMITER, Format, author_name, card_and_warnings, echoed, one_line, wants_page,
+    DELIMITER, Format, Reading, author_name, card_and_warnings, echoed, one_line, wants_page,
 };
 use crate::series;
 use crate::{AppState, allowance, attachments, time};
 use analyzer::slug_references;
+use url::Url;
 
+/// `GET /e/<id>`: the entry as plain text, as JSON when asked, or as a page for a
+/// browser. `/e/<id>.txt` is the plain text for every client, so a person can read
+/// the entry as agents do.
 pub async fn entry(
     State(state): State<AppState>,
     Path(id): Path<String>,
     headers: HeaderMap,
     format: Format,
 ) -> Result<Response, AppError> {
+    let Reading {
+        path: id,
+        format,
+        as_page,
+    } = Reading::of(id, format, &headers);
     let Some(entry) = entries::public_entry(&state.pool, &id).await? else {
         return own_entry(&state, &id, &headers, format).await;
     };
@@ -91,17 +103,18 @@ pub async fn entry(
     // A run's description and its list of entries become public together, once every
     // entry using it is. The description is author text, so it goes below the
     // delimiter; run IDs follow the slug rule, so they can't forge a line.
-    let mut descriptions = String::new();
+    let mut run_notes = Vec::new();
     for (run, description) in &runs {
         match description {
             Some(description) => {
                 let users = entries::run_entries(&state.pool, &entry.account_id, run).await?;
                 text.push_str(&format!("run: {run}: entries {}\n", users.join(" ")));
-                descriptions.push_str(&format!("run: {run}: {}\n", one_line(description)));
+                run_notes.push(format!("run: {run}: {}", one_line(description)));
             }
             None => text.push_str(&format!("run: {run}: description not public yet\n")),
         }
     }
+    let mut descriptions: String = run_notes.iter().map(|note| format!("{note}\n")).collect();
     // The set's files: each path is author text, so the lines go below the delimiter.
     let set = attachments::entry_set(&state.pool, entry.seq).await?;
     let files_url = state.files_url.as_deref().unwrap_or("");
@@ -125,6 +138,30 @@ pub async fn entry(
     }
     for (number, note) in (1..).zip(&notes) {
         text.push_str(&format!("row {number}: {note}\n"));
+    }
+    if as_page {
+        let files = set.as_ref().map_or_else(Vec::new, |set| {
+            set.files
+                .iter()
+                .map(|file| FileView {
+                    path: one_line(&file.path),
+                    href: (!file.removed).then(|| format!("{files_url}/f/{}", file.sha256)),
+                })
+                .collect()
+        });
+        return Ok(entry_page(
+            &state,
+            &entry,
+            &analysis,
+            &text,
+            &links,
+            EntryParts {
+                notes: run_notes,
+                files,
+                card: &card,
+                cited: cited.as_ref(),
+            },
+        ));
     }
     // The card holds author text (the title, hypothesis, tags and more), so it goes
     // below the delimiter with the entry itself.
@@ -177,6 +214,63 @@ pub async fn entry(
         })),
     });
     Ok(format.reply(StatusCode::OK, text, json))
+}
+
+/// What an entry's page shows below the delimiter, besides the entry's own text.
+struct EntryParts<'a> {
+    /// Run descriptions, one line each.
+    notes: Vec<String>,
+    files: Vec<FileView>,
+    card: &'a str,
+    cited: Option<&'a CitedSeries>,
+}
+
+/// The public entry's page for a person: the server's fields as the plain text
+/// `text` has them, the delimiter, then the card, the cited series and the entry's
+/// markdown, rendered.
+fn entry_page(
+    state: &AppState,
+    entry: &entries::PublicEntry,
+    analysis: &analyzer::Analysis,
+    text: &str,
+    links: &[(String, String)],
+    parts: EntryParts,
+) -> Response {
+    let base = Url::parse(&format!("{}/e/{}", state.public_url, entry.id)).ok();
+    let (front_matter, body) = analyzer::front_matter_and_body(&entry.source).unwrap_or_default();
+    let body = markdown::to_html(&body, base.as_ref(), links);
+    let series = parts.cited.and_then(|cited| {
+        let (title, description) = cited.shown.as_ref()?;
+        let href = format!("/series/{}", cited.cite.text());
+        let base = Url::parse(&format!("{}{href}", state.public_url)).ok();
+        let rendered = markdown::to_html(description, base.as_ref(), &[]);
+        Some((
+            SeriesBlock {
+                cite: cited.cite.text(),
+                href,
+                title: one_line(title),
+                html: rendered.html,
+            },
+            rendered.dropped,
+        ))
+    });
+    let dropped = body.dropped || series.as_ref().is_some_and(|(_, dropped)| *dropped);
+    page(
+        StatusCode::OK,
+        &EntryPage {
+            id: &entry.id,
+            stamp: Stamp::of(&analysis.fields.outcome),
+            fields: fields_above(text),
+            dropped,
+            title: analysis.fields.title.as_deref().map(one_line),
+            notes: parts.notes,
+            files: parts.files,
+            card_lines: parts.card.lines().map(str::to_string).collect(),
+            series: series.map(|(block, _)| block),
+            front_matter,
+            body: body.html,
+        },
+    )
 }
 
 /// The series version an entry cites, with its title and description (or the cited

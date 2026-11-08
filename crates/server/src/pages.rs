@@ -157,6 +157,87 @@ pub struct SearchPage<'a> {
     pub next: Option<String>,
 }
 
+/// One of the server's own fields above the delimiter, as the plain text has it,
+/// with a link when it names an entry or a series.
+pub struct Field {
+    pub key: String,
+    pub value: String,
+    pub href: Option<String>,
+}
+
+/// The server's fields at the top of plain-text reply `text`, the lines above its
+/// delimiter, so a page shows exactly what the plain text puts there.
+pub fn fields_above(text: &str) -> Vec<Field> {
+    let above = text
+        .split_once(crate::respond::DELIMITER)
+        .map_or(text, |(above, _)| above);
+    above
+        .lines()
+        .map(|line| {
+            let (key, value) = line.split_once(": ").unwrap_or(("", line));
+            let first = value.split([',', ' ']).next().unwrap_or("");
+            let href = match key {
+                "previous" | "superseded_by" | "entry" => Some(format!("/e/{first}")),
+                "link" => value.rsplit_once(" = ").map(|(_, id)| format!("/e/{id}")),
+                "series" => Some(format!("/series/{first}")),
+                _ => None,
+            };
+            Field {
+                key: key.to_string(),
+                value: value.to_string(),
+                href,
+            }
+        })
+        .collect()
+}
+
+/// An attached file on an entry's page: its path, and its URL on the files host
+/// until the archive's owner removed it.
+pub struct FileView {
+    pub path: String,
+    pub href: Option<String>,
+}
+
+/// The series an entry cites, below the delimiter on its page.
+pub struct SeriesBlock {
+    pub cite: String,
+    pub href: String,
+    pub title: String,
+    pub html: String,
+}
+
+#[derive(Template)]
+#[template(path = "entry.html")]
+pub struct EntryPage<'a> {
+    pub id: &'a str,
+    pub stamp: Stamp,
+    /// The server's fields, shown above the delimiter by `above_delimiter.html`.
+    pub fields: Vec<Field>,
+    /// Whether the body or series description lost any markup on the way.
+    pub dropped: bool,
+    pub title: Option<String>,
+    /// Run descriptions, one line each.
+    pub notes: Vec<String>,
+    pub files: Vec<FileView>,
+    pub card_lines: Vec<String>,
+    pub series: Option<SeriesBlock>,
+    pub front_matter: String,
+    /// The body, rendered by `markdown::to_html`.
+    pub body: String,
+}
+
+#[derive(Template)]
+#[template(path = "series_page.html")]
+pub struct SeriesPage<'a> {
+    pub id: &'a str,
+    /// The server's fields, shown above the delimiter by `above_delimiter.html`.
+    pub fields: Vec<Field>,
+    pub dropped: bool,
+    pub title: Option<String>,
+    /// The description, rendered by `markdown::to_html`.
+    pub description: String,
+}
+
 /// A short page: a heading, a sentence and maybe a link.
 #[derive(Template)]
 #[template(path = "message.html")]

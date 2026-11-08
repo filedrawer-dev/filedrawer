@@ -1,5 +1,6 @@
 //! Series for agents (design.md, Series): `POST /series`, `POST /series/<id>/join`,
-//! `POST /series/<id>/versions`, and `GET /series/<id>` or `/series/<id>@<version>`.
+//! `POST /series/<id>/versions`, and `GET /series/<id>` or `/series/<id>@<version>`,
+//! a page for a browser, and plain text for every client with `.txt` after it.
 //! The creator makes a series public from the account page, not here.
 
 use analyzer::{SeriesText, read_series};
@@ -11,8 +12,10 @@ use serde_json::json;
 
 use crate::auth::{TokenAccount, optional_token_account};
 use crate::error::AppError;
+use crate::markdown;
+use crate::pages::{SeriesPage, fields_above, page};
 use crate::queue::Screened;
-use crate::respond::{DELIMITER, Format, author_name, one_line};
+use crate::respond::{DELIMITER, Format, Reading, author_name, one_line};
 use crate::screening::Verdict;
 use crate::series::{self, Series, Version};
 use crate::{AppState, allowance, jobs, queue, time};
@@ -257,6 +260,11 @@ pub async fn read(
     headers: HeaderMap,
     format: Format,
 ) -> Result<Response, AppError> {
+    let Reading {
+        path,
+        format,
+        as_page,
+    } = Reading::of(path, format, &headers);
     let (id, asked) = match path.split_once('@') {
         Some((id, version)) => {
             let version = version.parse::<i64>().map_err(|_| AppError::NotFound)?;
@@ -317,6 +325,26 @@ pub async fn read(
             "member: {}, {}\n",
             member.account_id,
             byline(member.display_name.as_deref())
+        ));
+    }
+    if as_page {
+        let base = url::Url::parse(&format!("{}/series/{}", state.public_url, found.id)).ok();
+        let description = visible
+            .as_ref()
+            .map(|version| markdown::to_html(&version.description, base.as_ref(), &[]));
+        return Ok(page(
+            StatusCode::OK,
+            &SeriesPage {
+                id: &found.id,
+                fields: fields_above(&text),
+                dropped: description
+                    .as_ref()
+                    .is_some_and(|rendered| rendered.dropped),
+                title: visible.as_ref().map(|version| one_line(&version.title)),
+                description: description
+                    .map(|rendered| rendered.html)
+                    .unwrap_or_default(),
+            },
         ));
     }
     text.push_str(&format!("{DELIMITER}\n"));

@@ -1,0 +1,6 @@
+<dl class="fields">
+{%- for field in fields %}
+<dt>{{ field.key }}</dt><dd>{% if let Some(href) = field.href %}<a href="{{ href }}">{{ field.value }}</a>{% else %}{{ field.value }}{% endif %}</dd>
+{%- endfor %}
+</dl>
+<p class="delimiter">{{ crate::respond::DELIMITER }}</p>
