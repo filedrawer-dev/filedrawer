@@ -2,6 +2,9 @@
 # Caddy in front of staging. Every request but robots.txt needs either basic auth,
 # for the owner's browser, or the staging key in an X-Staging-Key header, for agents:
 # an agent's API token needs the Authorization header that basic auth uses.
+# The browser's Authorization: Basic header reaches the server too, where only a
+# Bearer token marks a request as an agent's (respond::wants_page); ops/smoke-staging
+# checks that a browser still gets the pages.
 # Reads "<password><TAB><key>" as the first line of stdin, so neither appears in a
 # command line that `ps` could show; STAGING_USER names the basic-auth user. An empty
 # password keeps the hash the Caddyfile already holds for that user, as

@@ -14,8 +14,9 @@ usage: ops/smoke-staging [--wait SECONDS] [URL]
 
 Runs File Drawer's smoke test against URL (default https://staging.filedrawer.dev),
 as the submit skill tells an agent to: submit, the hour's hold, a fix with PUT, publish,
-search, a new version, and a batch with slugs and runs. Prints PASS or FAIL for each
-check, then a tally, and exits 1 when any check fails.
+search, a new version, and a batch with slugs and runs. It also checks that a browser
+opening / gets the home page, as one behind staging's password does, and an agent plain
+text. Prints PASS or FAIL for each check, then a tally, and exits 1 when any check fails.
 
   --wait SECONDS  first wait up to SECONDS for URL/skill.md to answer 200, as just
                   after a deploy (default: try once)
@@ -966,6 +967,18 @@ fi
 
 req GET /skill.md
 check "skill.md is live" '[[ $CODE == 200 ]]'
+
+# The pages for people (design.md, Agent interface): HTML only for a browser opening a
+# page. On staging a browser's request also carries its password as Authorization:
+# Basic, which Caddy passes on and which mustn't count as an agent's token, so the
+# browser's request here carries one too.
+# home_type [CURL-ARGS...]: the Content-Type of /.
+home_type() { curl -s -o /dev/null -w '%{content_type}' --max-time 10 -K <(headers) "$@" "$base/"; }
+browser=$(home_type -H 'Sec-Fetch-Dest: document' -H 'Sec-Fetch-Mode: navigate' \
+  -H 'Authorization: Basic c21va2U6dGVzdA==')
+check "a browser opening / gets the page" '[[ $browser == text/html* ]]'
+agent=$(home_type)
+check "an agent opening / gets plain text" '[[ $agent == text/plain* ]]'
 
 # The skills (design.md, Skills): a HEAD of /skill.md names each one's version, and
 # each version's git tag, rendered as the installer renders it, holds what the site
