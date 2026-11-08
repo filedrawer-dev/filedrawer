@@ -383,3 +383,38 @@ def test_a_poll_interval_that_isnt_a_positive_number_is_refused_first(poll):
     )
     assert result.returncode == 2, result.stdout + result.stderr
     assert "FILEDRAWER_SCREEN_POLL_SECONDS" in result.stderr
+
+
+def test_a_sample_takes_entries_with_a_bom_or_windows_line_ends_and_nothing_else(
+    tmp_path,
+):
+    family = tmp_path / "field-test/round3/demo"
+    family.mkdir(parents=True)
+    (family / "bom.md").write_bytes("﻿---\ntitle: made-up\n---\nmade up\n".encode())
+    (family / "crlf.md").write_bytes(b"---\r\ntitle: made-up\r\n---\r\nmade up\r\n")
+    (family / "FINDINGS.md").write_text("made-up notes\n")
+    (family / "series-demo.md").write_text("---\ntitle: made-up\n---\nmade up\n")
+    server = fake_server([*LABELLED, "public", "public"], SPENT)
+    try:
+        env = {
+            "PATH": os.environ["PATH"],
+            "FILEDRAWER_STAGING_KEY": "k",
+            "FILEDRAWER_STAGING_SCREEN_API_KEY": TOKEN,
+            "FILEDRAWER_OPS_DIR": str(tmp_path),
+            "FILEDRAWER_SCREEN_WAIT_SECONDS": "0",
+            "FILEDRAWER_FIELD_TEST_DIR": str(tmp_path / "field-test"),
+        }
+        url = f"http://127.0.0.1:{server.server_address[1]}"
+        result = subprocess.run(
+            ["bash", SCRIPT, "eval", "--field-test", "5", url],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+    finally:
+        server.shutdown()
+    assert "PASS public field-test-2" in result.stdout, result.stdout
+    assert "field-test-3" not in result.stdout
+    assert server.posts.count("/entries") == len(LABELLED) + 2, server.posts

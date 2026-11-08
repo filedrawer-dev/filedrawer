@@ -122,7 +122,7 @@ pub async fn run_link_rechecker(state: AppState) {
     }
 }
 
-/// Runs `publish_due` every `tick` (`Config::publisher_tick`, 30 seconds outside dev),
+/// Runs `publish_due` every `tick` (`Config::publisher_tick`: 30 seconds, unless dev sets another),
 /// for `filedrawer serve`. An error is logged and the loop goes on.
 pub async fn run_publisher(state: AppState, tick: std::time::Duration) {
     let mut ticks = tokio::time::interval(tick);

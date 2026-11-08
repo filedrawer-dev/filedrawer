@@ -329,6 +329,13 @@ if [[ $mode == eval ]]; then
   # gathers them.
   store="$field_test_dir/files"
 
+  # is_entry FILE: whether FILE is a field-test entry, as bin/field-test-batches reads
+  # them: front matter first (a BOM and Windows line ends allowed), not a series.
+  is_entry() {
+    [[ $(basename "$1") != series-* ]] || return 1
+    [[ $(head -1 "$1" | sed $'s/^\xEF\xBB\xBF//; s/\r$//') == --- ]]
+  }
+
   # record FIELD...: appends a line to the run file, its fields split by tabs.
   record() {
     local IFS=$'\t'
@@ -403,13 +410,12 @@ if [[ $mode == eval ]]; then
         record family "$family"
       done
     fi
-    # Field-test entries, in a random order fixed here: the latest rounds' `*.md` files
-    # with front matter, not their series. One whose attached files aren't all gathered
-    # is passed over.
+    # Field-test entries, in a random order fixed here: the latest rounds' entries. One
+    # whose attached files aren't all gathered is passed over.
     if (( field_tests > 0 )); then
       passed_over=0
       while IFS= read -r file; do
-        [[ $(basename "$file") == series-* || $(head -1 "$file") != --- ]] && continue
+        is_entry "$file" || continue
         if [[ -f $(list_of "$file") ]] && ! gathered "$(list_of "$file")"; then
           passed_over=$((passed_over + 1))
           continue
@@ -422,10 +428,12 @@ if [[ $mode == eval ]]; then
   echo "run file: $run_file"
 
   cases=() expecteds=() candidates=() family_dirs=()
-  declare -A sent=() refused=() set_ids=() set_lists=() status_of=() series_ids=() batch_ids=()
+  declare -A sent=() set_ids=() set_lists=() status_of=() series_ids=() batch_ids=()
   declare -A series_failed=()
+  # Each refused entry: refused marks it, and for a refusal the server gave, the reply's
+  # code, the file holding its reasons, and what was refused.
+  declare -A refused=() refused_code=() refused_reasons=() refused_what=()
   passed_over=0
-  declare -A refused_what=()
   # How many refusals the run met, this session's and those a resumed run reports again.
   refusals=0
   while IFS=$'\t' read -r kind one two three four; do
@@ -439,7 +447,11 @@ if [[ $mode == eval ]]; then
       candidate) candidates+=("$one") ;;
       passed-over) passed_over=$one ;;
       sent) sent[$one]=$two ;;
-      refused) refused[$one]="$two $three"; refused_what[$one]=$four ;;
+      refused)
+        refused[$one]=1
+        refused_code[$one]=$two
+        refused_reasons[$one]=$three
+        refused_what[$one]=$four ;;
       set) set_ids[$one]=$two; set_lists[$one]=$three ;;
     esac
   done < "$run_file"
@@ -509,20 +521,21 @@ if [[ $mode == eval ]]; then
     fail=$((fail + 1))
     refusals=$((refusals + 1))
     for key; do
-      refused[$key]="$CODE $reasons"
+      refused[$key]=1
+      refused_code[$key]=$CODE
+      refused_reasons[$key]=$reasons
       refused_what[$key]=$what
       record refused "$key" "$CODE" "$reasons" "$what"
     done
   }
 
-  # refused_before WHAT KEY: whether the run already found KEY refused. A refusal the
-  # server gave counts again as a failure, so a resumed run's tally covers the whole
-  # run; one eval made itself, such as a set it couldn't build, was said when made.
-  refused_before() {
-    local entry=${refused[$2]:-}
-    [[ -n $entry ]] || return 1
-    if [[ -n ${entry%% *} ]]; then
-      echo "FAIL ${refused_what[$2]:-$1} was refused (${entry%% *}); its reasons are in ${entry#* }"
+  # recount_refusal WHAT KEY: whether the run already found KEY refused. One the server
+  # refused counts again as a failure, so a resumed run's tally covers the whole run;
+  # one eval refused itself, such as a set it couldn't build, was said when it was.
+  recount_refusal() {
+    [[ -n "${refused[$2]:-}" ]] || return 1
+    if [[ -n "${refused_code[$2]:-}" ]]; then
+      echo "FAIL ${refused_what[$2]:-$1} was refused (${refused_code[$2]}); its reasons are in ${refused_reasons[$2]}"
       fail=$((fail + 1))
       refusals=$((refusals + 1))
     fi
@@ -620,7 +633,7 @@ if [[ $mode == eval ]]; then
   send_batch() {
     local m unsent=0
     mapfile -t batch_members < "$2"
-    refused_before "a batch of ${#batch_members[@]} field-test entries" "${batch_members[0]}" && return 0
+    recount_refusal "a batch of ${#batch_members[@]} field-test entries" "${batch_members[0]}" && return 0
     CITED=0
     for m in "${batch_members[@]}"; do
       [[ -f $(list_of "$m") ]] && CITED=1
@@ -841,13 +854,13 @@ PY
     eval_case "$file" "$dir/case.md" && judge "$(basename "$file" .md)" "${expecteds[$i]}"
     (( stopped )) && break
   done
-  # A field-test entry the server refuses, or that isn't an entry, is recorded and
-  # skipped; it costs no screening. Only its number and ID are printed, never its
-  # contents.
+  # A field-test entry the server refuses, or whose set it refuses, is a FAIL, its
+  # reasons in a file (fail_refused); it costs no screening. Only an entry's number and
+  # ID are printed, never its contents.
   taken=0
   for file in "${candidates[@]}"; do
     (( taken < field_tests && ! stopped )) || break
-    refused_before "a field-test entry" "$file" && continue
+    recount_refusal "a field-test entry" "$file" && continue
     screen_entry "$file" > "$dir/case.md"
     list=$(list_of "$file")
     CITED=0
@@ -858,7 +871,7 @@ PY
         case $? in
           1) fail_refused "a field-test entry's attachment set" "$file"; continue ;;
           2) stop_run "an attachment set couldn't be uploaded now"; break ;;
-          3) refused[$file]=" "; record refused "$file"; continue ;;
+          3) refused[$file]=1; record refused "$file"; continue ;;
         esac
         sed -i "1a attachments: $SET" "$dir/case.md"
       fi
