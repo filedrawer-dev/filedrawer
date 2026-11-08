@@ -10,7 +10,14 @@
 # so dependencies build once. The tests run under cargo-nextest, which prints only the
 # failures and a summary (.config/nextest.toml); it skips doctests, so cargo test --doc
 # runs those.
-# --quick runs clippy alone, for bin/agent-quick-check.
+# Each check runs only when the commit stages what it covers: the Rust checks for a
+# build input, bin/tests for what those tests read. The staged copy of bin/checks-needed
+# decides (its -h lists the rules). Every check runs when nothing staged differs from
+# HEAD (CI, wt-ship's recheck, build-state finish), when the commit changes these
+# rules, when bin/checks-needed fails, and when HEAD's tree isn't one that passed: a
+# revert, a rebase or a small fix commit's clippy alone leaves an untested tree, which
+# a scoped check would trust. checks-passed in the git dir lists the trees that passed.
+# --quick runs clippy alone, for bin/agent-quick-check, and adds no tree to the list.
 set -e
 quick=
 [ "${1:-}" = --quick ] && quick=1
@@ -20,14 +27,35 @@ logs=$(mktemp -d)
 trap 'rm -rf "$tree" "$logs"' EXIT
 trap 'exit 130' INT TERM HUP
 git -C "$repo" checkout-index -a --prefix="$tree/"
+passed="$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir)/checks-passed"
+# Before the git variables go, since `git commit PATHS` stages into its own index.
+committed=$(git -C "$repo" write-tree 2>/dev/null) || committed=
+base=$(git -C "$repo" rev-parse -q --verify 'HEAD^{tree}') || base=
+need_every_check() {
+  printf 'rust %s\nbin-tests %s\n' "$1" "$1" >"$logs/needed"
+}
+if [ -z "$base" ] || ! grep -qxF "$base" "$passed" 2>/dev/null; then
+  need_every_check "(HEAD's tree isn't one that passed)"
+elif ! git -C "$repo" diff --cached -z --name-only --no-renames HEAD >"$logs/staged"; then
+  need_every_check "(git diff failed)"
+elif tr '\0' '\n' <"$logs/staged" | grep -qxE 'bin/(checks-needed|agent-pre-commit|agent-quick-check)'; then
+  need_every_check "(the commit changes these rules)"
+elif [ ! -x "$tree/bin/checks-needed" ]; then
+  need_every_check "(no bin/checks-needed staged)"
+elif ! timeout 60 "$tree/bin/checks-needed" "$tree" <"$logs/staged" >"$logs/needed" 2>"$logs/scope"; then
+  cat "$logs/scope" >&2
+  echo "agent-pre-commit: bin/checks-needed failed, so every check runs" >&2
+  need_every_check "(bin/checks-needed failed)"
+fi
+needs() { grep -q "^$1 " "$logs/needed"; }
 cd "$tree"
 # The hook's git variables name the repo being committed; no check should reach it.
 unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_OBJECT_DIRECTORY GIT_PREFIX
 failed=0
-if [ -z "$quick" ]; then
+if [ -z "$quick" ] && needs bin-tests; then
   uvx --quiet --with pytest-timeout==2.4.0 pytest@9.2.0 -q -p no:cacheprovider bin/tests >"$logs/pytest" 2>&1 || { cat "$logs/pytest"; failed=1; }
 fi
-if [ -f Cargo.toml ]; then
+if [ -f Cargo.toml ] && needs rust; then
   export CARGO_TARGET_DIR="$repo/target"
   if [ -z "$quick" ]; then
     if ! cargo nextest --version >/dev/null 2>&1; then
@@ -38,5 +66,12 @@ if [ -f Cargo.toml ]; then
     cargo test --doc --quiet >"$logs/doc" 2>&1 || { cat "$logs/doc"; failed=1; }
   fi
   cargo clippy --quiet --all-targets -- -D warnings >"$logs/clippy" 2>&1 || { cat "$logs/clippy"; failed=1; }
+fi
+if [ "$failed" = 0 ] && [ -z "$quick" ] && [ -n "$committed" ]; then
+  # The last 1,000 trees that passed, replaced in one rename. A write that fails, or
+  # loses to another commit's, only costs a full run later.
+  if ! { { grep -vxF "$committed" "$passed" | tail -n 999; echo "$committed"; } >"$passed.$$" && mv "$passed.$$" "$passed"; } 2>/dev/null; then
+    rm -f "$passed.$$"
+  fi
 fi
 exit $failed
