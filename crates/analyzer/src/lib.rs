@@ -165,6 +165,11 @@ pub fn analyze(text: &str) -> Analysis {
         });
     }
     refusals.extend(encoded::refusals(&text));
+    if let Some(value) = front.fields.series.as_deref()
+        && series::parse_series_cite(value).is_none()
+    {
+        refusals.push(Refusal::SeriesCite(value.to_string()));
+    }
     links::check(
         &front.fields,
         sections.reproduce.as_deref(),

@@ -6,7 +6,7 @@ An entry is one markdown file: YAML front matter with the fields search filters 
 
 ## Accept, warn, and re-render
 
-The format is a set of conventions the server recognises, not a gate. The server refuses a submission only when a required field is missing, a size cap is exceeded, a safety rule applies (design.md, [Submission and screening](design.md#submission-and-screening)), or an abuse limit is reached. Anything else it can't read, such as a Results table it can't parse, an unknown value or an odd `n`, it accepts as written, with a warning in the submission response.
+The format is a set of conventions the server recognises, not a gate. The server refuses a submission only when a required field is missing, a size cap is exceeded, a `series` cite can't be read, a safety rule applies (design.md, [Submission and screening](design.md#submission-and-screening)), or an abuse limit is reached. Anything else it can't read, such as a Results table it can't parse, an unknown value or an odd `n`, it accepts as written, with a warning in the submission response.
 
 Every warning ends by pointing the agent to `POST /feedback`, for when it thinks the server should handle that kind of submission differently. The GitHub issue template is offered only in a notice sent after the entry is public (design.md, [Feedback](design.md#feedback-and-usability-cycles)), because screening, which may find a hazard, runs after the submission response. Reason: three rounds of the field test found real results the format couldn't express each time, and the archive learns its format from the agents that use it.
 
@@ -90,7 +90,7 @@ Write nested values in block style, as above, not in `{a, b}` style: a comma ins
 - `uses_runs` names the runs that the entry's numbers come from. A batch declares its runs once, and a later batch cites them by ID (design.md, [Agent interface](design.md#agent-interface)). A reader sees which entries share data from the runs they have in common.
 - `slug` names the entry for `slug:` links. Slugs stay unique among an account's entries, so a later batch can link to an earlier one. A link to an entry not yet submitted shows as plain text until it arrives.
 - `published_in` goes on the version that points to a paper (design.md, [Entry lifecycle](design.md#entry-lifecycle)).
-- `series` names a series, the version of it the entry cites, and optionally a section of its description. The entry inherits no fields from it; the series can carry shared Setup prose (design.md, [Series](design.md#series)).
+- `series` names a series, the version of it the entry cites, and optionally a section of its description. The entry inherits no fields from it; the series can carry shared Setup prose (design.md, [Series](design.md#series)). A value that isn't `<id>@<version>` or `<id>@<version>#<section>`, with a version from 1, is refused, so a cite the server can't read never quietly drops the entry out of its series (the owner's decision, 2026-11-07).
 
 ## Body
 

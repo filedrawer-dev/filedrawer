@@ -127,3 +127,21 @@ fn a_file_name_that_isnt_utf8_is_reported_not_a_panic() {
     assert_eq!(output.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&output.stderr).contains("can't read"));
 }
+
+#[test]
+fn a_series_cite_the_server_cant_read_makes_entry_check_refuse() {
+    let path = fixture("example.md");
+    let text = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(
+        &path,
+        text.replacen("tags:", "series: ser_madeUp1@1\ntags:", 1),
+    )
+    .unwrap();
+    let output = entry_check(&[&path]);
+    assert_eq!(output.status.code(), Some(1));
+    let out = stdout(&output);
+    assert!(
+        out.contains("refused: `series: ser_madeUp1@1` should be `<id>@<version>`"),
+        "{out}"
+    );
+}

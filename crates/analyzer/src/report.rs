@@ -33,6 +33,9 @@ pub enum Refusal {
         kind: crate::encoded::Encoding,
         start: String,
     },
+    /// A `series` value that isn't `<id>@<version>[#<section>]` with a version from 1
+    /// (entry-format.md, Fields: `series`); it holds the value as written.
+    SeriesCite(String),
 }
 
 impl fmt::Display for Refusal {
@@ -61,6 +64,10 @@ impl fmt::Display for Refusal {
                 f,
                 "the `code` link isn't pinned to a commit or version: {url}. Link a \
                  40-character commit hash, or a Zenodo version record"
+            ),
+            Refusal::SeriesCite(value) => write!(
+                f,
+                "`series: {value}` should be `<id>@<version>` or `<id>@<version>#<section>`, with a version from 1"
             ),
             Refusal::EncodedText { kind, start } => write!(
                 f,

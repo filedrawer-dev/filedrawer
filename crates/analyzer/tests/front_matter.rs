@@ -504,3 +504,27 @@ fn attachments_names_the_attachment_set_an_entry_cites() {
     assert_eq!(analysis.unrecognised_fields, Vec::<String>::new());
     assert_eq!(analyze(EXAMPLE).fields.attachments, None);
 }
+
+#[test]
+fn a_series_cite_the_server_cant_read_is_refused() {
+    // entry-format.md, Fields: `series` is `<id>@<version>` or
+    // `<id>@<version>#<section>`, with a version from 1. The field test's agents made
+    // up IDs such as `ser_madeUp1`, which the server refuses.
+    for bad in ["ser_madeUp1@1", "s-abc", "s-abc@0"] {
+        let text = example_with("tags:", &format!("series: {bad}\ntags:"));
+        assert_eq!(
+            analyze(&text).refusals,
+            vec![Refusal::SeriesCite(bad.to_string())],
+            "{bad}"
+        );
+    }
+    let text = example_with("tags:", "series: ser_madeUp1@1\ntags:");
+    assert_eq!(
+        analyze(&text).refusals[0].to_string(),
+        "`series: ser_madeUp1@1` should be `<id>@<version>` or `<id>@<version>#<section>`, with a version from 1"
+    );
+    for good in ["s-34d1twxyg1@1", "s-34d1twxyg1@2#setup"] {
+        let text = example_with("tags:", &format!("series: {good}\ntags:"));
+        assert_eq!(analyze(&text).refusals, vec![], "{good}");
+    }
+}

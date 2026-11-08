@@ -85,12 +85,8 @@ pub(crate) fn accept(body: &Bytes, prior: Option<Prior<'_>>) -> Result<Accepted,
     let (source, cite) = match analysis.fields.series.as_deref() {
         None => (source, None),
         Some(value) => {
+            // A cite the analyzer can't read is among its refusals already.
             let cite = parse_series_cite(value);
-            if cite.is_none() {
-                reasons.push(format!(
-                    "`series: {value}` should be `<id>@<version>` or `<id>@<version>#<section>`, with a version from 1"
-                ));
-            }
             let stored = without_series(&source);
             if analyze(&stored).fields.series.is_some() {
                 reasons.push(
