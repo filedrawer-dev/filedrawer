@@ -1,9 +1,16 @@
 # Uncertainties
 
-Choices the docs left open, made while building the analyzer.
+Choices the docs left open, made while building.
 Once the owner settles one, move the answer into `docs/entry-format.md` or `docs/design.md` and delete it here.
 
-## Card line 4: note first, or numbers first
+Each entry sits under its group (Product: what an agent or person sees or must do; Architecture: how the site is built and run) and its topic.
+Add a new entry at the end of the topic it belongs to, or start a topic when none fits, rather than at the end of the file, so two sessions adding entries seldom touch the same lines.
+
+## Product
+
+### Cards
+
+#### Card line 4: note first, or numbers first
 
 - Options: the server's note and the claim first (`interval includes 0; null: +0.012 [−0.047, +0.070], n 520/520, fraction`), or the numbers first as the Example in entry-format.md shows (`+0.012 [−0.047, +0.070], n 520/520, fraction: no_effect; interval includes 0`).
 - Chosen: note first.
@@ -11,72 +18,82 @@ Once the owner settles one, move the answer into `docs/entry-format.md` or `docs
 - Against: the Example is the only worked line 4, and readers may scan for the number first.
   If the Example is right, the line 4 rule needs rewording instead.
 
-## The 100 KB entry cap
-
-- Options: 100 × 1024 = 102,400 bytes, or 100,000.
-- Chosen: 102,400, matching the attachment cap, which design.md gives in MiB.
-- Against: design.md writes "100 KB", and in SI that is 100,000.
-
-## More than 10 `logs` URLs
-
-- Options: refuse, or accept with a warning.
-- Chosen: refuse, as a size cap. design.md lists it under limits.
-- Against: entry-format.md lists the refusals and doesn't name this one.
-  Accepting and keeping the first 10 would fit "accept, warn" better.
-
-## Which Reproduce commands fetch code at a moving ref
-
-- Options: catch only clear shapes, or every `git clone` without a later checkout of a commit.
-- Chosen: clear shapes only, and only in the section's code (inline code and code blocks), not its prose: `git+` URLs without `@<40-hex>`, scripts (`.py`, `.sh` and the like) on raw.githubusercontent.com, and GitHub archive or codeload URLs, each at a ref that isn't a hash.
-  A false positive refuses an honest entry.
-- Against: `git clone URL && cd repo && python run.py` runs the default branch, the commonest moving ref, and passes.
-
-## Zenodo `code` links
-
-- Options: accept with a note that the server checks the record online, or refuse a link the analyzer can't prove is a version record.
-- Chosen: accept with a warning.
-  Offline, a concept record and a version record look the same.
-- Against: the server must still do the online check, and the CLI says less than the server will.
-
-## Line 8 on cards that aren't `effect`
+#### Line 8 on cards that aren't `effect`
 
 - Options: leave the line out, so a card has 10 or 11 lines, or keep an empty line 8.
 - Chosen: leave it out.
   `/cards.txt` can then separate cards with a blank line.
 - Against: a reader that counts lines can't find a line by its number.
 
-## Models with no `role` on line 7
+#### Models with no `role` on line 7
 
 - Options: list them as subjects, or show only models whose role is `subject`.
 - Chosen: list them.
   A model with no role is most often the subject.
 - Against: a judge with no role then reads as a subject, which is the confusion `role` exists to prevent.
 
-## The "no data" flag
+#### The "no data" flag
 
 - Options: flag "no data" when `data` is empty and `## Reproduce` mentions re-analysing ("re-analy", "reanaly"), or never flag it until the server has a structured way to tell.
 - Chosen: the keyword test.
 - Against: keywords miss "recompute from the stored transcripts" and catch "no re-analysis possible".
 
-## Signs on the card's numbers
+#### Signs on the card's numbers
 
 - Options: show the author's text exactly, or add `+` to positive differences and use U+2212 for minus, as the Example does.
 - Chosen: the Example's signs on differences; a single group's level keeps its own text, apart from the minus sign.
 - Against: "as the author wrote them" read strictly means no change at all.
 
-## "no claim" in the tally
+#### "no claim" in the tally
 
 - Options: count rows that claim nothing in line 1's tally ("rows: 1 effect, 2 null, 1 no claim"), or leave them out as the spec's example does.
 - Chosen: count them, so a reader sees how many rows the tally covers.
 - Against: the example lists only the three claims, and the "and N more rows" on line 4 already says how many rows there are.
 
-## Fields the server doesn't know
+### Entries and the analyzer
+
+#### The 100 KB entry cap
+
+- Options: 100 × 1024 = 102,400 bytes, or 100,000.
+- Chosen: 102,400, matching the attachment cap, which design.md gives in MiB.
+- Against: design.md writes "100 KB", and in SI that is 100,000.
+
+#### More than 10 `logs` URLs
+
+- Options: refuse, or accept with a warning.
+- Chosen: refuse, as a size cap. design.md lists it under limits.
+- Against: entry-format.md lists the refusals and doesn't name this one.
+  Accepting and keeping the first 10 would fit "accept, warn" better.
+
+#### Which Reproduce commands fetch code at a moving ref
+
+- Options: catch only clear shapes, or every `git clone` without a later checkout of a commit.
+- Chosen: clear shapes only, and only in the section's code (inline code and code blocks), not its prose: `git+` URLs without `@<40-hex>`, scripts (`.py`, `.sh` and the like) on raw.githubusercontent.com, and GitHub archive or codeload URLs, each at a ref that isn't a hash.
+  A false positive refuses an honest entry.
+- Against: `git clone URL && cd repo && python run.py` runs the default branch, the commonest moving ref, and passes.
+
+#### Zenodo `code` links
+
+- Options: accept with a note that the server checks the record online, or refuse a link the analyzer can't prove is a version record.
+- Chosen: accept with a warning.
+  Offline, a concept record and a version record look the same.
+- Against: the server must still do the online check, and the CLI says less than the server will.
+
+#### Fields the server doesn't know
 
 - Options: warn, or list them in the response without a warning.
 - Chosen: warn, saying the field is stored as written.
 - Against: a warning nudges agents to delete the field, and the admin report of unknown fields needs agents to keep adding them.
 
-## Search: any word, ranked, or every word
+#### `kind` left out
+
+- Options: store `experiment`, as entry-format.md says a missing `kind` means, or store nothing.
+- Chosen: `experiment`, so `/search?kind=experiment` finds entries that left it out.
+- Against: an unrecognised `kind` is stored as nothing, and a reader can't tell it from the default.
+
+### Search
+
+#### Search: any word, ranked, or every word
 
 - Options: match any word of the query and rank by bm25 (title weighted 10, hypothesis 5, safety motivation 2, the rest 1), or match every word.
 - Chosen: any word, ranked.
@@ -85,40 +102,22 @@ Once the owner settles one, move the answer into `docs/entry-format.md` or `docs
 - Against: a common word such as "model" matches most of the archive, so a page of 20 can fill with weak matches.
   Stop words or a minimum score would trim that.
 
-## A search with no words
+#### A search with no words
 
 - Options: return every public entry newest first, paged, or refuse a request with no words and no filters.
 - Chosen: every entry, newest first, so `/search?outcome=effect` works alone.
 - Against: `/cards.txt` already returns everything, so an empty search may be a mistake worth naming.
 
-## `kind` left out
+### Accounts
 
-- Options: store `experiment`, as entry-format.md says a missing `kind` means, or store nothing.
-- Chosen: `experiment`, so `/search?kind=experiment` finds entries that left it out.
-- Against: an unrecognised `kind` is stored as nothing, and a reader can't tell it from the default.
-
-## API tokens
+#### API tokens
 
 - Options: `fdt_` plus 52 base32 characters (260 bits), hashed with SHA-256; or argon2id, like passwords.
 - Chosen: SHA-256.
   A random 260-bit token can't be guessed, so a slow hash adds nothing, and lookup by hash stays one indexed query.
 - Against: design.md hashes passwords with argon2id, and one rule for every secret is simpler to audit.
 
-## JSON on every route
-
-- Options: JSON wherever Accept asks for it, or plain text only for `/cards.txt`.
-- Chosen: `/cards.txt` stays plain text, since its name says so; every other route, errors included, answers JSON on request.
-- Against: an agent that always sends `Accept: application/json` gets text from one route.
-
-## An embargo date that has passed
-
-- Options: refuse it, as here, or publish the entry at once.
-- Chosen: refuse.
-  A date already past is most likely a typo in the year, and publishing early can't be undone.
-  Leaving `embargo_until` out publishes at once.
-- Against: design.md's release rule reads naturally as "a date that has come means public", and an agent that writes up an old result with its original embargo date gets refused.
-
-## Session length
+#### Session length
 
 - Options: 30 days from login, fixed; a shorter idle timeout that each visit renews; or both.
 - Chosen: 30 days fixed.
@@ -126,35 +125,59 @@ Once the owner settles one, move the answer into `docs/entry-format.md` or `docs
 - Against: a stolen cookie works for the whole 30 days.
   An idle timeout of a few days would cut that, at the cost of more logins.
 
-## Passwords
+#### Passwords
 
 - Options: 12 to 1024 characters with no rules on content, as here; a check against known-breached passwords too; or a lower minimum, as NIST allows (8).
 - Chosen: 12, no composition rules, no breach check.
   A breach check needs the k-anonymity API of a third party, or a large list on the VPS.
 - Against: "password1234" passes.
 
-## Mail when SMTP fails
+#### Notes to taken addresses, sent with an invite code
 
-- Options: show the same page and log the error, as here, or tell the person the email didn't go.
-- Chosen: the same page, so the signup and reset pages never reveal whether an account exists.
-  The account page can resend the verification email.
-- Against: a person whose email never arrives has no hint why.
+- Options: as now, an invited signup counts against its address's email limit only, so a holder of a valid code can have the server send "this address already has an account" notes to any number of addresses from one IP, each up to its own address limit; count the IP for such signups too, which would tell a code holder which addresses have accounts, since only those would trip it; or send no note at all when a signup with a code meets a taken address.
+- Chosen: as now. design.md lifts the per-IP email limit for invited signups so a sprint behind one IP can verify, and both alternatives either leak or change what an honest person who signs up twice is told.
+- Against: a leaked sprint code is a mail-sending tool until it expires or the owner revokes it (the next build), at up to 5 notes an hour to each address.
+  Sending no note for invited signups costs only that rare honest case.
 
-## Versions form one line
+#### Account deletion: what else goes
+
+- Options: delete the account's private feedback and its `rejected` entries, as here, or keep them for the owner.
+  (`removed` entries stay: the owner's decision, 2026-11-05.)
+- Chosen: feedback goes, since it is personal data and the triage summaries keep what the owner needs; `rejected` entries go with the other unpublished ones.
+- Against: feedback is the usability signal the owner asked agents for, and a rejected entry is abuse data the owner may want after the account leaves.
+
+#### Account deletion: entries citing a deleted hidden series
+
+- Options: clear the cite, as here, or keep it and show "series description removed", as design.md says for a purged version.
+- Chosen: clear it.
+  Only entries already taken out of the series, or rejected or withdrawn, can still name one when it is deleted.
+- Against: an entry taken out of the series that later goes public loses its "see series" pointer, which design.md's "keeps the series version it cites" was meant to prevent.
+
+### Versions, embargoes and batches
+
+#### An embargo date that has passed
+
+- Options: refuse it, as here, or publish the entry at once.
+- Chosen: refuse.
+  A date already past is most likely a typo in the year, and publishing early can't be undone.
+  Leaving `embargo_until` out publishes at once.
+- Against: design.md's release rule reads naturally as "a date that has come means public", and an agent that writes up an old result with its original embargo date gets refused.
+
+#### Versions form one line
 
 - Options: each entry has at most one live successor, so a chain is a line, as here; or versions may branch, with several successors of one entry.
 - Chosen: a line.
   "The latest version in each chain", which search and cards show, then has one meaning.
 - Against: two people correcting different parts of one entry at once must go one after the other.
 
-## A version goes on the latest version only
+#### A version goes on the latest version only
 
 - Options: refuse a version of an older version, naming the latest, as here; or accept it and attach it to the latest.
 - Chosen: refuse, with a 409 that names the latest version, or says to PUT a pending one.
   The agent then reads what the latest says before correcting it.
 - Against: an agent that holds an old ID must make one more request.
 
-## Which date a chain releases on
+#### Which date a chain releases on
 
 - Options: when a chain's versions name different dates, release them all on the latest live version's date, whatever its status; on the latest version that passed screening; or each on its own date.
 - Chosen: the latest version that isn't rejected, withdrawn or removed, even one still pending or in review (`entries::chain_embargo`).
@@ -163,7 +186,7 @@ Once the owner settles one, move the answer into `docs/entry-format.md` or `docs
   A new version now keeps its chain's date, so only chains stored before that rule can differ.
 - Against: in such a chain, an unscreened version can have brought the release forward, and a release can't be undone; the screen never saw the version that set the date.
 
-## Batches: what holds them together
+#### Batches: what holds them together
 
 - Options: a batch is held as one (one hour, restarted by a PUT on any member) and publishes only as one, as here; or its members are independent once accepted.
 - Chosen: as one. design.md publishes a batch as a unit, and its members refer to each other.
@@ -171,7 +194,7 @@ Once the owner settles one, move the answer into `docs/entry-format.md` or `docs
 - Against: one slow member holds back the rest, and the hold job places members one by one in the same tick rather than in one transaction, so a failure partway leaves some public.
   Step 3's queue should place a batch in one step.
 
-## Where slug references resolve
+#### Where slug references resolve
 
 - Options: on `/e/<id>` only, as here, or on cards in search and `/cards.txt` too.
 - Chosen: `/e/<id>` lists each reference that names a public entry, and its card shows a resolved `superseded_by`.
@@ -179,7 +202,7 @@ Once the owner settles one, move the answer into `docs/entry-format.md` or `docs
 - Against: a reader scanning cards sees a slug, not an ID, and has to open the entry to follow it.
   Resolving there costs a lookup per card.
 
-## Slugs and run IDs
+#### Slugs and run IDs
 
 - Options: 1 to 64 of `A-Za-z0-9._-`, as here, or any one-line text.
 - Chosen: the narrow set.
@@ -187,14 +210,22 @@ Once the owner settles one, move the answer into `docs/entry-format.md` or `docs
 - Against: entry-format.md doesn't set a limit, so an agent with a longer or accented name is refused.
   Run fields other than `id` and `description` are stored without checks.
 
-## Series: what a section anchor is
+#### A batch's allowance day in the plain-text reply
+
+- Options: one `screen_from` for the batch, the day its last member waits for, as here, or one per member.
+- Chosen: one, since the batch publishes as one once its last member passes.
+- Against: an agent reading the text can't tell which members are screened today.
+
+### Series
+
+#### Series: what a section anchor is
 
 - Options: anchors as here (lower case, spaces as `-`, only ASCII letters, digits, `-` and `_` kept, first heading wins); GitHub's rule, which keeps non-ASCII letters and numbers repeats (`-1`); or the heading text as written.
 - Chosen: the narrow rule.
   The cite is shown above the author-text delimiter, so it must not be able to carry anything but those characters.
 - Against: a heading in another script has an empty anchor and can't be cited, and agents used to GitHub anchors may expect `-1` suffixes.
 
-## Series: entries that block a version from being read
+#### Series: entries that block a version from being read
 
 - Options: every entry citing a version that isn't public blocks it, as runs do; or only entries that may still become public (not rejected, withdrawn or removed), as here.
   Either way a version needs one public entry citing it, and once readable it stays so (the owner's choice, 2026-11-05).
@@ -202,89 +233,69 @@ Once the owner settles one, move the answer into `docs/entry-format.md` or `docs
   A rejected entry would otherwise keep its version unreadable for good.
 - Against: a removed entry may be restored, and its version would then have been readable meanwhile.
 
-## Series: the join key's format
+#### Series: the join key's format
 
 - Options: the key as the whole plain-text body of `POST /series/<id>/join`, as here, or JSON `{"key": ...}`.
 - Chosen: plain text, the simplest curl line.
 - Against: every other JSON route takes JSON bodies, and a body with stray text fails as a wrong key.
 
-## Account deletion: what else goes
-
-- Options: delete the account's private feedback and its `rejected` entries, as here, or keep them for the owner.
-  (`removed` entries stay: the owner's decision, 2026-11-05.)
-- Chosen: feedback goes, since it is personal data and the triage summaries keep what the owner needs; `rejected` entries go with the other unpublished ones.
-- Against: feedback is the usability signal the owner asked agents for, and a rejected entry is abuse data the owner may want after the account leaves.
-
-## Removing a series member rotates the key
+#### Removing a series member rotates the key
 
 - Options: rotate the key whenever a member is removed, as here, or keep a list of removed accounts that `join` refuses.
 - Chosen: rotate.
   One rule, no new table, and a removed member who kept the key can't rejoin.
 - Against: the creator must hand the new key to every teammate who hasn't joined yet.
 
-## Account deletion: entries citing a deleted hidden series
+### Screening and review
 
-- Options: clear the cite, as here, or keep it and show "series description removed", as design.md says for a purged version.
-- Chosen: clear it.
-  Only entries already taken out of the series, or rejected or withdrawn, can still name one when it is deleted.
-- Against: an entry taken out of the series that later goes public loses its "see series" pointer, which design.md's "keeps the series version it cites" was meant to prevent.
-
-## Screening: publishing screens at once
+#### Screening: publishing screens at once
 
 - Options: `POST /e/<id>/publish` ends the hold and screens the entry in the same request, replying with where it landed, as here; or it only ends the hold and the 30-second worker screens it.
 - Chosen: at once, within the day's caps.
   The agent learns at once whether the entry was rejected, while it still has the entry in mind, and a failed or capped call leaves it to the worker.
 - Against: the request takes as long as one or two model calls, up to a minute with Sonnet, and the fair queue (slice 3) doesn't order entries published this way.
 
-## Screening: a rejected entry gives its slug back
+#### Screening: a rejected entry gives its slug back
 
 - Options: release the slug of every rejected entry, as here; or only a rejected batch's, as design.md says.
 - Chosen: every one.
   A rejected entry can't be resubmitted with PUT, only with a new POST, which needs the slug free.
 - Against: something else may have linked to `slug:<name>` meanwhile, and would then point at whatever takes the slug next.
 
-## Screening: a series screened inline
+#### Screening: a series screened inline
 
 - Options: until slice 1b moves series into the queue, refuse a series the screen fails or flags, as here, or store it and hold it.
 - Chosen: refuse.
   A series with a possible hazard is refused with a neutral reason, and its calls are logged against the account and the day's caps.
 - Against: a hazard-flagged series never reaches the owner's review queue, so the owner can't see what tripped it.
 
-## Screening: how far the daily cap can be overshot
+#### Screening: how far the daily cap can be overshot
 
 - Options: check the cap once before each item and let its calls run, so the day overshoots by at most one item (Haiku, then Sonnet when needed), as here, screening one item at a time; or reserve a worst-case cost before each call.
 - Chosen: one item.
   One screening runs at a time, so items never race past the check together; the worst item, a 100 KB entry Sonnet also reads, costs about $0.26.
 - Against: that worst item is more than one account's daily share, and one item at a time limits throughput to what the models answer in a day, which the cap already limits more.
 
-## Screening: Sonnet unsure of the topic
+#### Screening: Sonnet unsure of the topic
 
 - Options: reject, as here, since design.md calls Sonnet's topic and spam verdict final; or send the entry to review.
 - Chosen: reject, with a generic reason.
 - Against: "unsure" isn't a verdict, and the review queue would cost the owner little for an off-topic case.
 
-## What the author of a held entry sees
+#### What the author of a held entry sees
 
 - Options: `status: held` through `GET /e/<id>` with its token, as `review` shows, or a 404, as for a withdrawn entry.
 - Chosen: `held`, with the submit skill saying the owner will publish or reject it once the vendor fixes the hole.
 - Against: `held` confirms to the author that the owner judged the hole real, which an attacker probing the screen could use.
 
-## What an account that isn't the admin gets from the admin pages
+#### What an account that isn't the admin gets from the admin pages
 
 - Options: a 404, as for a page that doesn't exist, or a 403 that says the page is for the admin.
 - Chosen: a 404, so the pages don't advertise themselves.
   A visitor with no session is sent to `/login`, as on the account pages.
 - Against: the routes are in the AGPL source anyway, and a 403 is clearer for the owner when logged in as the wrong account.
 
-## The smoke-test account's screening note
-
-- Options: say "not screened" in the entry's screening note, or show it as a separate line the server owns.
-  (The owner decided on 2026-11-06 that the smoke account isn't screened at all, so the smoke test calls no model.)
-- Chosen: the screening note, as `staging smoke account: not screened`.
-  It is staging only (production refuses `FILEDRAWER_SMOKE_ACCOUNT`), and it needs no new card line.
-- Against: entry-format.md defines the screening note as the screen's doubt about `outcome`, quoted as model text, so the server's own words read as the model's.
-
-## Publishing early skips the fair queue
+#### Publishing early skips the fair queue
 
 - Options: `POST /e/<id>/publish` and `POST /batches/<id>/publish` screen the entry at once, or leave it in `screening` to wait its turn in the fair queue.
 - Chosen: at once.
@@ -292,45 +303,36 @@ Once the owner settles one, move the answer into `docs/entry-format.md` or `docs
   A spent cap stops an early publish too, so it can't jump that backlog.
 - Against: within one 30-second worker run, an account that publishes early goes ahead of other accounts' entries whose holds have ended, which the design's "every account's first item goes ahead of anyone's second" doesn't allow.
 
-## When the review guard moves waiting items
+#### When the review guard moves waiting items
 
 - Options: move every waiting item of the account to review the moment the guard trips, or check the account as each item leaves the queue for screening.
 - Chosen: as each item leaves, without a model call and past a spent cap, so within one worker run. design.md says "The server checks the account again each time an item leaves its queue for screening."
 - Against: "so does everything it already has waiting" reads as at once; until the worker runs, the owner's queue doesn't yet show them.
 
-## Status codes for refused attachment uploads
+#### The review guard and the account's queue
+
+- Options: a guarded account's queued entries go to review as each one's allowance day comes, as here, or all at once when the guard trips.
+- Chosen: as each day comes. design.md has the server check the account "each time an item leaves its queue for screening", and issue #8 is about one account flooding the owner's review page.
+- Against: "and so does everything it already has waiting" can read as all at once, and the owner then sees a guarded account's whole queue only over several days.
+
+### Attached code
+
+#### Status codes for refused attachment uploads
 
 - Options: 422 for every refused `POST /attachments`, as for refused entries, or a code per cause.
 - Chosen: 422 for bad origins or text, 413 for a set over 1 MiB, 429 past the account's 10 MB a day, 507 when the site's storage is full, 501 when the server has no files host.
   An agent can tell "fix the set" from "wait" from "link the code instead" by the code alone, and an entry over 100 KB is already a 413.
 - Against: the brief said 422, and the entry routes answer every content refusal with 422 except size.
 
-## The review guard and the account's queue
-
-- Options: a guarded account's queued entries go to review as each one's allowance day comes, as here, or all at once when the guard trips.
-- Chosen: as each day comes. design.md has the server check the account "each time an item leaves its queue for screening", and issue #8 is about one account flooding the owner's review page.
-- Against: "and so does everything it already has waiting" can read as all at once, and the owner then sees a guarded account's whole queue only over several days.
-
-## A batch's allowance day in the plain-text reply
-
-- Options: one `screen_from` for the batch, the day its last member waits for, as here, or one per member.
-- Chosen: one, since the batch publishes as one once its last member passes.
-- Against: an agent reading the text can't tell which members are screened today.
-
-## A removed file: restoring it, and attaching it again
+#### A removed file: restoring it, and attaching it again
 
 - Options: no restore for a removed file, and its bytes may be attached again unserved, as here; a restore action like the one design.md gives entries; or refusing a plainly removed file's bytes at upload, as a banned one is.
 - Chosen: no restore and no refusal. design.md gives restore for entries only, and bans only files removed as a hazard.
 - Against: an owner who removes the wrong file can't undo it, and an entry attaching a plainly removed file again publishes with that file unserved, without being told at submission.
 
-## Notes to taken addresses, sent with an invite code
+### Link checks
 
-- Options: as now, an invited signup counts against its address's email limit only, so a holder of a valid code can have the server send "this address already has an account" notes to any number of addresses from one IP, each up to its own address limit; count the IP for such signups too, which would tell a code holder which addresses have accounts, since only those would trip it; or send no note at all when a signup with a code meets a taken address.
-- Chosen: as now. design.md lifts the per-IP email limit for invited signups so a sprint behind one IP can verify, and both alternatives either leak or change what an honest person who signs up twice is told.
-- Against: a leaked sprint code is a mail-sending tool until it expires or the owner revokes it (the next build), at up to 5 notes an hour to each address.
-  Sending no note for invited signups costs only that rare honest case.
-
-## What a link check counts as dead
+#### What a link check counts as dead
 
 - Options: count only 404 and 410 as dead, or any 4xx but 408 and 429; follow a redirect to a listed host's download domain, or count it live unfetched.
 - Chosen: any 4xx but 408 and 429 is dead, since Hugging Face answers 401 for a private or missing repository.
@@ -338,28 +340,21 @@ Once the owner settles one, move the answer into `docs/entry-format.md` or `docs
   A link with a user or a port is dead unfetched.
 - Against: a 403 from GitHub's web pages can mean a rate limit rather than a missing page, and such a link would be flagged dead until a recheck a week later.
 
-## When the link checks run, and for how long
+#### When the link checks run, and for how long
 
 - Options: in the submission request, or in a job during the hour's hold, with the warnings shown at `GET /e/<id>`.
 - Chosen: in the request, after every other check, each URL once, 8 at a time, each fetch at most 10 s, all of them at most 20 s; what is unanswered then counts as "retry later".
   The warnings arrive in the reply, and a bad pin can be refused.
 - Against: a submission with a slow host takes up to 20 s longer, and a batch of 100 entries with many distinct links may leave some unchecked until a recheck an hour later.
 
-## An account's share of GitHub's API calls
-
-- Options: count each account's calls per UTC hour, or in a token bucket that refills over an hour; in memory, or in SQLite as the hourly rate limits are.
-- Chosen: a token bucket of a tenth of the server's half of the hour's calls (250 with a token), in memory beside the per-minute rate limits.
-  It has no boundary at which an account gets two hours' worth at once, and a restart forgets at most one hour's count.
-- Against: a deploy hands every account a full share again.
-
-## Which branches the fork check compares
+#### Which branches the fork check compares
 
 - Options: the first 10 other branches in GitHub's list (alphabetical), or the 10 most recently pushed, which needs a call per branch to learn.
 - Chosen: the first 10 in the list, skipping the one whose head is the default branch's.
   One call lists up to 100.
 - Against: in a repository with many branches, the commit's branch may sort late, and an honest entry is flagged "commit on no branch"; the warning says how many branches the server checked.
 
-## GitHub's commit page as the fork check's first step
+#### GitHub's commit page as the fork check's first step
 
 - Options: when the page's empty answer can't be confirmed, because the confirming compare can't run, leave the pin "not verified" or trust the page and flag "commit on no branch"; note a page the compare overrules in the log only, or also somewhere the owner looks, such as `/staging/status`.
 - Chosen: "not verified", retried within the hour, since a check that couldn't run never says more; a log line, and a count on `/staging/status` since the server started.
@@ -370,14 +365,14 @@ Once the owner settles one, move the answer into `docs/entry-format.md` or `docs
   And only a commit on the default branch is overruled and logged: one on another branch, or only in a tag, would still be flagged "commit on no branch", with the fork warning and no log line, until the page answered right again.
   And the page's own limits aren't published, so a busy day could earn github.com a pause, which also pauses fetching github.com links.
 
-## A commit on no branch: the order of the calls, and when it is checked again
+#### A commit on no branch: the order of the calls, and when it is checked again
 
 - Options: list the tags before or after comparing the commit with the other branches; check every tag, or the first 100; recheck a no-branch commit within the hour, as an unconfirmed pin is, or weekly.
 - Chosen: tags right after the default branch, so a commit its author tagged costs 2 calls, not 12; the first 100 tags, in one call, matched by the commit each points at; weekly, since "on no branch" is an answer, not a failed check.
   An author who tags the commit can PUT a pending entry to have it checked at once.
 - Against: a repository with over 100 tags may hold the one that matters further down, and a public entry whose author tags the commit keeps its flag for up to a week.
 
-## What a recheck covers, and when
+#### What a recheck covers, and when
 
 - Options: recheck only the due links, or every link of an entry that has one; skip entries by status.
   Retry a link that couldn't be checked every hour, or an hour then doubling.
@@ -387,7 +382,49 @@ Once the owner settles one, move the answer into `docs/entry-format.md` or `docs
 - Against: a public entry whose links were all live at submission is never rechecked, so a repository deleted later keeps a clean card.
   And a host that is down for a day is retried 4 times that day, at 1, 3, 7 and 15 hours.
 
-## Pauses for hosts that ask the server to wait
+### Pages for people
+
+#### A MIXED tab on the outcome divider cards
+
+- Options: the mockup's tabs (ALL, NULL, INCONCLUSIVE, EFFECT), or those and MIXED.
+- Chosen: MIXED as well, since `mixed` is one of `outcome`'s values and a filter that can't reach it hides those entries from people browsing by outcome.
+- Against: the owner chose the look with four tabs, and mixed entries may stay rare enough that ALL covers them.
+
+#### No terms or privacy links in the footer yet
+
+- Options: link `/terms` and `/privacy` from every page now, as the mockups do, or leave them out until build step 5 writes them.
+- Chosen: leave them out, since the links would answer 404.
+- Against: the footer then changes again at step 5, and a page that names the licences without the privacy terms may read as complete.
+
+## Architecture
+
+### API
+
+#### JSON on every route
+
+- Options: JSON wherever Accept asks for it, or plain text only for `/cards.txt`.
+- Chosen: `/cards.txt` stays plain text, since its name says so; every other route, errors included, answers JSON on request.
+- Against: an agent that always sends `Accept: application/json` gets text from one route.
+
+### Mail
+
+#### Mail when SMTP fails
+
+- Options: show the same page and log the error, as here, or tell the person the email didn't go.
+- Chosen: the same page, so the signup and reset pages never reveal whether an account exists.
+  The account page can resend the verification email.
+- Against: a person whose email never arrives has no hint why.
+
+### Calls to other services
+
+#### An account's share of GitHub's API calls
+
+- Options: count each account's calls per UTC hour, or in a token bucket that refills over an hour; in memory, or in SQLite as the hourly rate limits are.
+- Chosen: a token bucket of a tenth of the server's half of the hour's calls (250 with a token), in memory beside the per-minute rate limits.
+  It has no boundary at which an account gets two hours' worth at once, and a restart forgets at most one hour's count.
+- Against: a deploy hands every account a full share again.
+
+#### Pauses for hosts that ask the server to wait
 
 - Options: keep the pauses in memory or in SQLite; treat every GitHub 403 as a rate limit, or only one that says so; cap the waits or not.
 - Chosen: in memory, per host, with `api.github.com` for the API.
@@ -398,34 +435,32 @@ Once the owner settles one, move the answer into `docs/entry-format.md` or `docs
   The recheck job doesn't run while GitHub's API is paused, so a long wait costs no retries.
 - Against: a restart forgets a pause, so a deploy during GitHub's secondary limit sends one call too soon; and a rate-limit 403 worded otherwise is read as a plain error, retried at the next submission.
 
-## `FILEDRAWER_LINK_CHECKS=off`
+### Staging and checks
+
+#### The smoke-test account's screening note
+
+- Options: say "not screened" in the entry's screening note, or show it as a separate line the server owns.
+  (The owner decided on 2026-11-06 that the smoke account isn't screened at all, so the smoke test calls no model.)
+- Chosen: the screening note, as `staging smoke account: not screened`.
+  It is staging only (production refuses `FILEDRAWER_SMOKE_ACCOUNT`), and it needs no new card line.
+- Against: entry-format.md defines the screening note as the screen's doubt about `outcome`, quoted as model text, so the server's own words read as the model's.
+
+#### `FILEDRAWER_LINK_CHECKS=off`
 
 - Options: a setting that turns the checks off, or no setting, with every fixture the binary's tests submit kept free of listed-host links.
 - Chosen: the setting, which production refuses, like `FILEDRAWER_SCREENER=pass-all`.
   `crates/server/tests/smoke.rs` sets it, since `ops/smoke-staging eval` submits the `ops/screen-eval/` cases, which link github.com.
 - Against: one more setting, and the binary's tests no longer exercise the checks; the router tests do, with a fake web.
 
-## Staging without a GitHub token
+#### Staging without a GitHub token
 
 - Options: staging refuses to start without `FILEDRAWER_GITHUB_TOKEN`, as production does, or starts and logs a warning.
 - Chosen: it starts, with the warning, so a deploy before `ops/provision-vps github` has run doesn't fail.
 - Against: staging can run for days at 60 calls an hour, and when GitHub's commit page doesn't answer, most GitHub links get "pin not verified", which only `/staging/status` ("github allowance: 60 calls an hour") and the log say.
 
-## agent-pre-commit without `CHECK_BASE`
+#### agent-pre-commit without `CHECK_BASE`
 
 - Options: drop the hook's own record of passed trees (`checks-passed` in the git dir) and run every check whenever `CHECK_BASE` is unset, or keep the record as a fallback for when llm-toolbox's `agent-commit-gate` isn't on PATH.
 - Chosen: drop it.
   The gate already records each pass, and a base it offers is by construction a tree that passed this same check, which is what the record guarded; one record can't drift from another.
 - Against: an agent committing on the owner's host, which has no `agent-commit-gate`, now runs every check, as CI does, where since 68c462b it ran only what its staged paths needed.
-
-## A MIXED tab on the outcome divider cards
-
-- Options: the mockup's tabs (ALL, NULL, INCONCLUSIVE, EFFECT), or those and MIXED.
-- Chosen: MIXED as well, since `mixed` is one of `outcome`'s values and a filter that can't reach it hides those entries from people browsing by outcome.
-- Against: the owner chose the look with four tabs, and mixed entries may stay rare enough that ALL covers them.
-
-## No terms or privacy links in the footer yet
-
-- Options: link `/terms` and `/privacy` from every page now, as the mockups do, or leave them out until build step 5 writes them.
-- Chosen: leave them out, since the links would answer 404.
-- Against: the footer then changes again at step 5, and a page that names the licences without the privacy terms may read as complete.
