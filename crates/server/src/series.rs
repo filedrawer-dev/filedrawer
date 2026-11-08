@@ -40,19 +40,23 @@ pub async fn create(
     pool: &SqlitePool,
     account_id: &str,
     text: &SeriesText,
+    public: bool,
 ) -> Result<(String, String), sqlx::Error> {
     let id = format!("s-{}", ids::new_id());
     let key = ids::new_join_key();
     let hash = ids::token_hash(&key);
     let created_at = now();
+    let public_at = public.then_some(created_at.as_str());
     let mut transaction = crate::db::write_tx(pool).await?;
     let seq = sqlx::query_scalar!(
-        r#"INSERT INTO series (id, account_id, key_hash, created_at) VALUES (?, ?, ?, ?)
+        r#"INSERT INTO series (id, account_id, key_hash, created_at, public_at)
+           VALUES (?, ?, ?, ?, ?)
            RETURNING seq AS "seq!: i64""#,
         id,
         account_id,
         hash,
-        created_at
+        created_at,
+        public_at
     )
     .fetch_one(&mut *transaction)
     .await?;

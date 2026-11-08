@@ -684,3 +684,22 @@ async fn the_humans_command_refuses_what_isnt_a_token() {
         assert_eq!(std::fs::read_to_string(&file).unwrap(), old, "{typed:?}");
     }
 }
+
+#[tokio::test]
+async fn the_documents_offer_no_embargo_or_hidden_series_while_they_are_paused() {
+    // design.md, Embargo (paused, 2026-11-08): the documents name an embargo only to
+    // say it is refused, or for entries embargoed before the pause.
+    let text = every_document().await;
+    for line in text
+        .lines()
+        .filter(|line| line.to_lowercase().contains("embargo"))
+    {
+        assert!(
+            ["paused", "no release dates", "before 2026-11-08"]
+                .iter()
+                .any(|allowed| line.contains(allowed)),
+            "{line}"
+        );
+    }
+    assert!(!text.contains("waiting_on_series"));
+}

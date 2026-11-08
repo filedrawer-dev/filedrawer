@@ -95,7 +95,7 @@ screen.
                       field-test/ as batches (bin/field-test-batches builds them),
                       making the series its entries cite first, each a case; an
                       entry that passed while its series waits hidden, as eval's
-                      series do, counts as public
+                      series did before hidden series were paused, counts as public
   --resume RUNFILE    go on with the run RUNFILE records, its cases and tag
 EOF
 }
@@ -290,8 +290,7 @@ explain() {
 # with POST /series, which the server screens at once: a 429 saying the screening
 # budget is spent means the day's cap is, which sets DAY_SPENT to 1 (else 0); a 429
 # for the account's allowance doesn't. 503 means the model call fails. Of the reply
-# it prints only the first reason: a 201's body holds the new, hidden series' join
-# key.
+# it prints only the first reason: a 201's body holds the new series' join key.
 explain_undecided() {
   DAY_SPENT=0
   printf -- '---\ntitle: Screen check %s, refusal-rate setup\n---\n%s\n' "$tag" \
@@ -492,8 +491,8 @@ if [[ $mode == eval ]]; then
   judge() {
     local status
     status=$(field status)
-    # An entry that passed while its series is hidden waits on it: the screen passed it,
-    # and eval's series stay hidden.
+    # An entry that passed while its series is hidden waits on it: the screen passed it.
+    # Eval's series were hidden until hidden series were paused (design.md, Embargo).
     [[ $2 == public && $status == waiting_on_series ]] && status=public
     wanted[$2]=$(( ${wanted[$2]:-0} + 1 ))
     if [[ $status == "$2" ]]; then

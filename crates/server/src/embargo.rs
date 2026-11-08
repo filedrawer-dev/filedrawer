@@ -1,6 +1,66 @@
 //! Reading `embargo_until` at submission (design.md, Embargo).
 
+use analyzer::Refusal;
 use time::{Date, Month, OffsetDateTime, Time, UtcOffset, macros::format_description};
+
+/// Whether the server takes embargoes (design.md, Embargo: paused, the owner's
+/// decision of 2026-11-08). Every real configuration is `Paused`; the tests build
+/// `Open`, so the dormant code keeps its tests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Embargoes {
+    /// `embargo_until` is refused, and new series start public.
+    Paused,
+    /// Embargoes and hidden series work as design.md describes.
+    Open,
+}
+
+impl Embargoes {
+    /// Whether the server takes embargoes and hidden series.
+    pub fn taken(self) -> bool {
+        self == Embargoes::Open
+    }
+}
+
+/// Whether `named`, a version's `embargo_until`, repeats the date its previous
+/// version's text names. The text an agent edits still carries that date, so it asks
+/// for no new embargo.
+pub fn repeats(previous: Option<&str>, named: Option<&str>) -> bool {
+    previous.is_some() && parse_date(previous) == parse_date(named)
+}
+
+/// The analyzer's refusals that stand for one submission (entry-format.md, Accept,
+/// warn, and re-render: refused while embargoes are paused).
+pub struct Standing<'r> {
+    pub refusals: Vec<&'r Refusal>,
+    /// The paused refusal is among them, so the embargo rules' own reasons, which
+    /// would contradict it, aren't added.
+    pub refused_as_paused: bool,
+}
+
+impl<'r> Standing<'r> {
+    /// While embargoes are paused, a key asking for one stands unless it is a
+    /// `repeated` date, and it replaces an unreadable date's refusal. While they are
+    /// taken, it never stands.
+    pub fn of(refusals: &'r [Refusal], embargoes: Embargoes, repeated: bool) -> Standing<'r> {
+        let asks_for_embargo = |refusal: &Refusal| {
+            matches!(refusal, Refusal::EmbargoPaused { field }
+                if !(repeated && field == "embargo_until"))
+        };
+        let refused_as_paused = !embargoes.taken() && refusals.iter().any(asks_for_embargo);
+        let refusals = refusals
+            .iter()
+            .filter(|refusal| match refusal {
+                Refusal::EmbargoPaused { .. } => !embargoes.taken() && asks_for_embargo(refusal),
+                Refusal::EmbargoUnreadable(_) => !refused_as_paused,
+                _ => true,
+            })
+            .collect();
+        Standing {
+            refusals,
+            refused_as_paused,
+        }
+    }
+}
 
 /// What an entry's `embargo_until` means for it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

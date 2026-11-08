@@ -12,7 +12,7 @@ use axum::response::Response;
 use serde_json::json;
 
 use crate::auth::TokenAccount;
-use crate::embargo::{kept_date, parse_date, release};
+use crate::embargo::{Embargoes, Standing, kept_date, parse_date, release, repeats};
 use crate::entries::{self, NewEntry, OwnEntry};
 use crate::error::AppError;
 use crate::jobs::{end_hold, hold_until};
@@ -38,11 +38,13 @@ pub(crate) struct Accepted {
 }
 
 /// What an earlier submission fixes for a resubmission or a new version: the first
-/// submission date the embargo cap counts from, and the embargo in force, which a
-/// version keeps.
+/// submission date the embargo cap counts from, the embargo in force, which a
+/// version keeps, and the previous version's stored date, which a version may repeat.
 pub(crate) struct Prior<'a> {
     first_submitted_at: &'a str,
     embargo_in_force: Option<&'a str>,
+    /// The `embargo_until` its previous version's text names.
+    previous_date: Option<String>,
 }
 
 impl<'a> Prior<'a> {
@@ -55,6 +57,7 @@ impl<'a> Prior<'a> {
                 .embargo_until
                 .as_deref()
                 .filter(|_| entry.status == "embargoed"),
+            previous_date: analyze(&entry.source).fields.embargo_until,
         }
     }
 
@@ -65,13 +68,19 @@ impl<'a> Prior<'a> {
         Prior {
             first_submitted_at: &entry.first_submitted_at,
             embargo_in_force: previous.and_then(|previous| Prior::of(previous).embargo_in_force),
+            previous_date: previous
+                .and_then(|previous| analyze(&previous.source).fields.embargo_until),
         }
     }
 }
 
-/// Runs every check a submission must pass, given what an earlier submission fixes,
-/// and lists every reason it fails.
-pub(crate) fn accept(body: &Bytes, prior: Option<Prior<'_>>) -> Result<Accepted, AppError> {
+/// Runs every check a submission must pass, given what an earlier submission fixes
+/// and whether the server takes embargoes, and lists every reason it fails.
+pub(crate) fn accept(
+    body: &Bytes,
+    prior: Option<Prior<'_>>,
+    embargoes: Embargoes,
+) -> Result<Accepted, AppError> {
     if body.len() > MAX_ENTRY_BYTES {
         return Err(AppError::Refused {
             status: StatusCode::PAYLOAD_TOO_LARGE,
@@ -84,7 +93,18 @@ pub(crate) fn accept(body: &Bytes, prior: Option<Prior<'_>>) -> Result<Accepted,
     })?;
     let source = stored_text(text);
     let mut analysis = analyze(&source);
-    let mut reasons: Vec<String> = analysis.refusals.iter().map(ToString::to_string).collect();
+    let repeated = repeats(
+        prior
+            .as_ref()
+            .and_then(|prior| prior.previous_date.as_deref()),
+        analysis.fields.embargo_until.as_deref(),
+    );
+    if repeated {
+        analysis.fields.embargo_until = None;
+    }
+    let standing = Standing::of(&analysis.refusals, embargoes, repeated);
+    let refused_as_paused = standing.refused_as_paused;
+    let mut reasons: Vec<String> = standing.refusals.iter().map(ToString::to_string).collect();
     let (source, cite) = match analysis.fields.series.as_deref() {
         None => (source, None),
         Some(value) => {
@@ -120,18 +140,21 @@ pub(crate) fn accept(body: &Bytes, prior: Option<Prior<'_>>) -> Result<Accepted,
         .and_then(|prior| OffsetDateTime::parse(prior.first_submitted_at, &Rfc3339).ok())
         .unwrap_or(now);
     let embargo = analysis.fields.embargo_until.as_deref();
-    match prior
-        .as_ref()
-        .and_then(|prior| parse_date(prior.embargo_in_force))
-    {
-        // The date in force was checked when it was set, so no cap applies again.
-        Some(in_force) => match kept_date(in_force, embargo) {
-            Ok(kept) => analysis.fields.embargo_until = Some(kept.to_string()),
-            Err(why) => reasons.push(why.to_string()),
-        },
-        None => {
-            if let Err(why) = release(embargo, now, first_submitted) {
-                reasons.push(why.to_string());
+    // The paused refusal comes alone: the embargo rules' own reasons would contradict it.
+    if !refused_as_paused {
+        match prior
+            .as_ref()
+            .and_then(|prior| parse_date(prior.embargo_in_force))
+        {
+            // The date in force was checked when it was set, so no cap applies again.
+            Some(in_force) => match kept_date(in_force, embargo) {
+                Ok(kept) => analysis.fields.embargo_until = Some(kept.to_string()),
+                Err(why) => reasons.push(why.to_string()),
+            },
+            None => {
+                if let Err(why) = release(embargo, now, first_submitted) {
+                    reasons.push(why.to_string());
+                }
             }
         }
     }
@@ -325,7 +348,7 @@ pub async fn submit(
     format: Format,
     body: Bytes,
 ) -> Result<Response, AppError> {
-    let accepted = accept(&body, None)?;
+    let accepted = accept(&body, None, state.embargoes)?;
     check_references(&state, &account, &accepted, SlugRule::New, None).await?;
     let cited = one_cite(&state, &account, &accepted).await?;
     let set = one_set(&state, &account, &accepted).await?;
@@ -388,7 +411,7 @@ pub async fn new_version(
     if let Some(conflict) = newer_version(&state, &id, entry.seq).await? {
         return Err(conflict);
     }
-    let accepted = accept(&body, Some(Prior::of(&entry)))?;
+    let accepted = accept(&body, Some(Prior::of(&entry)), state.embargoes)?;
     let chain_slug = entries::chain_slug(&state.pool, entry.seq).await?;
     let register_slug = chain_slug.is_none() && accepted.analysis.fields.slug.is_some();
     check_references(
@@ -523,7 +546,11 @@ pub async fn resubmit(
         Some(previous) => entries::own_entry(&state.pool, previous, &account.id).await?,
         None => None,
     };
-    let accepted = accept(&body, Some(Prior::for_put(&entry, previous.as_ref())))?;
+    let accepted = accept(
+        &body,
+        Some(Prior::for_put(&entry, previous.as_ref())),
+        state.embargoes,
+    )?;
     // A slug names the entry for good, and other entries may already refer to it.
     let kept = analyzer::analyze(&entry.source).fields.slug;
     check_references(

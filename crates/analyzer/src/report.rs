@@ -27,6 +27,11 @@ pub enum Refusal {
         command: String,
     },
     EmbargoUnreadable(String),
+    /// A front-matter key asking for an embargo, refused while embargoes are paused
+    /// (entry-format.md, Accept, warn, and re-render).
+    EmbargoPaused {
+        field: String,
+    },
     /// A long run of encoded text that hides readable text, such as base64: `kind`
     /// names the encoding, and `start` is the run's first characters.
     EncodedText {
@@ -79,6 +84,11 @@ impl fmt::Display for Refusal {
                 f,
                 "`embargo_until: {value}` is not a date written YYYY-MM-DD; the server won't \
                  guess at an embargo, since publishing too early can't be undone"
+            ),
+            Refusal::EmbargoPaused { field } => write!(
+                f,
+                "`{field}` asks for an embargo, and embargoes are paused: the archive takes no \
+                 release dates for now. Leave `{field}` out, and submit once the entry may be public"
             ),
             Refusal::MovingRef { command } => write!(
                 f,

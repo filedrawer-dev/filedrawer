@@ -427,9 +427,33 @@ fn an_embargo_that_isnt_a_date_is_refused() {
             analysis.refusals
         );
     }
-    let fine = analyze(&entry("embargo_until: 2026-12-20\n", ""));
-    assert_eq!(fine.refusals, vec![]);
-    assert_eq!(fine.fields.embargo_until.as_deref(), Some("2026-12-20"));
+    // A date is read, and refused only because embargoes are paused.
+    let date = analyze(&entry("embargo_until: 2026-12-20\n", ""));
+    assert_eq!(
+        date.refusals,
+        vec![Refusal::EmbargoPaused {
+            field: "embargo_until".into()
+        }]
+    );
+    assert_eq!(date.fields.embargo_until.as_deref(), Some("2026-12-20"));
+}
+
+#[test]
+fn any_field_asking_for_an_embargo_is_refused_while_embargoes_are_paused() {
+    // design.md, Embargo (paused, 2026-11-08): a near-miss name would otherwise be
+    // stored as written and published, though its author meant to hold the entry.
+    for field in ["embargo", "embargo_date", "Embargoed_until"] {
+        let analysis = analyze(&entry(&format!("{field}: 2026-12-20\n"), ""));
+        assert_eq!(
+            analysis.refusals,
+            vec![Refusal::EmbargoPaused {
+                field: field.into()
+            }],
+            "{field}"
+        );
+    }
+    let empty = analyze(&entry("embargo_until:\n", ""));
+    assert_eq!(empty.refusals, vec![]);
 }
 
 #[test]

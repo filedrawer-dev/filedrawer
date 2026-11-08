@@ -281,7 +281,21 @@ impl Reader {
             "series" => self.fields.series = self.text(name, value),
             "attachments" => self.fields.attachments = self.text(name, value),
             "written_by" => self.fields.written_by = self.mapping_list(name, value, Self::writer),
-            "embargo_until" => self.fields.embargo_until = self.embargo(value),
+            "embargo_until" => {
+                if !matches!(value, Yaml::Null) {
+                    self.refusals.push(Refusal::EmbargoPaused {
+                        field: name.to_string(),
+                    });
+                }
+                self.fields.embargo_until = self.embargo(value);
+            }
+            // A near miss would be stored as written and published, though its
+            // author meant to hold the entry (design.md, Embargo: paused).
+            asked if asked.to_ascii_lowercase().starts_with("embargo") => {
+                self.refusals.push(Refusal::EmbargoPaused {
+                    field: asked.to_string(),
+                });
+            }
             "label" => self.warn(
                 WarningKind::StrippedField,
                 "the server removed `label`; cards come from the analyzer, not the entry".into(),

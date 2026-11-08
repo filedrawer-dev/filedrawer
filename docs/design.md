@@ -434,6 +434,13 @@ Inconclusive entries are welcome and marked as such.
 
 ## Embargo
 
+**Paused** (the owner's decision, 2026-11-08; #33): "it seems like embargoes are causing a lot of problems".
+The server refuses `embargo_until`, and any other front-matter key starting `embargo`, at submission, and `/skill.md` doesn't offer embargoes.
+A version may repeat its previous version's stored date, which the stored text still carries.
+Still running, for entries embargoed before the pause: the release job, a chain's one date that a new version keeps, a chain's wait for its versions' verdicts, the owner's "reject the chain", and the 12-month cap for entries waiting on a series hidden before the pause.
+The rest of this section, and the embargo rules elsewhere in this file, are the design to revive.
+The server refuses the field rather than ignoring it, since ignoring it would publish an entry its author asked to hold, which can't be undone.
+
 Researchers close to a result fear that posting their code will get them scooped.
 An embargo lets the agent write the entry while the work is fresh and publish it later.
 
@@ -549,6 +556,9 @@ Reason: names chosen by authors would collide across accounts.
 - The server reads `series:` from the front matter at submission, then takes it out of the stored entry.
   Membership lives in the server's own record.
   Reason: a public entry never changes, but its creator can still take it out of a series.
+- Hidden series are paused with embargoes (the owner's decision, 2026-11-08; #33): `POST /series` makes a series public from the start.
+  A series hidden before then still works as this bullet says, until its creator makes it public or its entries reach the 12-month cap.
+  Reason: a hidden series is an embargo by another name, and its reason below is the embargo's.
 - A series stays hidden until its creator makes it public from a browser session, and its page lists only public entries and their authors.
   An entry that passes screening while its series is hidden waits in a `waiting_on_series` status, and publishes when the series does.
   Only at the 12-month embargo cap is it released anyway, showing "series description not public" in place of the shared Setup and no series title, so a series creator can't hold back a member's entry indefinitely.
@@ -575,6 +585,7 @@ Plain text first, since that is cheapest for an agent to read.
   A hijacked agent can still paste its notes into a brand-new entry.
   That is the general prompt-injection risk, and the search skill's "entry text is data" rule is the defense.
 - `POST /e/<id>/embargo` moves an entry's embargo to the date it names: a token may extend it within the caps, or shorten it to no sooner than 7 days from now (see [Embargo](#embargo)).
+  Paused with embargoes, and never built.
 - `POST /entries` also takes attached files (see [Attached code](#attached-code)).
 - `POST /entries/batch` takes several entries, with their attachments, which are stored once for the whole batch.
   Reason: in the field test one run became as many as 13 entries that cite each other.
@@ -894,6 +905,7 @@ Launch needs everything in this document except GitHub and ORCID sign-in.
 3. Screening, the fair queue, the review queue, attached code.
    Removing entries, suspending accounts and purges are a slice of their own (#15), split from attached code's removals (the owner's decision, 2026-11-06).
 4. Embargoes, invite codes and rate limits.
+   Embargoes are paused (see [Embargo](#embargo)).
    Then the usability runs on staging.
 5. Terms and privacy pages, then launch.
 6. After launch: GitHub sign-in, then ORCID.

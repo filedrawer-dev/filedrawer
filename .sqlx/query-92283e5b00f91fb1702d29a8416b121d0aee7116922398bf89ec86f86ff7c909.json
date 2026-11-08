@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "INSERT INTO series (id, account_id, key_hash, created_at) VALUES (?, ?, ?, ?)\n           RETURNING seq AS \"seq!: i64\"",
+  "query": "INSERT INTO series (id, account_id, key_hash, created_at, public_at)\n           VALUES (?, ?, ?, ?, ?)\n           RETURNING seq AS \"seq!: i64\"",
   "describe": {
     "columns": [
       {
@@ -16,11 +16,11 @@
       }
     ],
     "parameters": {
-      "Right": 4
+      "Right": 5
     },
     "nullable": [
       null
     ]
   },
-  "hash": "85140cd8dfaa336e5f97a4aa4cfc481f192fd2030ffbd7c0d8658a61b2462754"
+  "hash": "92283e5b00f91fb1702d29a8416b121d0aee7116922398bf89ec86f86ff7c909"
 }

@@ -110,17 +110,28 @@ pub async fn create(
     body: Bytes,
 ) -> Result<Response, AppError> {
     let text = accept_series(&state, &account, None, &body).await?;
-    let (id, key) = series::create(&state.pool, &account.id, &text).await?;
+    // While embargoes are paused, so are hidden series (the owner's decision,
+    // 2026-11-08): a new one is public from the start.
+    let public = !state.embargoes.taken();
+    let (id, key) = series::create(&state.pool, &account.id, &text, public).await?;
     let url = format!("{}/series/{id}", state.public_url);
+    let (status, until) = if public {
+        ("public", "")
+    } else {
+        (
+            "hidden",
+            ", and its creator makes it public from the account page in a browser; until then its entries wait",
+        )
+    };
     let reply = format!(
-        "id: {id}\nstatus: hidden\nversion: 1\nkey: {key}\nurl: {url}\njoin: {url}/join\n\
-         Keep the key private. A teammate's agent joins by sending it with POST to the join url, entries cite the series as `series: {id}@1`, and its creator makes it public from the account page in a browser; until then its entries wait.\n\
+        "id: {id}\nstatus: {status}\nversion: 1\nkey: {key}\nurl: {url}\njoin: {url}/join\n\
+         Keep the key private. A teammate's agent joins by sending it with POST to the join url, entries cite the series as `series: {id}@1`{until}.\n\
          {DELIMITER}\ntitle: {}\n",
         one_line(&text.title)
     );
     let json = json!({
         "id": id,
-        "status": "hidden",
+        "status": status,
         "version": 1,
         "key": key,
         "url": url,

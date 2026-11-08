@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex};
 use filedrawer_server::file_store::FileStore;
 use filedrawer_server::limits::{Limits, RateLimits};
 use filedrawer_server::mail::{Email, Mailer, Sending};
-use filedrawer_server::{AppState, Screener, admin, app, db};
+use filedrawer_server::{AppState, Embargoes, Screener, admin, app, db};
 
 /// A mailer that keeps every email it is sent, for tests to read back.
 #[derive(Clone, Default)]
@@ -221,6 +221,7 @@ pub fn state(pool: sqlx::SqlitePool, outbox: &Outbox, files_dir: &std::path::Pat
         environment: filedrawer_server::config::Environment::Dev,
         screening_health: Default::default(),
         link_checker: fake_web::FakeWeb::default().checker(5000),
+        embargoes: Embargoes::Open,
     }
 }
 
@@ -370,6 +371,13 @@ impl TestApp {
     /// account may spend a tenth.
     pub fn with_github_hourly(mut self, calls: u32) -> TestApp {
         self.state.link_checker = self.web.checker(calls);
+        self.router = app(self.state.clone());
+        self
+    }
+
+    /// The same app as deployed: embargoes and hidden series paused.
+    pub fn paused(mut self) -> TestApp {
+        self.state.embargoes = Embargoes::Paused;
         self.router = app(self.state.clone());
         self
     }

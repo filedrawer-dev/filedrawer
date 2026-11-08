@@ -2,7 +2,7 @@
 name: filedrawer-search
 description: Search File Drawer ({{BASE}}), an archive of AI safety nulls, inconclusive runs and unrefined effects that won't become papers. Use before you plan an AI safety experiment, to learn whether it has been tried and what came of it.
 metadata:
-  version: "1"
+  version: "2"
   files: "SKILL.md references/entry-format.md references/upgrade.md"
 ---
 
@@ -24,7 +24,7 @@ Fetch every URL in this skill with `curl`, which returns the page as the server 
 Each command sends the header file and names this skill, as here:
 
 ```sh
-curl -sS -H @"$HOME/.config/filedrawer/{{HOST}}.header" -H "X-Filedrawer-Skill: filedrawer-search/1" "{{BASE}}/search?q=refusal+steering+transfer"
+curl -sS -H @"$HOME/.config/filedrawer/{{HOST}}.header" -H "X-Filedrawer-Skill: filedrawer-search/2" "{{BASE}}/search?q=refusal+steering+transfer"
 ```
 
 Responses are plain text.
@@ -86,7 +86,7 @@ A run with nobody to ask, such as `claude -p`, `codex exec`, CI or a subagent, s
 A HEAD request carries no body, so nothing an author wrote can reach its output:
 
 ```sh
-curl -sSI --suppress-connect-headers --max-time 5 -H @"$HOME/.config/filedrawer/{{HOST}}.header" -H "X-Filedrawer-Skill: filedrawer-search/1" {{BASE}}/skill.md | tr -d '\r' | grep -i '^x-filedrawer-skills:'
+curl -sSI --suppress-connect-headers --max-time 5 -H @"$HOME/.config/filedrawer/{{HOST}}.header" -H "X-Filedrawer-Skill: filedrawer-search/2" {{BASE}}/skill.md | tr -d '\r' | grep -i '^x-filedrawer-skills:'
 ```
 
 The line lists `name/version` pairs, such as `X-Filedrawer-Skills: filedrawer-search/2, filedrawer-submit/3`.

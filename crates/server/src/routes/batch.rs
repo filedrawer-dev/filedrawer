@@ -125,7 +125,7 @@ pub async fn submit_batch(
             Some(slug) => format!("entry {position} (slug {slug})"),
             None => format!("entry {position}"),
         };
-        match accept(&bytes, None) {
+        match accept(&bytes, None, state.embargoes) {
             Ok(member) => {
                 if member.analysis.fields.slug.is_none() {
                     problems.push(format!("{label}: every entry in a batch needs a `slug`"));

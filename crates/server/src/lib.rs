@@ -40,6 +40,7 @@ use axum::routing::{MethodRouter, get, post};
 use sqlx::SqlitePool;
 
 pub use attachments::StoreError;
+pub use embargo::Embargoes;
 pub use screening::Screener;
 
 /// The largest request body the server reads. Entries are capped at 100 KiB by the
@@ -86,6 +87,8 @@ pub struct AppState {
     pub screening_health: std::sync::Arc<screening::ScreeningHealth>,
     /// Fetches `code` and `logs` links, and asks GitHub about commits.
     pub link_checker: std::sync::Arc<link_checks::LinkChecker>,
+    /// Whether embargoes and hidden series are taken: `Paused` everywhere but tests.
+    pub embargoes: Embargoes,
 }
 
 /// The free disk an upload must leave (design.md, Attached code: 5 GB).

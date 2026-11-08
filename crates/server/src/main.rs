@@ -251,6 +251,8 @@ async fn serve() -> ExitCode {
         } else {
             LinkChecker::off()
         }),
+        // Paused (design.md, Embargo); no setting opens them.
+        embargoes: filedrawer_server::Embargoes::Paused,
     };
     tokio::spawn(filedrawer_server::jobs::run_publisher(
         state.clone(),
