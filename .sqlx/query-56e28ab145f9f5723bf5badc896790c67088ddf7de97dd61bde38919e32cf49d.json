@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE attachment_sets SET deleted_at = ?2 WHERE seq = ?1\n           AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.attachment_set_seq = ?1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "56e28ab145f9f5723bf5badc896790c67088ddf7de97dd61bde38919e32cf49d"
+}

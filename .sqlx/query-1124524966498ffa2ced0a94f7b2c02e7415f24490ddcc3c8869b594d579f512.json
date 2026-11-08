@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO deleted_entries (id, account_id, batch_id, deleted_at)\n             VALUES (?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "1124524966498ffa2ced0a94f7b2c02e7415f24490ddcc3c8869b594d579f512"
+}

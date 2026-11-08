@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO screenings (entry_seq, account_id, model, input_tokens, output_tokens,\n                 cost_nano_usd, at, attachment)\n             VALUES ((SELECT seq FROM entries WHERE seq = ?), ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 8
+    },
+    "nullable": []
+  },
+  "hash": "be2e3eee9edb50ffc8c17f9e912d3e93c1b1c53a0de4120909658666babda57b"
+}

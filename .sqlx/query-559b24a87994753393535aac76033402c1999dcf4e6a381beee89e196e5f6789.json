@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id, deleted_at FROM deleted_entries\n         WHERE batch_id = ? AND account_id = ? ORDER BY rowid",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "deleted_entries",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "deleted_at",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "deleted_entries",
+            "name": "deleted_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "559b24a87994753393535aac76033402c1999dcf4e6a381beee89e196e5f6789"
+}

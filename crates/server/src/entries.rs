@@ -136,6 +136,8 @@ pub struct Previous<'a> {
 /// An accepted submission, as `insert_on` stores it.
 pub struct NewEntry<'a> {
     pub account_id: &'a str,
+    /// The token that submitted it, the only one that may delete it while pending.
+    pub token_id: &'a str,
     pub source: &'a str,
     pub analysis: &'a Analysis,
     /// When its hold ends.
@@ -164,6 +166,7 @@ pub async fn insert_on(
 ) -> Result<(i64, String), sqlx::Error> {
     let NewEntry {
         account_id,
+        token_id,
         source,
         analysis,
         hold_until,
@@ -184,8 +187,9 @@ pub async fn insert_on(
     let seq = sqlx::query_scalar!(
         r#"INSERT INTO entries (id, account_id, status, source, submitted_at, first_submitted_at,
                embargo_until, analyzer_version, outcome, kind, stage, hold_until, previous_seq,
-               batch_seq, series_seq, series_version, series_section, attachment_set_seq)
-           VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               batch_seq, series_seq, series_version, series_section, attachment_set_seq,
+               token_id)
+           VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            RETURNING seq AS "seq!: i64""#,
         id,
         account_id,
@@ -203,7 +207,8 @@ pub async fn insert_on(
         series_seq,
         series_version,
         series_section,
-        attachments
+        attachments,
+        token_id
     )
     .fetch_one(&mut *transaction)
     .await?;
@@ -254,18 +259,36 @@ async fn write_runs(
     Ok(())
 }
 
-/// Replaces a pending entry's text and everything read from it, and restarts its
-/// hold, in the caller's transaction. Its ID and first submission date stay. Returns
-/// false if it is no longer pending.
+/// What a PUT sends in place of a pending entry: the accepted text and what was read
+/// from it, the end of its new hold, and the token that sent it.
+pub struct Replacement<'a> {
+    /// The token that sent it, which becomes the one that may delete the entry.
+    pub token_id: &'a str,
+    pub source: &'a str,
+    pub analysis: &'a Analysis,
+    pub hold_until: &'a str,
+    /// The series version it cites, checked beforehand.
+    pub series: Option<&'a Cited>,
+    /// The attachment set it cites, checked beforehand to be its account's.
+    pub attachments: Option<i64>,
+}
+
+/// Replaces pending entry `seq`'s text and everything read from it with
+/// `replacement`, and restarts its hold, in the caller's transaction. Its ID and
+/// first submission date stay. Returns false if it is no longer pending.
 pub async fn replace_on(
     transaction: &mut sqlx::SqliteConnection,
     seq: i64,
-    source: &str,
-    analysis: &Analysis,
-    hold_until: &str,
-    series: Option<&Cited>,
-    attachments: Option<i64>,
+    replacement: &Replacement<'_>,
 ) -> Result<bool, sqlx::Error> {
+    let Replacement {
+        token_id,
+        source,
+        analysis,
+        hold_until,
+        series,
+        attachments,
+    } = *replacement;
     let submitted_at = now();
     let columns = columns(analysis);
     let (series_seq, series_version, series_section) = series_columns(series);
@@ -273,7 +296,7 @@ pub async fn replace_on(
         "UPDATE entries SET source = ?, submitted_at = ?, embargo_until = ?,
              analyzer_version = ?, outcome = ?, kind = ?, stage = ?, hold_until = ?,
              series_seq = ?, series_version = ?, series_section = ?, series_removed_at = NULL,
-             attachment_set_seq = ?
+             attachment_set_seq = ?, token_id = ?
          WHERE seq = ? AND status = 'pending'",
         source,
         submitted_at,
@@ -287,6 +310,7 @@ pub async fn replace_on(
         series_version,
         series_section,
         attachments,
+        token_id,
         seq
     )
     .execute(&mut *transaction)
@@ -1072,36 +1096,51 @@ pub async fn run_declared(
 }
 
 /// The runs an entry uses, each with its description once every entry using it is
-/// public (design.md, Agent interface), or `None` before then.
+/// public ([`run_description`]), or `None` before then.
 pub async fn entry_runs(
     pool: &SqlitePool,
     id: &str,
 ) -> Result<Vec<(String, Option<String>)>, sqlx::Error> {
-    let rows = sqlx::query!(
-        r#"SELECT r.id, r.declaration,
-                  NOT EXISTS (
-                      SELECT 1 FROM entry_runs other JOIN entries x ON x.seq = other.entry_seq
-                      WHERE other.account_id = r.account_id AND other.run_id = r.id
-                        AND x.status != 'public'
-                  ) AS "all_public!: bool"
-           FROM entry_runs er JOIN runs r ON r.account_id = er.account_id AND r.id = er.run_id
-           WHERE er.entry_seq = (SELECT seq FROM entries WHERE id = ?) ORDER BY r.id"#,
+    let mut connection = pool.acquire().await?;
+    let runs = sqlx::query!(
+        "SELECT account_id, run_id FROM entry_runs
+         WHERE entry_seq = (SELECT seq FROM entries WHERE id = ?) ORDER BY run_id",
         id
     )
-    .fetch_all(pool)
+    .fetch_all(&mut *connection)
     .await?;
-    Ok(rows
-        .into_iter()
-        .map(|row| {
-            let description = row.all_public.then(|| {
-                serde_json::from_str::<serde_json::Value>(&row.declaration)
-                    .ok()
-                    .and_then(|run| run["description"].as_str().map(str::to_string))
-                    .unwrap_or_default()
-            });
-            (row.id, description)
-        })
-        .collect())
+    let mut described = Vec::new();
+    for run in runs {
+        let description = run_description(&mut connection, &run.account_id, &run.run_id).await?;
+        described.push((run.run_id, description));
+    }
+    Ok(described)
+}
+
+/// The description of `account_id`'s run `run_id` once every entry using it is
+/// public (design.md, Agent interface), and `None` before then or with no such run.
+/// A run's description is author text, shown only once no hidden entry uses it.
+pub async fn run_description(
+    connection: &mut sqlx::SqliteConnection,
+    account_id: &str,
+    run_id: &str,
+) -> Result<Option<String>, sqlx::Error> {
+    let declaration = sqlx::query_scalar!(
+        "SELECT r.declaration FROM runs r WHERE r.account_id = ?1 AND r.id = ?2
+           AND NOT EXISTS (
+               SELECT 1 FROM entry_runs other JOIN entries x ON x.seq = other.entry_seq
+               WHERE other.account_id = ?1 AND other.run_id = ?2 AND x.status != 'public')",
+        account_id,
+        run_id
+    )
+    .fetch_optional(&mut *connection)
+    .await?;
+    Ok(declaration.map(|declaration| {
+        serde_json::from_str::<serde_json::Value>(&declaration)
+            .ok()
+            .and_then(|run| run["description"].as_str().map(str::to_string))
+            .unwrap_or_default()
+    }))
 }
 
 /// Stores a batch and returns its row number and ID.
@@ -1607,4 +1646,80 @@ pub async fn seq_of(pool: &SqlitePool, id: &str) -> Result<Option<i64>, sqlx::Er
     sqlx::query_scalar!(r#"SELECT seq AS "seq!: i64" FROM entries WHERE id = ?"#, id)
         .fetch_optional(pool)
         .await
+}
+
+/// One of an account's entries, as `GET /entries/mine` lists it.
+pub struct Mine {
+    pub id: String,
+    pub status: String,
+    /// Its chain's slug, while the account holds it.
+    pub slug: Option<String>,
+    pub title: Option<String>,
+    pub code: Option<String>,
+}
+
+/// Whether the `code` link `code` lies in the repo at `repo`: it is that URL, or goes
+/// on from it with a path, query or fragment, ignoring case.
+fn in_repo(code: &str, repo: &str) -> bool {
+    let code = code.to_lowercase();
+    let repo = repo.to_lowercase();
+    code.strip_prefix(&repo)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with(['/', '?', '#']))
+}
+
+/// `account_id`'s entries, newest first, leaving out those the owner removed, at
+/// `offset` and at most `limit` of them; with `repo`, only those whose `code` link
+/// lies in that repo. The link is read from each entry's text, so a repo filter
+/// reads every entry whose text holds the repo's URL, and pages after.
+pub async fn mine(
+    pool: &SqlitePool,
+    account_id: &str,
+    repo: Option<&str>,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<Mine>, sqlx::Error> {
+    // SQLite reads a negative LIMIT as none.
+    let (rows_limit, rows_offset) = if repo.is_some() {
+        (-1, 0)
+    } else {
+        (limit, offset)
+    };
+    let needle = repo.map(str::to_lowercase);
+    let rows = sqlx::query!(
+        r#"SELECT seq AS "seq!: i64", id, status, source FROM entries
+           WHERE account_id = ?1 AND status != 'removed'
+             AND (?2 IS NULL OR instr(lower(source), ?2) > 0)
+           ORDER BY seq DESC LIMIT ?3 OFFSET ?4"#,
+        account_id,
+        needle,
+        rows_limit,
+        rows_offset
+    )
+    .fetch_all(pool)
+    .await?;
+    let mut listed = Vec::new();
+    for row in rows {
+        let fields = analyze(&row.source).fields;
+        if let Some(repo) = repo
+            && !fields
+                .code
+                .as_deref()
+                .is_some_and(|code| in_repo(code, repo))
+        {
+            continue;
+        }
+        listed.push(Mine {
+            slug: chain_slug(pool, row.seq).await?,
+            id: row.id,
+            status: row.status,
+            title: fields.title,
+            code: fields.code,
+        });
+    }
+    if repo.is_some() {
+        let skip = usize::try_from(offset).unwrap_or(usize::MAX);
+        let take = usize::try_from(limit).unwrap_or(usize::MAX);
+        listed = listed.into_iter().skip(skip).take(take).collect();
+    }
+    Ok(listed)
 }

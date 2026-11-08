@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT s.id, v.title FROM series_versions v JOIN series s ON s.seq = v.series_seq\n               WHERE v.series_seq = ? AND v.version = ? AND v.readable_at IS NOT NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "series",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "title",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "series_versions",
+            "name": "title"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "66588281ecd648f6a9e026ea80cc78dea771dc83e38fa1de79ad0e5e8bcd6b4e"
+}

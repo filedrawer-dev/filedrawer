@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE screenings SET entry_seq = NULL WHERE entry_seq = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "c98284b5e23ecee54f8612c160685dd9aec939dafc489e8a40436e0241c6c738"
+}

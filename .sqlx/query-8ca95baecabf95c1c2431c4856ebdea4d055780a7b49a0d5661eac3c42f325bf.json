@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT seq AS \"seq!: i64\" FROM attachment_sets WHERE id = ? AND account_id = ?",
+  "query": "SELECT seq AS \"seq!: i64\" FROM entries\n           WHERE account_id = ? AND status NOT IN ('public', 'removed')",
   "describe": {
     "columns": [
       {
@@ -9,18 +9,18 @@
         "type_info": "Integer",
         "origin": {
           "Table": {
-            "table": "attachment_sets",
+            "table": "entries",
             "name": "seq"
           }
         }
       }
     ],
     "parameters": {
-      "Right": 2
+      "Right": 1
     },
     "nullable": [
-      false
+      null
     ]
   },
-  "hash": "d52870dd5a34f2a6d29b72f906ec03a0450cb5a3b4dfd5c5361bcffbdcf442ef"
+  "hash": "8ca95baecabf95c1c2431c4856ebdea4d055780a7b49a0d5661eac3c42f325bf"
 }

@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT seq AS \"seq!: i64\" FROM attachment_sets\n           WHERE id = ? AND account_id = ? AND deleted_at IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "seq!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "attachment_sets",
+            "name": "seq"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "2459b2ae8fc1855df9695276e802df558f61c59630315400c5a080a9980bbfaa"
+}

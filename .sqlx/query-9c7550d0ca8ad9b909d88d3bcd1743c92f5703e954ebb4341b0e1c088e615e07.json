@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH RECURSIVE later(seq) AS (\n               SELECT e.seq FROM entries e\n               WHERE e.previous_seq = ?1 AND e.status NOT IN ('rejected', 'withdrawn', 'removed')\n               UNION ALL\n               SELECT e.seq FROM entries e JOIN later l ON e.previous_seq = l.seq\n               WHERE e.status NOT IN ('rejected', 'withdrawn', 'removed')\n           )\n           SELECT seq AS \"seq!: i64\" FROM later ORDER BY seq DESC LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "seq!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "seq"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "9c7550d0ca8ad9b909d88d3bcd1743c92f5703e954ebb4341b0e1c088e615e07"
+}

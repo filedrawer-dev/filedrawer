@@ -261,7 +261,11 @@ async fn the_reply_keeps_author_text_below_a_delimiter() {
         .lines()
         .filter_map(|line| line.split_once(": ").map(|(k, _)| k))
         .collect();
-    assert_eq!(keys, vec!["id", "status", "publish_at", "url"], "{server}");
+    assert_eq!(
+        keys,
+        vec!["id", "status", "publish_at", "url", "account"],
+        "{server}"
+    );
     assert!(author.contains("primary row: "), "{author}");
     assert!(author.contains("warning: "), "{author}");
     assert!(
@@ -292,4 +296,44 @@ async fn a_lowercase_bearer_works_and_a_401_says_how_to_authenticate() {
     .unwrap();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     assert_eq!(response.headers()["www-authenticate"], "Bearer");
+}
+
+#[tokio::test]
+async fn each_submission_and_replacement_names_the_account_it_was_posted_as() {
+    let app = test_app().await;
+    let line = format!("account: {} (Ada)", app.account);
+    let held = app.post("/entries", entry("T", "")).await;
+    assert_eq!(held.status, StatusCode::CREATED, "{}", held.body);
+    assert!(held.body.lines().any(|l| l == line), "{}", held.body);
+    let id = common::id_in(&held.body);
+    let put = app
+        .put_as(&format!("/e/{id}"), &app.token, entry("T again", ""))
+        .await;
+    assert_eq!(put.status, StatusCode::OK, "{}", put.body);
+    assert!(put.body.lines().any(|l| l == line), "{}", put.body);
+    app.post(&format!("/e/{id}/publish"), "").await;
+    let version = app
+        .post(&format!("/e/{id}/versions"), entry("T, corrected", ""))
+        .await;
+    assert_eq!(version.status, StatusCode::CREATED, "{}", version.body);
+    assert!(version.body.lines().any(|l| l == line), "{}", version.body);
+    let batch = serde_json::json!({"entries": [entry("B", "slug: b\n")]}).to_string();
+    let batched = app.post("/entries/batch", batch).await;
+    assert_eq!(batched.status, StatusCode::CREATED, "{}", batched.body);
+    assert!(batched.body.lines().any(|l| l == line), "{}", batched.body);
+
+    let json = app
+        .send(
+            axum::http::Request::post("/entries")
+                .header("authorization", format!("Bearer {}", app.token))
+                .header("accept", "application/json")
+                .body(axum::body::Body::from(entry("T", "")))
+                .unwrap(),
+        )
+        .await;
+    let json: serde_json::Value = serde_json::from_str(&json.body).unwrap();
+    assert_eq!(
+        json["account"],
+        serde_json::json!({"id": app.account, "display_name": "Ada"})
+    );
 }

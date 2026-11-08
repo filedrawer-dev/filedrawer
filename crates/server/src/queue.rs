@@ -416,7 +416,8 @@ pub async fn spent_on(
 /// Logs each model call and what it cost (design.md: "the server logs what each
 /// screening cost").
 /// Calls whose `subject` is attached code are marked so: they may spend at most
-/// half the caps.
+/// half the caps. An entry deleted while its call was in flight is logged with no
+/// entry, and its cost still counts (the owner's decision, 2026-11-08).
 pub async fn log_calls(
     pool: &SqlitePool,
     entry_seq: Option<i64>,
@@ -433,7 +434,7 @@ pub async fn log_calls(
         sqlx::query!(
             "INSERT INTO screenings (entry_seq, account_id, model, input_tokens, output_tokens,
                  cost_nano_usd, at, attachment)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES ((SELECT seq FROM entries WHERE seq = ?), ?, ?, ?, ?, ?, ?, ?)",
             entry_seq,
             account_id,
             model,

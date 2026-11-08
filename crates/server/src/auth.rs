@@ -5,6 +5,7 @@ use axum::http::request::Parts;
 use axum::http::{HeaderMap, Method, header};
 
 use crate::error::AppError;
+use crate::respond::one_line;
 use crate::{AppState, ids};
 
 /// The account a request's `Authorization: Bearer` token belongs to. Only an account
@@ -14,12 +15,28 @@ use crate::{AppState, ids};
 pub struct TokenAccount {
     pub id: String,
     pub display_name: String,
+    /// The token's own ID, which each entry it submits records.
+    pub token_id: String,
+}
+
+impl TokenAccount {
+    /// The reply line that names the account, above the delimiter: its ID and its
+    /// display name on one line.
+    pub fn line(&self) -> String {
+        format!("account: {} ({})\n", self.id, one_line(&self.display_name))
+    }
+
+    /// The account, as a JSON reply names it.
+    pub fn json(&self) -> serde_json::Value {
+        serde_json::json!({"id": self.id, "display_name": self.display_name})
+    }
 }
 
 struct TokenRow {
     id: String,
     display_name: String,
     verified: bool,
+    token_id: String,
 }
 
 impl FromRequestParts<AppState> for TokenAccount {
@@ -65,7 +82,8 @@ async fn token_account(headers: &HeaderMap, state: &AppState) -> Result<TokenAcc
     let hash = ids::token_hash(token.trim());
     let row = sqlx::query_as!(
         TokenRow,
-        r#"SELECT a.id, a.display_name, a.email_verified_at IS NOT NULL AS "verified!: bool"
+        r#"SELECT a.id, a.display_name, a.email_verified_at IS NOT NULL AS "verified!: bool",
+                  t.id AS token_id
                FROM tokens t JOIN accounts a ON a.id = t.account_id
                WHERE t.hash = ? AND t.revoked_at IS NULL AND a.deleted_at IS NULL"#,
         hash
@@ -81,5 +99,6 @@ async fn token_account(headers: &HeaderMap, state: &AppState) -> Result<TokenAcc
     Ok(TokenAccount {
         id: row.id,
         display_name: row.display_name,
+        token_id: row.token_id,
     })
 }

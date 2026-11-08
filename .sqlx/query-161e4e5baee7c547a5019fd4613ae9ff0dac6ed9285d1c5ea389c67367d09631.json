@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "INSERT INTO allowance_units (account_id, day)\n           SELECT ?1, ?2 WHERE (SELECT COUNT(*) FROM allowance_units\n                                WHERE account_id = ?1 AND day = ?2 AND entry_seq IS NULL) < ?3\n           RETURNING seq AS \"seq!: i64\"",
+  "query": "INSERT INTO allowance_units (account_id, day, kind)\n           SELECT ?1, ?2, 'series' WHERE (SELECT COUNT(*) FROM allowance_units\n                                WHERE account_id = ?1 AND day = ?2 AND kind = 'series') < ?3\n           RETURNING seq AS \"seq!: i64\"",
   "describe": {
     "columns": [
       {
@@ -22,5 +22,5 @@
       null
     ]
   },
-  "hash": "a8e328d443c935b3c2ba2f5b34b3f42ad049fce18487be5b3f082af5e66e6efd"
+  "hash": "161e4e5baee7c547a5019fd4613ae9ff0dac6ed9285d1c5ea389c67367d09631"
 }

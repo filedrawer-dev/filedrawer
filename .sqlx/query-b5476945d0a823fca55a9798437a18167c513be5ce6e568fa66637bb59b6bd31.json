@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE entries SET previous_seq = NULL WHERE previous_seq = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "b5476945d0a823fca55a9798437a18167c513be5ce6e568fa66637bb59b6bd31"
+}

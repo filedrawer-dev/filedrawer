@@ -28,6 +28,7 @@ const NOT_FOR_AGENTS: &[&str] = &[
     "/account/verify-email",
     "/account/series/{id}/publish",
     "/account/delete",
+    "/account/e/{id}/withdraw",
     "/admin",
     "/admin/invites",
     "/admin/invites/{code}/revoke",
@@ -208,7 +209,7 @@ async fn every_route_the_documents_name_exists() {
             continue;
         }
         seen += 1;
-        for method in ["GET", "POST"] {
+        for method in ["GET", "POST", "DELETE"] {
             let reply = app
                 .send(
                     Request::builder()
@@ -226,7 +227,10 @@ async fn every_route_the_documents_name_exists() {
             if reply.status != StatusCode::METHOD_NOT_ALLOWED {
                 break;
             }
-            assert_eq!(method, "GET", "{path} answers neither GET nor POST");
+            assert_ne!(
+                method, "DELETE",
+                "{path} answers neither GET, POST nor DELETE"
+            );
         }
     }
     assert!(seen >= 6, "the documents name only {seen} URLs");

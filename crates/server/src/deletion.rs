@@ -1,5 +1,9 @@
 //! Deleting an account (design.md, Accounts): everything not yet public goes with
-//! it, and its public entries stay without its name.
+//! it, and its public entries stay without its name. Also the deletion of entries
+//! that an account's deletion shares with a token's `DELETE` and the account page's
+//! withdrawal (`withdraw`), and the record of the entries deleted those two ways.
+
+use std::collections::BTreeSet;
 
 use sqlx::{SqliteConnection, SqlitePool};
 
@@ -101,13 +105,30 @@ pub async fn delete(state: &AppState, account_id: &str) -> Result<Outcome, sqlx:
     }
     // Its allowance goes with it, before the entries its units name.
     allowance::delete_account(&mut transaction, account_id).await?;
-    delete_entries(&mut transaction, account_id).await?;
+    let doomed = sqlx::query_scalar!(
+        r#"SELECT seq AS "seq!: i64" FROM entries
+           WHERE account_id = ? AND status NOT IN ('public', 'removed')"#,
+        account_id
+    )
+    .fetch_all(&mut *transaction)
+    .await?;
+    delete_entries(&mut transaction, &doomed).await?;
+    delete_unused(&mut transaction, account_id).await?;
     delete_hidden_series(&mut transaction, account_id).await?;
     let deleted_at = now();
     for statement in [
         sqlx::query!("DELETE FROM sessions WHERE account_id = ?", account_id),
         sqlx::query!("DELETE FROM email_tokens WHERE account_id = ?", account_id),
+        // The kept entries forget the tokens that submitted them, which go next.
+        sqlx::query!(
+            "UPDATE entries SET token_id = NULL WHERE account_id = ?",
+            account_id
+        ),
         sqlx::query!("DELETE FROM tokens WHERE account_id = ?", account_id),
+        sqlx::query!(
+            "DELETE FROM deleted_entries WHERE account_id = ?",
+            account_id
+        ),
         sqlx::query!("DELETE FROM feedback WHERE account_id = ?", account_id),
         sqlx::query!(
             "DELETE FROM series_members WHERE account_id = ?",
@@ -143,67 +164,12 @@ pub async fn delete(state: &AppState, account_id: &str) -> Result<Outcome, sqlx:
     Ok(Outcome::Deleted)
 }
 
-/// Deletes every entry of the account that isn't public or removed, and the runs,
-/// slugs and batches only those entries used.
-async fn delete_entries(
+/// Deletes the account's runs and batches that nothing left uses, whichever entries
+/// used them: the account-wide cleanup only its own deletion does.
+async fn delete_unused(
     transaction: &mut SqliteConnection,
     account_id: &str,
 ) -> Result<(), sqlx::Error> {
-    // Each statement names the doomed entries the same way; the last deletes them.
-    for statement in [
-        sqlx::query!(
-            "DELETE FROM entry_models WHERE entry_seq IN (SELECT seq FROM entries
-                 WHERE account_id = ? AND status NOT IN ('public', 'removed'))",
-            account_id
-        ),
-        sqlx::query!(
-            "DELETE FROM entry_tags WHERE entry_seq IN (SELECT seq FROM entries
-                 WHERE account_id = ? AND status NOT IN ('public', 'removed'))",
-            account_id
-        ),
-        sqlx::query!(
-            "DELETE FROM entry_rows WHERE entry_seq IN (SELECT seq FROM entries
-                 WHERE account_id = ? AND status NOT IN ('public', 'removed'))",
-            account_id
-        ),
-        sqlx::query!(
-            "DELETE FROM entry_unknown_fields WHERE entry_seq IN (SELECT seq FROM entries
-                 WHERE account_id = ? AND status NOT IN ('public', 'removed'))",
-            account_id
-        ),
-        sqlx::query!(
-            "DELETE FROM entry_runs WHERE entry_seq IN (SELECT seq FROM entries
-                 WHERE account_id = ? AND status NOT IN ('public', 'removed'))",
-            account_id
-        ),
-        sqlx::query!(
-            "DELETE FROM slugs WHERE entry_seq IN (SELECT seq FROM entries
-                 WHERE account_id = ? AND status NOT IN ('public', 'removed'))",
-            account_id
-        ),
-        sqlx::query!(
-            "DELETE FROM entries_fts WHERE rowid IN (SELECT seq FROM entries
-                 WHERE account_id = ? AND status NOT IN ('public', 'removed'))",
-            account_id
-        ),
-        sqlx::query!(
-            "UPDATE entries SET previous_seq = NULL WHERE previous_seq IN (SELECT seq
-                 FROM entries WHERE account_id = ? AND status NOT IN ('public', 'removed'))",
-            account_id
-        ),
-        // The cost log keeps the spend, which still counts against the day's cap.
-        sqlx::query!(
-            "UPDATE screenings SET entry_seq = NULL WHERE entry_seq IN (SELECT seq
-                 FROM entries WHERE account_id = ? AND status NOT IN ('public', 'removed'))",
-            account_id
-        ),
-        sqlx::query!(
-            "DELETE FROM entries WHERE account_id = ? AND status NOT IN ('public', 'removed')",
-            account_id
-        ),
-    ] {
-        statement.execute(&mut *transaction).await?;
-    }
     sqlx::query!(
         "DELETE FROM runs WHERE account_id = ?1
            AND NOT EXISTS (SELECT 1 FROM entry_runs er
@@ -251,4 +217,155 @@ async fn delete_hidden_series(
         }
     }
     Ok(())
+}
+
+/// Deletes entries `seqs`, none public or removed, in the caller's transaction, with
+/// what was read from them, and then what only they used: their attachment sets, runs
+/// and batches that no remaining entry cites. A set's files leave it, and its row is
+/// marked deleted rather than dropped, so its bytes still count toward the day's
+/// uploads (`attachments::delete_uncited_set`); the files no set holds any more go
+/// with `attachments::delete_lone_files`, which the caller runs. Each entry's
+/// allowance unit stays, with no entry, and the cost log keeps what its screening
+/// spent.
+pub async fn delete_entries(
+    transaction: &mut SqliteConnection,
+    seqs: &[i64],
+) -> Result<(), sqlx::Error> {
+    let mut sets = BTreeSet::new();
+    let mut batches = BTreeSet::new();
+    let mut runs = BTreeSet::new();
+    for &seq in seqs {
+        let used = sqlx::query!(
+            "SELECT attachment_set_seq, batch_seq FROM entries WHERE seq = ?",
+            seq
+        )
+        .fetch_one(&mut *transaction)
+        .await?;
+        sets.extend(used.attachment_set_seq);
+        batches.extend(used.batch_seq);
+        let cited = sqlx::query!(
+            "SELECT account_id, run_id FROM entry_runs WHERE entry_seq = ?",
+            seq
+        )
+        .fetch_all(&mut *transaction)
+        .await?;
+        runs.extend(cited.into_iter().map(|run| (run.account_id, run.run_id)));
+        delete_entry(transaction, seq).await?;
+    }
+    let deleted_at = now();
+    for set in sets {
+        attachments::delete_uncited_set(transaction, set, &deleted_at).await?;
+    }
+    for (account_id, run_id) in runs {
+        sqlx::query!(
+            "DELETE FROM runs WHERE account_id = ?1 AND id = ?2
+               AND NOT EXISTS (SELECT 1 FROM entry_runs er
+                               WHERE er.account_id = ?1 AND er.run_id = ?2)",
+            account_id,
+            run_id
+        )
+        .execute(&mut *transaction)
+        .await?;
+    }
+    for batch in batches {
+        sqlx::query!(
+            "DELETE FROM batches WHERE seq = ?1
+               AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.batch_seq = ?1)",
+            batch
+        )
+        .execute(&mut *transaction)
+        .await?;
+    }
+    Ok(())
+}
+
+/// Deletes entry `seq` and what was read from it. A later version that names it
+/// loses the link; its allowance unit and its screenings' costs stay, with no entry.
+async fn delete_entry(transaction: &mut SqliteConnection, seq: i64) -> Result<(), sqlx::Error> {
+    for statement in [
+        sqlx::query!("DELETE FROM entry_models WHERE entry_seq = ?", seq),
+        sqlx::query!("DELETE FROM entry_tags WHERE entry_seq = ?", seq),
+        sqlx::query!("DELETE FROM entry_rows WHERE entry_seq = ?", seq),
+        sqlx::query!("DELETE FROM entry_unknown_fields WHERE entry_seq = ?", seq),
+        sqlx::query!("DELETE FROM entry_runs WHERE entry_seq = ?", seq),
+        sqlx::query!("DELETE FROM slugs WHERE entry_seq = ?", seq),
+        sqlx::query!("DELETE FROM entries_fts WHERE rowid = ?", seq),
+        sqlx::query!(
+            "UPDATE entries SET previous_seq = NULL WHERE previous_seq = ?",
+            seq
+        ),
+        // The cost log keeps the spend, which still counts against the day's cap.
+        sqlx::query!(
+            "UPDATE screenings SET entry_seq = NULL WHERE entry_seq = ?",
+            seq
+        ),
+        // The unit isn't given back; it stays an entry's, never a series'.
+        sqlx::query!(
+            "UPDATE allowance_units SET entry_seq = NULL WHERE entry_seq = ?",
+            seq
+        ),
+        sqlx::query!("DELETE FROM entries WHERE seq = ?", seq),
+    ] {
+        statement.execute(&mut *transaction).await?;
+    }
+    Ok(())
+}
+
+/// Records that `account_id` deleted entries `ids` at `at`, with batch `batch_id`
+/// when they came in one, so its later read or retry is told when.
+pub async fn record_deleted(
+    transaction: &mut SqliteConnection,
+    account_id: &str,
+    ids: &[String],
+    batch_id: Option<&str>,
+    at: &str,
+) -> Result<(), sqlx::Error> {
+    for id in ids {
+        sqlx::query!(
+            "INSERT INTO deleted_entries (id, account_id, batch_id, deleted_at)
+             VALUES (?, ?, ?, ?)",
+            id,
+            account_id,
+            batch_id,
+            at
+        )
+        .execute(&mut *transaction)
+        .await?;
+    }
+    Ok(())
+}
+
+/// When `account_id` deleted entry `id`, if it did.
+pub async fn deleted_entry(
+    pool: &SqlitePool,
+    account_id: &str,
+    id: &str,
+) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar!(
+        "SELECT deleted_at FROM deleted_entries WHERE id = ? AND account_id = ?",
+        id,
+        account_id
+    )
+    .fetch_optional(pool)
+    .await
+}
+
+/// When `account_id` deleted batch `batch_id`, and its members' IDs, if it did.
+pub async fn deleted_batch(
+    pool: &SqlitePool,
+    account_id: &str,
+    batch_id: &str,
+) -> Result<Option<(String, Vec<String>)>, sqlx::Error> {
+    let rows = sqlx::query!(
+        "SELECT id, deleted_at FROM deleted_entries
+         WHERE batch_id = ? AND account_id = ? ORDER BY rowid",
+        batch_id,
+        account_id
+    )
+    .fetch_all(pool)
+    .await?;
+    let Some(at) = rows.first().map(|row| row.deleted_at.clone()) else {
+        return Ok(None);
+    };
+    Ok(Some((at, rows.into_iter().map(|row| row.id).collect())))
 }

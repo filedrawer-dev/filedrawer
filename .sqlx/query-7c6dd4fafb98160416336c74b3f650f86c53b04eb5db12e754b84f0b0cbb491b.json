@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT a.id, a.display_name, a.email_verified_at IS NOT NULL AS \"verified!: bool\"\n               FROM tokens t JOIN accounts a ON a.id = t.account_id\n               WHERE t.hash = ? AND t.revoked_at IS NULL AND a.deleted_at IS NULL",
+  "query": "SELECT a.id, a.display_name, a.email_verified_at IS NOT NULL AS \"verified!: bool\",\n                  t.id AS token_id\n               FROM tokens t JOIN accounts a ON a.id = t.account_id\n               WHERE t.hash = ? AND t.revoked_at IS NULL AND a.deleted_at IS NULL",
   "describe": {
     "columns": [
       {
@@ -30,6 +30,17 @@
         "ordinal": 2,
         "type_info": "Integer",
         "origin": "Expression"
+      },
+      {
+        "name": "token_id",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "tokens",
+            "name": "id"
+          }
+        }
       }
     ],
     "parameters": {
@@ -38,8 +49,9 @@
     "nullable": [
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "5b45b4d7feb014c0d20a3733f0220cc75cf27cd6b460abe7a4e0c67aad25feb6"
+  "hash": "7c6dd4fafb98160416336c74b3f650f86c53b04eb5db12e754b84f0b0cbb491b"
 }

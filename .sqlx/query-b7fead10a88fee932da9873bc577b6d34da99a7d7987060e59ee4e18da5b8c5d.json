@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM runs WHERE account_id = ?1 AND id = ?2\n               AND NOT EXISTS (SELECT 1 FROM entry_runs er\n                               WHERE er.account_id = ?1 AND er.run_id = ?2)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "b7fead10a88fee932da9873bc577b6d34da99a7d7987060e59ee4e18da5b8c5d"
+}

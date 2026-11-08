@@ -301,10 +301,11 @@ fn held_reply(state: &AppState, format: Format, status: StatusCode, held: &Held<
         .as_deref()
         .map_or(String::new(), |date| format!("embargo_until: {date}\n"));
     let text = format!(
-        "id: {id}\nstatus: pending\npublish_at: {publish_at}\n{embargo_line}{previous_line}url: {}/e/{id}\n\
+        "id: {id}\nstatus: pending\npublish_at: {publish_at}\n{embargo_line}{previous_line}url: {}/e/{id}\n{}\
          Fix it before then by sending the whole entry again with PUT to the url, or publish it now with a POST to the url plus /publish.\n\
          {}{DELIMITER}\nprimary row: {}\n{}",
         state.public_url,
+        account.line(),
         allowance::screen_from_lines(screen_from),
         analysis.primary_row_summary(),
         card_and_warnings(&card, &warnings)
@@ -317,6 +318,7 @@ fn held_reply(state: &AppState, format: Format, status: StatusCode, held: &Held<
         "embargo_until": embargo,
         "previous": previous,
         "url": format!("{}/e/{id}", state.public_url),
+        "account": account.json(),
         "primary_row": analysis.primary_row_summary(),
         "card": card,
         "warnings": warnings,
@@ -357,6 +359,7 @@ pub async fn submit(
     let publish_at = hold_until(now);
     let new = NewEntry {
         account_id: &account.id,
+        token_id: &account.token_id,
         source: &accepted.source,
         analysis: &accepted.analysis,
         hold_until: &publish_at,
@@ -429,6 +432,7 @@ pub async fn new_version(
     let publish_at = hold_until(now);
     let new = NewEntry {
         account_id: &account.id,
+        token_id: &account.token_id,
         source: &accepted.source,
         analysis: &accepted.analysis,
         hold_until: &publish_at,
@@ -567,16 +571,15 @@ pub async fn resubmit(
     let now = time::now_utc();
     let publish_at = hold_until(now);
     let mut transaction = crate::db::write_tx(&state.pool).await?;
-    let replaced = entries::replace_on(
-        &mut transaction,
-        entry.seq,
-        &accepted.source,
-        &accepted.analysis,
-        &publish_at,
-        cited.as_ref(),
-        set,
-    )
-    .await?;
+    let replacement = entries::Replacement {
+        token_id: &account.token_id,
+        source: &accepted.source,
+        analysis: &accepted.analysis,
+        hold_until: &publish_at,
+        series: cited.as_ref(),
+        attachments: set,
+    };
+    let replaced = entries::replace_on(&mut transaction, entry.seq, &replacement).await?;
     if !replaced {
         return Err(AppError::Conflict(format!(
             "entry {id}'s hold ended while it was being replaced"

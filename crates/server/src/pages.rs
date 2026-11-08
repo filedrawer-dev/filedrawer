@@ -11,6 +11,7 @@ use crate::accounts::{Guarded, TokenView};
 use crate::entries::{Doubted, EarlierVersion, PublicEntry, Undecided};
 use crate::removed_files::{FileState, FileUse, OwnersFile};
 use crate::series::{Owned, Refused};
+use crate::withdraw::{Listed, MadePublic, Member, WithOwner};
 
 /// A rendered page with its status code.
 pub fn page(status: StatusCode, template: &impl Template) -> Response {
@@ -302,6 +303,24 @@ pub struct AccountPage<'a> {
     pub series: &'a [Owned],
     /// A token just made, shown this once.
     pub new_token: Option<&'a str>,
+    /// Its entries that may be withdrawn.
+    pub withdrawable: &'a [Listed],
+    /// Its chains whose newest version waits on the archive's owner.
+    pub with_owner: &'a [WithOwner],
+}
+
+/// The confirm page for withdrawing an entry, or its whole batch.
+#[derive(Template)]
+#[template(path = "withdraw.html")]
+pub struct WithdrawPage<'a> {
+    /// The entry the account chose.
+    pub id: &'a str,
+    pub batch_id: Option<&'a str>,
+    /// The entry, or every member of its batch.
+    pub members: &'a [Member],
+    /// Why it can't be withdrawn now, if it can't.
+    pub refusal: Option<&'a str>,
+    pub made_public: &'a [MadePublic],
 }
 
 /// An entry on the admin queue page, with the title read from its text.

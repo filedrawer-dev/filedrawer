@@ -20,7 +20,7 @@ use crate::pages::{
     VerifyPage, page,
 };
 use crate::time::now_utc;
-use crate::{AppState, admin, deletion, invites, jobs, passwords, series};
+use crate::{AppState, admin, deletion, invites, jobs, passwords, series, withdraw};
 
 const COOKIE: &str = "fd_session";
 
@@ -400,8 +400,11 @@ async fn account_page(
 ) -> Result<Response, AppError> {
     let view = accounts::view(&state.pool, account_id).await?;
     let series = series::created_by(&state.pool, account_id).await?;
+    let (withdrawable, with_owner) = withdraw::listing(&state.pool, account_id).await?;
     let template = AccountPage {
         series: &series,
+        withdrawable: &withdrawable,
+        with_owner: &with_owner,
         display_name: &view.display_name,
         account_id: &view.id,
         email: view.email.as_deref(),

@@ -383,3 +383,45 @@ async fn migration_22_keeps_every_link_check_and_allows_a_commit_on_no_branch() 
         .unwrap();
     assert_eq!(flagged, ("no_branch".to_string(),));
 }
+
+#[tokio::test]
+async fn migration_23_marks_each_unit_with_no_entry_as_a_series_unit() {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            SqliteConnectOptions::from_str("sqlite::memory:")
+                .unwrap()
+                .foreign_keys(true),
+        )
+        .await
+        .unwrap();
+    let mut first = sqlx::migrate!("./migrations");
+    first.migrations = Cow::Owned(first.migrations[..22].to_vec());
+    first.run(&pool).await.unwrap();
+    for statement in [
+        "INSERT INTO accounts (id, display_name, created_at) VALUES ('a1', 'A', 't')",
+        "INSERT INTO entries (id, account_id, status, source, submitted_at, first_submitted_at,
+             analyzer_version) VALUES ('e1', 'a1', 'pending', 'x', 't', 't', 1)",
+        "INSERT INTO allowance_units (account_id, day, entry_seq) VALUES
+             ('a1', '2026-11-08', 1), ('a1', '2026-11-08', NULL)",
+    ] {
+        sqlx::query(statement).execute(&pool).await.unwrap();
+    }
+
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+
+    let kinds: Vec<(Option<i64>, String)> =
+        sqlx::query_as("SELECT entry_seq, kind FROM allowance_units ORDER BY seq")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        kinds,
+        vec![(Some(1), "entry".to_string()), (None, "series".to_string())]
+    );
+    let token: (Option<String>,) = sqlx::query_as("SELECT token_id FROM entries")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(token, (None,), "an older entry has no token to delete it");
+}

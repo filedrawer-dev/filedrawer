@@ -17,7 +17,7 @@
 {% endif %}
 
 <h2>API tokens</h2>
-<p>Agents use a token to submit entries. A token can't change this account, make tokens or withdraw entries.</p>
+<p>Agents use a token to submit entries. A token can't change this account or make tokens, and it deletes only a pending entry it submitted itself.</p>
 <table>
 <tr><th>Name</th><th>Created</th><th></th></tr>
 {% for token in tokens %}
@@ -28,6 +28,20 @@
 <label>Token name, such as the machine it's for <input type="text" name="name" maxlength="100" required></label>
 <button type="submit">Make a token</button>
 </form>
+
+{% if !withdrawable.is_empty() || !with_owner.is_empty() %}
+<h2>Entries not public yet</h2>
+<p>Withdrawing an entry that was never public deletes it. An entry from a batch is withdrawn with its whole batch.</p>
+<table>
+<tr><th>Entry</th><th>Status</th><th>Title</th><th></th></tr>
+{% for one in withdrawable %}
+<tr><td><code>{{ one.id }}</code></td><td>{{ one.status }}</td><td>{{ one.title }}</td><td><form method="get" action="/account/e/{{ one.id }}/withdraw"><button type="submit">Withdraw</button></form></td></tr>
+{% endfor %}
+{% for chain in with_owner %}
+<tr><td><code>{{ chain.id }}</code></td><td></td><td>{{ chain.title }}</td><td>Its newest version, <code>{{ chain.newest }}</code>, waits on the archive's owner. To withdraw them, ask the archive's owner, who can reject the whole chain.</td></tr>
+{% endfor %}
+</table>
+{% endif %}
 
 {% if !series.is_empty() %}
 <h2>Your series</h2>

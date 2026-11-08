@@ -262,6 +262,7 @@ async fn store<'a>(
     {
         let new = NewEntry {
             account_id: &account.id,
+            token_id: &account.token_id,
             source: &member.source,
             analysis: &member.analysis,
             hold_until: publish_at,
@@ -296,8 +297,9 @@ fn batch_reply(
 ) -> Response {
     let publish = format!("{}/batches/{batch_id}/publish", state.public_url);
     let mut text = format!(
-        "id: {batch_id}\nstatus: pending\npublish_at: {publish_at}\npublish: {publish}\n\
+        "id: {batch_id}\nstatus: pending\npublish_at: {publish_at}\npublish: {publish}\n{}\
          Fix a member before then by sending it again with PUT to its url, or publish the whole batch now with a POST to the publish url.\n{}",
+        account.line(),
         allowance::screen_from_lines(screen_from)
     );
     for (id, _, _) in members {
@@ -341,6 +343,7 @@ fn batch_reply(
         "publish_at": publish_at,
         "screen_from": screen_from.map(allowance::day_text),
         "publish": publish,
+        "account": account.json(),
         "entries": json_members,
     });
     format.reply(StatusCode::CREATED, text, json)

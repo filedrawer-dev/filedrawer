@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE allowance_units SET entry_seq = NULL WHERE entry_seq = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "577cbe2ee72118358893edf7743c8653a5511eaf2ea6eb3a2316de5db78dea22"
+}

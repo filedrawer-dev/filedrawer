@@ -308,7 +308,8 @@ pub async fn owned_set(
     id: &str,
 ) -> Result<Option<i64>, sqlx::Error> {
     sqlx::query_scalar!(
-        r#"SELECT seq AS "seq!: i64" FROM attachment_sets WHERE id = ? AND account_id = ?"#,
+        r#"SELECT seq AS "seq!: i64" FROM attachment_sets
+           WHERE id = ? AND account_id = ? AND deleted_at IS NULL"#,
         id,
         account_id
     )
@@ -401,6 +402,33 @@ pub async fn delete_uncited_sets(
                  SELECT 1 FROM entries e WHERE e.attachment_set_seq = attachment_sets.seq)",
         account_id,
         uploaded_before
+    )
+    .execute(&mut *transaction)
+    .await?;
+    Ok(())
+}
+
+/// Deletes set `seq`'s files from it when no entry cites it, as when the entries
+/// that cited it are deleted, and marks it deleted at `at`: no entry may cite it
+/// again, and its row stays until uncited sets expire, so its bytes still count
+/// toward its account's day. The files' records go with [`delete_lone_files`].
+pub async fn delete_uncited_set(
+    transaction: &mut SqliteConnection,
+    seq: i64,
+    at: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        "DELETE FROM attachment_files WHERE set_seq = ?1
+           AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.attachment_set_seq = ?1)",
+        seq
+    )
+    .execute(&mut *transaction)
+    .await?;
+    sqlx::query!(
+        "UPDATE attachment_sets SET deleted_at = ?2 WHERE seq = ?1
+           AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.attachment_set_seq = ?1)",
+        seq,
+        at
     )
     .execute(&mut *transaction)
     .await?;

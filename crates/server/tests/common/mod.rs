@@ -2,6 +2,7 @@
 #![allow(dead_code)]
 
 pub mod attachments;
+pub mod deletion;
 pub mod fake_models;
 pub mod fake_web;
 pub mod series;
@@ -76,6 +77,9 @@ const SINGLE_KEYS: &[&str] = &[
     "attachments",
     "bytes",
     "error",
+    "account",
+    "entries",
+    "deleted",
 ];
 
 /// Keys a reply may repeat, one line per item: slug links, runs and batch members.
@@ -446,6 +450,22 @@ impl TestApp {
                 .unwrap(),
         )
         .await
+    }
+
+    /// DELETEs `path` with `token`, asking for JSON when `json`.
+    pub async fn delete_as(&self, path: &str, token: &str, json: bool) -> Reply {
+        let mut request = Request::delete(path).header("authorization", format!("Bearer {token}"));
+        if json {
+            request = request.header("accept", "application/json");
+        }
+        self.send(request.body(Body::empty()).unwrap()).await
+    }
+
+    /// A second token for this app's own account.
+    pub async fn second_token(&self) -> String {
+        admin::create_token(&self.pool, &self.account, "desktop")
+            .await
+            .unwrap()
     }
 
     /// PUTs `body` to `path` with `token`.

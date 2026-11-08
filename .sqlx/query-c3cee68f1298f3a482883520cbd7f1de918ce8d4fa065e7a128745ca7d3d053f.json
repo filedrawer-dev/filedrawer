@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT e.series_seq AS \"series_seq!: i64\", e.series_version AS \"version!: i64\"\n               FROM entries e JOIN series_versions v\n                 ON v.series_seq = e.series_seq AND v.version = e.series_version\n               WHERE e.seq = ? AND e.series_removed_at IS NULL AND v.readable_at IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "series_seq!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "series_seq"
+          }
+        }
+      },
+      {
+        "name": "version!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "series_version"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "c3cee68f1298f3a482883520cbd7f1de918ce8d4fa065e7a128745ca7d3d053f"
+}

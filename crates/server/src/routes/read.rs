@@ -12,7 +12,7 @@ use serde_json::json;
 use analyzer::render_card;
 use axum::http::HeaderMap;
 
-use crate::auth::optional_token_account;
+use crate::auth::{TokenAccount, optional_token_account};
 use crate::embargo::parse_date;
 use crate::entries::{self, Filters};
 use crate::error::AppError;
@@ -25,7 +25,7 @@ use crate::respond::{
     DELIMITER, Format, Reading, author_name, card_and_warnings, echoed, one_line, wants_page,
 };
 use crate::series;
-use crate::{AppState, allowance, attachments, time};
+use crate::{AppState, allowance, attachments, deletion, time};
 use analyzer::slug_references;
 use url::Url;
 
@@ -47,11 +47,18 @@ pub async fn entry(
     // held status to public, so this order can't miss one that publishes between the
     // two reads; the other order answered 404 for it, seen as smoke.rs's eval tests
     // failing when the screen published an entry they were polling.
-    match own_entry(&state, &id, &headers, format).await {
+    let account = optional_token_account(&headers, &state).await?;
+    match own_entry(&state, &id, account.as_ref(), format).await {
         Err(AppError::NotFound) => {}
         shown => return shown,
     }
     let Some(entry) = entries::public_entry(&state.pool, &id).await? else {
+        // The account that deleted it is told when; anyone else, nothing.
+        if let Some(account) = &account
+            && let Some(at) = deletion::deleted_entry(&state.pool, &account.id, &id).await?
+        {
+            return Err(AppError::Gone(format!("entry {id} was deleted at {at}")));
+        }
         return Err(AppError::NotFound);
     };
     let analysis = analyze(&entry.source);
@@ -312,10 +319,10 @@ async fn shown_series(state: &AppState, seq: i64) -> Result<Option<CitedSeries>,
 async fn own_entry(
     state: &AppState,
     id: &str,
-    headers: &HeaderMap,
+    account: Option<&TokenAccount>,
     format: Format,
 ) -> Result<Response, AppError> {
-    let Some(account) = optional_token_account(headers, state).await? else {
+    let Some(account) = account else {
         return Err(AppError::NotFound);
     };
     let entry = entries::own_entry(&state.pool, id, &account.id)
@@ -455,8 +462,8 @@ pub struct SearchQuery {
     page: Option<i64>,
 }
 
-const DEFAULT_LIMIT: i64 = 20;
-const MAX_LIMIT: i64 = 100;
+pub(crate) const DEFAULT_LIMIT: i64 = 20;
+pub(crate) const MAX_LIMIT: i64 = 100;
 
 pub async fn search(
     State(state): State<AppState>,

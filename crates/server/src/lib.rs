@@ -33,10 +33,11 @@ mod series;
 mod skills;
 mod time;
 pub mod unpack;
+mod withdraw;
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
-use axum::routing::{MethodRouter, get, post};
+use axum::routing::{MethodRouter, delete, get, post};
 use sqlx::SqlitePool;
 
 pub use attachments::StoreError;
@@ -183,6 +184,10 @@ fn build(state: AppState) -> Routes<Router> {
             "/account/series/{id}/publish",
             post(account::publish_series),
         )
+        .route(
+            "/account/e/{id}/withdraw",
+            get(routes::withdraw::confirm_page).post(routes::withdraw::withdraw),
+        )
         .route("/admin", get(admin::queue))
         .route(
             "/admin/invites",
@@ -220,16 +225,20 @@ fn build(state: AppState) -> Routes<Router> {
         .route("/entries", post(routes::submit::submit))
         .route(
             "/e/{id}",
-            get(routes::read::entry).put(routes::submit::resubmit),
+            get(routes::read::entry)
+                .put(routes::submit::resubmit)
+                .delete(routes::delete::entry),
         )
         .route("/e/{id}/publish", post(routes::submit::publish))
         .route("/e/{id}/versions", post(routes::submit::new_version))
         .route("/entries/batch", post(routes::batch::submit_batch))
+        .route("/entries/mine", get(routes::mine::list))
         .route(
             "/attachments",
             post(routes::attachments::upload)
                 .layer(DefaultBodyLimit::max(MAX_ATTACHMENT_BODY_BYTES)),
         )
+        .route("/batches/{id}", delete(routes::delete::batch))
         .route("/batches/{id}/publish", post(routes::batch::publish_batch))
         .route("/search", get(routes::read::search))
         .route("/cards.txt", get(routes::read::cards))

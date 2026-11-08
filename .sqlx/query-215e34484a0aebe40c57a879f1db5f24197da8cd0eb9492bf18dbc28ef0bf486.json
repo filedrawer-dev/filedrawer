@@ -1,0 +1,62 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT seq AS \"seq!: i64\", id, status, source FROM entries\n           WHERE account_id = ?1 AND status != 'removed'\n             AND (?2 IS NULL OR instr(lower(source), ?2) > 0)\n           ORDER BY seq DESC LIMIT ?3 OFFSET ?4",
+  "describe": {
+    "columns": [
+      {
+        "name": "seq!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "id",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "status",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "status"
+          }
+        }
+      },
+      {
+        "name": "source",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "source"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "215e34484a0aebe40c57a879f1db5f24197da8cd0eb9492bf18dbc28ef0bf486"
+}

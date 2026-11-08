@@ -14,6 +14,13 @@ pub enum AppError {
     Unauthorized,
     #[error("not found")]
     NotFound,
+    /// Nothing the token's account may see, saying which account that is, so an
+    /// agent holding another account's token can tell.
+    #[error("not found: {}", one_line(.0))]
+    NotFoundFor(String),
+    /// The account deleted it; the message says when.
+    #[error("{}", one_line(.0))]
+    Gone(String),
     #[error("{}", one_line(.0))]
     Forbidden(String),
     #[error("{}", one_line(.0))]
@@ -57,7 +64,8 @@ impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let status = match &self {
             AppError::Unauthorized => StatusCode::UNAUTHORIZED,
-            AppError::NotFound => StatusCode::NOT_FOUND,
+            AppError::NotFound | AppError::NotFoundFor(_) => StatusCode::NOT_FOUND,
+            AppError::Gone(_) => StatusCode::GONE,
             AppError::Forbidden(_) => StatusCode::FORBIDDEN,
             AppError::Conflict(_) => StatusCode::CONFLICT,
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,

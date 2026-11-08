@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT deleted_at FROM deleted_entries WHERE id = ? AND account_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "deleted_at",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "deleted_entries",
+            "name": "deleted_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "595d63be019de0d8420182159d8043778da38773ae917f6bec7caab176d5bba1"
+}

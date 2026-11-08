@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT account_id, run_id FROM entry_runs WHERE entry_seq = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "account_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entry_runs",
+            "name": "account_id"
+          }
+        }
+      },
+      {
+        "name": "run_id",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entry_runs",
+            "name": "run_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "3746133149712b304b7459865dc141c157aac9cde68e7d8b2a939c925bd4ec1d"
+}

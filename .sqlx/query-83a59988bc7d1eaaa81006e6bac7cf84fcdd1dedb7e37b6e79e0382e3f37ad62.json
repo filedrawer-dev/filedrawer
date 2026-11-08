@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM batches WHERE seq = ?1\n               AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.batch_seq = ?1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "83a59988bc7d1eaaa81006e6bac7cf84fcdd1dedb7e37b6e79e0382e3f37ad62"
+}

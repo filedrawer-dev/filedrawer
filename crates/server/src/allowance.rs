@@ -173,9 +173,9 @@ pub async fn take_for_series(
         .units_on(today);
     let day = day_text(today);
     let taken = sqlx::query_scalar!(
-        r#"INSERT INTO allowance_units (account_id, day)
-           SELECT ?1, ?2 WHERE (SELECT COUNT(*) FROM allowance_units
-                                WHERE account_id = ?1 AND day = ?2 AND entry_seq IS NULL) < ?3
+        r#"INSERT INTO allowance_units (account_id, day, kind)
+           SELECT ?1, ?2, 'series' WHERE (SELECT COUNT(*) FROM allowance_units
+                                WHERE account_id = ?1 AND day = ?2 AND kind = 'series') < ?3
            RETURNING seq AS "seq!: i64""#,
         account_id,
         day,
