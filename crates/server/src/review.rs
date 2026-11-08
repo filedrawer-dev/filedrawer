@@ -7,7 +7,7 @@ use crate::entries::Earlier;
 use crate::{AppState, attachments, entries, queue};
 
 /// The one reason the author reads for a rejection in review. The author already saw
-/// `review`, which `/skill.md` says means a possible info hazard, so a category would
+/// `review`, which the submit skill says means a possible info hazard, so a category would
 /// say no more, or contradict it (the owner's decision, 2026-11-06).
 const REJECTED_IN_REVIEW: &str = "rejected in review";
 

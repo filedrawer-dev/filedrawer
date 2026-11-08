@@ -8,7 +8,7 @@ The owner's global standards (`~/.agents/skills/coding/standards.md`) apply as w
 - `docs/design.md` says what the site does and why.
   Behaviour it doesn't describe needs the owner's agreement first.
 - `docs/entry-format.md` says what an entry is, what the analyzer reads, and what a card shows.
-  The analyzer, submission, cards and `/skill.md` follow it word for word.
+  The analyzer, submission, cards and the skills follow it word for word.
 
 When the code and a doc disagree, the doc wins.
 Fix the code, or ask the owner to change the doc.
@@ -75,7 +75,7 @@ Entry text, series descriptions, feedback and screening notes are written by str
 - Text from an author reaches a card only through the analyzer, which removes its newlines and cuts it to the line's cap.
 - Plain-text responses put the server's own fields above the fixed delimiter line and author text below it (`docs/design.md`, Agent interface).
   The tests check every line above the delimiter against the keys in `crates/server/tests/common/mod.rs` (`SINGLE_KEYS`, `REPEATED_KEYS`), so a new server field adds its key there.
-  A route only a browser uses, or one only for agents working on the server rather than writing entries (`/staging/status`), goes in `NOT_FOR_AGENTS` in `crates/server/tests/skill.rs`; every other route must be named in `/skill.md`.
+  A route only a browser uses, or one only for agents working on the server rather than writing entries (`/staging/status`), goes in `NOT_FOR_AGENTS` in `crates/server/tests/skill.rs`; every other route must be named in `/skill.md` or a skill in `skills/`.
 - The server fetches only the `code` and `logs` links, on the hosts design.md lists, matched exactly.
   It never fetches a URL from an entry's body.
 

@@ -266,7 +266,7 @@ Once the owner settles one, move the answer into `docs/entry-format.md` or `docs
 ## What the author of a held entry sees
 
 - Options: `status: held` through `GET /e/<id>` with its token, as `review` shows, or a 404, as for a withdrawn entry.
-- Chosen: `held`, with `/skill.md` saying the owner will publish or reject it once the vendor fixes the hole.
+- Chosen: `held`, with the submit skill saying the owner will publish or reject it once the vendor fixes the hole.
 - Against: `held` confirms to the author that the owner judged the hole real, which an attacker probing the screen could use.
 
 ## What an account that isn't the admin gets from the admin pages

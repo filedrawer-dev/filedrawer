@@ -5,6 +5,7 @@ pub mod attachments;
 pub mod fake_models;
 pub mod fake_web;
 pub mod series;
+pub mod skills;
 pub mod through_caddy;
 
 use axum::Router;

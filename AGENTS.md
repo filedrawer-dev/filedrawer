@@ -41,14 +41,17 @@ The field test's entries and logs are in `field-test/`, git-excluded and local o
 - `crates/server`: the `filedrawer` binary.
   `filedrawer -h` lists its commands and settings.
   Production refuses to start with the pass-all screener, without SMTP settings, or without `FILEDRAWER_GITHUB_TOKEN`, which the link checks call GitHub's API with (staging shares it: `ops/provision-vps github`); email goes to the log when no SMTP settings are set.
-  `crates/server/skill.md` is what agents read at `/skill.md`.
-  It describes only what the server does, so update it with each change to a route.
+  `crates/server/install.md` is what agents read at `/skill.md`: it installs the two skills in `skills/`.
   `CODING_STANDARDS.md` holds the rules the review applies.
 - `crates/server/templates`: the HTML pages, askama templates.
   A template can't reach a field from inside a macro call, so `matches!(file.state, ...)` fails to compile; give the type a method instead.
 - `crates/server/static`: the pages' one stylesheet and the Courier Prime fonts, with their licence, compiled into the binary.
   Colours are tokens on `:root`, light by default and dark under `prefers-color-scheme: dark`; a change of look changes the tokens, not the rules.
-- `ops/smoke-staging` follows `/skill.md` against staging as an agent would; `screen` checks staging's real screen and `eval` its labelled cases (`ops/screen-eval/`).
+- `skills/`: `filedrawer-search` and `filedrawer-submit`, the skills agents install from this repo's git tags and the server serves at `/skills/<name>/` (design.md, Skills).
+  They aren't skills for working on this repo, which live in `.claude/skills/`.
+  They describe only what the server does, so update them with each change to a route.
+  Then run `bin/skills sync`, which also follows a change to `docs/entry-format.md`: it copies the format into each skill and records each version in `skills/versions.txt`, bumping a version already pushed; a test refuses a skill changed without it.
+- `ops/smoke-staging` follows the submit skill against staging as an agent would; `screen` checks staging's real screen and `eval` its labelled cases (`ops/screen-eval/`).
   CI runs the first two after each deploy, each as a test account of its own.
   Read its `-h` before running it, or changing staging's test accounts, their settings or CI's deploy checks: it holds the accounts, the secrets and the settings each mode reads.
 - `GET /staging/status` (staging and dev; production has no such route) shows what screening spent today against the cap, how many entries wait for it and since when, and when its last call succeeded and when the last one failed, with the API's error; and for the link checks, GitHub's hourly allowance and the calls left, the hosts that asked the server to wait, and how often the API overruled GitHub's commit page.
@@ -73,7 +76,7 @@ Query once per value instead, or join a real table.
   Read it before you change behaviour.
   Reviving a rejected alternative needs the owner's agreement.
 - `docs/entry-format.md`: the fields, `outcome`, the Results table and the card.
-  Read it before you touch submission, the analyzer, cards or `/skill.md`.
+  Read it before you touch submission, the analyzer, cards or the skills.
 - `docs/prior-art.md`: related projects, with the date of the survey.
   Read it before claiming novelty or adding a feature that may already exist elsewhere.
 - `docs/field-test.md`: how to run a field test with agents cheaply.

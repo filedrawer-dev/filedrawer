@@ -50,8 +50,9 @@ repos:
         files: ^\.github/workflows/.*\.ya?ml$
       # Every markdown file on every commit (milliseconds), so renaming a heading or
       # deleting a file that another doc links to is refused too. The field test's
-      # drafts in field-test/ are skipped. bin/lychee downloads lychee once per machine,
-      # pinned by SHA-256, and CI runs this same hook.
+      # drafts in field-test/ are skipped, and so are the skills' copies of
+      # docs/entry-format.md, whose links point into docs/. bin/lychee downloads lychee
+      # once per machine, pinned by SHA-256, and CI runs this same hook.
       - id: lychee
         name: lychee (links and anchors, offline)
         entry: bin/lychee
@@ -64,6 +65,8 @@ repos:
           - field-test
           - --exclude-path
           - target
+          - --exclude-path
+          - skills/[^/]+/references
           - "**/*.md"
         pass_filenames: false
         always_run: true

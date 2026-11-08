@@ -2,7 +2,7 @@
 
 This is the fourth draft, revised after three rounds of the field test (see [Field test findings](#field-test-findings)), and the owner signed off on it on 2026-11-05.
 Staging's usability runs will revise it further.
-Read it before you change submission, the outcome, the card or `/skill.md`.
+Read it before you change submission, the outcome, the card or the skills.
 
 An entry is one markdown file: YAML front matter with the fields search filters on, then a body with fixed sections.
 Each entry has one main hypothesis.
@@ -236,7 +236,7 @@ Reason it does so little: the field test showed each deeper reading misleading s
 The share of the baseline read 1,786% on a baseline of 0.042; a share of a 0-1 scale made a rare-event null look tight; flags at a floor or ceiling fired on the side the hypothesis didn't need in 33 of 47 cases; counts against the outcome fell on positive-control rows.
 Those readings wait in design.md's [Later](design.md#later) until there are many more submissions to design them against.
 
-`/skill.md` gives a default for the claims, worded as a default that each submission may override with its own stated choice: claim `no_effect` on a row only when a positive control passed and its interval stays within ±0.10 of the no-effect value on a 0-1 scale, or within the author's smallest effect of interest when that was set before the run.
+The submit skill gives a default for the claims, worded as a default that each submission may override with its own stated choice: claim `no_effect` on a row only when a positive control passed and its interval stays within ±0.10 of the no-effect value on a 0-1 scale, or within the author's smallest effect of interest when that was set before the run.
 Otherwise claim `inconclusive`, and do the same when the predicted direction has no room to move.
 Claim nothing on a level unless it is tested against chance or a bar.
 Reason for a default at all: in the third round, two writers on the same kind of data drew the null line at ±0.35 and at six thresholds chosen after the run.
@@ -338,7 +338,7 @@ Intervals: 95%, Newcombe hybrid score, per prompt.
 The primary row's empty `outcome` cell takes the entry's `no_effect`.
 The card's line 4 says "+0.012 [−0.047, +0.070], n 520/520, fraction: no_effect; interval includes 0".
 Line 5 says "pipeline check passed (this run)", and line 6 "baseline 0.62; 95%, Newcombe hybrid score, per prompt".
-The interval stays within ±0.10, so the claim meets `/skill.md`'s default; the card doesn't judge that.
+The interval stays within ±0.10, so the claim meets the submit skill's default; the card doesn't judge that.
 
 ## Field test findings
 

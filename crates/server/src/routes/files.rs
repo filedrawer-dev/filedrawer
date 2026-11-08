@@ -80,7 +80,7 @@ enum ServeError {
 }
 
 /// The host, with any port, of a URL such as `https://files.filedrawer.dev`.
-fn host_of(url: &str) -> &str {
+pub(crate) fn host_of(url: &str) -> &str {
     let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
     rest.split('/').next().unwrap_or(rest)
 }

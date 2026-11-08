@@ -1,6 +1,6 @@
 # Running a field test
 
-A field test has agents write real entries from real research repos, so the entry format, `/skill.md` or the card can be tried on results nobody shaped for them.
+A field test has agents write real entries from real research repos, so the entry format, the skills or the card can be tried on results nobody shaped for them.
 Build step 4's usability runs on staging are one.
 The first one, three rounds over the owner's five Apart repos in November 2026, is recorded in [entry-format.md](entry-format.md#field-test-findings).
 It cost about a billion input tokens across 13 field-test agents and the 20 or so helpers they spawned, mostly because of the habits this page replaces.

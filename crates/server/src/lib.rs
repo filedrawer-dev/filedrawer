@@ -30,6 +30,7 @@ mod review;
 mod routes;
 pub mod screening;
 mod series;
+mod skills;
 mod time;
 pub mod unpack;
 
@@ -155,6 +156,8 @@ async fn not_found() -> error::AppError {
 /// The router with every route, and their paths.
 fn build(state: AppState) -> Routes<Router> {
     use routes::{account, admin};
+    // A build whose skills lack a version stops here, at start, not on a request.
+    skills::versions(", ");
     let accounts = Routes::new()
         .route("/signup", get(account::signup_page).post(account::signup))
         .route("/verify", get(account::verify_page).post(account::verify))
@@ -248,6 +251,7 @@ fn build(state: AppState) -> Routes<Router> {
         )
         .route("/feedback", post(routes::feedback::feedback))
         .route("/skill.md", get(routes::docs::skill))
+        .route("/skills/{name}/{*path}", get(routes::docs::skill_file))
         .route("/entry-format.md", get(routes::docs::entry_format))
         .map_router(|router| {
             let files_host =

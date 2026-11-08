@@ -1,0 +1,6 @@
+# Each skill's version, and its folder's hash as
+# `cd skills/NAME && find . -type f | LC_ALL=C sort | xargs sha256sum | sha256sum`
+# prints it. `bin/skills sync` writes this file; crates/server/tests/skill_folders.rs
+# checks it.
+filedrawer-search 1 bc2dad5dc700adbad91dcb5dfdaae31dd7531050b7ac2fe8b8d5efc7dcb9776e
+filedrawer-submit 1 c34d3baef42aeffa745aaee0e918d49ebd92cf63373dd2e1d21428060d52aa01
