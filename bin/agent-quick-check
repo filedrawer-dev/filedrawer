@@ -5,5 +5,7 @@
 # on each commit a fold rewrites. It is agent-pre-commit's clippy, the one fast check
 # the pre-commit hook lacks (cargo fmt and ruff run there), on a copy of what's staged,
 # and only when the change since CHECK_BASE holds a build input, as agent-pre-commit
-# decides.
+# decides. Since clippy is a build, it waits its turn in heavy's queue: this file names
+# $CHECK_QUEUE_EXIT, so the gate runs it first outside the queue, and agent-pre-commit
+# exits with that code before clippy starts (`agent-commit-gate -h`).
 exec "$(dirname "$0")/agent-pre-commit" --quick

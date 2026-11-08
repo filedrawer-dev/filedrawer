@@ -70,7 +70,11 @@ LAYOUT = {
     "docs/format.md": "# Format\n",
     "docs/notes.md": "# Notes\n",
 }
-FAKE = '#!/bin/sh\necho "$(basename "$0") $*" >> "$FAKE_LOG"\n'
+FAKE = (
+    "#!/bin/sh\n"
+    'echo "$(basename "$0") $*" >> "$FAKE_LOG"\n'
+    'if [ -n "${CHECK_QUEUE_EXIT+set}" ]; then echo saw-CHECK_QUEUE_EXIT >> "$FAKE_LOG"; fi\n'
+)
 
 
 def git(repo: Path, *args: str, env: dict | None = None) -> str:
@@ -113,11 +117,15 @@ def repo(template, tmp_path) -> Path:
 
 
 def hook(
-    repo: Path, *args: str, env: dict | None = None, base: str | None = "HEAD"
+    repo: Path,
+    *args: str,
+    env: dict | None = None,
+    base: str | None = "HEAD",
+    code: int = 0,
 ) -> tuple[set[str], subprocess.CompletedProcess]:
     """Run the hook with fake cargo and uvx, and CHECK_BASE set to `base` as
-    `git rev-parse` gives it (None: unset); return the checks it ran (nextest, doctest,
-    clippy, pytest) and the hook's run."""
+    `git rev-parse` gives it (None: unset), and check it exits with `code`; return the
+    checks it ran (nextest, doctest, clippy, pytest) and the hook's run."""
     fakes = repo.parent / "fakes"
     fakes.mkdir(exist_ok=True)
     for tool in ("cargo", "uvx"):
@@ -128,7 +136,7 @@ def hook(
     hook_env = {
         k: v
         for k, v in os.environ.items()
-        if not k.startswith("GIT_") and k != "CHECK_BASE"
+        if not k.startswith("GIT_") and k not in ("CHECK_BASE", "CHECK_QUEUE_EXIT")
     }
     hook_env |= {"PATH": f"{fakes}{os.pathsep}{os.environ['PATH']}"}
     if base is not None:
@@ -143,7 +151,7 @@ def hook(
         timeout=60,
         check=False,
     )
-    assert done.returncode == 0, done.stdout + done.stderr
+    assert done.returncode == code, done.stdout + done.stderr
     calls = log.read_text().splitlines()
     named = {
         "nextest": "cargo nextest run",
@@ -355,3 +363,48 @@ def test_a_workspace_member_outside_crates_is_a_build_input(repo):
     commit(repo)
     change(repo, "tools/xtask/src/main.rs", "fn main() {}\n")
     assert run(repo) == EVERY
+
+
+# llm-toolbox's agent-commit-gate runs a check first outside heavy's queue when its
+# file names CHECK_QUEUE_EXIT, with it set to this; the check exits with it to queue.
+QUEUE_EXIT = {"CHECK_QUEUE_EXIT": "75"}
+
+
+@pytest.mark.parametrize(
+    "path, args, base, reason",
+    [
+        ("crates/app/src/lib.rs", (), "HEAD", "bin-tests crates/app/src/lib.rs"),
+        ("docs/format.md", (), "HEAD", "rust docs/format.md"),
+        ("bin/other", (), "HEAD", "bin-tests bin/other"),
+        ("docs/notes.md", (), None, "bin-tests (no CHECK_BASE"),
+        ("crates/app/src/lib.rs", ("--quick",), "HEAD", "rust crates/app/src/lib.rs"),
+    ],
+    ids=["a crate", "an embedded file", "a bin script", "no CHECK_BASE", "--quick"],
+)
+def test_outside_the_queue_a_change_that_needs_a_check_asks_for_it_first(
+    repo, path, args, base, reason
+):
+    change(repo, path)
+    ran, done = hook(repo, *args, env=QUEUE_EXIT, base=base, code=75)
+    assert (repo.parent / "calls").read_text() == ""  # no cargo or uvx call at all
+    assert f"agent-pre-commit: needs heavy's queue for {reason}" in done.stdout
+
+
+def test_outside_the_queue_a_docs_only_change_passes_there(repo):
+    change(repo, "docs/notes.md")
+    assert run(repo, env=QUEUE_EXIT) == set()
+
+
+@pytest.mark.parametrize("value", ["", "0", "075", "256", "seventy-five"])
+def test_a_check_queue_exit_that_is_no_exit_status_from_1_to_255_is_ignored(
+    repo, value
+):
+    change(repo, "crates/app/src/lib.rs", "pub fn f() {}\n")
+    assert run(repo, env={"CHECK_QUEUE_EXIT": value}) == EVERY
+    # The checks never see it.
+    assert "saw-CHECK_QUEUE_EXIT" not in (repo.parent / "calls").read_text()
+
+
+@pytest.mark.parametrize("script", ["agent-pre-commit", "agent-quick-check"])
+def test_the_gate_asks_both_checks_whether_they_need_the_queue(script):
+    assert "CHECK_QUEUE_EXIT" in (REPO / "bin" / script).read_text()

@@ -23,6 +23,14 @@
 # script keeps none.
 # --quick runs clippy alone, for bin/agent-quick-check, which the gate gives the
 # same CHECK_BASE.
+# Every check here is a build or a test suite, so none may start outside heavy's queue.
+# The gate runs this script first outside it when the file names $CHECK_QUEUE_EXIT, as
+# here, with that variable set (`agent-commit-gate -h`). Each check's block then starts
+# with queue_first, which says why and exits with that code, and the gate runs the
+# script again in the queue. A change that needs no check, such as a docs-only one,
+# passes without waiting behind other sessions' builds. A value other than an exit
+# status from 1 to 255 counts as unset: sh keeps only the low 8 bits, so 256 would
+# exit 0.
 set -e
 quick=
 [ "${1:-}" = --quick ] && quick=1
@@ -51,15 +59,24 @@ elif ! timeout 60 "$tree/bin/checks-needed" "$tree" <"$logs/changed" >"$logs/nee
   need_every_check "(bin/checks-needed failed)"
 fi
 needs() { grep -q "^$1 " "$logs/needed"; }
+queue_exit=${CHECK_QUEUE_EXIT:-}
+queue_first() {
+  case "$queue_exit" in '' | *[!0-9]* | 0*) return ;; esac
+  [ "$queue_exit" -le 255 ] || return 0
+  echo "agent-pre-commit: needs heavy's queue for $(grep "^$1 " "$logs/needed")"
+  exit "$queue_exit"
+}
 cd "$tree"
 # The hook's git variables, and CHECK_BASE, name the repo being committed; no check
 # should reach it.
-unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_OBJECT_DIRECTORY GIT_PREFIX CHECK_BASE
+unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_OBJECT_DIRECTORY GIT_PREFIX CHECK_BASE CHECK_QUEUE_EXIT
 failed=0
 if [ -z "$quick" ] && needs bin-tests; then
+  queue_first bin-tests
   uvx --quiet --with pytest-timeout==2.4.0 pytest@9.2.0 -q -p no:cacheprovider bin/tests >"$logs/pytest" 2>&1 || { cat "$logs/pytest"; failed=1; }
 fi
 if [ -f Cargo.toml ] && needs rust; then
+  queue_first rust
   export CARGO_TARGET_DIR="$repo/target"
   if [ -z "$quick" ]; then
     if ! cargo nextest --version >/dev/null 2>&1; then
