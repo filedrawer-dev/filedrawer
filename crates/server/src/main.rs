@@ -49,7 +49,9 @@ most half of the token's hourly allowance.
 FILEDRAWER_GITHUB_TOKEN, a token with no repository access, raises GitHub's
 allowance from 60 calls an hour to 5,000; production refuses to start without it.
 FILEDRAWER_LINK_CHECKS=off fetches nothing, for tests that run this binary;
-production refuses it.
+production refuses it. FILEDRAWER_PUBLISHER_SECONDS sets how often the screening
+queue runs, which is when an entry with attached code is screened: 30 seconds unless
+set, and only dev takes it, for the same tests.
 
 The admin commands need only FILEDRAWER_DATABASE. create-account prints the new
 account's ID. create-token prints a new API token for the account; only its hash
@@ -250,7 +252,10 @@ async fn serve() -> ExitCode {
             LinkChecker::off()
         }),
     };
-    tokio::spawn(filedrawer_server::jobs::run_publisher(state.clone()));
+    tokio::spawn(filedrawer_server::jobs::run_publisher(
+        state.clone(),
+        config.publisher_tick,
+    ));
     tokio::spawn(filedrawer_server::jobs::run_tidier(state.clone()));
     tokio::spawn(filedrawer_server::jobs::run_link_rechecker(state.clone()));
     let router = app(state);

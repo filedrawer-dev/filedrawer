@@ -798,6 +798,9 @@ fn serve_attachments(name: &str) -> (Server, String) {
     let settings = [
         ("FILEDRAWER_SCREENER", "pass-all"),
         ("FILEDRAWER_FILES_URL", "http://files.localhost"),
+        // An entry with attached code is screened on the publisher's tick, 30 s unless
+        // dev sets it.
+        ("FILEDRAWER_PUBLISHER_SECONDS", "1"),
     ];
     (serve_with(database, &settings), token)
 }

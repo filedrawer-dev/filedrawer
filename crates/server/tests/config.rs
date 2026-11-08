@@ -276,3 +276,45 @@ fn the_attachment_cap_is_20_gb_in_production_and_2_gb_elsewhere() {
         );
     }
 }
+
+#[test]
+fn the_publishers_tick_is_30_seconds_and_only_dev_takes_another() {
+    use std::time::Duration;
+    assert_eq!(config(&[]).unwrap().publisher_tick, Duration::from_secs(30));
+    let dev = [
+        ("FILEDRAWER_ENVIRONMENT", "dev"),
+        ("FILEDRAWER_PUBLISHER_SECONDS", "1"),
+    ];
+    assert_eq!(config(&dev).unwrap().publisher_tick, Duration::from_secs(1));
+    assert_eq!(
+        config(&[("FILEDRAWER_PUBLISHER_SECONDS", "1")]).unwrap_err(),
+        ConfigError::PublisherTickOutsideDev
+    );
+    let mut production = vec![
+        ("FILEDRAWER_ENVIRONMENT", "production"),
+        ("FILEDRAWER_SCREENER", "anthropic"),
+        ("FILEDRAWER_ANTHROPIC_API_KEY", "sk-ant-not-real"),
+        ("FILEDRAWER_GITHUB_TOKEN", "github_pat_not_real"),
+        ("FILEDRAWER_PUBLISHER_SECONDS", "1"),
+    ];
+    production.extend(SMTP);
+    assert_eq!(
+        config(&production).unwrap_err(),
+        ConfigError::PublisherTickOutsideDev
+    );
+    for bad in ["0", "soon", "0.5"] {
+        assert!(
+            matches!(
+                config(&[
+                    ("FILEDRAWER_ENVIRONMENT", "dev"),
+                    ("FILEDRAWER_PUBLISHER_SECONDS", bad)
+                ]),
+                Err(ConfigError::Invalid {
+                    name: "FILEDRAWER_PUBLISHER_SECONDS",
+                    ..
+                })
+            ),
+            "{bad}"
+        );
+    }
+}

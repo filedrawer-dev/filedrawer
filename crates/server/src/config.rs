@@ -52,6 +52,10 @@ pub struct Config {
     /// tests that run the server binary, so they reach no real host; production
     /// refuses off.
     pub link_checks: bool,
+    /// How often the publisher runs the screening queue, which is when an entry with
+    /// attached code is screened: 30 seconds, or `FILEDRAWER_PUBLISHER_SECONDS` in dev,
+    /// for tests that run the server binary.
+    pub publisher_tick: std::time::Duration,
 }
 
 /// A GitHub token, which Debug output leaves out.
@@ -132,6 +136,10 @@ pub enum ConfigError {
     NoGithubTokenInProduction,
     #[error("FILEDRAWER_LINK_CHECKS=off leaves every link unchecked, so production refuses it")]
     LinkChecksOffInProduction,
+    #[error(
+        "FILEDRAWER_PUBLISHER_SECONDS speeds up the screening queue for tests, so only dev takes it"
+    )]
+    PublisherTickOutsideDev,
 }
 
 /// The SMTP settings, if any are set. All four must be set together.
@@ -301,8 +309,25 @@ impl Config {
         if environment == Environment::Production && !link_checks {
             return Err(ConfigError::LinkChecksOffInProduction);
         }
+        let publisher_tick = match var("FILEDRAWER_PUBLISHER_SECONDS") {
+            None => std::time::Duration::from_secs(30),
+            Some(_) if environment != Environment::Dev => {
+                return Err(ConfigError::PublisherTickOutsideDev);
+            }
+            Some(text) => match text.parse::<u64>() {
+                Ok(seconds) if seconds > 0 => std::time::Duration::from_secs(seconds),
+                _ => {
+                    return Err(ConfigError::Invalid {
+                        name: "FILEDRAWER_PUBLISHER_SECONDS",
+                        value: text,
+                        expected: "a whole number of seconds from 1",
+                    });
+                }
+            },
+        };
         Ok(Config {
             link_checks,
+            publisher_tick,
             github_token,
             files_dir,
             attachment_store_cap_bytes,
