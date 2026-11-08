@@ -3,6 +3,7 @@
 
 use time::OffsetDateTime;
 
+use crate::entries::Earlier;
 use crate::{AppState, attachments, entries, queue};
 
 /// The one reason the author reads for a rejection in review. The author already saw
@@ -10,11 +11,19 @@ use crate::{AppState, attachments, entries, queue};
 /// say no more, or contradict it (the owner's decision, 2026-11-06).
 const REJECTED_IN_REVIEW: &str = "rejected in review";
 
+/// [`REJECTED_IN_REVIEW`] as the JSON array of reasons a rejection stores.
+fn rejected_in_review() -> String {
+    serde_json::json!([REJECTED_IN_REVIEW]).to_string()
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum Decision {
     Publish,
     Hold,
     Reject,
+    /// Rejects an entry in review or held with the earlier versions of its chain
+    /// that are held back with it.
+    RejectChain,
     /// A frozen entry goes back to screening.
     Release,
 }
@@ -24,7 +33,8 @@ pub enum Decided {
     Done,
     NoEntry,
     /// The entry isn't waiting on this decision: publish needs `review` or `held`,
-    /// reject those or `frozen`, hold needs `review`, and release `frozen`.
+    /// reject those or `frozen`, reject-chain `review` or `held`, hold needs
+    /// `review`, and release `frozen`.
     NotWaiting,
 }
 
@@ -49,9 +59,12 @@ pub async fn decide(
             passed
         }
         Decision::Reject => {
-            let reasons = serde_json::json!([REJECTED_IN_REVIEW]).to_string();
-            entries::owner_reject(&state.pool, seq, &reasons).await?
+            let reasons = rejected_in_review();
+            entries::owner_reject(&state.pool, seq, &reasons, Earlier::Keep).await?
                 || entries::reject_frozen(&state.pool, seq, &reasons).await?
+        }
+        Decision::RejectChain => {
+            entries::owner_reject(&state.pool, seq, &rejected_in_review(), Earlier::Reject).await?
         }
         Decision::Release => entries::release_frozen(&state.pool, seq).await?,
     };

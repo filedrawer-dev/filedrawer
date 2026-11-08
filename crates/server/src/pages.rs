@@ -8,7 +8,7 @@ use axum::response::{Html, IntoResponse, Response};
 use analyzer::{Choice, Outcome};
 
 use crate::accounts::{Guarded, TokenView};
-use crate::entries::{Doubted, PublicEntry, Undecided};
+use crate::entries::{Doubted, EarlierVersion, PublicEntry, Undecided};
 use crate::removed_files::{FileState, FileUse, OwnersFile};
 use crate::series::{Owned, Refused};
 
@@ -346,6 +346,8 @@ pub struct AdminEntryPage<'a> {
     pub batch_failed: bool,
     /// Its attached files, with their text and the screen's verdict so far.
     pub files: &'a [ShownFile],
+    /// The earlier versions of its chain that wait on its verdict.
+    pub held_back: &'a [EarlierVersion],
 }
 
 /// An attached file as the owner's review page shows it.

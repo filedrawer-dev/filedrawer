@@ -412,6 +412,10 @@ Each entry has one status field: `pending`, `screening`, `review`, `held`, `froz
   `removed` comes from the owner (see [Admin](#admin)).
 - The release job publishes only `embargoed` entries whose date has come.
   An entry still in `screening` or `review` on its release date waits, and goes straight to `public` once it passes.
+- An embargoed entry, or one in `waiting_on_series`, also waits while a later version of its chain is `pending`, `screening`, `review`, `held` or `frozen`, past its date and past the 12-month cap (the owner's decision, 2026-11-08).
+  Reason: the versions release together, an earlier version usually carries what a later one was flagged for, and a release can't be undone.
+- The owner's page for a version in `review` or `held` lists the earlier versions waiting on it and can reject them with it ("reject the chain"); a plain reject lets them release on their date (the owner's decision, 2026-11-08).
+  Reason: a later version is often flagged for a change of its own, which the earlier ones don't share, so the owner judges the chain while reading the version, rather than every version going to review.
 - "Release now" works only on `embargoed` entries, so an owner's hold can't be bypassed.
 
 Reason: without one status, an embargoed entry still in the review queue, or waiting past the spending cap, would be published unreviewed on its release date.
@@ -539,6 +543,7 @@ Reason: names chosen by authors would collide across accounts.
 - A series stays hidden until its creator makes it public from a browser session, and its page lists only public entries and their authors.
   An entry that passes screening while its series is hidden waits in a `waiting_on_series` status, and publishes when the series does.
   Only at the 12-month embargo cap is it released anyway, showing "series description not public" in place of the shared Setup and no series title, so a series creator can't hold back a member's entry indefinitely.
+  The cap doesn't release it while a later version of its chain waits for a verdict (see [Entry status](#entry-status)).
   Each entry keeps the series version it cites in its own record, so taking it out of the series later doesn't leave its "see series" pointing at nothing.
   Reason: otherwise any member, or anyone holding a leaked key, could expose the title of a series made for embargoed work by publishing one entry in it, and with shared Setup, its method too.
 
@@ -902,5 +907,8 @@ Bring one of these back only with the owner's agreement.
 - **Object storage as the home of attached files** (2026-11-06, #12).
   Real use stays at a few GB, every serve and screening would wait on the network, and Hetzner's starts at €6.49 a month (2026-11-06), more than the VPS.
   B2 holds the files' backups instead.
+- **Sending a chain's earlier versions to review when the owner rejects or holds a later one** (2026-11-08).
+  The owner chose a "reject the chain" button on the later version's page instead (see [Entry status](#entry-status)).
+  Doing nothing more was turned down too: a rejected version's earlier versions would release within a minute, with nothing in the admin pages to pull them.
 - **A 1 GB VPS.**
   Processes would fit, but with little RAM left for the page cache, and the 4 GB plans cost about the same.

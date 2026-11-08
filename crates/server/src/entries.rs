@@ -6,6 +6,7 @@ use analyzer::{
 };
 use sqlx::SqlitePool;
 
+use crate::embargo::ChainDate;
 use crate::link_checks::{self, LinkFlags};
 use crate::screening::Verdict;
 use crate::series::Cited;
@@ -589,8 +590,10 @@ pub struct HeldBack {
     pub status: String,
     /// The 12-month cap counts from here.
     pub first_submitted_at: String,
-    /// The date its chain releases on ([`chain_embargo`]).
-    pub chain_embargo: Option<String>,
+    /// The date its chain releases on ([`chain_date`]).
+    pub chain_date: ChainDate,
+    /// A later version of its chain still waits for a verdict ([`chain_undecided`]).
+    pub chain_undecided: bool,
 }
 
 /// Why a held-back entry is due for release.
@@ -604,17 +607,16 @@ pub enum Due {
 }
 
 impl HeldBack {
-    /// Why it is due at `now`, if it is.
+    /// Why it is due at `now`, if it is. Never while a later version of its chain
+    /// waits for a verdict, even at the cap: the versions release together, and an
+    /// owner's hold beats the author's cap (the owner's decision, 2026-11-08).
     pub fn due(&self, now: time::OffsetDateTime) -> Option<Due> {
+        if self.chain_undecided {
+            return None;
+        }
         let at_cap = crate::time::parse(&self.first_submitted_at)
             .is_some_and(|first| now >= crate::embargo::cap_time(first));
-        // A stored date that isn't one holds the entry: a release can't be undone.
-        let embargo_over = self.status == "embargoed"
-            && match self.chain_embargo.as_deref() {
-                None => true,
-                Some(text) => crate::embargo::parse_date(Some(text))
-                    .is_some_and(|date| now >= crate::embargo::release_time(date)),
-            };
+        let embargo_over = self.status == "embargoed" && !self.chain_date.holds(now);
         if at_cap {
             Some(Due::Cap)
         } else {
@@ -622,10 +624,10 @@ impl HeldBack {
         }
     }
 
-    /// Whether its chain names a date that isn't one, which holds it.
+    /// Whether it is embargoed under a stored date that isn't one, which holds it
+    /// until the 12-month cap.
     pub fn date_unreadable(&self) -> bool {
-        self.chain_embargo.is_some()
-            && crate::embargo::parse_date(self.chain_embargo.as_deref()).is_none()
+        self.status == "embargoed" && self.chain_date == ChainDate::Unreadable
     }
 }
 
@@ -664,8 +666,72 @@ async fn held_back_one(
         seq,
         status: row.status,
         first_submitted_at: row.first_submitted_at,
-        chain_embargo: chain_embargo(&mut *connection, seq).await?,
+        chain_date: chain_date(&mut *connection, seq).await?,
+        chain_undecided: chain_undecided(&mut *connection, seq).await?,
     }))
+}
+
+/// Whether a later version of entry `seq`'s chain is still pending, being screened,
+/// or with the owner (`review`, `held`, `frozen`).
+async fn chain_undecided(
+    connection: &mut sqlx::SqliteConnection,
+    seq: i64,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar!(
+        r#"WITH RECURSIVE later(seq) AS (
+               SELECT seq FROM entries WHERE previous_seq = ?1
+               UNION ALL
+               SELECT n.seq FROM entries n JOIN later l ON n.previous_seq = l.seq
+           )
+           SELECT EXISTS (
+               SELECT 1 FROM entries e JOIN later l ON l.seq = e.seq
+               WHERE e.status IN ('pending', 'screening', 'review', 'held', 'frozen')
+           ) AS "undecided!: bool""#,
+        seq
+    )
+    .fetch_one(&mut *connection)
+    .await
+}
+
+/// An earlier version of a chain, held back while a later one is decided.
+pub struct EarlierVersion {
+    pub seq: i64,
+    pub id: String,
+    pub status: String,
+}
+
+/// The earlier versions of entry `seq`'s chain that are `embargoed` or
+/// `waiting_on_series`, oldest first: the ones that wait on its verdict, which the
+/// owner's "reject the chain" rejects with it.
+pub async fn held_back_before<'e>(
+    executor: impl sqlx::SqliteExecutor<'e>,
+    seq: i64,
+) -> Result<Vec<EarlierVersion>, sqlx::Error> {
+    sqlx::query_as!(
+        EarlierVersion,
+        r#"WITH RECURSIVE earlier(seq) AS (
+               SELECT previous_seq FROM entries WHERE seq = ?1 AND previous_seq IS NOT NULL
+               UNION ALL
+               SELECT e.previous_seq FROM entries e JOIN earlier p ON e.seq = p.seq
+               WHERE e.previous_seq IS NOT NULL
+           )
+           SELECT e.seq AS "seq!: i64", e.id, e.status FROM entries e JOIN earlier p ON p.seq = e.seq
+           WHERE e.status IN ('embargoed', 'waiting_on_series')
+           ORDER BY e.seq"#,
+        seq
+    )
+    .fetch_all(executor)
+    .await
+}
+
+/// Entry `seq`'s chain's release date ([`chain_embargo`]), read.
+pub async fn chain_date<'e>(
+    executor: impl sqlx::SqliteExecutor<'e>,
+    seq: i64,
+) -> Result<ChainDate, sqlx::Error> {
+    Ok(ChainDate::read(
+        chain_embargo(executor, seq).await?.as_deref(),
+    ))
 }
 
 /// The date entry `seq`'s chain releases on (design.md, Entry lifecycle: the
@@ -1380,7 +1446,12 @@ pub async fn owner_pass(pool: &SqlitePool, seq: i64) -> Result<bool, sqlx::Error
 /// The owner fails an entry in review or held with `reasons` (a JSON array): it goes
 /// back to `screening` with a rejection, for the queue to send its whole batch back,
 /// and its account is guarded. False if it was in neither.
-pub async fn owner_reject(pool: &SqlitePool, seq: i64, reasons: &str) -> Result<bool, sqlx::Error> {
+pub async fn owner_reject(
+    pool: &SqlitePool,
+    seq: i64,
+    reasons: &str,
+    earlier: Earlier,
+) -> Result<bool, sqlx::Error> {
     let mut transaction = crate::db::write_tx(pool).await?;
     let done = sqlx::query!(
         "UPDATE entries SET status = 'screening', screen_verdict = 'reject',
@@ -1395,8 +1466,36 @@ pub async fn owner_reject(pool: &SqlitePool, seq: i64, reasons: &str) -> Result<
         return Ok(false);
     }
     guard_author(&mut transaction, seq).await?;
+    if earlier == Earlier::Reject {
+        for version in held_back_before(&mut *transaction, seq).await? {
+            sqlx::query!(
+                "UPDATE entries SET status = 'rejected', rejection_reasons = ?
+                 WHERE seq = ? AND status IN ('embargoed', 'waiting_on_series')",
+                reasons,
+                version.seq
+            )
+            .execute(&mut *transaction)
+            .await?;
+            // As any rejection does, so its author can submit again with the slug.
+            sqlx::query!("DELETE FROM slugs WHERE entry_seq = ?", version.seq)
+                .execute(&mut *transaction)
+                .await?;
+        }
+        // A rejected version no longer holds back the series version it cites.
+        crate::series::mark_readable(&mut transaction).await?;
+    }
     transaction.commit().await?;
     Ok(true)
+}
+
+/// What the owner's reject of a version does to the earlier versions of its chain
+/// that are held back with it ([`held_back_before`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Earlier {
+    /// They release once it is decided, on their date.
+    Keep,
+    /// They are rejected with it (the owner's "reject the chain", 2026-11-08).
+    Reject,
 }
 
 /// An entry that passed although the screen doubted it holds a hazard.

@@ -337,6 +337,7 @@ async fn every_admin_write_refuses_a_token_and_another_accounts_session() {
         format!("/admin/e/{id}/publish"),
         format!("/admin/e/{id}/hold"),
         format!("/admin/e/{id}/reject"),
+        format!("/admin/e/{id}/reject-chain"),
         format!("/admin/e/{id}/doubt-seen"),
         format!("/admin/accounts/{}/clear-guard", app.account),
     ] {

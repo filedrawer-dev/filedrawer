@@ -88,8 +88,7 @@ pub async fn release_due(state: &AppState, now: OffsetDateTime) -> Result<usize,
         if held.date_unreadable() {
             tracing::error!(
                 seq = held.seq,
-                date = ?held.chain_embargo,
-                "an embargoed entry's stored date isn't a date, so it stays held"
+                "an embargoed entry's stored date isn't a date; it is held until the date is fixed or the 12-month cap"
             );
         }
         let to = match held.due(now) {

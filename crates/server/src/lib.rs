@@ -188,6 +188,7 @@ fn build(state: AppState) -> Routes<Router> {
         .route("/admin/e/{id}/publish", post(admin::publish))
         .route("/admin/e/{id}/hold", post(admin::hold))
         .route("/admin/e/{id}/reject", post(admin::reject))
+        .route("/admin/e/{id}/reject-chain", post(admin::reject_chain))
         .route("/admin/e/{id}/doubt-seen", post(admin::doubt_seen))
         .route(
             "/admin/series-refusals/{id}/confirm",

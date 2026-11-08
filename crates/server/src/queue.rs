@@ -7,7 +7,6 @@ use analyzer::analyze;
 use sqlx::SqlitePool;
 use time::OffsetDateTime;
 
-use crate::embargo::embargoed_until;
 use crate::screening::{Call, MAX_ATTEMPTS, ModelError, Subject, Verdict};
 use crate::{
     AppState, accounts, allowance, attachments, entries, removed_files, series, time::stamp, unpack,
@@ -530,8 +529,7 @@ async fn place_passed(state: &AppState, seq: i64, now: OffsetDateTime) -> Result
     };
     let analysis = analyze(&source);
     // The chain's date, which a browser may have moved since this text was written.
-    let chain_date = entries::chain_embargo(&state.pool, seq).await?;
-    if embargoed_until(chain_date.as_deref(), now).is_some() {
+    if entries::chain_date(&state.pool, seq).await?.holds(now) {
         entries::embargo(&state.pool, seq).await?;
     } else if series::waits(&state.pool, seq).await? {
         entries::wait_on_series(&state.pool, seq).await?;

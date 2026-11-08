@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH RECURSIVE later(seq) AS (\n               SELECT seq FROM entries WHERE previous_seq = ?1\n               UNION ALL\n               SELECT n.seq FROM entries n JOIN later l ON n.previous_seq = l.seq\n           )\n           SELECT EXISTS (\n               SELECT 1 FROM entries e JOIN later l ON l.seq = e.seq\n               WHERE e.status IN ('pending', 'screening', 'review', 'held', 'frozen')\n           ) AS \"undecided!: bool\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "undecided!: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "069ec44ae98e285ecc7206d6484efd4b999d2f142d022db4d64c81711147a131"
+}

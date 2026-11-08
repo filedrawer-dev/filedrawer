@@ -82,12 +82,33 @@ pub fn parse_date(embargo_until: Option<&str>) -> Option<Date> {
     .ok()
 }
 
-/// The date an entry stays embargoed until at `now`, if its `embargo_until` is a date
-/// whose release time is still ahead. For an entry already accepted, whose date was
-/// checked at submission.
-pub fn embargoed_until(embargo_until: Option<&str>, now: OffsetDateTime) -> Option<Date> {
-    let date = parse_date(embargo_until)?;
-    (now < release_time(date)).then_some(date)
+/// A chain's stored release date (`entries::chain_embargo`), read once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChainDate {
+    /// No embargo.
+    Unset,
+    On(Date),
+    /// Stored, but not a date, which only a hand-edited row can be.
+    Unreadable,
+}
+
+impl ChainDate {
+    pub fn read(stored: Option<&str>) -> ChainDate {
+        match stored {
+            None => ChainDate::Unset,
+            Some(text) => parse_date(Some(text)).map_or(ChainDate::Unreadable, ChainDate::On),
+        }
+    }
+
+    /// Whether it still holds the chain back at `now`. An unreadable date holds it,
+    /// since a release can't be undone.
+    pub fn holds(self, now: OffsetDateTime) -> bool {
+        match self {
+            ChainDate::Unset => false,
+            ChainDate::On(date) => now < release_time(date),
+            ChainDate::Unreadable => true,
+        }
+    }
 }
 
 /// The date a version bound by the embargo `in_force` keeps, given the

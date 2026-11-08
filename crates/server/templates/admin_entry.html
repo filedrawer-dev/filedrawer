@@ -20,6 +20,18 @@
 {% endif %}
 <form method="post" action="/admin/e/{{ entry.id }}/reject"><button type="submit">Reject</button></form>
 <p>The author reads only "rejected in review". Rejecting one member sends its whole batch back.</p>
+{% if !held_back.is_empty() %}
+<h2>Earlier versions held back with it</h2>
+<p>These versions of its chain wait while this one is undecided, and release on their date once it is decided. If its problem is in them too, reject them with it.</p>
+<ul>
+{% for version in held_back %}
+<li><code>{{ version.id }}</code>, {{ version.status }}</li>
+{% endfor %}
+</ul>
+{% if entry.status != "frozen" %}
+<form method="post" action="/admin/e/{{ entry.id }}/reject-chain"><button type="submit">Reject it and those versions</button></form>
+{% endif %}
+{% endif %}
 <h2>Card</h2>
 <pre>{{ card }}</pre>
 <h2>Text</h2>

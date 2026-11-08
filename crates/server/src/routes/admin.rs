@@ -104,6 +104,7 @@ pub async fn entry(
     // Shown with the entry once public, so the owner reads them too.
     let runs = entries::run_declarations(&state.pool, entry.seq).await?;
     let batch_failed = entries::batch_failed(&state.pool, entry.seq).await?;
+    let held_back = entries::held_back_before(&state.pool, entry.seq).await?;
     // Its attached files, which a guarded account's entry reaches here unscreened.
     let mut files = Vec::new();
     for file in attachments::entry_files(&state.pool, entry.seq).await? {
@@ -125,6 +126,7 @@ pub async fn entry(
             runs: &runs,
             batch_failed,
             files: &files,
+            held_back: &held_back,
         },
     ))
 }
@@ -161,6 +163,16 @@ pub async fn reject(
     Path(id): Path<String>,
 ) -> Result<Response, AppError> {
     decide(&state, &id, Decision::Reject).await
+}
+
+/// Rejects an entry in review or held, and the earlier versions of its chain that
+/// are held back with it.
+pub async fn reject_chain(
+    _: AdminSession,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Response, AppError> {
+    decide(&state, &id, Decision::RejectChain).await
 }
 
 /// Releases a frozen entry back to screening.

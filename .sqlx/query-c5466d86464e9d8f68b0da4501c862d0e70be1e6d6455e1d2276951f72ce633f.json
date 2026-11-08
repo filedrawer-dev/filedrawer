@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE entries SET status = 'rejected', rejection_reasons = ?\n                 WHERE seq = ? AND status IN ('embargoed', 'waiting_on_series')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "c5466d86464e9d8f68b0da4501c862d0e70be1e6d6455e1d2276951f72ce633f"
+}

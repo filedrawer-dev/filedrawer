@@ -342,3 +342,151 @@ async fn a_stored_date_that_isnt_one_holds_the_entry() {
     );
     assert_eq!(status(&app, &id).await, "embargoed");
 }
+
+const HAZARD: &str = "FAKE-HAZARD FAKE-SONNET-HAZARD";
+
+/// An app whose screen sends an entry with [`HAZARD`] in its title to review, and
+/// the owner's session.
+async fn review_app() -> (TestApp, String) {
+    let app = test_app_with(FakeModels::default().screener(), 1_000_000_000).await;
+    let cookie = common::owner(&app).await;
+    (app, cookie)
+}
+
+/// Posts an owner's decision and checks it went back to the queue.
+async fn decide(app: &TestApp, cookie: &str, path: &str) {
+    let reply = app.form(path, &[], Some(cookie)).await;
+    assert_eq!(
+        reply.status,
+        StatusCode::SEE_OTHER,
+        "{path}: {}",
+        reply.body
+    );
+}
+
+/// An embargoed v1 and its v2, which the screen sent to review.
+async fn chain_with_v2_in_review(app: &TestApp, date: &str) -> (String, String) {
+    let v1 = app
+        .submit(&entry("Steering", &format!("embargo_until: {date}\n")))
+        .await;
+    let v2 = new_version(app, &v1, &entry(&format!("Steering {HAZARD}"), "")).await;
+    assert_eq!(status(app, &v2).await, "review");
+    (v1, v2)
+}
+
+#[tokio::test]
+async fn a_chain_waits_while_a_newer_version_is_in_review() {
+    let (app, cookie) = review_app().await;
+    let date = date_in(10);
+    let (v1, v2) = chain_with_v2_in_review(&app, &date).await;
+
+    assert_eq!(release(&app, release_time(&date)).await, 0);
+    assert!(!is_public(&app, &v1).await);
+
+    decide(&app, &cookie, &format!("/admin/e/{v2}/publish")).await;
+    assert_eq!(release(&app, release_time(&date)).await, 2);
+    assert!(is_public(&app, &v1).await);
+    assert!(is_public(&app, &v2).await);
+}
+
+#[tokio::test]
+async fn a_plain_reject_of_the_newer_version_lets_the_chain_out() {
+    let (app, cookie) = review_app().await;
+    let date = date_in(10);
+    let (v1, v2) = chain_with_v2_in_review(&app, &date).await;
+    decide(&app, &cookie, &format!("/admin/e/{v2}/reject")).await;
+    assert_eq!(release(&app, release_time(&date)).await, 1);
+    assert!(is_public(&app, &v1).await);
+}
+
+#[tokio::test]
+async fn the_owner_can_reject_a_version_with_its_chains_held_back_versions() {
+    let (app, cookie) = review_app().await;
+    let date = date_in(10);
+    let (v1, v2) = chain_with_v2_in_review(&app, &date).await;
+    let page = app.page(&format!("/admin/e/{v2}"), Some(&cookie)).await;
+    assert!(page.body.contains(&v1), "{}", page.body);
+    assert!(
+        page.body
+            .contains(&format!("action=\"/admin/e/{v2}/reject-chain\"")),
+        "{}",
+        page.body
+    );
+
+    decide(&app, &cookie, &format!("/admin/e/{v2}/reject-chain")).await;
+    assert_eq!(status(&app, &v1).await, "rejected");
+    assert_eq!(status(&app, &v2).await, "rejected");
+    assert_eq!(release(&app, release_time(&date)).await, 0);
+    assert!(!is_public(&app, &v1).await);
+}
+
+#[tokio::test]
+async fn a_pending_newer_version_holds_the_chain_too() {
+    let app = test_app().await;
+    let date = date_in(10);
+    let v1 = app
+        .submit(&entry("Steering", &format!("embargo_until: {date}\n")))
+        .await;
+    let held = app
+        .post(
+            &format!("/e/{v1}/versions"),
+            entry("Steering, corrected", ""),
+        )
+        .await;
+    assert_eq!(held.status, StatusCode::CREATED, "{}", held.body);
+    assert_eq!(release(&app, release_time(&date)).await, 0);
+    assert!(!is_public(&app, &v1).await);
+}
+
+#[tokio::test]
+async fn rejecting_the_chain_frees_its_slug() {
+    let (app, cookie) = review_app().await;
+    let date = date_in(10);
+    let v1 = app
+        .submit(&entry(
+            "Steering",
+            &format!("slug: steer\nembargo_until: {date}\n"),
+        ))
+        .await;
+    let v2 = new_version(&app, &v1, &entry(&format!("Steering {HAZARD}"), "")).await;
+    decide(&app, &cookie, &format!("/admin/e/{v2}/reject-chain")).await;
+    let again = app
+        .post("/entries", entry("Steering", "slug: steer\n"))
+        .await;
+    assert_eq!(again.status, StatusCode::CREATED, "{}", again.body);
+}
+
+#[tokio::test]
+async fn an_undecided_newer_version_holds_the_chain_past_the_12_month_cap() {
+    let (app, _) = review_app().await;
+    let (v1, _) = chain_with_v2_in_review(&app, &date_in(10)).await;
+    assert_eq!(release(&app, release_time(&a_year_from_today())).await, 0);
+    assert!(!is_public(&app, &v1).await);
+}
+
+#[tokio::test]
+async fn a_version_placed_under_a_stored_date_that_isnt_one_is_held() {
+    let app = test_app().await;
+    let v1 = app
+        .submit(&entry(
+            "Steering",
+            &format!("embargo_until: {}\n", date_in(10)),
+        ))
+        .await;
+    let held = app
+        .post(
+            &format!("/e/{v1}/versions"),
+            entry("Steering, corrected", ""),
+        )
+        .await;
+    let v2 = id_in(&held.body);
+    store_date(&app, &v2, "soon").await;
+    let placed = app.post(&format!("/e/{v2}/publish"), "").await;
+    assert_eq!(
+        field(&placed.body, "status"),
+        Some("embargoed"),
+        "{}",
+        placed.body
+    );
+    assert!(!is_public(&app, &v2).await);
+}

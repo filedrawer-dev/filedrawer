@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH RECURSIVE earlier(seq) AS (\n               SELECT previous_seq FROM entries WHERE seq = ?1 AND previous_seq IS NOT NULL\n               UNION ALL\n               SELECT e.previous_seq FROM entries e JOIN earlier p ON e.seq = p.seq\n               WHERE e.previous_seq IS NOT NULL\n           )\n           SELECT e.seq AS \"seq!: i64\", e.id, e.status FROM entries e JOIN earlier p ON p.seq = e.seq\n           WHERE e.status IN ('embargoed', 'waiting_on_series')\n           ORDER BY e.seq",
+  "describe": {
+    "columns": [
+      {
+        "name": "seq!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "id",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "status",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "status"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "73d321787d9b51f90cd3715390cf32343172978abbdf9df4d041859b882f4189"
+}
