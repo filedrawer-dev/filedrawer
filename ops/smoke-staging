@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Smoke test of a File Drawer server, staging by default, following /skill.md as an
+# Smoke test of a File Drawer server, staging by default, following the submit skill as an
 # agent would: submit, the hour's hold, a fix with PUT, publish, search, a new
 # version, and a batch with slugs and runs. Each entry's title says it is a smoke
 # test, and staging keeps them. CI runs it after each deploy to staging.
@@ -13,7 +13,7 @@ usage: ops/smoke-staging [--wait SECONDS] [URL]
                               [--wait SECONDS] [URL]
 
 Runs File Drawer's smoke test against URL (default https://staging.filedrawer.dev),
-as /skill.md tells an agent to: submit, the hour's hold, a fix with PUT, publish,
+as the submit skill tells an agent to: submit, the hour's hold, a fix with PUT, publish,
 search, a new version, and a batch with slugs and runs. Prints PASS or FAIL for each
 check, then a tally, and exits 1 when any check fails.
 
@@ -61,7 +61,10 @@ times that for an entry citing attached code, which the screen reads in parts, a
 once more for each 10 entries of a batch, whose entries are decided together. Raise
 it for a long eval; tests lower it. FILEDRAWER_SCREEN_POLL_SECONDS is how often it
 asks for a verdict meanwhile, default 5; tests ask every 0.2.
-FILEDRAWER_BATCH_MAX_BYTES caps a batch's body, default 900000, for tests.)
+FILEDRAWER_BATCH_MAX_BYTES caps a batch's body, default 900000, for tests.
+FILEDRAWER_SKILL_TAGS_URL is where the skills' git tags are read, default
+https://raw.githubusercontent.com/filedrawer-dev/filedrawer; tests point it at a
+local folder with file://.)
 
 eval runs a labelled test set through the screen, as the screen-test account, to
 see whether it is too strict or too lax. By hand only. The cases are the entries
@@ -961,6 +964,30 @@ fi
 
 req GET /skill.md
 check "skill.md is live" '[[ $CODE == 200 ]]'
+
+# The skills (design.md, Skills): a HEAD of /skill.md names each one's version, and
+# each version's git tag, rendered as the installer renders it, holds what the site
+# serves at /skills/<name>/, so an install from the tag gets what this server describes.
+skills=$(curl -sSI --suppress-connect-headers --max-time 10 -K <(headers) "$base/skill.md" |
+  tr -d '\r' | sed -n 's/^[Xx]-[Ff]iledrawer-[Ss]kills: //p')
+check "skill.md names both skills' versions" \
+  '[[ $skills =~ ^filedrawer-search/[0-9]+,\ filedrawer-submit/[0-9]+$ ]]'
+tags_url=${FILEDRAWER_SKILL_TAGS_URL:-https://raw.githubusercontent.com/filedrawer-dev/filedrawer}
+host=${base#*://}
+host=${host%%/*}
+for pair in ${skills//,/}; do
+  name=${pair%/*}
+  n=${pair#*/}
+  files=$(curl -s -K <(headers) "$base/skills/$name/SKILL.md" | sed -n 's/^  files: "\(.*\)"$/\1/p')
+  check "$name $n: SKILL.md lists its files" '[[ -n $files ]]'
+  for file in $files; do
+    curl -fsSL --max-time 30 "$tags_url/refs/tags/skill-$name-v$n/skills/$name/$file" 2>/dev/null |
+      sed "s#[{]{BASE}}#$base#g; s#[{]{HOST}}#$host#g" > "$dir/tagged"
+    CODE=$(curl -s -o "$dir/served" -w '%{http_code}' -K <(headers) "$base/skills/$name/$file")
+    check "$name $n: the tag's $file is what the site serves" \
+      '[[ $CODE == 200 && -s $dir/tagged ]] && cmp -s "$dir/tagged" "$dir/served"'
+  done
+done
 
 make_entry single "compute: 1h" > "$dir/e1.md"
 req POST /entries "$dir/e1.md"

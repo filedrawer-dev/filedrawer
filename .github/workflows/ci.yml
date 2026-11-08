@@ -135,7 +135,7 @@ jobs:
             -o UserKnownHostsFile=known_hosts \
             "deploy@$VPS_HOST" "deploy staging $hash" < filedrawer
 
-  # After each deploy, ops/smoke-staging follows /skill.md against staging as an agent
+  # After each deploy, ops/smoke-staging follows the submit skill against staging as an agent
   # would, as an account of its own. deploy-staging succeeds only once the new binary
   # passed filedrawer-install's health check, and the script's --wait then waits for
   # /skill.md to answer through Caddy. Smoke entries stay on staging. This job holds

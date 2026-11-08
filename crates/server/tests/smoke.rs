@@ -2,11 +2,24 @@
 //! loopback. CI runs the script against staging after each deploy, so a change to the
 //! server's replies that would break it there fails here first.
 
+mod common;
+
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output};
 
 const SCRIPT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../ops/smoke-staging");
+
+/// The skills' tags as this build has them, made once for every test.
+fn true_skill_tags() -> &'static Path {
+    static TAGS: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+    TAGS.get_or_init(|| {
+        let dir = tempfile::tempdir().unwrap();
+        common::skills::tags_mirror(dir.path(), |_, _, text| text);
+        dir
+    })
+    .path()
+}
 
 /// A `filedrawer serve` on a free loopback port, stopped when dropped.
 struct Server {
@@ -109,6 +122,10 @@ fn script(args: &[&str], key: Option<&str>) -> Command {
         .env_remove("FILEDRAWER_STAGING_KEY")
         .env_remove("FILEDRAWER_STAGING_API_KEY")
         .env_remove("FILEDRAWER_STAGING_SCREEN_API_KEY")
+        .env(
+            "FILEDRAWER_SKILL_TAGS_URL",
+            format!("file://{}", true_skill_tags().display()),
+        )
         // A local server decides within a second or two; polling every 5 s, as against
         // staging, would spend seconds per case.
         .env("FILEDRAWER_SCREEN_POLL_SECONDS", "0.2");
@@ -142,12 +159,56 @@ fn every_check_passes_against_this_server() {
     assert!(output.status.success(), "{printed}");
     assert!(!printed.contains("FAIL"), "{printed}");
     assert!(printed.contains(" 0 failed"), "{printed}");
+    for name in common::skills::NAMES {
+        for file in common::skills::files(name) {
+            let check = format!(": the tag's {file} is what the site serves");
+            assert!(
+                printed.lines().any(
+                    |line| line.starts_with(&format!("PASS {name} ")) && line.ends_with(&check)
+                ),
+                "{printed}"
+            );
+        }
+    }
     assert!(
         printed
             .lines()
             .filter(|line| line.starts_with("PASS "))
             .count()
             >= 18,
+        "{printed}"
+    );
+}
+
+#[test]
+fn a_skill_tag_that_differs_from_the_site_fails() {
+    let (server, token) = server_and_token("tags");
+    let tags = tempfile::tempdir().unwrap();
+    common::skills::tags_mirror(tags.path(), |_, _, text| {
+        text.replace("# File Drawer: submit", "# Planted")
+    });
+    let output = script(&["--wait", "30", &server.url], Some("unused"))
+        .env("FILEDRAWER_STAGING_API_KEY", &token)
+        .env(
+            "FILEDRAWER_SKILL_TAGS_URL",
+            format!("file://{}", tags.path().display()),
+        )
+        .output()
+        .unwrap();
+    let printed = text(&output);
+    assert!(!output.status.success(), "{printed}");
+    assert!(
+        printed
+            .lines()
+            .any(|line| line.starts_with("FAIL filedrawer-submit ")
+                && line.ends_with(": the tag's SKILL.md is what the site serves")),
+        "{printed}"
+    );
+    assert!(
+        printed
+            .lines()
+            .any(|line| line.starts_with("PASS filedrawer-search ")
+                && line.ends_with(": the tag's SKILL.md is what the site serves")),
         "{printed}"
     );
 }

@@ -52,7 +52,7 @@ The field test's entries and logs are in `field-test/`, git-excluded and local o
   They describe only what the server does, so update them with each change to a route.
   Then run `bin/skills sync`, which also follows a change to `docs/entry-format.md`: it copies the format into each skill and records each version in `skills/versions.txt`, bumping a version already pushed; a test refuses a skill changed without it.
   CI's `release-skills` job tags each new version before staging deploys, with a deploy key `ops/protect-skill-tags` sets up (`-h`).
-- `ops/smoke-staging` follows the submit skill against staging as an agent would; `screen` checks staging's real screen and `eval` its labelled cases (`ops/screen-eval/`).
+- `ops/smoke-staging` follows the submit skill against staging as an agent would, and checks that each skill's tag holds what the site serves; `screen` checks staging's real screen and `eval` its labelled cases (`ops/screen-eval/`).
   CI runs the first two after each deploy, each as a test account of its own.
   Read its `-h` before running it, or changing staging's test accounts, their settings or CI's deploy checks: it holds the accounts, the secrets and the settings each mode reads.
 - `GET /staging/status` (staging and dev; production has no such route) shows what screening spent today against the cap, how many entries wait for it and since when, and when its last call succeeded and when the last one failed, with the API's error; and for the link checks, GitHub's hourly allowance and the calls left, the hosts that asked the server to wait, and how often the API overruled GitHub's commit page.
