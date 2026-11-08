@@ -3,20 +3,21 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <title>{% block title %}File Drawer{% endblock %} · File Drawer</title>
-<style>
-body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
-label { display: block; margin-top: 1rem; }
-input[type=text], input[type=email], input[type=password] { width: 100%; padding: .4rem; box-sizing: border-box; }
-button { margin-top: 1rem; padding: .4rem 1rem; }
-.error { color: #a00; }
-code { background: #f3f3f3; padding: .1rem .3rem; word-break: break-all; }
-table { border-collapse: collapse; width: 100%; }
-td, th { text-align: left; padding: .3rem; border-bottom: 1px solid #ddd; }
-</style>
+<link rel="stylesheet" href="{{ crate::routes::assets::stylesheet_href() }}">
+{% block head %}{% endblock %}
 </head>
 <body>
-<p><a href="/">File Drawer</a></p>
+<div class="col">
+<a class="plate" href="/"><span>File Drawer<small>AI safety results that won't become papers</small></span></a>
+<nav class="nav" aria-label="Site"><a href="/search">Search</a> · <a href="/skill.md">/skill.md</a> · <a href="/cards.txt">/cards.txt</a> · <a href="/account">Your account</a></nav>
+{% block page %}
+<main class="card big{% block wide %}{% endblock %}">
 {% block content %}{% endblock %}
+</main>
+{% endblock %}
+<p class="foot">Source code <a href="https://github.com/filedrawer-dev/filedrawer">AGPL-3.0</a> · Entries CC-BY 4.0</p>
+</div>
 </body>
 </html>

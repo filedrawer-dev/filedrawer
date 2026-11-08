@@ -39,6 +39,11 @@ const NOT_FOR_AGENTS: &[&str] = &[
     "/admin/f/{sha256}/remove-hazard",
     "/skill.md",
     "/staging/status",
+    // Its plain text points an agent that arrived without /skill.md to it; take it off
+    // this list if /skill.md comes to name it (uncertainties.md).
+    "/",
+    "/static/site.css",
+    "/static/fonts/{name}",
 ];
 
 /// Each URL on this site that `text` names, as a path without its query, with each

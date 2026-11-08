@@ -1,0 +1,166 @@
+/* The pages for people (design.md, Pages for people): a library card catalog.
+   Look 5 in light mode and look 9 in dark mode (issue #27's mockups, branch
+   prototype/site-looks). Both share every rule below; only the tokens differ. */
+
+@font-face { font-family: "Courier Prime"; font-style: normal; font-weight: 400; font-display: swap;
+  src: url(/static/fonts/courier-prime-5.2.8-latin-400-normal.woff2) format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "Courier Prime"; font-style: italic; font-weight: 400; font-display: swap;
+  src: url(/static/fonts/courier-prime-5.2.8-latin-400-italic.woff2) format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "Courier Prime"; font-style: normal; font-weight: 700; font-display: swap;
+  src: url(/static/fonts/courier-prime-5.2.8-latin-700-normal.woff2) format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "Courier Prime"; font-style: italic; font-weight: 700; font-display: swap;
+  src: url(/static/fonts/courier-prime-5.2.8-latin-700-italic.woff2) format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "Courier Prime"; font-style: normal; font-weight: 400; font-display: swap;
+  src: url(/static/fonts/courier-prime-5.2.8-latin-ext-400-normal.woff2) format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: "Courier Prime"; font-style: italic; font-weight: 400; font-display: swap;
+  src: url(/static/fonts/courier-prime-5.2.8-latin-ext-400-italic.woff2) format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: "Courier Prime"; font-style: normal; font-weight: 700; font-display: swap;
+  src: url(/static/fonts/courier-prime-5.2.8-latin-ext-700-normal.woff2) format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: "Courier Prime"; font-style: italic; font-weight: 700; font-display: swap;
+  src: url(/static/fonts/courier-prime-5.2.8-latin-ext-700-italic.woff2) format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+
+/* Look 5: white card stock on steel. */
+:root {
+  color-scheme: light;
+  --ink: #22201c; --dim: #6c675e; --card: #fbf8ef; --red: #c4453a; --blue: #b3c8dc;
+  --brass: #b8995a; --manila: #e6d6a4; --steel: #59616a; --plate: #8f7a46; --platehi: #d8c38a;
+  --stamp: #c4453a; --inc: #8a6d1d; --eff: #2f5f8a; --field: #a8996a;
+  --foot: #e9e6df; --foot-a: #ffffff; --error: #a3241a;
+  --shadow: 0 1px 0 #00000022, 0 6px 14px #00000033; --hole: inset 0 2px 3px #00000066;
+}
+/* Look 9: charcoal card stock on dark steel. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --ink: #ebe5d6; --dim: #a0978a; --card: #2b2824; --red: #b8504a; --blue: #36495d;
+    --brass: #9c8048; --manila: #4b4029; --steel: #1a1d22; --plate: #4f4126; --platehi: #c2a868;
+    --stamp: #ec7565; --inc: #d8b052; --eff: #86b6e2; --field: #6a5d44;
+    --foot: #8c939c; --foot-a: #dfe3e8; --error: #ff8a7a;
+    --shadow: 0 1px 0 #000000aa, 0 8px 18px #00000099; --hole: inset 0 2px 3px #000000cc;
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; padding: 2rem 16px 3rem; background: var(--steel); color: var(--ink);
+  font: 15px/1.5 "Courier Prime", "Courier New", ui-monospace, monospace;
+}
+a { color: inherit; }
+a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+.col { max-width: 62rem; margin: 0 auto; }
+.narrow { max-width: 46rem; margin-left: auto; margin-right: auto; }
+
+/* The brass label holder with the site's name. */
+.plate { display: block; border: 4px solid var(--brass); border-radius: 3px; padding: 6px; max-width: 34rem; margin: 0 auto 1.4rem;
+  background: var(--plate); box-shadow: inset 0 0 0 1px var(--platehi); text-decoration: none; color: var(--ink); }
+.plate span { display: block; background: var(--card); padding: .6rem 1rem; text-align: center; letter-spacing: .12em; font-weight: 700; text-transform: uppercase; }
+.plate small { display: block; letter-spacing: .04em; font-weight: 400; text-transform: none; color: var(--dim); }
+.nav { text-align: center; margin: -.6rem 0 1.8rem; color: var(--foot); font-size: .9em; }
+.nav a { color: var(--foot-a); }
+
+/* An index card: ruled lines, a red rule under the top line, and the rod hole. */
+.card { display: block; background: var(--card); color: var(--ink); position: relative; padding: 1.1rem 1.4rem 2.6rem; box-shadow: var(--shadow);
+  background-image: linear-gradient(var(--card) 2.6rem, transparent 2.6rem),
+    repeating-linear-gradient(transparent 0 calc(1.5em - 1px), var(--blue) calc(1.5em - 1px) 1.5em);
+  background-position: 0 0, 0 1.1rem; }
+.card::before { content: ""; position: absolute; left: 0; right: 0; top: 2.5rem; border-top: 1.5px solid var(--red); }
+.card::after { content: ""; position: absolute; left: 50%; bottom: .7rem; width: 16px; height: 16px; margin-left: -8px; border-radius: 50%;
+  background: var(--steel); box-shadow: var(--hole); }
+.card p { margin: 0; overflow-wrap: anywhere; }
+.card .ind { text-indent: 3ch; }
+.call { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; height: 1.6rem; margin-bottom: .2rem; }
+.call > :first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The outcome, stamped. */
+.stamp { display: inline-block; flex: none; color: var(--stamp); border: 2px solid var(--stamp); border-radius: 3px; padding: 0 .45rem; font-weight: 700;
+  letter-spacing: .14em; transform: rotate(-5deg); opacity: .85; font-size: .9em; text-transform: uppercase; }
+.stamp.inconclusive { color: var(--inc); border-color: var(--inc); }
+.stamp.effect { color: var(--eff); border-color: var(--eff); }
+.stamp.mixed, .stamp.unknown { color: var(--dim); border-color: var(--dim); }
+
+/* The home page's README card. */
+.pitch { max-width: 40rem; margin: 0 auto 2.5rem; }
+.agent { margin-top: 1.5em !important; }
+.agent code { font: inherit; font-weight: 700; }
+
+/* Divider-card tabs: the outcome filters, then the subject search. */
+.guides { display: flex; gap: .4rem; align-items: flex-end; flex-wrap: wrap; margin-bottom: -1px; }
+.guides a { background: var(--manila); padding: .3rem 1rem .25rem; border-radius: 8px 8px 0 0; text-decoration: none; color: var(--ink);
+  font-weight: 700; letter-spacing: .08em; font-size: .85em; }
+.guides a[aria-current] { padding-top: .5rem; }
+.guidebar { background: var(--manila); padding: .8rem 1rem; display: flex; gap: .6rem; flex-wrap: wrap; align-items: center; margin-bottom: 1.6rem; }
+.guidebar input { flex: 1; min-width: 0; }
+input[type=text], input[type=email], input[type=password], input[type=number], input[type=date], input[type=search] {
+  font: inherit; color: var(--ink); background: var(--card); border: 1px solid var(--field); padding: .3rem .5rem; max-width: 100%; }
+button { font: inherit; font-weight: 700; background: var(--ink); color: var(--card); border: 0; padding: .35rem .9rem; cursor: pointer; }
+
+/* The drawer: a grid of cards. */
+.drawer { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.4rem; }
+.drawer .card { font-size: .93em; }
+.drawer a { text-decoration: none; }
+.drawer a:hover, .drawer a:focus-visible { text-decoration: underline; }
+.empty { color: var(--foot); text-align: center; }
+.pages { display: flex; justify-content: space-between; margin-top: 1.6rem; }
+.pages a { color: var(--foot-a); }
+
+/* A big card: an entry, a series, or a page of the account's. */
+.big { max-width: 46rem; margin: 0 auto 1.6rem; padding: 1.1rem 2rem 3.2rem; }
+.big.wide { max-width: 62rem; }
+.big h1, .big h2, .big h3, .big h4, .big h5, .big h6 { font-size: 1em; line-height: 1.5; margin: 1.5em 0 0; letter-spacing: .06em; text-transform: uppercase; }
+.big > :first-child { margin-top: 0; }
+.big h1.title { text-transform: none; letter-spacing: 0; margin: 0 0 1.5em; }
+.message { white-space: pre-wrap; }
+.notice { border-left: 3px solid var(--inc); padding-left: 1ch; }
+/* What the author wrote sits in a box of its own, its code unlike the card's type,
+   so none of it passes for the server's words. */
+.authored { border: 1px solid var(--field); padding: 0 1ch; margin: 0 0 1.5em; background: var(--card); }
+.authored > :first-child { margin-top: .75em; }
+.authored pre, .authored code { background: var(--manila); }
+.authored pre { padding: 0 1ch; white-space: pre; overflow-x: auto; overflow-wrap: normal; }
+.authored h3, .authored h4, .authored h5, .authored h6 { text-transform: none; letter-spacing: 0; }
+.big p, .big ul, .big ol, .big pre, .big table, .big form, .big details, .big blockquote, .big .tw { margin: 0 0 1.5em; }
+.big ul, .big ol { padding-left: 3ch; }
+.big pre { font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
+.big blockquote { padding-left: 2ch; border-left: 2px solid var(--blue); }
+.big code { font: inherit; font-weight: 700; overflow-wrap: anywhere; }
+.big hr { border: 0; border-top: 1px dashed var(--dim); margin: 0 0 1.5em; }
+.big summary { cursor: pointer; color: var(--dim); }
+.tw { overflow-x: auto; background: var(--card); }
+table { border-collapse: collapse; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; vertical-align: top; padding: 0 1rem 0 0; border-bottom: 1px dashed var(--dim); }
+.tw th, .tw td { white-space: nowrap; }
+th { font-weight: 700; }
+dl.fields { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0 2ch; margin: 0 0 1.5em; }
+dl.fields dt { color: var(--dim); }
+dl.fields dd { margin: 0; overflow-wrap: anywhere; }
+.cardtext p { padding-left: 3ch; text-indent: -3ch; }
+.big .cardtext { margin: 0 0 1.5em; }
+.big .cardtext p { margin: 0; }
+.error { color: var(--error); font-weight: 700; }
+label { display: block; margin-top: 1.5em; }
+label input { display: block; width: 100%; margin-top: .2rem; }
+form button { margin-top: .75em; }
+td form button, .inline button { margin-top: 0; }
+.inline { display: inline; }
+
+/* The line where author text begins (design.md, Agent interface). */
+.delimiter { margin: 0 0 1.5em; padding: .1rem .6rem; border: 1.5px dashed var(--red); color: var(--red); font-weight: 700; overflow-wrap: anywhere; }
+
+.foot { text-align: center; margin-top: 2.5rem; color: var(--foot); font-size: .9em; }
+.foot a { color: var(--foot-a); }
+
+@media (max-width: 680px) {
+  body { padding-top: 1.2rem; }
+  .drawer { grid-template-columns: minmax(0, 1fr); }
+  .big { padding: 1.1rem 1.2rem 3rem; }
+  .card { padding-left: 1rem; padding-right: 1rem; }
+}

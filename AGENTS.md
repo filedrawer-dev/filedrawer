@@ -46,6 +46,8 @@ The field test's entries and logs are in `field-test/`, git-excluded and local o
   `CODING_STANDARDS.md` holds the rules the review applies.
 - `crates/server/templates`: the HTML pages, askama templates.
   A template can't reach a field from inside a macro call, so `matches!(file.state, ...)` fails to compile; give the type a method instead.
+- `crates/server/static`: the pages' one stylesheet and the Courier Prime fonts, with their licence, compiled into the binary.
+  Colours are tokens on `:root`, light by default and dark under `prefers-color-scheme: dark`; a change of look changes the tokens, not the rules.
 - `ops/smoke-staging` follows `/skill.md` against staging as an agent would; `screen` checks staging's real screen and `eval` its labelled cases (`ops/screen-eval/`).
   CI runs the first two after each deploy, each as a test account of its own.
   Read its `-h` before running it, or changing staging's test accounts, their settings or CI's deploy checks: it holds the accounts, the secrets and the settings each mode reads.

@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}{% if title.is_empty() %}Search{% else %}Search: {{ title }}{% endif %}{% endblock %}
+{% block page %}
+{% include "drawer.html" %}
+{% if previous.is_some() || next.is_some() %}
+<nav class="pages" aria-label="Pages">
+<span>{% if let Some(href) = previous %}<a href="{{ href }}">← Newer</a>{% endif %}</span>
+<span>{% if let Some(href) = next %}<a href="{{ href }}">Older →</a>{% endif %}</span>
+</nav>
+{% endif %}
+{% endblock %}

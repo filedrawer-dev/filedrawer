@@ -247,9 +247,9 @@ pub async fn per_ip(
     {
         Ok(()) => next.run(request).await,
         Err(wait) => {
-            let json = crate::respond::wants_json(request.headers());
+            let asked = crate::respond::Asked::of(request.headers());
             let refusal = too_many("requests from this IP address", wait).into_response();
-            crate::respond::as_json_if(json, refusal).await
+            asked.shape(refusal).await
         }
     }
 }

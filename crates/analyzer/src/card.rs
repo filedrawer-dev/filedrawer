@@ -149,7 +149,7 @@ fn cut(text: &str, cap: usize) -> String {
 fn one_line(text: &str) -> String {
     let spaced: String = text
         .chars()
-        .filter(|c| !matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'))
+        .filter(|c| !crate::is_bidi_control(*c))
         .map(|c| {
             if c.is_control() || matches!(c, '\u{2028}' | '\u{2029}') {
                 ' '

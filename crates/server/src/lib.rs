@@ -145,6 +145,12 @@ impl<R> Routes<R> {
     }
 }
 
+/// What a path no route serves answers: a 404 with a body, which a browser sees as a
+/// page (axum's own has none).
+async fn not_found() -> error::AppError {
+    error::AppError::NotFound
+}
+
 /// The router with every route, and their paths.
 fn build(state: AppState) -> Routes<Router> {
     use routes::{account, admin};
@@ -200,6 +206,9 @@ fn build(state: AppState) -> Routes<Router> {
     let same_origin = axum::middleware::from_fn_with_state(state.clone(), account::same_origin);
     accounts
         .map_router(|router| Router::new().merge(router.layer(same_origin)))
+        .route("/", get(routes::home::home))
+        .route("/static/site.css", get(routes::assets::stylesheet))
+        .route("/static/fonts/{name}", get(routes::assets::font))
         .route("/entries", post(routes::submit::submit))
         .route(
             "/e/{id}",
@@ -243,8 +252,9 @@ fn build(state: AppState) -> Routes<Router> {
                 axum::middleware::from_fn_with_state(state.clone(), routes::files::files_host);
             let per_ip = axum::middleware::from_fn_with_state(state.clone(), limits::per_ip);
             router
+                .fallback(not_found)
                 .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
-                .layer(axum::middleware::from_fn(respond::json_errors))
+                .layer(axum::middleware::from_fn(respond::negotiate))
                 .layer(files_host)
                 .layer(per_ip)
                 .with_state(state)

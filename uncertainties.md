@@ -417,3 +417,21 @@ Once the owner settles one, move the answer into `docs/entry-format.md` or `docs
 - Chosen: drop it.
   The gate already records each pass, and a base it offers is by construction a tree that passed this same check, which is what the record guarded; one record can't drift from another.
 - Against: an agent committing on the owner's host, which has no `agent-commit-gate`, now runs every check, as CI does, where since 68c462b it ran only what its staged paths needed.
+
+## A MIXED tab on the outcome divider cards
+
+- Options: the mockup's tabs (ALL, NULL, INCONCLUSIVE, EFFECT), or those and MIXED.
+- Chosen: MIXED as well, since `mixed` is one of `outcome`'s values and a filter that can't reach it hides those entries from people browsing by outcome.
+- Against: the owner chose the look with four tabs, and mixed entries may stay rare enough that ALL covers them.
+
+## No terms or privacy links in the footer yet
+
+- Options: link `/terms` and `/privacy` from every page now, as the mockups do, or leave them out until build step 5 writes them.
+- Chosen: leave them out, since the links would answer 404.
+- Against: the footer then changes again at step 5, and a page that names the licences without the privacy terms may read as complete.
+
+## `/` on `NOT_FOR_AGENTS`
+
+- Options: name `GET /` in `/skill.md`, or list it in `NOT_FOR_AGENTS` in `crates/server/tests/skill.rs`.
+- Chosen: `NOT_FOR_AGENTS`, since its plain text is for an agent that arrived without `/skill.md`, which then points it there, and another agent was rewriting `/skill.md` at the time.
+- Against: `CODING_STANDARDS.md` puts there only routes a browser alone uses, and `/` answers agents too.

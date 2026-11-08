@@ -17,7 +17,10 @@ use crate::embargo::parse_date;
 use crate::entries::{self, Filters};
 use crate::error::AppError;
 use crate::link_checks::{self, LinkFlags};
-use crate::respond::{DELIMITER, Format, author_name, card_and_warnings, one_line};
+use crate::pages::{Drawer, SearchPage, page};
+use crate::respond::{
+    DELIMITER, Format, author_name, card_and_warnings, echoed, one_line, wants_page,
+};
 use crate::series;
 use crate::{AppState, allowance, attachments, time};
 use analyzer::slug_references;
@@ -52,7 +55,10 @@ pub async fn entry(
     let resolved_successor = successor_slug
         .and_then(|name| links.iter().find(|(slug, _)| slug == name))
         .map(|(_, id)| id.clone());
-    let card = entry.card_with(entry.superseded_by.clone().or(resolved_successor));
+    let card = entry.card_from(
+        &analysis,
+        entry.superseded_by.clone().or(resolved_successor),
+    );
     let runs = entries::entry_runs(&state.pool, &entry.id).await?;
     let cited = shown_series(&state, entry.seq).await?;
     let mut text = format!(
@@ -353,21 +359,39 @@ const MAX_LIMIT: i64 = 100;
 pub async fn search(
     State(state): State<AppState>,
     Query(query): Query<SearchQuery>,
+    headers: HeaderMap,
     format: Format,
 ) -> Result<Response, AppError> {
     let filters = Filters {
         words: query.q.as_deref().and_then(entries::fts_query),
-        outcome: known::<Outcome>("outcome", query.outcome)?,
-        kind: known::<Kind>("kind", query.kind)?,
-        stage: known::<Stage>("stage", query.stage)?,
-        tag: query.tag.filter(|tag| !tag.is_empty()),
-        model: query.model.filter(|model| !model.is_empty()),
-        row_model: query.row_model.filter(|model| !model.is_empty()),
-        row_claim: known::<Claim>("row_claim", query.row_claim)?,
+        outcome: known::<Outcome>("outcome", query.outcome.as_deref())?,
+        kind: known::<Kind>("kind", query.kind.as_deref())?,
+        stage: known::<Stage>("stage", query.stage.as_deref())?,
+        tag: query.tag.clone().filter(|tag| !tag.is_empty()),
+        model: query.model.clone().filter(|model| !model.is_empty()),
+        row_model: query.row_model.clone().filter(|model| !model.is_empty()),
+        row_claim: known::<Claim>("row_claim", query.row_claim.as_deref())?,
     };
     let limit = query.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
-    let offset = (query.page.unwrap_or(1).max(1) - 1).saturating_mul(limit);
-    let results = entries::search(&state.pool, &filters, limit, offset).await?;
+    let page_number = query.page.unwrap_or(1).max(1);
+    let offset = (page_number - 1).saturating_mul(limit);
+    // One more than a page, to know whether another page follows.
+    let mut results = entries::search(&state.pool, &filters, limit + 1, offset).await?;
+    let more = i64::try_from(results.len()).is_ok_and(|found| found > limit);
+    results.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
+    if wants_page(&headers) {
+        let outcome = query.outcome.as_deref().unwrap_or("");
+        let words = query.q.as_deref().unwrap_or("");
+        return Ok(page(
+            StatusCode::OK,
+            &SearchPage {
+                title: echoed(words),
+                drawer: Drawer::new(outcome, words, &results),
+                previous: (page_number > 1).then(|| query.page_href(page_number - 1)),
+                next: more.then(|| query.page_href(page_number + 1)),
+            },
+        ));
+    }
     let cards: Vec<(String, String)> = results
         .iter()
         .map(|entry| (entry.id.clone(), entry.card()))
@@ -383,15 +407,42 @@ pub async fn search(
     Ok(format.reply(StatusCode::OK, text, json))
 }
 
+impl SearchQuery {
+    /// The URL of page `number` of these results, with every filter kept.
+    fn page_href(&self, number: i64) -> String {
+        let mut query = url::form_urlencoded::Serializer::new(String::new());
+        for (name, value) in [
+            ("q", &self.q),
+            ("outcome", &self.outcome),
+            ("kind", &self.kind),
+            ("stage", &self.stage),
+            ("tag", &self.tag),
+            ("model", &self.model),
+            ("row_model", &self.row_model),
+            ("row_claim", &self.row_claim),
+        ] {
+            if let Some(value) = value.as_deref().filter(|value| !value.is_empty()) {
+                query.append_pair(name, value);
+            }
+        }
+        if let Some(limit) = self.limit {
+            query.append_pair("limit", &limit.to_string());
+        }
+        query.append_pair("page", &number.to_string());
+        format!("/search?{}", query.finish())
+    }
+}
+
 /// A filter value checked against the field's vocabulary. Empty means no filter.
-fn known<T: Vocabulary>(name: &str, value: Option<String>) -> Result<Option<T>, AppError> {
+fn known<T: Vocabulary>(name: &str, value: Option<&str>) -> Result<Option<T>, AppError> {
     match value.filter(|value| !value.is_empty()) {
         None => Ok(None),
-        Some(value) => T::parse(&value)
+        Some(value) => T::parse(value)
             .map(Some)
             .ok_or_else(|| {
                 AppError::BadRequest(format!(
-                    "`{name}={value}` is not a value the server knows; see docs for {} (a null result is `no_effect`)",
+                    "`{name}={}` is not a value the server knows; see docs for {} (a null result is `no_effect`)",
+                    echoed(value),
                     T::FIELD
                 ))
             }),

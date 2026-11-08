@@ -76,11 +76,19 @@ pub enum Placed {
 impl PublicEntry {
     /// The card, rendered from the stored text by the current analyzer.
     pub fn card(&self) -> String {
-        self.card_with(self.superseded_by.clone())
+        self.card_from(&analyze(&self.source), self.superseded_by.clone())
     }
 
-    /// The card, with `superseded_by` as the server's record of what replaced it.
-    pub fn card_with(&self, superseded_by: Option<String>) -> String {
+    /// The card and the outcome its stamp shows, from one reading of the entry.
+    pub fn card_and_outcome(&self) -> (String, Choice<Outcome>) {
+        let analysis = analyze(&self.source);
+        let card = self.card_from(&analysis, self.superseded_by.clone());
+        (card, analysis.fields.outcome)
+    }
+
+    /// The card from `analysis`, this entry's, with `superseded_by` as the server's
+    /// record of what replaced it.
+    pub fn card_from(&self, analysis: &Analysis, superseded_by: Option<String>) -> String {
         let flags = LinkFlags {
             code_link_dead: self.code_link_dead,
             logs_link_dead: self.logs_link_dead,
@@ -92,7 +100,7 @@ impl PublicEntry {
             code_attached: self.code_attached,
             ..card_context(&self.id, &self.account_id, self.display_name.as_deref())
         });
-        render_card(&analyze(&self.source), &context)
+        render_card(analysis, &context)
     }
 }
 

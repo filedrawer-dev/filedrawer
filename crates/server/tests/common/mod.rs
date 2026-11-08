@@ -257,6 +257,7 @@ pub async fn test_app_with(screener: Screener, daily_nano_usd: i64) -> TestApp {
     }
 }
 
+#[derive(Debug)]
 pub struct Reply {
     pub status: StatusCode,
     pub headers: HeaderMap,

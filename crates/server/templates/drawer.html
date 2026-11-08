@@ -1,0 +1,21 @@
+<nav class="guides" aria-label="Filter by outcome">
+{%- for tab in drawer.tabs %}<a href="{{ tab.href }}"{% if tab.current %} aria-current="page"{% endif %}>{{ tab.label }}</a>{% endfor -%}
+</nav>
+<form class="guidebar" method="get" action="/search" role="search">
+<label for="q">Subject:</label>
+<input type="search" id="q" name="q" value="{{ drawer.query }}" placeholder="steering vector transfer">
+{%- if !drawer.outcome.is_empty() %}<input type="hidden" name="outcome" value="{{ drawer.outcome }}">{% endif %}
+<button type="submit">Look up</button>
+</form>
+{% if drawer.cards.is_empty() %}<p class="empty">No entries match.</p>{% else %}
+<div class="drawer">
+{%- for card in drawer.cards %}
+<article class="card">
+<div class="call"><a href="/e/{{ card.id }}">{{ card.id }}</a><span class="stamp {{ card.stamp.class }}">{{ card.stamp.word }}</span></div>
+<div class="cardtext">
+{%- for line in card.lines %}{% if crate::pages::is_title_line(loop.index0) %}<p><a href="/e/{{ card.id }}"><b>{{ line }}</b></a></p>{% else %}<p>{{ line }}</p>{% endif %}{% endfor -%}
+</div>
+</article>
+{%- endfor %}
+</div>
+{% endif %}

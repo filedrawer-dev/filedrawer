@@ -201,6 +201,13 @@ pub fn stored_text(text: &str) -> String {
     front_matter::without_reserved_fields(text)
 }
 
+/// Whether `c` is a bidirectional embedding, override or isolate, which author text
+/// shown beside the server's words drops, so it can't reorder them (entry-format.md,
+/// The card: author text can't forge lines).
+pub fn is_bidi_control(c: char) -> bool {
+    matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+}
+
 /// Whether `slug` is a slug the format takes (entry-format.md, Fields): 1 to 64 of
 /// `A-Z`, `a-z`, `0-9`, `.`, `_` and `-`. Slugs are shown beside the server's own
 /// words, so nothing else is allowed in one.

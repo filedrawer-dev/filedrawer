@@ -5,8 +5,10 @@ use askama::Template;
 use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Response};
 
+use analyzer::{Choice, Outcome};
+
 use crate::accounts::{Guarded, TokenView};
-use crate::entries::{Doubted, Undecided};
+use crate::entries::{Doubted, PublicEntry, Undecided};
 use crate::removed_files::{FileState, FileUse, OwnersFile};
 use crate::series::{Owned, Refused};
 
@@ -19,6 +21,140 @@ pub fn page(status: StatusCode, template: &impl Template) -> Response {
             (StatusCode::INTERNAL_SERVER_ERROR, "internal error\n").into_response()
         }
     }
+}
+
+/// The outcome stamped on a card: its word, and the class that colours it.
+#[derive(Debug, Clone, Copy)]
+pub struct Stamp {
+    pub word: &'static str,
+    pub class: &'static str,
+}
+
+impl Stamp {
+    pub fn of(outcome: &Choice<Outcome>) -> Stamp {
+        match outcome.known() {
+            Some(outcome) => Stamp {
+                word: outcome.card_word(),
+                class: outcome.card_word(),
+            },
+            None => Stamp {
+                word: "unrecognised",
+                class: "unknown",
+            },
+        }
+    }
+}
+
+/// A card in the drawer: the analyzer's card, line by line, under its stamp.
+pub struct CardView {
+    pub id: String,
+    pub stamp: Stamp,
+    pub lines: Vec<String>,
+}
+
+impl CardView {
+    pub fn new(id: &str, card: &str, outcome: &Choice<Outcome>) -> CardView {
+        CardView {
+            id: id.to_string(),
+            stamp: Stamp::of(outcome),
+            lines: card.lines().map(str::to_string).collect(),
+        }
+    }
+}
+
+/// A divider card's tab: an outcome filter.
+pub struct Tab {
+    pub label: &'static str,
+    pub href: String,
+    pub current: bool,
+}
+
+/// Whether line `index` (counted from 0) of a card is its title: line 2
+/// (entry-format.md, The card), which a card in the drawer links to its entry. It
+/// takes a reference because templates pass their values by reference.
+pub fn is_title_line(index: &usize) -> bool {
+    *index == 1
+}
+
+/// What `drawer.html` shows on the home and search pages: the outcome tabs, the
+/// subject search, and the cards.
+pub struct Drawer<'a> {
+    pub tabs: Vec<Tab>,
+    /// The words searched for, kept in the box and the tabs.
+    pub query: &'a str,
+    /// The `outcome` filter, or empty for all.
+    pub outcome: &'a str,
+    pub cards: Vec<CardView>,
+}
+
+impl<'a> Drawer<'a> {
+    /// The drawer for `entries`, found with `outcome` and `query`.
+    pub fn new(outcome: &'a str, query: &'a str, entries: &[PublicEntry]) -> Drawer<'a> {
+        let cards = entries
+            .iter()
+            .map(|entry| {
+                let (card, stamped) = entry.card_and_outcome();
+                CardView::new(&entry.id, &card, &stamped)
+            })
+            .collect();
+        Drawer {
+            tabs: outcome_tabs(outcome, query),
+            query,
+            outcome,
+            cards,
+        }
+    }
+}
+
+/// The outcome tabs, with `current` (an `outcome` value, or empty for all) marked,
+/// each keeping the words searched for, `query`.
+fn outcome_tabs(current: &str, query: &str) -> Vec<Tab> {
+    [
+        ("ALL", ""),
+        ("NULL", "no_effect"),
+        ("INCONCLUSIVE", "inconclusive"),
+        ("EFFECT", "effect"),
+        ("MIXED", "mixed"),
+    ]
+    .into_iter()
+    .map(|(label, value)| {
+        let mut href = url::form_urlencoded::Serializer::new(String::new());
+        for (name, value) in [("q", query), ("outcome", value)] {
+            if !value.is_empty() {
+                href.append_pair(name, value);
+            }
+        }
+        let href = href.finish();
+        Tab {
+            label,
+            href: if href.is_empty() {
+                "/search".to_string()
+            } else {
+                format!("/search?{href}")
+            },
+            current: value == current,
+        }
+    })
+    .collect()
+}
+
+#[derive(Template)]
+#[template(path = "home.html")]
+pub struct HomePage<'a> {
+    pub public_url: &'a str,
+    pub drawer: Drawer<'a>,
+}
+
+#[derive(Template)]
+#[template(path = "search.html")]
+pub struct SearchPage<'a> {
+    /// The words searched for as the tab's title shows them: in part, as
+    /// `respond::echoed` cuts them.
+    pub title: String,
+    pub drawer: Drawer<'a>,
+    /// The page of newer results, and of older ones, if there are any.
+    pub previous: Option<String>,
+    pub next: Option<String>,
 }
 
 /// A short page: a heading, a sentence and maybe a link.
