@@ -286,36 +286,65 @@ fn eval_samples_field_test_entries_without_printing_them() {
     )
     .unwrap();
     let marked = fixture.replace("## Caveats", "SECRET-FIELD-TEST-MARKER\n\n## Caveats");
-    std::fs::create_dir_all(fake.join("round1")).unwrap();
-    std::fs::create_dir_all(fake.join("round2")).unwrap();
-    std::fs::write(fake.join("round1/one.md"), &marked).unwrap();
-    // A near-copy under the same name in a later round, and a note that isn't an entry.
-    std::fs::write(fake.join("round2/one.md"), &marked).unwrap();
+    // Only a repo's latest round is sampled, and only its entries: an older round's
+    // copy, notes with no front matter and a series stay unsent.
+    let latest = fake.join("round3/demo-repo");
+    std::fs::create_dir_all(&latest).unwrap();
+    std::fs::create_dir_all(fake.join("round2/demo-repo")).unwrap();
+    std::fs::write(fake.join("round2/demo-repo/old.md"), &marked).unwrap();
+    std::fs::write(latest.join("one.md"), &marked).unwrap();
+    std::fs::write(latest.join("FINDINGS.md"), "SECRET-FIELD-TEST-MARKER notes").unwrap();
     std::fs::write(
-        fake.join("round1/notes.md"),
-        "SECRET-FIELD-TEST-MARKER notes",
+        latest.join("series-demo.md"),
+        "---\ntitle: SECRET-FIELD-TEST-MARKER series\n---\nMade up.\n",
     )
     .unwrap();
-    let mut command = script(
-        &["eval", "--field-test", "3", "--wait", "30", &server.url],
-        Some("unused"),
-    );
-    let empty = scratch_database("eval-field-settings");
-    command
-        .env("FILEDRAWER_OPS_DIR", empty.parent().unwrap())
-        .env("FILEDRAWER_FIELD_TEST_DIR", &fake)
-        .env("FILEDRAWER_STAGING_SCREEN_API_KEY", &token);
-    let output = command.output().unwrap();
-    let printed = text(&output);
-    let _ = std::fs::remove_dir_all(&fake);
+    // An entry the server refuses: its code link has no commit.
+    std::fs::write(
+        latest.join("bad.md"),
+        marked.replacen(
+            "---\n",
+            "---\ncode: https://github.com/made-up/secret-repo-marker\n",
+            1,
+        ),
+    )
+    .unwrap();
+    let ops = scratch_database("eval-field-settings");
+    let ops = ops.parent().unwrap();
+    let run = |args: &[&str]| {
+        let mut command = script(
+            &[&["eval"], args, &["--wait", "30", &server.url]].concat(),
+            Some("unused"),
+        );
+        command
+            .env("FILEDRAWER_OPS_DIR", ops)
+            .env("FILEDRAWER_FIELD_TEST_DIR", &fake)
+            .env("FILEDRAWER_STAGING_SCREEN_API_KEY", &token);
+        text(&command.output().unwrap())
+    };
+    let printed = run(&["--field-test", "5"]);
     assert!(printed.contains("PASS public field-test-1"), "{printed}");
     assert!(!printed.contains("field-test-2"), "{printed}");
     assert!(
         printed.contains("only 1 field-test entries found"),
         "{printed}"
     );
-    assert!(!printed.contains("SECRET-FIELD-TEST-MARKER"), "{printed}");
-    assert!(!printed.contains("one.md"), "{printed}");
+    // A refusal is a failure, its reasons in a file beside the run file.
+    let refused = "FAIL a field-test entry was refused (422); its reasons are in ";
+    assert_eq!(printed.matches(refused).count(), 1, "{printed}");
+    assert!(printed.contains("1 refused at submission"), "{printed}");
+    let (path, _) = run_file(&printed);
+    let reasons = std::fs::read_to_string(format!("{}.refused-1", path.display())).unwrap();
+    assert!(reasons.contains("secret-repo-marker"), "{reasons}");
+    // A resumed run reports it again, so its tally covers the whole run.
+    let again = run(&["--resume", path.to_str().unwrap()]);
+    assert_eq!(again.matches(refused).count(), 1, "{again}");
+    let _ = std::fs::remove_dir_all(&fake);
+    for out in [&printed, &again] {
+        for secret in ["SECRET-FIELD-TEST-MARKER", "one.md", "secret-repo-marker"] {
+            assert!(!out.contains(secret), "{secret} printed: {out}");
+        }
+    }
 }
 
 #[test]
@@ -953,6 +982,11 @@ fn eval_sends_each_field_test_family_as_batches_and_resumes_without_resending() 
     );
     let printed = text(&again);
     assert!(printed.contains("PASS public field-test-2"), "{printed}");
+    // The refused batch is a failure of the whole run, so the resumed run reports it.
+    assert!(
+        printed.contains("FAIL a batch of 1 field-test entries was refused (422)"),
+        "{printed}"
+    );
     let run = std::fs::read_to_string(&path).unwrap();
     assert_eq!(
         sent(&run).len(),

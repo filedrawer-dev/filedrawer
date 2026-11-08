@@ -67,7 +67,10 @@ eval runs a labelled test set through the screen, as the screen-test account, to
 see whether it is too strict or too lax. By hand only. The cases are the entries
 under ops/screen-eval/<expected>/, <expected> being public, rejected or review,
 plus --field-test N (default 10; 0 for none) honest entries picked at random from
-field-test/, expected public (their contents are never printed). A field-test entry
+each repo's latest round in field-test/ (its *.md files with front matter, not its
+series), expected public (their contents are never printed). An entry or batch the
+server refuses is a FAIL, reported again by a resumed run, and its reasons go to a
+file beside the run file, never to the output. A field-test entry
 with a list of attached files beside it, <name>.attachments, is sent citing an
 attachment set of those files, which bin/field-test-files gathers into
 field-test/files/ first; one whose files aren't all there is passed over, and
@@ -78,7 +81,7 @@ server's own decoding finds hidden in the sets' files, run here with no model ca
 how the field-test entries citing a set that hides text fared. It stops at the
 first case left undecided, and says why as screen does, or at the first field-test
 entry or set the server can't take now (no answer, a 429 or a 5xx); one it refuses
-is passed over. Each run writes its cases, and the ID of each entry and set it sends,
+is a FAIL, as above. Each run writes its cases, and the ID of each entry and set it sends,
 to a run file under ops/.eval-runs/ (paths and IDs, no entry text), and prints its
 path; --resume goes on from there, polling what the run sent rather than sending it
 again. Once a run is over, the owner rejects the review cases on /admin, which
@@ -378,39 +381,41 @@ if [[ $mode == eval ]]; then
       done
     done
     record field-tests "$field_tests"
-    # Field-test families: each repo's latest round, the field test's last word on it.
+    # Each repo's latest round, the field test's last word on it: the families
+    # --families sends, and the folders a sample is drawn from, since earlier rounds
+    # hold near-copies in older formats.
+    declare -A latest=() latest_round=()
+    for family in "$field_test_dir"/round*/*/; do
+      [[ -d $family ]] || continue
+      family=${family%/}
+      repo=$(basename "$family")
+      round=$(basename "$(dirname "$family")")
+      round=${round#round}
+      [[ $round =~ ^[0-9]+$ ]] || continue
+      if (( round > ${latest_round[$repo]:-0} )); then
+        latest_round[$repo]=$round
+        latest[$repo]=$family
+      fi
+    done
+    mapfile -t latest_dirs < <(for repo in "${!latest[@]}"; do printf '%s\n' "${latest[$repo]}"; done | sort)
     if (( families )); then
-      declare -A latest=() latest_round=()
-      for family in "$field_test_dir"/round*/*/; do
-        family=${family%/}
-        repo=$(basename "$family")
-        round=$(basename "$(dirname "$family")")
-        round=${round#round}
-        [[ $round =~ ^[0-9]+$ ]] || continue
-        if (( round > ${latest_round[$repo]:-0} )); then
-          latest_round[$repo]=$round
-          latest[$repo]=$family
-        fi
+      for family in "${latest_dirs[@]}"; do
+        record family "$family"
       done
-      while IFS= read -r repo; do
-        [[ -n $repo ]] && record family "${latest[$repo]}"
-      done < <(printf '%s\n' "${!latest[@]}" | sort)
     fi
-    # Field-test entries: one per name, since the rounds hold near-copies, in a random
-    # order fixed here. One whose attached files aren't all gathered is passed over.
+    # Field-test entries, in a random order fixed here: the latest rounds' `*.md` files
+    # with front matter, not their series. One whose attached files aren't all gathered
+    # is passed over.
     if (( field_tests > 0 )); then
-      declare -A picked=()
       passed_over=0
       while IFS= read -r file; do
-        name=$(basename "$file")
-        [[ -n "${picked[$name]:-}" ]] && continue
-        picked[$name]=1
+        [[ $(basename "$file") == series-* || $(head -1 "$file") != --- ]] && continue
         if [[ -f $(list_of "$file") ]] && ! gathered "$(list_of "$file")"; then
           passed_over=$((passed_over + 1))
           continue
         fi
         record candidate "$file"
-      done < <(find "$field_test_dir" -name '*.md' 2>/dev/null | shuf)
+      done < <(for family in "${latest_dirs[@]}"; do find "$family" -maxdepth 1 -name '*.md'; done | shuf)
       record passed-over "$passed_over"
     fi
   fi
@@ -420,7 +425,10 @@ if [[ $mode == eval ]]; then
   declare -A sent=() refused=() set_ids=() set_lists=() status_of=() series_ids=() batch_ids=()
   declare -A series_failed=()
   passed_over=0
-  while IFS=$'\t' read -r kind one two three; do
+  declare -A refused_what=()
+  # How many refusals the run met, this session's and those a resumed run reports again.
+  refusals=0
+  while IFS=$'\t' read -r kind one two three four; do
     case $kind in
       case) expecteds+=("$one"); cases+=("$two") ;;
       field-tests) field_tests=$one ;;
@@ -431,7 +439,7 @@ if [[ $mode == eval ]]; then
       candidate) candidates+=("$one") ;;
       passed-over) passed_over=$one ;;
       sent) sent[$one]=$two ;;
-      refused) refused[$one]=1 ;;
+      refused) refused[$one]="$two $three"; refused_what[$one]=$four ;;
       set) set_ids[$one]=$two; set_lists[$one]=$three ;;
     esac
   done < "$run_file"
@@ -486,6 +494,38 @@ if [[ $mode == eval ]]; then
     stopped=1
     stop_why=$1
     fail=$((fail + 1))
+  }
+
+  # fail_refused WHAT KEY...: the last reply refused WHAT (such as "a field-test
+  # entry"), a failure. Its reasons quote slugs, links and commands, so they go to a
+  # file beside the run file, git-ignored with it, and only that file's place is
+  # printed. The run file records the refusal against each KEY.
+  fail_refused() {
+    local what=$1 reasons key
+    shift
+    reasons="$run_file.refused-$(( $(compgen -G "$run_file.refused-*" | wc -l) + 1 ))"
+    printf '%s\n' "$BODY" > "$reasons"
+    echo "FAIL $what was refused ($CODE); its reasons are in $reasons"
+    fail=$((fail + 1))
+    refusals=$((refusals + 1))
+    for key; do
+      refused[$key]="$CODE $reasons"
+      refused_what[$key]=$what
+      record refused "$key" "$CODE" "$reasons" "$what"
+    done
+  }
+
+  # refused_before WHAT KEY: whether the run already found KEY refused. A refusal the
+  # server gave counts again as a failure, so a resumed run's tally covers the whole
+  # run; one eval made itself, such as a set it couldn't build, was said when made.
+  refused_before() {
+    local entry=${refused[$2]:-}
+    [[ -n $entry ]] || return 1
+    if [[ -n ${entry%% *} ]]; then
+      echo "FAIL ${refused_what[$2]:-$1} was refused (${entry%% *}); its reasons are in ${entry#* }"
+      fail=$((fail + 1))
+      refusals=$((refusals + 1))
+    fi
   }
 
   # first_reason: the first reason in the last reply, a `- ` line or an `error: ` one.
@@ -580,7 +620,7 @@ if [[ $mode == eval ]]; then
   send_batch() {
     local m unsent=0
     mapfile -t batch_members < "$2"
-    [[ -n "${refused[${batch_members[0]}]:-}" ]] && return 0
+    refused_before "a batch of ${#batch_members[@]} field-test entries" "${batch_members[0]}" && return 0
     CITED=0
     for m in "${batch_members[@]}"; do
       [[ -f $(list_of "$m") ]] && CITED=1
@@ -616,15 +656,7 @@ if [[ $mode == eval ]]; then
         stop_run "POST /entries/batch answered $CODE"
         return 1
       fi
-      # The reasons quote slugs, links and commands, so they go to a file beside the
-      # run file, git-ignored with it, and only their place is printed.
-      reasons="$run_file.refused-$(( $(compgen -G "$run_file.refused-*" | wc -l) + 1 ))"
-      printf '%s\n' "$BODY" > "$reasons"
-      echo "FAIL a batch of ${#batch_members[@]} field-test entries was refused ($CODE); its reasons are in $reasons"
-      fail=$((fail + 1))
-      for m in "${batch_members[@]}"; do
-        refused[$m]=1; record refused "$m"
-      done
+      fail_refused "a batch of ${#batch_members[@]} field-test entries" "${batch_members[@]}"
       return 2
     fi
     mapfile -t ids < <(printf '%s\n' "$BODY" | sed -n 's/^entry: \([^ ]*\) .*/\1/p')
@@ -708,16 +740,16 @@ if [[ $mode == eval ]]; then
   }
 
   # set_for LIST [WHAT]: sets SET to the ID of the attachment set made from the files
-  # LIST names, uploading it unless the run already did. Returns 1 when it can't be
-  # made or the server refuses it, saying what then happens to its entry (WHAT,
-  # default "is passed over"), and 2 when the server can't take it now (see later),
-  # saying why.
+  # LIST names, uploading it unless the run already did. Returns 1 when the server
+  # refuses it and 3 when it can't be made from the store, saying what then happens
+  # to its entry (WHAT, default "is passed over"), and 2 when the server can't take it
+  # now (see later), saying why.
   set_for() {
     local key reason what=${2:-is passed over}
     key=$(list_key "$1")
     SET=${set_ids[$key]:-}
     [[ -n $SET ]] && return 0
-    python3 - "$1" "$store" > "$dir/set.json" 2>/dev/null <<'PY' || { echo "  an attachment set couldn't be made from the store: its entry $what"; return 1; }
+    python3 - "$1" "$store" > "$dir/set.json" 2>/dev/null <<'PY' || { echo "  an attachment set couldn't be made from the store: its entry $what"; return 3; }
 import json
 import pathlib
 import sys
@@ -815,7 +847,7 @@ PY
   taken=0
   for file in "${candidates[@]}"; do
     (( taken < field_tests && ! stopped )) || break
-    [[ -n "${refused[$file]:-}" ]] && continue
+    refused_before "a field-test entry" "$file" && continue
     screen_entry "$file" > "$dir/case.md"
     list=$(list_of "$file")
     CITED=0
@@ -824,15 +856,16 @@ PY
       if [[ -z "${sent[$file]:-}" ]]; then
         set_for "$list"
         case $? in
-          1) refused[$file]=1; record refused "$file"; continue ;;
+          1) fail_refused "a field-test entry's attachment set" "$file"; continue ;;
           2) stop_run "an attachment set couldn't be uploaded now"; break ;;
+          3) refused[$file]=" "; record refused "$file"; continue ;;
         esac
         sed -i "1a attachments: $SET" "$dir/case.md"
       fi
     fi
     eval_case "$file" "$dir/case.md" quiet
     case $? in
-      1) refused[$file]=1; record refused "$file"; continue ;;
+      1) fail_refused "a field-test entry" "$file"; continue ;;
       2) stop_run "POST /entries answered $CODE"; break ;;
       3) continue ;;
     esac
@@ -846,6 +879,7 @@ PY
   done
   (( field_tests > 0 && taken < field_tests && ! stopped )) && echo "  only $taken field-test entries found"
   (( passed_over > 0 )) && echo "  $passed_over field-test entries passed over: their attached files aren't all in $store; bin/field-test-files gathers them"
+  (( refusals > 0 )) && echo "  $refusals refused at submission; the reasons are in $run_file.refused-*"
   if (( stopped )); then
     if [[ -n $stop_why ]]; then
       echo "Stopped: $stop_why."

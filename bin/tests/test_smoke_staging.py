@@ -184,9 +184,11 @@ def eval_run(tmp_path):
     fake_bin.chmod(0o755)
     servers = []
 
-    def run(statuses, series, attachments):
-        server = fake_server(statuses, series, attachments)
-        servers.append(server)
+    def run(statuses, series, attachments, args=("--field-test", "1"), server=None):
+        """One run of eval; pass a server again to resume against it."""
+        if server is None:
+            server = fake_server(statuses, series, attachments)
+            servers.append(server)
         env = {
             "PATH": os.environ["PATH"],
             "FILEDRAWER_STAGING_KEY": "k",
@@ -198,7 +200,7 @@ def eval_run(tmp_path):
         }
         url = f"http://127.0.0.1:{server.server_address[1]}"
         return subprocess.run(
-            ["bash", SCRIPT, "eval", "--field-test", "1", url],
+            ["bash", SCRIPT, "eval", *args, url],
             env=env,
             capture_output=True,
             text=True,
@@ -206,9 +208,28 @@ def eval_run(tmp_path):
             timeout=60,
         )
 
+    run.servers = servers
     yield run
     for server in servers:
         server.shutdown()
+
+
+def test_a_refused_attachment_set_is_a_failure_reported_again_on_resume(eval_run):
+    refused = (422, "refused:\n- file made-up.py isn't UTF-8 text\n")
+    result = eval_run(LABELLED, SPENT, refused)
+    failure = "FAIL a field-test entry's attachment set was refused (422)"
+    assert failure in result.stdout, result.stdout
+    assert "1 refused at submission" in result.stdout
+    run_file = next(
+        line.removeprefix("run file: ")
+        for line in result.stdout.splitlines()
+        if line.startswith("run file: ")
+    )
+    again = eval_run(
+        LABELLED, SPENT, refused, ("--resume", run_file), eval_run.servers[-1]
+    )
+    assert failure in again.stdout, again.stdout
+    assert "made-up.py" not in result.stdout + again.stdout
 
 
 def test_uploads_spent_for_the_day_stop_the_run_for_a_resume(eval_run):
