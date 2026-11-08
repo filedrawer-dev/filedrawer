@@ -328,13 +328,8 @@ if [[ $mode == eval ]]; then
   # The field-test entries' attached files, named by SHA-256, as bin/field-test-files
   # gathers them.
   store="$field_test_dir/files"
-
-  # is_entry FILE: whether FILE is a field-test entry, as bin/field-test-batches reads
-  # them: front matter first (a BOM and Windows line ends allowed), not a series.
-  is_entry() {
-    [[ $(basename "$1") != series-* ]] || return 1
-    [[ $(head -1 "$1" | sed $'s/^\xEF\xBB\xBF//; s/\r$//') == --- ]]
-  }
+  # bin/field-test-batches: which files are entries, and the batches --families sends.
+  batches_tool="$(dirname "$0")/../bin/field-test-batches"
 
   # record FIELD...: appends a line to the run file, its fields split by tabs.
   record() {
@@ -410,24 +405,29 @@ if [[ $mode == eval ]]; then
         record family "$family"
       done
     fi
-    # Field-test entries, in a random order fixed here: the latest rounds' entries. One
-    # whose attached files aren't all gathered is passed over.
+    # Field-test entries, in a random order fixed here: the latest rounds' entries, as
+    # bin/field-test-batches reads them for --families too. One whose attached files
+    # aren't all gathered is passed over.
     if (( field_tests > 0 )); then
       passed_over=0
+      : > "$dir/entries"
+      for family in "${latest_dirs[@]}"; do
+        # Its own message, on stderr, names the file it couldn't read.
+        "$batches_tool" entries "$family" >> "$dir/entries" || record unread "$family"
+      done
       while IFS= read -r file; do
-        is_entry "$file" || continue
         if [[ -f $(list_of "$file") ]] && ! gathered "$(list_of "$file")"; then
           passed_over=$((passed_over + 1))
           continue
         fi
         record candidate "$file"
-      done < <(for family in "${latest_dirs[@]}"; do find "$family" -maxdepth 1 -name '*.md'; done | shuf)
+      done < <(shuf "$dir/entries")
       record passed-over "$passed_over"
     fi
   fi
   echo "run file: $run_file"
 
-  cases=() expecteds=() candidates=() family_dirs=()
+  cases=() expecteds=() candidates=() family_dirs=() unread=()
   declare -A sent=() set_ids=() set_lists=() status_of=() series_ids=() batch_ids=()
   declare -A series_failed=()
   # Each refused entry: refused marks it, and for a refusal the server gave, the reply's
@@ -443,6 +443,7 @@ if [[ $mode == eval ]]; then
       family) family_dirs+=("$one") ;;
       series) series_ids[$one]=$two ;;
       series-failed) series_failed[$one]=1 ;;
+      unread) unread+=("$one") ;;
       batch) batch_ids[$one]=$two ;;
       candidate) candidates+=("$one") ;;
       passed-over) passed_over=$one ;;
@@ -455,6 +456,12 @@ if [[ $mode == eval ]]; then
       set) set_ids[$one]=$two; set_lists[$one]=$three ;;
     esac
   done < "$run_file"
+  # A family a sample couldn't list is a failure of every session of the run, so a
+  # resumed one reports it too.
+  for family in "${unread[@]}"; do
+    echo "FAIL a family's entries: bin/field-test-batches couldn't read them ($family)"
+    fail=$((fail + 1))
+  done
 
   # bin: the filedrawer binary, whose `unpack` is the server's own decoding, needed
   # only when a field-test entry attaches files.
@@ -582,8 +589,6 @@ if [[ $mode == eval ]]; then
     echo $(( ${CITED:-0} ? screen_wait * 4 : screen_wait ))
   }
 
-  # The field-test families' batches, built by bin/field-test-batches.
-  batches_tool="$(dirname "$0")/../bin/field-test-batches"
   series_n=0
 
   # make_series MADEUP FILE: creates the series FILE holds, which the family's entries

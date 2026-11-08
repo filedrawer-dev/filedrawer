@@ -225,7 +225,7 @@ def test_an_entry_with_windows_line_ends_or_a_bom_is_still_an_entry(tmp_path):
         b"---\r\ntitle: Made-up\r\nslug: c\r\n---\r\nBody.\r\n"
     )
     (folder / "bom.md").write_bytes(
-        "﻿---\ntitle: Made-up\nslug: b\n---\nBody.\n".encode()
+        "\ufeff---\ntitle: Made-up\nslug: b\n---\nBody.\n".encode()
     )
     out = tmp_path / "out"
     assert run("build", folder, "--tag", "T", "--out", out).returncode == 0
@@ -268,3 +268,23 @@ def test_needs_picks_the_series_whose_id_field_names_the_id(family):
     assert (
         f"series\tser_madeUp1\t{family / 'series-zzz.md'}" in done.stdout.splitlines()
     )
+
+
+def test_entries_lists_a_familys_entry_files_and_nothing_else(family):
+    # The family's series, notes and runs file aren't entries; an entry with a BOM is.
+    (family / "c.md").write_bytes("\ufeff---\ntitle: Made-up\n---\nBody.\n".encode())
+    done = run("entries", family)
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.splitlines() == [
+        str(family / "a.md"),
+        str(family / "b.md"),
+        str(family / "c.md"),
+    ]
+
+
+def test_a_file_that_isnt_utf8_fails_in_one_line_naming_it(family):
+    (family / "bad.md").write_bytes(b"---\ntitle: made-up \xff\n---\nBody.\n")
+    done = run("entries", family)
+    assert done.returncode == 2, done.stdout
+    assert done.stderr.count("\n") == 1, done.stderr
+    assert str(family / "bad.md") in done.stderr

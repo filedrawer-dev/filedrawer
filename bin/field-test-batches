@@ -5,6 +5,7 @@
 # ///
 """Turn a field-test family into the bodies of POST /entries/batch, for ops/smoke-staging.
 
+    bin/field-test-batches entries FAMILY
     bin/field-test-batches needs FAMILY
     bin/field-test-batches series-body SERIES_FILE
     bin/field-test-batches build FAMILY --tag TAG --out DIR [--series MADEUP=REAL]...
@@ -14,6 +15,9 @@ A family is one field-test folder, `round<n>/<repo>/`. Its entries are the `*.md
 with front matter, other than its series, `series-*.md`. They name runs that the
 family's `*runs.yaml` files declare, series by IDs the field-test agents made up, and
 each other by slug.
+
+entries prints the family's entries' paths, one a line, as build reads them, for
+ops/smoke-staging's sample mode too.
 
 needs prints what the family needs before it can be sent, one a line, tab-separated:
 `series MADEUP FILE` for each made-up series ID its entries cite, FILE being the
@@ -58,7 +62,11 @@ class BadFile(Exception):
 def read(path: Path) -> str:
     """A file's text with a leading BOM dropped and Windows line ends made plain, as
     the analyzer reads an entry."""
-    return path.read_text(encoding="utf-8").lstrip("﻿").replace("\r\n", "\n")
+    try:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        raise BadFile(f"{path} isn't UTF-8 text") from None
+    return text.lstrip("﻿").replace("\r\n", "\n")
 
 
 def listing_of(entry: Path) -> Path:
@@ -249,6 +257,9 @@ def main(argv: list[str] | None = None) -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("entries", help="a family's entries").add_argument(
+        "family", type=Path
+    )
     commands.add_parser("needs", help="what a family needs first").add_argument(
         "family", type=Path
     )
@@ -266,6 +277,10 @@ def main(argv: list[str] | None = None) -> int:
     building.add_argument("--max-bytes", type=int, default=900_000)
     args = parser.parse_args(argv)
     try:
+        if args.command == "entries":
+            for path in entries(args.family):
+                print(path)
+            return 0
         if args.command == "needs":
             return needs(args.family)
         if args.command == "series-body":
