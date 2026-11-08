@@ -341,3 +341,24 @@ def test_a_series_the_screen_held_back_isnt_sent_again_on_resume(families_run):
     assert "PASS public field-test-2" in again.stdout, again.stdout
     assert "FAIL series" not in again.stdout
     assert server.posts.count("/series") == 1, server.posts
+
+
+@pytest.mark.parametrize("poll", ["soon", "0", "0.0"])
+def test_a_poll_interval_that_isnt_a_positive_number_is_refused_first(poll):
+    # 0 would ask staging as fast as it answers, into its per-IP rate limit.
+    env = {
+        "PATH": os.environ["PATH"],
+        "FILEDRAWER_STAGING_KEY": "k",
+        "FILEDRAWER_STAGING_SCREEN_API_KEY": TOKEN,
+        "FILEDRAWER_SCREEN_POLL_SECONDS": poll,
+    }
+    result = subprocess.run(
+        ["bash", SCRIPT, "screen", "http://127.0.0.1:9"],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "FILEDRAWER_SCREEN_POLL_SECONDS" in result.stderr

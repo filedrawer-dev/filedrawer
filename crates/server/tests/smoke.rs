@@ -108,7 +108,10 @@ fn script(args: &[&str], key: Option<&str>) -> Command {
         .env_remove("BASH_ENV")
         .env_remove("FILEDRAWER_STAGING_KEY")
         .env_remove("FILEDRAWER_STAGING_API_KEY")
-        .env_remove("FILEDRAWER_STAGING_SCREEN_API_KEY");
+        .env_remove("FILEDRAWER_STAGING_SCREEN_API_KEY")
+        // A local server decides within a second or two; polling every 5 s, as against
+        // staging, would spend seconds per case.
+        .env("FILEDRAWER_SCREEN_POLL_SECONDS", "0.2");
     if let Some(key) = key {
         command.env("FILEDRAWER_STAGING_KEY", key);
     }

@@ -59,8 +59,9 @@ run files, and FILEDRAWER_FIELD_TEST_DIR where eval looks for field-test entries
 FILEDRAWER_SCREEN_WAIT_SECONDS is how long it waits for a verdict, default 120: 4
 times that for an entry citing attached code, which the screen reads in parts, and
 once more for each 10 entries of a batch, whose entries are decided together. Raise
-it for a long eval; tests lower it. FILEDRAWER_BATCH_MAX_BYTES caps a batch's body,
-default 900000, for tests.)
+it for a long eval; tests lower it. FILEDRAWER_SCREEN_POLL_SECONDS is how often it
+asks for a verdict meanwhile, default 5; tests ask every 0.2.
+FILEDRAWER_BATCH_MAX_BYTES caps a batch's body, default 900000, for tests.)
 
 eval runs a labelled test set through the screen, as the screen-test account, to
 see whether it is too strict or too lax. By hand only. The cases are the entries
@@ -97,6 +98,13 @@ base=https://staging.filedrawer.dev
 wait_seconds=0
 screen_wait="${FILEDRAWER_SCREEN_WAIT_SECONDS:-120}"
 [[ "$screen_wait" =~ ^[0-9]+$ ]] || { echo "smoke-staging: FILEDRAWER_SCREEN_WAIT_SECONDS takes a number of seconds" >&2; exit 2; }
+poll_seconds="${FILEDRAWER_SCREEN_POLL_SECONDS:-5}"
+# Above 0: polling without a pause would ask staging as fast as it answers, into its
+# per-IP rate limit.
+if ! [[ "$poll_seconds" =~ ^[0-9]+(\.[0-9]+)?$ ]] || ! awk -v p="$poll_seconds" 'BEGIN { exit !(p > 0) }'; then
+  echo "smoke-staging: FILEDRAWER_SCREEN_POLL_SECONDS takes a number of seconds above 0, such as 5 or 0.2" >&2
+  exit 2
+fi
 mode=smoke
 field_tests=10
 field_tests_given=0
@@ -246,7 +254,7 @@ await() {
   local deadline=$((SECONDS + ${1:-$screen_wait}))
   req GET "/e/$ID"
   while [[ $(field status) == screening ]] && (( SECONDS < deadline )); do
-    sleep 5
+    sleep "$poll_seconds"
     req GET "/e/$ID"
   done
 }
