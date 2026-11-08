@@ -387,7 +387,7 @@ def test_outside_the_queue_a_change_that_needs_a_check_asks_for_it_first(
     change(repo, path)
     ran, done = hook(repo, *args, env=QUEUE_EXIT, base=base, code=75)
     assert (repo.parent / "calls").read_text() == ""  # no cargo or uvx call at all
-    assert f"agent-pre-commit: needs heavy's queue for {reason}" in done.stdout
+    assert f"agent-pre-commit: needs heavy's queue for {reason}" in done.stderr
 
 
 def test_outside_the_queue_a_docs_only_change_passes_there(repo):
@@ -406,5 +406,5 @@ def test_a_check_queue_exit_that_is_no_exit_status_from_1_to_255_is_ignored(
 
 
 @pytest.mark.parametrize("script", ["agent-pre-commit", "agent-quick-check"])
-def test_the_gate_asks_both_checks_whether_they_need_the_queue(script):
+def test_both_checks_opt_in_to_a_first_run_outside_the_queue(script):
     assert "CHECK_QUEUE_EXIT" in (REPO / "bin" / script).read_text()

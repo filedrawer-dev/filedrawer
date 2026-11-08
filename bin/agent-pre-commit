@@ -63,7 +63,7 @@ queue_exit=${CHECK_QUEUE_EXIT:-}
 queue_first() {
   case "$queue_exit" in '' | *[!0-9]* | 0*) return ;; esac
   [ "$queue_exit" -le 255 ] || return 0
-  echo "agent-pre-commit: needs heavy's queue for $(grep "^$1 " "$logs/needed")"
+  echo "agent-pre-commit: needs heavy's queue for $(grep "^$1 " "$logs/needed")" >&2
   exit "$queue_exit"
 }
 cd "$tree"
