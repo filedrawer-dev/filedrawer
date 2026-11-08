@@ -1,22 +1,11 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT seq AS \"seq!: i64\", status, first_submitted_at FROM entries\n           WHERE status IN ('embargoed', 'waiting_on_series') ORDER BY seq",
+  "query": "SELECT status, first_submitted_at FROM entries\n         WHERE seq = ? AND status IN ('embargoed', 'waiting_on_series')",
   "describe": {
     "columns": [
       {
-        "name": "seq!: i64",
-        "ordinal": 0,
-        "type_info": "Integer",
-        "origin": {
-          "Table": {
-            "table": "entries",
-            "name": "seq"
-          }
-        }
-      },
-      {
         "name": "status",
-        "ordinal": 1,
+        "ordinal": 0,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -27,7 +16,7 @@
       },
       {
         "name": "first_submitted_at",
-        "ordinal": 2,
+        "ordinal": 1,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -38,13 +27,12 @@
       }
     ],
     "parameters": {
-      "Right": 0
+      "Right": 1
     },
     "nullable": [
-      false,
       false,
       false
     ]
   },
-  "hash": "4dd621cc3b9cc1d10f150d6324ba6ffe4ae4cfe1b8a2d900aad2251cadd676c1"
+  "hash": "7e89861a409a576cd7c9985b9fa3d7ca8cd9036f5bb6adcbcc0a6e2416ac198d"
 }

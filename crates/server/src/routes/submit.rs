@@ -12,7 +12,7 @@ use axum::response::Response;
 use serde_json::json;
 
 use crate::auth::TokenAccount;
-use crate::embargo::{parse_date, release, token_may_change};
+use crate::embargo::{kept_date, parse_date, release};
 use crate::entries::{self, NewEntry, OwnEntry};
 use crate::error::AppError;
 use crate::jobs::{end_hold, hold_until};
@@ -30,13 +30,16 @@ use analyzer::{SeriesCite, parse_series_cite, without_series};
 /// (design.md, Series).
 pub(crate) struct Accepted {
     pub source: String,
+    /// What the analyzer read, except that `fields.embargo_until` is the date the
+    /// entry is stored with: for a version bound by an embargo, the one it keeps
+    /// ([`kept_date`]), so the reference checks, the row and the reply all use it.
     pub analysis: Analysis,
     pub cite: Option<SeriesCite>,
 }
 
 /// What an earlier submission fixes for a resubmission or a new version: the first
 /// submission date the embargo cap counts from, and the embargo in force, which a
-/// token may not drop or bring within 7 days.
+/// version keeps.
 pub(crate) struct Prior<'a> {
     first_submitted_at: &'a str,
     embargo_in_force: Option<&'a str>,
@@ -80,7 +83,7 @@ pub(crate) fn accept(body: &Bytes, prior: Option<Prior<'_>>) -> Result<Accepted,
         reasons: vec!["the entry is not UTF-8 text".into()],
     })?;
     let source = stored_text(text);
-    let analysis = analyze(&source);
+    let mut analysis = analyze(&source);
     let mut reasons: Vec<String> = analysis.refusals.iter().map(ToString::to_string).collect();
     let (source, cite) = match analysis.fields.series.as_deref() {
         None => (source, None),
@@ -117,13 +120,20 @@ pub(crate) fn accept(body: &Bytes, prior: Option<Prior<'_>>) -> Result<Accepted,
         .and_then(|prior| OffsetDateTime::parse(prior.first_submitted_at, &Rfc3339).ok())
         .unwrap_or(now);
     let embargo = analysis.fields.embargo_until.as_deref();
-    if let Err(why) = release(embargo, now, first_submitted) {
-        reasons.push(why.to_string());
-    }
-    if let Some(prior) = &prior
-        && let Err(why) = token_may_change(prior.embargo_in_force, embargo, now)
+    match prior
+        .as_ref()
+        .and_then(|prior| parse_date(prior.embargo_in_force))
     {
-        reasons.push(why.to_string());
+        // The date in force was checked when it was set, so no cap applies again.
+        Some(in_force) => match kept_date(in_force, embargo) {
+            Ok(kept) => analysis.fields.embargo_until = Some(kept.to_string()),
+            Err(why) => reasons.push(why.to_string()),
+        },
+        None => {
+            if let Err(why) = release(embargo, now, first_submitted) {
+                reasons.push(why.to_string());
+            }
+        }
     }
     if !reasons.is_empty() {
         return Err(AppError::Refused {

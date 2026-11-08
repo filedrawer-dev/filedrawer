@@ -529,7 +529,9 @@ async fn place_passed(state: &AppState, seq: i64, now: OffsetDateTime) -> Result
         return Ok(());
     };
     let analysis = analyze(&source);
-    if embargoed_until(analysis.fields.embargo_until.as_deref(), now).is_some() {
+    // The chain's date, which a browser may have moved since this text was written.
+    let chain_date = entries::chain_embargo(&state.pool, seq).await?;
+    if embargoed_until(chain_date.as_deref(), now).is_some() {
         entries::embargo(&state.pool, seq).await?;
     } else if series::waits(&state.pool, seq).await? {
         entries::wait_on_series(&state.pool, seq).await?;

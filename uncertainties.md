@@ -160,8 +160,8 @@ Once the owner settles one, move the answer into `docs/entry-format.md` or `docs
 - Chosen: the latest version that isn't rejected, withdrawn or removed, even one still pending or in review (`entries::chain_embargo`).
   It is the date the author chose last, and an older version released on its own earlier date would publish what an extension held back.
   The author's view of every embargoed version shows that date.
-  Once build 3 makes a new version keep its chain's date, only chains stored before then can differ.
-- Against: an unscreened version can bring the chain's release forward, to no sooner than 7 days from when it was posted, and a release can't be undone; the screen never sees the version that set the date.
+  A new version now keeps its chain's date, so only chains stored before that rule can differ.
+- Against: in such a chain, an unscreened version can have brought the release forward, and a release can't be undone; the screen never saw the version that set the date.
 
 ## Batches: what holds them together
 

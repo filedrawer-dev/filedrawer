@@ -85,6 +85,13 @@ pub async fn publish_due(state: &AppState, now: OffsetDateTime) -> Result<usize,
 pub async fn release_due(state: &AppState, now: OffsetDateTime) -> Result<usize, sqlx::Error> {
     let mut releases = Vec::new();
     for held in entries::held_back(&state.pool).await? {
+        if held.date_unreadable() {
+            tracing::error!(
+                seq = held.seq,
+                date = ?held.chain_embargo,
+                "an embargoed entry's stored date isn't a date, so it stays held"
+            );
+        }
         let to = match held.due(now) {
             None => continue,
             Some(Due::Cap) => Released::Public,

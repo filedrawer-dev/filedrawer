@@ -56,6 +56,18 @@ async fn new_version(app: &TestApp, id: &str, text: &str) -> String {
     version
 }
 
+/// Writes `date` as entry `id`'s stored embargo. A new version takes its chain's date,
+/// so a chain whose versions name different dates is one stored before that rule;
+/// nothing else can make one now.
+async fn store_date(app: &TestApp, id: &str, date: &str) {
+    sqlx::query("UPDATE entries SET embargo_until = ? WHERE id = ?")
+        .bind(date)
+        .bind(id)
+        .execute(&app.pool)
+        .await
+        .unwrap();
+}
+
 #[tokio::test]
 async fn an_embargoed_entry_is_released_at_2359_at_utc_minus_12_on_its_date() {
     let app = test_app().await;
@@ -111,12 +123,8 @@ async fn a_chain_releases_together_on_its_latest_versions_later_date() {
     let v1 = app
         .submit(&entry("Steering", &format!("embargo_until: {first}\n")))
         .await;
-    let v2 = new_version(
-        &app,
-        &v1,
-        &entry("Steering, corrected", &format!("embargo_until: {later}\n")),
-    )
-    .await;
+    let v2 = new_version(&app, &v1, &entry("Steering, corrected", "")).await;
+    store_date(&app, &v2, &later).await;
     assert_eq!(status(&app, &v2).await, "embargoed");
 
     assert_eq!(release(&app, release_time(&first)).await, 0);
@@ -137,13 +145,9 @@ async fn a_rejected_version_leaves_the_chain_on_its_own_date() {
     let v1 = app
         .submit(&entry("Steering", &format!("embargo_until: {first}\n")))
         .await;
-    let v2 = new_version(
-        &app,
-        &v1,
-        &entry("Steering FAKE-SPAM", &format!("embargo_until: {later}\n")),
-    )
-    .await;
+    let v2 = new_version(&app, &v1, &entry("Steering FAKE-SPAM", "")).await;
     assert_eq!(status(&app, &v2).await, "rejected");
+    store_date(&app, &v2, &later).await;
 
     assert_eq!(release(&app, release_time(&first)).await, 1);
     assert!(is_public(&app, &v1).await);
@@ -156,12 +160,8 @@ async fn the_author_sees_the_chains_release_date_on_every_version() {
     let v1 = app
         .submit(&entry("Steering", &format!("embargo_until: {first}\n")))
         .await;
-    let v2 = new_version(
-        &app,
-        &v1,
-        &entry("Steering, corrected", &format!("embargo_until: {later}\n")),
-    )
-    .await;
+    let v2 = new_version(&app, &v1, &entry("Steering, corrected", "")).await;
+    store_date(&app, &v2, &later).await;
     for id in [&v1, &v2] {
         let own = app.get_as_author(&format!("/e/{id}")).await;
         assert_eq!(field(&own.body, "release"), Some(later.as_str()), "{id}");
@@ -186,12 +186,8 @@ async fn a_chain_releases_together_on_its_latest_versions_earlier_date() {
     let v1 = app
         .submit(&entry("Steering", &format!("embargo_until: {first}\n")))
         .await;
-    let v2 = new_version(
-        &app,
-        &v1,
-        &entry("Steering, corrected", &format!("embargo_until: {sooner}\n")),
-    )
-    .await;
+    let v2 = new_version(&app, &v1, &entry("Steering, corrected", "")).await;
+    store_date(&app, &v2, &sooner).await;
 
     assert_eq!(
         release(&app, release_time(&sooner) - Duration::minutes(1)).await,
@@ -328,4 +324,21 @@ async fn an_entry_waiting_on_a_hidden_series_is_released_at_the_12_month_cap() {
         "{}",
         page.body
     );
+}
+
+#[tokio::test]
+async fn a_stored_date_that_isnt_one_holds_the_entry() {
+    let app = test_app().await;
+    let id = app
+        .submit(&entry(
+            "Steering",
+            &format!("embargo_until: {}\n", date_in(3)),
+        ))
+        .await;
+    store_date(&app, &id, "soon").await;
+    assert_eq!(
+        release(&app, OffsetDateTime::now_utc() + Duration::days(30)).await,
+        0
+    );
+    assert_eq!(status(&app, &id).await, "embargoed");
 }

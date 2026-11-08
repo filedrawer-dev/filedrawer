@@ -201,8 +201,8 @@ async fn the_hour_running_out_publishes_the_entry_by_itself() {
 
 #[tokio::test]
 async fn a_draft_may_drop_or_shorten_its_own_embargo() {
-    // Nothing has been held back yet, so the 7-day rule doesn't bind a draft (the
-    // owner's decision, 2026-11-05).
+    // Nothing has been held back yet, so a first submission's draft may move or drop
+    // its own embargo (the owner's decision, 2026-11-05).
     let app = test_app().await;
     let id = app
         .submit_held(&entry("T", &format!("embargo_until: {}\n", date_in(30))))
@@ -244,36 +244,38 @@ async fn a_pending_version_of_an_embargoed_entry_keeps_its_embargo_and_lists_eve
         .body,
     );
     let url = format!("/e/{version}");
-    let sooner = app
-        .put_as(
-            &url,
-            &app.token,
-            entry("U", &format!("embargo_until: {}\n", date_in(3))),
-        )
-        .await;
-    assert_eq!(
-        sooner.status,
-        StatusCode::UNPROCESSABLE_ENTITY,
-        "{}",
-        sooner.body
-    );
-    let text = entry("U", "").replace("title: U\n", "");
-    let both = app.put_as(&url, &app.token, text).await;
-    assert_eq!(both.status, StatusCode::UNPROCESSABLE_ENTITY);
-    assert!(both.body.contains("`title` is missing"), "{}", both.body);
-    assert!(
-        both.body.contains("remove an entry's embargo"),
-        "{}",
-        both.body
-    );
-    for allowed in [date_in(10), date_in(60)] {
+    // A version keeps its chain's date (design.md, Embargo): another date, earlier or
+    // later, is refused with the chain's date.
+    for other in [date_in(10), date_in(60)] {
         let reply = app
             .put_as(
                 &url,
                 &app.token,
-                entry("U", &format!("embargo_until: {allowed}\n")),
+                entry("U", &format!("embargo_until: {other}\n")),
             )
             .await;
-        assert_eq!(reply.status, StatusCode::OK, "{allowed}: {}", reply.body);
+        assert_eq!(
+            reply.status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{other}: {}",
+            reply.body
+        );
+        assert!(reply.body.contains(&date_in(30)), "{other}: {}", reply.body);
+    }
+    let text = entry("U", &format!("embargo_until: {}\n", date_in(3))).replace("title: U\n", "");
+    let both = app.put_as(&url, &app.token, text).await;
+    assert_eq!(both.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(both.body.contains("`title` is missing"), "{}", both.body);
+    assert!(both.body.contains(&date_in(30)), "{}", both.body);
+    // Leaving the date out keeps it; so does repeating it.
+    for kept in [String::new(), format!("embargo_until: {}\n", date_in(30))] {
+        let reply = app.put_as(&url, &app.token, entry("U", &kept)).await;
+        assert_eq!(reply.status, StatusCode::OK, "{kept}: {}", reply.body);
+        assert_eq!(
+            field(&reply.body, "embargo_until"),
+            Some(date_in(30).as_str()),
+            "{}",
+            reply.body
+        );
     }
 }

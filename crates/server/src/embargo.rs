@@ -22,13 +22,9 @@ pub enum EmbargoError {
     )]
     TooLong { date: Date, latest: Date },
     #[error(
-        "a token can't remove an entry's embargo; release it early from a browser session once that exists"
+        "`embargo_until: {named}` isn't this chain's date: a new version keeps its chain's embargo, until {date}, so leave `embargo_until` out or set it to {date}"
     )]
-    Dropped,
-    #[error(
-        "a token can move an embargo earlier only to {earliest} or later, 7 days from now; `embargo_until: {date}` is sooner"
-    )]
-    TooSoon { date: Date, earliest: Date },
+    NotTheChainDate { named: String, date: Date },
     /// Most likely a typo in the date, and publishing early can't be undone.
     #[error("`embargo_until: {0}` has passed; to publish at once, leave embargo_until out")]
     Passed(Date),
@@ -94,32 +90,19 @@ pub fn embargoed_until(embargo_until: Option<&str>, now: OffsetDateTime) -> Opti
     (now < release_time(date)).then_some(date)
 }
 
-/// How soon a token may bring an embargo forward (design.md, Embargo).
-const TOKEN_SHORTEN_DAYS: i64 = 7;
-
-/// Whether a token may change an entry's embargo from `old` to `new` (design.md,
-/// Accounts and Agent interface): it may add or extend one, and shorten one to no
-/// sooner than 7 days from today, but never remove one. Reason: entry text can tell
-/// a reading agent to release its embargoes.
-pub fn token_may_change(
-    old: Option<&str>,
-    new: Option<&str>,
-    now: OffsetDateTime,
-) -> Result<(), EmbargoError> {
-    let Some(old) = parse_date(old) else {
-        return Ok(());
-    };
-    let Some(new) = parse_date(new) else {
-        return Err(EmbargoError::Dropped);
-    };
-    let earliest = now.to_offset(UtcOffset::UTC).date() + time::Duration::days(TOKEN_SHORTEN_DAYS);
-    if new >= old || new >= earliest {
-        Ok(())
-    } else {
-        Err(EmbargoError::TooSoon {
-            date: new,
-            earliest,
-        })
+/// The date a version bound by the embargo `in_force` keeps, given the
+/// `embargo_until` it `named` (design.md, Embargo: "A new version of an embargoed
+/// entry keeps its chain's date"): leaving the field out, or repeating the date,
+/// keeps it, and any other date is refused. Reason: a token moves an embargo only
+/// through its own route, so an agent resending old text can't undo a move.
+pub fn kept_date(in_force: Date, named: Option<&str>) -> Result<Date, EmbargoError> {
+    match named {
+        None => Ok(in_force),
+        Some(text) if parse_date(Some(text)) == Some(in_force) => Ok(in_force),
+        Some(text) => Err(EmbargoError::NotTheChainDate {
+            named: text.trim().to_string(),
+            date: in_force,
+        }),
     }
 }
 
