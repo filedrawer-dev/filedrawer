@@ -92,6 +92,8 @@ The commit hook's `bin/sentence-lines` keeps it that way and leaves entries as t
 
 ## Checks
 
+Start a worktree with `bin/new-worktree TOPIC` (`-h`): it adds `../filedrawer-wt-TOPIC` beside the main tree and starts its warm build in the background, which sccache makes quick.
+
 Committing runs the checks, so commit and read the hook's output instead of running them first.
 Every commit runs `bin/slop-lint` on staged markdown, lychee (links and anchors, offline) over every markdown file, actionlint with shellcheck (when a workflow is staged), and `bin/sentence-lines` on staged markdown, ruff, and `cargo fmt` (when a `.rs` file is staged), which write: a person's commit that needs formatting is refused with the files rewritten, to stage, and `bin/pre-commit-run` stages an agent's and checks again.
 Agents' commits add the tests in `bin/tests`, clippy and the Rust tests (`bin/agent-pre-commit`), each only when the change needs it.

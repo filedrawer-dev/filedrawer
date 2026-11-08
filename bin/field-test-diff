@@ -29,6 +29,25 @@ REPO = Path(__file__).resolve().parents[1]
 DEFAULT_BASELINE = REPO / "target/field-test-baseline.json"
 
 
+def main_tree() -> Path:
+    """The main tree of this script's repo, which alone has field-test/ (it is
+    git-excluded), even when the script runs from a worktree."""
+    common = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(REPO),
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-common-dir",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return Path(common.stdout.strip()).parent if common.returncode == 0 else REPO
+
+
 def outcome(output: str) -> str:
     """One file's outcome from entry-check's output, holding no entry text."""
     lines = output.splitlines()
@@ -66,8 +85,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--dir",
         type=Path,
-        default=REPO / "field-test",
-        help="the entries to check (default: field-test/)",
+        default=main_tree() / "field-test",
+        help="the entries to check (default: the main tree's field-test/, from a worktree too)",
     )
     parser.add_argument(
         "--baseline",

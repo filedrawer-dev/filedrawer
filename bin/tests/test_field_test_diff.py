@@ -2,6 +2,7 @@
 field-test entries with a saved baseline. Each runs the script as a process with a
 fake entry-check that answers from the file's first word, over a scratch folder."""
 
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -105,3 +106,49 @@ def test_without_a_baseline_it_says_to_save_one(box):
     done = run()
     assert done.returncode == 2
     assert "save" in done.stderr
+
+
+def test_from_a_worktree_it_reads_the_main_trees_field_test(tmp_path):
+    # field-test/ is git-excluded, so only the main tree has it.
+    main = tmp_path / "proj"
+    (main / "bin").mkdir(parents=True)
+    shutil.copy(SCRIPT, main / "bin/field-test-diff")
+    ident = ["-c", "user.name=t", "-c", "user.email=t@t"]
+    subprocess.run(["git", "-C", str(main), "init", "-q", "-b", "main"], check=True)
+    subprocess.run(["git", "-C", str(main), "add", "bin"], check=True)
+    subprocess.run(
+        ["git", "-C", str(main), *ident, "commit", "-q", "-m", "one"], check=True
+    )
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(main),
+            "worktree",
+            "add",
+            "-q",
+            "--detach",
+            str(tmp_path / "wt"),
+        ],
+        check=True,
+    )
+    (main / "field-test/round1").mkdir(parents=True)
+    (main / "field-test/round1/a.md").write_text("ACCEPT secret entry text\n")
+    fake = tmp_path / "entry-check"
+    fake.write_text(FAKE)
+    fake.chmod(0o755)
+    done = subprocess.run(
+        [
+            str(tmp_path / "wt/bin/field-test-diff"),
+            "save",
+            "--entry-check",
+            str(fake),
+            "--baseline",
+            str(tmp_path / "baseline.json"),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert done.returncode == 0, done.stderr
+    assert "saved 1 outcome" in done.stdout + done.stderr
