@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# Lets only CI create, move or delete the repo's skill-* tags (design.md, Skills).
+#
+# Usage: ops/protect-skill-tags      (from a checkout of the repo, logged in to gh
+#                                     with admin rights on it)
+#
+# Installed skills upgrade from the git tags skill-<name>-v<N>, so a tag nobody can
+# plant or move is what keeps a compromised server from supplying a skill's text.
+# GitHub can't put a workflow's own token on a ruleset's bypass list, but it can put
+# deploy keys there. So this:
+#   1. makes an ed25519 deploy key with write access, titled "skill tags (CI)",
+#      replacing any earlier key of that title;
+#   2. stores its private half as SKILL_TAGS_SSH_KEY in a `skill-tags` environment
+#      that only main may use, for CI's release-skills job;
+#   3. creates, or updates, the ruleset "skill tags" on refs/tags/skill-*, which
+#      restricts creation, update and deletion, with deploy keys as the only bypass.
+#
+# Run it before the first push that brings a skill: until the secret exists,
+# release-skills fails and staging doesn't deploy. Rerun it to replace the key.
+
+set -euo pipefail
+
+if [[ ${1:-} == -h || ${1:-} == --help ]]; then
+  sed -n '2,/^$/s/^# \{0,1\}//p' "$0"
+  exit 0
+fi
+
+TITLE="skill tags (CI)"
+repo="repos/{owner}/{repo}"
+
+key_dir=$(mktemp -d)
+trap 'rm -rf "$key_dir"' EXIT
+ssh-keygen -q -t ed25519 -N '' -C "filedrawer skill tags (CI)" -f "$key_dir/key"
+
+echo "Replacing the deploy key \"$TITLE\"..."
+for id in $(gh api "$repo/keys" --jq ".[] | select(.title == \"$TITLE\") | .id"); do
+  gh api -X DELETE "$repo/keys/$id" > /dev/null
+done
+gh api -X POST "$repo/keys" -f title="$TITLE" -f key="$(cat "$key_dir/key.pub")" -F read_only=false > /dev/null
+
+echo "Storing it in the 'skill-tags' environment, open to main only..."
+gh api -X PUT "$repo/environments/skill-tags" --input - > /dev/null <<'JSON'
+{"deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}}
+JSON
+policies="$repo/environments/skill-tags/deployment-branch-policies"
+if ! gh api "$policies" --jq '.branch_policies[].name' | grep -qx main; then
+  gh api -X POST "$policies" -f name=main -f type=branch > /dev/null
+fi
+gh secret set SKILL_TAGS_SSH_KEY --env skill-tags < "$key_dir/key"
+
+echo "Setting the ruleset \"skill tags\"..."
+ruleset_id=$(gh api "$repo/rulesets" --jq '.[] | select(.name == "skill tags") | .id')
+if [[ -n $ruleset_id ]]; then
+  method=(-X PUT "$repo/rulesets/$ruleset_id")
+else
+  method=(-X POST "$repo/rulesets")
+fi
+gh api "${method[@]}" --input - > /dev/null <<'JSON'
+{
+  "name": "skill tags",
+  "target": "tag",
+  "enforcement": "active",
+  "conditions": {"ref_name": {"include": ["refs/tags/skill-*"], "exclude": []}},
+  "rules": [{"type": "creation"}, {"type": "update"}, {"type": "deletion"}],
+  "bypass_actors": [{"actor_id": null, "actor_type": "DeployKey", "bypass_mode": "always"}]
+}
+JSON
+echo "Done: only CI's deploy key can create, move or delete skill-* tags."

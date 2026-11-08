@@ -73,8 +73,43 @@ jobs:
           path: ${{ env.BINARY }}
           retention-days: 7
 
+  # Each skill version on main gets its tag, skill-<name>-v<N>, before staging can name
+  # it, since installed skills upgrade from those tags and never from the site
+  # (design.md, Skills). bin/skills release fails when a tag exists with another
+  # folder. Tags are pushed with a deploy key, the only actor the "skill tags" ruleset
+  # lets create, move or delete them; ops/protect-skill-tags
+  # makes the key and stores SKILL_TAGS_SSH_KEY in the `skill-tags` environment, which
+  # only main may use. github.com's host key is pinned, from `gh api meta`.
+  release-skills:
+    needs: check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: skill-tags
+    concurrency:
+      group: release-skills
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Tag each new skill version
+        env:
+          SKILL_TAGS_SSH_KEY: ${{ secrets.SKILL_TAGS_SSH_KEY }}
+        run: |
+          if [ -z "$SKILL_TAGS_SSH_KEY" ]; then
+            echo "::error::SKILL_TAGS_SSH_KEY isn't set: the owner runs ops/protect-skill-tags first"
+            exit 1
+          fi
+          key=$(mktemp)
+          trap 'rm -f "$key"' EXIT
+          printf '%s\n' "$SKILL_TAGS_SSH_KEY" > "$key"
+          echo "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" > known_hosts
+          export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$PWD/known_hosts"
+          bin/skills release --push-url "git@github.com:$GITHUB_REPOSITORY.git"
+
   deploy-staging:
-    needs: build-staging
+    needs: [build-staging, release-skills]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: staging

@@ -206,20 +206,23 @@ def test_install_refuses_other_arguments(box, args):
 # The workflow and the wizard
 
 
-def test_every_secret_and_variable_the_workflow_reads_is_one_the_wizard_sets():
+def test_every_secret_and_variable_the_workflow_reads_is_one_the_ops_scripts_set():
     workflow = (REPO / ".github/workflows/ci.yml").read_text()
-    wizard = (REPO / "ops/provision-vps").read_text()
+    # provision-vps sets the server's; protect-skill-tags, the skill tags' deploy key.
+    setters = (REPO / "ops/provision-vps").read_text() + (
+        REPO / "ops/protect-skill-tags"
+    ).read_text()
     read = set(re.findall(r"\$\{\{\s*(?:secrets|vars)\.(\w+)\s*\}\}", workflow))
-    set_by_wizard = set(
+    set_by_scripts = set(
         re.findall(
             r"(?:set_var|set_staging_secret|gh secret set|gh variable set)\s+(\w+)",
-            wizard,
+            setters,
         )
     )
     # ci_account ROLE SAVED SECRET WHAT stores SECRET.
-    set_by_wizard |= set(re.findall(r"^\s*ci_account \w+ \w+ (\w+) ", wizard, re.M))
+    set_by_scripts |= set(re.findall(r"^\s*ci_account \w+ \w+ (\w+) ", setters, re.M))
     assert read, "the workflow reads no secrets or variables"
-    assert read <= set_by_wizard, read - set_by_wizard
+    assert read <= set_by_scripts, read - set_by_scripts
 
 
 def test_the_settings_the_vps_scripts_write_are_the_ones_the_server_reads():

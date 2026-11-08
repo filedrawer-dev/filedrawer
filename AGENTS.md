@@ -51,6 +51,7 @@ The field test's entries and logs are in `field-test/`, git-excluded and local o
   They aren't skills for working on this repo, which live in `.claude/skills/`.
   They describe only what the server does, so update them with each change to a route.
   Then run `bin/skills sync`, which also follows a change to `docs/entry-format.md`: it copies the format into each skill and records each version in `skills/versions.txt`, bumping a version already pushed; a test refuses a skill changed without it.
+  CI's `release-skills` job tags each new version before staging deploys, with a deploy key `ops/protect-skill-tags` sets up (`-h`).
 - `ops/smoke-staging` follows the submit skill against staging as an agent would; `screen` checks staging's real screen and `eval` its labelled cases (`ops/screen-eval/`).
   CI runs the first two after each deploy, each as a test account of its own.
   Read its `-h` before running it, or changing staging's test accounts, their settings or CI's deploy checks: it holds the accounts, the secrets and the settings each mode reads.
