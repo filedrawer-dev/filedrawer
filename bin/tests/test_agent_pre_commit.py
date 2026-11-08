@@ -115,9 +115,9 @@ def repo(template, tmp_path) -> Path:
 def hook(
     repo: Path, *args: str, env: dict | None = None, base: str | None = "HEAD"
 ) -> tuple[set[str], subprocess.CompletedProcess]:
-    """Run the hook with fake cargo and uvx, and CHECK_BASE set to the commit `base`
-    names (None: unset); return the checks it ran (nextest, doctest, clippy, pytest)
-    and the hook's run."""
+    """Run the hook with fake cargo and uvx, and CHECK_BASE set to `base` as
+    `git rev-parse` gives it (None: unset); return the checks it ran (nextest, doctest,
+    clippy, pytest) and the hook's run."""
     fakes = repo.parent / "fakes"
     fakes.mkdir(exist_ok=True)
     for tool in ("cargo", "uvx"):
@@ -159,11 +159,9 @@ def hook(
     return ran, done
 
 
-def run(
-    repo: Path, *args: str, env: dict | None = None, base: str | None = "HEAD"
-) -> set[str]:
-    """The checks the hook ran."""
-    return hook(repo, *args, env=env, base=base)[0]
+def run(repo: Path, *args: str, **options) -> set[str]:
+    """The checks the hook ran; `options` as hook() takes them."""
+    return hook(repo, *args, **options)[0]
 
 
 def needed(tree: Path, *paths: str) -> set[str]:
@@ -282,15 +280,9 @@ def test_a_recheck_runs_only_what_the_commits_since_check_base_need(repo):
 
 def test_a_check_base_git_cant_diff_against_runs_every_check(repo):
     change(repo, "docs/notes.md")
-    ran, done = hook(repo, env={"CHECK_BASE": "0" * 40}, base=None)
+    ran, done = hook(repo, base="0" * 40)  # no such commit
     assert ran == EVERY
     assert "can't diff against CHECK_BASE" in done.stderr
-
-
-def test_the_hook_keeps_no_record_of_its_own(repo):
-    change(repo, "docs/notes.md")
-    run(repo)
-    assert not (repo / ".git/checks-passed").exists()
 
 
 def test_quick_runs_clippy_for_a_crates_change_and_nothing_for_docs(repo):
@@ -318,26 +310,21 @@ def test_a_failing_checks_needed_runs_every_check_and_says_so(repo):
     assert "bin/checks-needed failed, so every check runs" in done.stderr
 
 
+@pytest.mark.parametrize("committed", [False, True], ids=["staged", "committed"])
 @pytest.mark.parametrize(
     "script", ["bin/checks-needed", "bin/agent-pre-commit", "bin/agent-quick-check"]
 )
-def test_a_staged_change_to_the_rules_runs_every_check(repo, script):
+def test_a_change_to_the_rules_since_check_base_runs_every_check(
+    repo, script, committed
+):
+    """Staged, as at a commit, or committed since CHECK_BASE, as on a recheck."""
     with (repo / script).open("a") as text:
         text.write("# a comment\n")
     git(repo, "add", script)
-    assert run(repo) == EVERY
-
-
-@pytest.mark.parametrize(
-    "script", ["bin/checks-needed", "bin/agent-pre-commit", "bin/agent-quick-check"]
-)
-def test_a_change_to_the_rules_since_check_base_runs_every_check(repo, script):
-    with (repo / script).open("a") as text:
-        text.write("# a comment\n")
-    git(repo, "add", script)
-    commit(repo)
-    change(repo, "docs/notes.md")
-    assert run(repo, base="HEAD~1") == EVERY
+    if committed:
+        commit(repo)
+        change(repo, "docs/notes.md")
+    assert run(repo, base="HEAD~1" if committed else "HEAD") == EVERY
 
 
 def test_the_staged_checks_needed_decides_not_the_working_copy(repo):

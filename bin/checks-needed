@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
 """Which of bin/agent-pre-commit's slow checks a change needs.
 
-    git diff --cached -z --name-only --no-renames "$CHECK_BASE" | bin/checks-needed [TREE]
+    git diff --cached -z --name-only --no-renames BASE | bin/checks-needed [TREE]
 
 TREE (default .) holds the files as staged; agent-pre-commit passes its copy of the
-index. The paths that differ from CHECK_BASE, the nearest commit that passed the
-checks, come NUL-separated on stdin. It prints a line for each check the change
-needs, the check's name and the first path that needs it:
+index. The paths that differ from BASE come NUL-separated on stdin: agent-pre-commit
+diffs against $CHECK_BASE, the nearest commit that passed the checks; by hand, HEAD
+gives what's staged. It prints a line for each check the change needs, the check's
+name and the first path that needs it:
 
     rust       cargo nextest, cargo test --doc and clippy
     bin-tests  pytest over bin/tests
 
-No paths needs every check.
+No paths needs every check: with nothing changed, nothing narrows them.
 
 A path needs rust when it is a build input, or lies in a folder that is one:
 - crates/, .sqlx/, .cargo/, .config/, .gitattributes, any Cargo.toml, Cargo.lock or
@@ -316,7 +317,7 @@ def main(argv: list[str]) -> int:
         )
         return 2
     sys.stdout.reconfigure(errors="backslashreplace")
-    staged = [
+    changed = [
         path
         for path in sys.stdin.buffer.read().decode(errors="surrogateescape").split("\0")
         if path
@@ -331,9 +332,9 @@ def main(argv: list[str]) -> int:
         "bin-tests": lambda path: any(within(path, ref) for ref in bin_tests),
     }
     for name, need in needs.items():
-        if not staged:
+        if not changed:
             print(f"{name} (nothing differs from the base)")
-        elif first := next((path for path in staged if need(path)), None):
+        elif first := next((path for path in changed if need(path)), None):
             print(f"{name} {first}")
     return 0
 

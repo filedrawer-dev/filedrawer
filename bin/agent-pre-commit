@@ -38,22 +38,23 @@ need_every_check() {
 # Before the git variables go, since `git commit PATHS` stages into its own index.
 if [ -z "${CHECK_BASE:-}" ]; then
   need_every_check "(no CHECK_BASE, so no commit known to pass)"
-elif ! git -C "$repo" diff --cached -z --name-only --no-renames "$CHECK_BASE" -- >"$logs/staged"; then
+elif ! git -C "$repo" diff --cached -z --name-only --no-renames "$CHECK_BASE" -- >"$logs/changed"; then
   echo "agent-pre-commit: git can't diff against CHECK_BASE $CHECK_BASE, so every check runs" >&2
   need_every_check "(git can't diff against CHECK_BASE)"
-elif tr '\0' '\n' <"$logs/staged" | grep -qxE 'bin/(checks-needed|agent-pre-commit|agent-quick-check)'; then
+elif tr '\0' '\n' <"$logs/changed" | grep -qxE 'bin/(checks-needed|agent-pre-commit|agent-quick-check)'; then
   need_every_check "(the change touches these rules)"
 elif [ ! -x "$tree/bin/checks-needed" ]; then
   need_every_check "(no bin/checks-needed staged)"
-elif ! timeout 60 "$tree/bin/checks-needed" "$tree" <"$logs/staged" >"$logs/needed" 2>"$logs/scope"; then
+elif ! timeout 60 "$tree/bin/checks-needed" "$tree" <"$logs/changed" >"$logs/needed" 2>"$logs/scope"; then
   cat "$logs/scope" >&2
   echo "agent-pre-commit: bin/checks-needed failed, so every check runs" >&2
   need_every_check "(bin/checks-needed failed)"
 fi
 needs() { grep -q "^$1 " "$logs/needed"; }
 cd "$tree"
-# The hook's git variables name the repo being committed; no check should reach it.
-unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_OBJECT_DIRECTORY GIT_PREFIX
+# The hook's git variables, and CHECK_BASE, name the repo being committed; no check
+# should reach it.
+unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_OBJECT_DIRECTORY GIT_PREFIX CHECK_BASE
 failed=0
 if [ -z "$quick" ] && needs bin-tests; then
   uvx --quiet --with pytest-timeout==2.4.0 pytest@9.2.0 -q -p no:cacheprovider bin/tests >"$logs/pytest" 2>&1 || { cat "$logs/pytest"; failed=1; }

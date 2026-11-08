@@ -88,13 +88,13 @@ The commit hook's `bin/sentence-lines` keeps it that way and leaves entries as t
 
 Committing runs the checks, so commit and read the hook's output instead of running them first.
 Every commit runs `bin/slop-lint` on staged markdown, lychee (links and anchors, offline) over every markdown file, actionlint with shellcheck (when a workflow is staged), and `bin/sentence-lines` on staged markdown, ruff, and `cargo fmt` (when a `.rs` file is staged), which write: a person's commit that needs formatting is refused with the files rewritten, to stage, and `bin/pre-commit-run` stages an agent's and checks again.
-Agents' commits add the tests in `bin/tests`, clippy and the Rust tests (`bin/agent-pre-commit`), each only when the change covers it.
+Agents' commits add the tests in `bin/tests`, clippy and the Rust tests (`bin/agent-pre-commit`), each only when the change needs it.
 The change is what differs from `$CHECK_BASE`, which llm-toolbox's `agent-commit-gate` sets to the nearest commit that passed them: at a commit, usually HEAD, so what's staged; on a recheck by wt-ship or `build-state finish`, the commit it was rebased or folded onto.
 The Rust checks run for a build input: anything in `crates/`, the Cargo files, `.sqlx/`, `.cargo/` and `.config/`, and the files the crates embed or their tests read, such as `docs/entry-format.md` and `ops/smoke-staging`.
 `bin/tests` runs for a change in `bin/`, `ops/` or a crate (one of its tests reads the crates' references), or to a file those tests read, such as `.pre-commit-config.yaml`.
 A commit of other docs runs neither.
 `bin/checks-needed` finds the embeds and reads in the sources on each commit, so a new `include_str!` needs no list kept by hand; its `-h` gives the rules.
-Every check runs without `CHECK_BASE` (CI, an agent without llm-toolbox, or no commit known to pass), when nothing differs from it, and when the change touches those rules.
+Every check runs without `CHECK_BASE` (CI, an agent without llm-toolbox, or no commit known to pass), when nothing differs from it, when the change touches those rules, when git can't diff against it, and when `bin/checks-needed` is missing, fails or runs past 60 s.
 A small fix commit gets only clippy (`bin/agent-quick-check`, run by `agent-commit-gate`), and only for a build input; `build-state finish` runs the rest.
 CI runs all of them.
 Run `cargo fmt` after each batch of edits to `.rs` files: otherwise the hook reformats them at commit, and edits you make after that no longer match the text you hold.
