@@ -418,3 +418,20 @@ def test_a_sample_takes_entries_with_a_bom_or_windows_line_ends_and_nothing_else
     assert "PASS public field-test-2" in result.stdout, result.stdout
     assert "field-test-3" not in result.stdout
     assert server.posts.count("/entries") == len(LABELLED) + 2, server.posts
+
+
+def test_an_entry_whose_status_comes_back_empty_doesnt_break_the_decoding_tally(
+    eval_run, tmp_path
+):
+    # A GET that fails under load leaves no status; the tally still counts the entry,
+    # whose set (says this fake filedrawer) hides text.
+    (tmp_path / "filedrawer").write_text(
+        '#!/bin/sh\nfor f; do echo "$f: 1 part, 10 bytes hidden"; done\n'
+    )
+    uploaded = (201, "id: as-1\nbytes: 17\n")
+    result = eval_run([*LABELLED, ""], SPENT, uploaded)
+    assert "bad array subscript" not in result.stderr, result.stderr
+    assert (
+        "citing a set that hides text or passes a limit: 1 (public 0, rejected 0, review 0, undecided 1)"
+        in result.stdout
+    ), result.stdout

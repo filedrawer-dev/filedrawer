@@ -809,7 +809,7 @@ PY
   decode_tally() {
     (( ${#set_lists[@]} )) || return 0
     declare -A seen=() hides=() by_status=()
-    local key line path what n files=0 hiding=0 parts=0 bytes=0 limits=0
+    local key line path what n status files=0 hiding=0 parts=0 bytes=0 limits=0
     local -a paths
     for key in "${!set_lists[@]}"; do
       mapfile -t paths < <(listed "${set_lists[$key]}")
@@ -839,7 +839,9 @@ PY
       key=$(list_key "$(list_of "$path")")
       [[ -n "${hides[$key]:-}" ]] || continue
       n=$((n + 1))
-      by_status[${status_of[$path]}]=$(( ${by_status[${status_of[$path]}]:-0} + 1 ))
+      # A status a failed GET left empty counts as undecided, below.
+      status=${status_of[$path]:-undecided}
+      by_status[$status]=$(( ${by_status[$status]:-0} + 1 ))
     done
     local decided=$(( ${by_status[public]:-0} + ${by_status[rejected]:-0} + ${by_status[review]:-0} ))
     line="  field-test entries citing a set that hides text or passes a limit: $n (public ${by_status[public]:-0}, rejected ${by_status[rejected]:-0}, review ${by_status[review]:-0}"
