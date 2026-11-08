@@ -31,6 +31,15 @@ repos:
         language: system
         types: [rust]
         pass_filenames: false
+      # One sentence per line in the docs (AGENTS.md, Checks); it writes, as the
+      # formatters above do. Entries aren't docs, so the analyzer's fixtures, the
+      # screen-eval cases and the smoke test's entry stay as their authors wrote them.
+      - id: sentence-lines
+        name: sentence-lines (one sentence per line in markdown)
+        entry: bin/sentence-lines
+        language: script
+        types: [markdown]
+        exclude: ^(crates/.*/fixtures/|ops/screen-eval/|ops/smoke-fixture\.md$)
       # The workflows, with shellcheck over their run blocks. Only when one is staged.
       # Both are pinned, shellcheck included: actionlint skips the shell checks
       # without a shellcheck on PATH.

@@ -2,8 +2,8 @@
 bin/pre-commit-run (a copy of llm-toolbox's) restages an agent's files they rewrote
 when each was fully staged. Each runs the real bin/git-pre-commit, bin/pre-commit-run
 and pre-commit 4.7.0, offline from uv's cache, in a scratch repo whose config holds
-this repo's ruff-format and cargo-fmt hooks. Skipped when uv's cache lacks pre-commit
-or ruff, or cargo is missing.
+this repo's ruff-format, cargo-fmt and sentence-lines hooks. Skipped when uv's cache
+lacks pre-commit or ruff, or cargo is missing.
 """
 
 import os
@@ -19,6 +19,8 @@ UGLY_PY = "x = {'a':1}\n"
 TIDY_PY = 'x = {"a": 1}\n'
 UGLY_RS = "pub fn a( ){}\n"
 TIDY_RS = "pub fn a() {}\n"
+UGLY_MD = "One. Two.\n"
+TIDY_MD = "One.\nTwo.\n"
 
 
 def cached(*argv: str) -> bool:
@@ -31,11 +33,12 @@ def cached(*argv: str) -> bool:
 
 
 def formatter_hooks() -> str:
-    """This repo's ruff-format and cargo-fmt hooks, as a config of their own."""
+    """This repo's ruff-format, cargo-fmt and sentence-lines hooks, as a config of
+    their own."""
     config = (REPO / ".pre-commit-config.yaml").read_text()
     blocks = [
         re.search(rf"^      - id: {hook}\n(?:        .*\n)+", config, re.M).group(0)
-        for hook in ("ruff-format", "cargo-fmt")
+        for hook in ("ruff-format", "cargo-fmt", "sentence-lines")
     ]
     return "repos:\n  - repo: local\n    hooks:\n" + "".join(blocks)
 
@@ -64,7 +67,7 @@ def repo(tmp_path):
     (root / "src/lib.rs").write_text(TIDY_RS)
     (root / "tool.py").write_text(TIDY_PY)
     (root / ".pre-commit-config.yaml").write_text(formatter_hooks())
-    for script in ("git-pre-commit", "pre-commit-run"):
+    for script in ("git-pre-commit", "pre-commit-run", "sentence-lines"):
         shutil.copy(REPO / "bin" / script, root / "bin" / script)
     git(root, "init", "-q")
     git(root, "-c", "user.name=t", "-c", "user.email=t@t", "add", ".")
@@ -134,6 +137,37 @@ def test_the_copies_from_llm_toolbox_are_left_unformatted(repo):
     done = hook(repo, agent=True)
     assert done.returncode == 0, done.stdout + done.stderr
     assert git(repo, "show", ":bin/slop-lint") == "#!/usr/bin/env python3\n" + UGLY_PY
+
+
+def test_an_agents_staged_markdown_is_rewritten_and_staged(repo):
+    stage(repo, "notes.md", UGLY_MD)
+    done = hook(repo, agent=True)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert git(repo, "show", ":notes.md") == TIDY_MD
+
+
+def test_a_persons_markdown_is_refused_with_the_file_rewritten(repo):
+    stage(repo, "notes.md", UGLY_MD)
+    done = hook(repo, agent=False)
+    assert done.returncode == 1
+    assert (repo / "notes.md").read_text() == TIDY_MD
+    assert git(repo, "show", ":notes.md") == UGLY_MD, "the person stages it"
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        "crates/x/tests/fixtures/entry.md",
+        "ops/screen-eval/public/case.md",
+        "ops/smoke-fixture.md",
+    ],
+)
+def test_an_entry_is_left_as_its_author_wrote_it(repo, entry):
+    (repo / entry).parent.mkdir(parents=True, exist_ok=True)
+    stage(repo, entry, UGLY_MD)
+    done = hook(repo, agent=True)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert git(repo, "show", f":{entry}") == UGLY_MD
 
 
 def test_an_agents_file_with_unstaged_changes_is_refused_and_left_staged_as_it_was(

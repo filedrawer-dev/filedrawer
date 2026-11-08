@@ -1,0 +1,552 @@
+#!/usr/bin/env python3
+"""Break markdown prose after each sentence, so each sentence starts a line.
+
+    bin/sentence-lines FILE...           rewrite the files in place
+    bin/sentence-lines --check FILE...   list the lines it would split; exit 1 if any
+
+It breaks paragraphs, list items and block quotes after a sentence's `.`, `!` or `?`,
+any closing `)`, `]`, quote, `*` or `_`, and the spaces after them, when the next
+sentence starts with a capital, a digit, a code span, a link, emphasis, a quote or a
+parenthesis. A new line takes the list item's indent and the block quote's `>`
+prefix, so the page renders as before. It never joins lines, and hard line breaks
+stay where they are.
+
+It leaves alone headings, tables, fenced and indented code, HTML blocks, front
+matter and link reference definitions; any line holding `<!--` or `slop-lint: ignore`
+(slop-lint's marker covers its own line); text inside inline code, links, HTML tags,
+bare URLs, parentheses and quotations; and the dot after e.g., i.e., etc., vs., cf.,
+et al., Mr., Mrs., Ms., Dr., Fig., approx. or an initial. So some lines still hold
+two sentences.
+
+The commit hook runs it on staged markdown other than entries
+(.pre-commit-config.yaml). A file that can't be read as UTF-8 is an error: one line,
+and exit 2.
+"""
+
+import argparse
+import bisect
+import functools
+import re
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from typing import NamedTuple
+
+ABBREVIATIONS = {"e.g", "i.e", "etc", "vs", "cf", "al", "mr", "mrs", "ms", "dr", "fig"}
+ABBREVIATIONS |= {"approx"}
+INITIALS = re.compile(r"(?:[A-Z]\.)*[A-Z]")
+CLOSERS = ")]\"'*_"
+# A line holding one of these stays whole.
+KEEP = ("<!--", "slop-lint: ignore")
+
+QUOTE = re.compile(r" {0,3}>[ \t]?")
+FENCE = re.compile(r"(`{3,})(?=[^`]*$)|(~{3,})")
+HEADING = re.compile(r"#{1,6}(?:[ \t]|$)")
+BREAK = re.compile(r"(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})")
+MARKER = re.compile(r"([-*+]|\d{1,9}[.)])([ \t]+|$)")
+SETEXT = re.compile(r"(?:=+|-+)[ \t]*")
+DELIMITER_ROW = re.compile(r"\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*")
+LINK_DEFINITION = re.compile(r"\[[^\]]+\]:")
+# HTML blocks that end at a marker rather than a blank line.
+HTML_ENDS = [
+    (
+        re.compile(r"<(?:pre|script|style|textarea)(?:[ \t>]|$)", re.I),
+        re.compile(r"</(?:pre|script|style|textarea)>", re.I),
+    ),
+    (re.compile(r"<!--"), re.compile(r"-->")),
+    (re.compile(r"<\?"), re.compile(r"\?>")),
+    (re.compile(r"<![A-Za-z]"), re.compile(r">")),
+    (re.compile(r"<!\[CDATA\["), re.compile(r"\]\]>")),
+]
+BLANK_LINE = "blank line"
+# Where an inline span might start.
+SPAN_START = re.compile(r'[\\`<\[("]|!\[|https?://|www\.')
+SPACES = re.compile(r" +")
+ORDERED_MARKER = re.compile(r"\d+[.)](?:[ \t]|$)")
+
+
+@dataclass
+class Line:
+    text: str
+    end: str  # "\n", "\r\n", or "" for a last line without one
+    # For a line of prose: the text before it (quote prefix, indent, list marker),
+    # what a new line starts with, and the paragraph it belongs to.
+    head: str = ""
+    indent: str = ""
+    paragraph: int = -1
+    prose: bool = False
+
+
+def read_lines(text: str) -> list[Line]:
+    """The lines, split at \\n only, each keeping its own ending."""
+    parts = text.split("\n")
+    lines = []
+    for i, part in enumerate(parts):
+        last = i == len(parts) - 1
+        if last and part == "":
+            break
+        if not last and part.endswith("\r"):
+            lines.append(Line(part[:-1], "\r\n"))
+        else:
+            lines.append(Line(part, "" if last else "\n"))
+    return lines
+
+
+def leading(text: str, start: int = 0) -> tuple[int, int]:
+    """The width of text's leading spaces and tabs, from column `start` with tab
+    stops of 4, and their length."""
+    column = start
+    for i, char in enumerate(text):
+        if char == " ":
+            column += 1
+        elif char == "\t":
+            column += 4 - column % 4
+        else:
+            return column - start, i
+    return column - start, len(text)
+
+
+def html_end(content: str):
+    """What ends the HTML block `content` starts: a pattern, a blank line, or None
+    when it ends on its first line."""
+    for start, end in HTML_ENDS:
+        if found := start.match(content):
+            return None if end.search(content, found.end()) else end
+    return BLANK_LINE
+
+
+def fence_closer(content: str) -> re.Pattern | None:
+    """The line that closes the fence `content` opens; None when it opens none."""
+    found = FENCE.match(content)
+    if not found:
+        return None
+    run = found.group(1) or found.group(2)
+    return re.compile(rf"{re.escape(run[0])}{{{len(run)},}}[ \t]*")
+
+
+def starts_block(content: str) -> bool:
+    """Whether a line starting with `content`, indented under 4, starts a block that
+    ends a paragraph or a table rather than continuing it."""
+    return bool(
+        FENCE.match(content)
+        or HEADING.match(content)
+        or BREAK.fullmatch(content)
+        or MARKER.match(content)
+        or content.startswith(("<", ">"))
+    )
+
+
+class Fence(NamedTuple):
+    closer: re.Pattern
+    column: int  # the content column of the list item it's in, or 0
+    depth: int  # its block quote depth
+
+
+class HtmlBlock(NamedTuple):
+    end: re.Pattern | str  # a pattern, or BLANK_LINE
+    depth: int
+
+
+def mark_prose(lines: list[Line]) -> None:
+    """Mark each line of prose with its paragraph, its head and what a line split from
+    it starts with."""
+    ProseMarker(lines).mark()
+
+
+class ProseMarker:
+    """Reads the lines as CommonMark reads blocks, inside block quotes and list items,
+    to find the prose; everything else is left as it is."""
+
+    def __init__(self, lines: list[Line]):
+        self.lines = lines
+        self.fence: Fence | None = None
+        self.html: HtmlBlock | None = None
+        self.table = None  # the open table's quote depth
+        self.definition = False  # the last line was a link reference definition
+        self.blank = True  # the last line was blank
+        self.paragraph = -1  # the paragraph the last line was in
+        self.paragraphs = 0
+        self.items: list[int] = []  # open list items' content columns
+        self.depth = 0  # the block quote depth of the last line
+        self.headings: set[int] = set()  # paragraphs a setext underline made headings
+
+    def mark(self) -> None:
+        lines = self.lines
+        comment = False
+        front = bool(lines) and lines[0].text == "---"
+        for n, line in enumerate(lines):
+            if front:
+                front = n == 0 or line.text not in ("---", "...")
+                continue
+            self.read(n, line)
+            opened, closed = line.text.rfind("<!--"), line.text.rfind("-->")
+            if comment or any(marker in line.text for marker in KEEP):
+                line.prose = False
+            if opened > closed:
+                comment = True
+            elif closed > opened:
+                comment = False
+        for line in lines:
+            if line.paragraph in self.headings:
+                line.prose = False
+
+    def start_paragraph(self, line: Line, head: str, column: int, prefix: str):
+        self.paragraphs += 1
+        self.paragraph = self.paragraphs
+        line.prose, line.head, line.paragraph = True, head, self.paragraph
+        line.indent = prefix + " " * column
+
+    def read(self, n: int, line: Line) -> None:
+        """Read one line, marking it if it's prose."""
+        text = line.text
+        prefix_end = 0
+        depth = 0
+        while found := QUOTE.match(text, prefix_end):
+            prefix_end, depth = found.end(), depth + 1
+        prefix, rest = text[:prefix_end], text[prefix_end:]
+        column, start = leading(rest)
+        content = rest[start:]
+        blank = not content.strip()
+        after_blank, self.blank = self.blank, blank
+        definition, self.definition = self.definition, False
+        if fence := self.fence:
+            if depth < fence.depth or (not blank and column < fence.column):
+                self.fence = None  # its quote or list item ended: read the line anew
+            else:
+                if column - fence.column < 4 and fence.closer.fullmatch(content):
+                    self.fence = None
+                return None
+        if html := self.html:
+            if depth < html.depth:
+                self.html = None
+            else:
+                if blank if html.end == BLANK_LINE else html.end.search(text):
+                    self.html = None
+                return None
+        if blank:
+            self.paragraph, self.table = -1, None
+            return None
+        if definition and content.startswith(('"', "'", "(")):
+            return None  # the definition's title
+        top = self.items[-1] if self.items else 0
+        if depth and self.items and len(text) - len(text.lstrip(" ")) >= top:
+            # A block quote inside a list item: not read, so left whole.
+            self.paragraph = -1
+            return None
+        if self.table is not None:
+            if depth >= self.table and not (column - top < 4 and starts_block(content)):
+                return None  # a row
+            self.table = None
+        if depth != self.depth:
+            lazy = (
+                depth < self.depth
+                and self.paragraph != -1
+                and not (column - top < 4 and starts_block(content))
+            )
+            self.depth = depth
+            if not lazy:
+                self.items, self.paragraph, top = [], -1, 0
+        if (
+            not after_blank
+            and column - top < 4
+            and "|" in content
+            and DELIMITER_ROW.fullmatch(content)
+        ):
+            # The line above was a table's header row.
+            self.lines[n - 1].prose = False
+            self.table, self.paragraph = depth, -1
+            return None
+        if self.paragraph != -1:
+            if column - top < 4 and SETEXT.fullmatch(content):
+                self.headings.add(self.paragraph)
+                self.paragraph = -1
+                return None
+            if not (column - top < 4 and starts_block(content)):
+                line.prose, line.paragraph = True, self.paragraph
+                line.head = text[: prefix_end + start]
+                line.indent = prefix + " " * (top if self.items else column)
+                return None
+        while self.items and column < self.items[-1]:
+            self.items.pop()
+        base = self.items[-1] if self.items else 0
+        self.paragraph = -1
+        if column - base >= 4:
+            return None  # indented code
+        self.block(line, prefix, prefix_end + start, column, content, base, depth)
+        return None
+
+    def block(self, line, prefix, at, column, content, base, depth):
+        """Read a line that starts a block at `column`, its content from `at`."""
+        if closer := fence_closer(content):
+            self.fence = Fence(closer, base, depth)
+        elif HEADING.match(content) or BREAK.fullmatch(content):
+            pass
+        elif content.startswith("<"):
+            end = html_end(content)
+            self.html = HtmlBlock(end, depth) if end else None
+        elif found := MARKER.match(content):
+            self.item(line, prefix, at, column, found, depth)
+        elif LINK_DEFINITION.match(content):
+            self.definition = True
+        elif content.startswith(("|", ">")):
+            pass
+        else:
+            self.start_paragraph(line, line.text[:at], column, prefix)
+
+    def item(self, line, prefix, at, column, found, depth):
+        """Open a list item; what follows its marker is a block at the item's content
+        column."""
+        marker, spaces = found.group(1), found.group(2)
+        after = column + len(marker)
+        width = leading(spaces, after)[0]
+        if not spaces or width >= 5:
+            # No content, or indented code after one space.
+            self.items.append(after + 1)
+            return
+        content_column = after + width
+        self.items.append(content_column)
+        at += found.end()
+        self.block(
+            line, prefix, at, content_column, line.text[at:], content_column, depth
+        )
+
+
+def matching(text: str, at: int, opener: str, closer: str) -> int | None:
+    """The index of the `closer` that closes an `opener` before `at`, skipping
+    escapes, nested pairs and code spans; None when there is none."""
+    depth = 1
+    i = at
+    while i < len(text):
+        char = text[i]
+        if char == "\\":
+            i += 2
+            continue
+        if char == "`":
+            end = code_span_end(text, i)
+            if end is None:
+                return None
+            i = end
+            continue
+        if char == opener:
+            depth += 1
+        elif char == closer:
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return None
+
+
+@functools.cache
+def backtick_run(length: int) -> re.Pattern:
+    return re.compile(rf"(?<!`)`{{{length}}}(?!`)")
+
+
+def code_span_end(text: str, at: int) -> int | None:
+    """The end of the code span whose backtick run starts at `at`, or None."""
+    end = at
+    while end < len(text) and text[end] == "`":
+        end += 1
+    found = backtick_run(end - at).search(text, end)
+    return found.end() if found else None
+
+
+def tag_end(text: str, at: int) -> int | None:
+    """The end of the HTML tag starting at `at`, past any `>` in a quoted attribute
+    value; None when the line ends first."""
+    i = at + 1
+    while i < len(text):
+        if text[i] in "\"'":
+            close = text.find(text[i], i + 1)
+            if close < 0:
+                return None
+            i = close
+        elif text[i] == ">":
+            return i + 1
+        i += 1
+    return None
+
+
+def spans(text: str) -> tuple[list[tuple[int, int, str]], bool]:
+    """The spans no break falls inside, as (start, end, kind), and whether one is
+    still open at the line's end: an opener with no match protects the rest of the
+    line, and may go on to the next."""
+    found = []
+    unclosed = False
+    i = 0
+    end_of_text = len(text)
+    while match := SPAN_START.search(text, i):
+        i = match.start()
+        char = text[i]
+        if char == "\\":
+            i += 2
+            continue
+        if char == "`":
+            end, kind = code_span_end(text, i), "code"
+        elif char in "hw":
+            space = text.find(" ", i)
+            end, kind = (end_of_text if space < 0 else space), "url"
+            found.append((i, end, kind))
+            i = end
+            continue
+        elif char == "<":
+            nxt = text[i + 1 : i + 2]
+            if not (nxt.isalpha() or nxt in ("/", "!", "?")):
+                i += 1
+                continue  # a lone <, as in a < b
+            end, kind = tag_end(text, i), "html"
+        elif char in "[!":
+            close = matching(text, text.index("[", i) + 1, "[", "]")
+            end, kind = (None if close is None else close + 1), "link"
+            if end is not None and end < end_of_text and text[end] in "([":
+                pair = {"(": ")", "[": "]"}[text[end]]
+                close = matching(text, end + 1, text[end], pair)
+                end = None if close is None else close + 1
+        elif char == "(":
+            close = matching(text, i + 1, "(", ")")
+            end, kind = (None if close is None else close + 1), "paren"
+        else:
+            close = text.find('"', i + 1)
+            end, kind = (None if close < 0 else close + 1), "quote"
+        if end is None:
+            end, unclosed = end_of_text, True
+        found.append((i, end, kind))
+        i = end
+    return found, unclosed
+
+
+def starts_sentence(text: str, at: int) -> bool:
+    """Whether a new line may start at `at`: with a sentence's start that can't be
+    read as a block's."""
+    char = text[at]
+    if char.isupper() or char in '[("':
+        return True
+    if char.isdigit():
+        return not ORDERED_MARKER.match(text, at)
+    if char == "`":
+        return not text.startswith("```", at)
+    if char in "*_":
+        # Not a list marker (`* `), and not a thematic break (`***`, `___`).
+        nxt = text[at + 1 : at + 2]
+        return nxt not in ("", " ", "\t") and not text.startswith(char * 3, at)
+    return False
+
+
+def ends_sentence(text: str, at: int, covering) -> bool:
+    """Whether the text before the spaces at `at` ends a sentence."""
+    t = at - 1
+    while t >= 0 and text[t] in CLOSERS:
+        t -= 1
+    if t < 0 or text[t] not in ".!?":
+        return False
+    escape = t
+    while escape > 0 and text[escape - 1] == "\\":
+        escape -= 1
+    if (t - escape) % 2:
+        return False
+    span = covering(t)
+    if span and not (span[2] in ("paren", "quote") and span[1] <= at):
+        return False
+    if text[t] != ".":
+        return True
+    word_start = t
+    while word_start > 0 and (
+        text[word_start - 1].isalpha() or text[word_start - 1] == "."
+    ):
+        word_start -= 1
+    word = text[word_start:t]
+    if word.lower() in ABBREVIATIONS:
+        return False
+    before = text[word_start - 1] if word_start > 0 else " "
+    return not (INITIALS.fullmatch(word) and before in " (.")
+
+
+def pieces(text: str) -> tuple[list[str], bool]:
+    """`text` cut into sentences at the spaces after each sentence end, and whether
+    a span is still open at its end."""
+    found, unclosed = spans(text)
+    starts = [start for start, _, _ in found]
+
+    def covering(at: int):
+        i = bisect.bisect_right(starts, at) - 1
+        return found[i] if i >= 0 and at < found[i][1] else None
+
+    cuts = []
+    for space in SPACES.finditer(text):
+        a, b = space.span()
+        if (
+            a > 0
+            and b < len(text)
+            and covering(a) is None
+            and ends_sentence(text, a, covering)
+            and starts_sentence(text, b)
+        ):
+            cuts.append((a, b))
+    out, last = [], 0
+    for a, b in cuts:
+        out.append(text[last:a])
+        last = b
+    out.append(text[last:])
+    return out, unclosed
+
+
+def rewrite(text: str) -> tuple[str, list[tuple[int, str]]]:
+    """The text with prose broken after each sentence, and the lines it split."""
+    # A byte order mark isn't part of the first line's markdown.
+    bom = "﻿" if text.startswith("﻿") else ""
+    lines = read_lines(text[len(bom) :])
+    mark_prose(lines)
+    out, split = [bom], []
+    # Paragraphs where a span (a link's title, a tag) runs on past a line's end: their
+    # later lines start inside it, so they stay whole.
+    unclosed = set()
+    for n, line in enumerate(lines, 1):
+        parts = []
+        if line.prose and line.paragraph not in unclosed:
+            parts, still_open = pieces(line.text[len(line.head) :])
+            if still_open:
+                unclosed.add(line.paragraph)
+        if len(parts) < 2:
+            out.append(line.text + line.end)
+            continue
+        split.append((n, line.text))
+        newline = line.end or "\n"
+        out.append(line.head + parts[0] + newline)
+        for part in parts[1:-1]:
+            out.append(line.indent + part + newline)
+        out.append(line.indent + parts[-1] + line.end)
+    return "".join(out), split
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument("--check", action="store_true", help="list, don't rewrite")
+    parser.add_argument("files", nargs="+", metavar="FILE", type=Path)
+    args = parser.parse_args(argv)
+    status = 0
+    for path in args.files:
+        try:
+            text = path.read_bytes().decode("utf-8")
+        except (OSError, UnicodeDecodeError) as error:
+            print(
+                f"sentence-lines: can't read {path} as UTF-8 text ({error});"
+                " save it as UTF-8, or leave it out",
+                file=sys.stderr,
+            )
+            status = 2
+            continue
+        new, split = rewrite(text)
+        if args.check:
+            for n, line in split:
+                print(f"{path}:{n}: {line[:80]}")
+            if split and status == 0:
+                status = 1
+        elif split:
+            path.write_bytes(new.encode("utf-8"))
+    return status
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
