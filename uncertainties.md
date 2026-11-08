@@ -410,3 +410,10 @@ Once the owner settles one, move the answer into `docs/entry-format.md` or `docs
 - Options: staging refuses to start without `FILEDRAWER_GITHUB_TOKEN`, as production does, or starts and logs a warning.
 - Chosen: it starts, with the warning, so a deploy before `ops/provision-vps github` has run doesn't fail.
 - Against: staging can run for days at 60 calls an hour, and when GitHub's commit page doesn't answer, most GitHub links get "pin not verified", which only `/staging/status` ("github allowance: 60 calls an hour") and the log say.
+
+## agent-pre-commit without `CHECK_BASE`
+
+- Options: drop the hook's own record of passed trees (`checks-passed` in the git dir) and run every check whenever `CHECK_BASE` is unset, or keep the record as a fallback for when llm-toolbox's `agent-commit-gate` isn't on PATH.
+- Chosen: drop it.
+  The gate already records each pass, and a base it offers is by construction a tree that passed this same check, which is what the record guarded; one record can't drift from another.
+- Against: an agent committing on the owner's host, which has no `agent-commit-gate`, now runs every check, as CI does, where since 68c462b it ran only what its staged paths needed.

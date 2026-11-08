@@ -1,8 +1,11 @@
-"""bin/agent-pre-commit runs the cargo checks only when a staged path is a build input,
-and bin/tests only when what those tests cover changed; bin/checks-needed decides.
-The tests run the real hook and bin/checks-needed in a scratch workspace, the hook
-with fakes of cargo and uvx first on PATH that note their arguments, so no real check
-runs. Which references count is asked of bin/checks-needed directly, which is faster."""
+"""bin/agent-pre-commit runs the cargo checks only when a path changed since
+$CHECK_BASE is a build input, and bin/tests only when what those tests cover changed;
+bin/checks-needed decides. llm-toolbox's agent-commit-gate sets CHECK_BASE to the
+nearest commit that passed the hook; these tests set it themselves, to HEAD unless a
+test says otherwise, as at an agent's commit. They run the real hook and
+bin/checks-needed in a scratch workspace, the hook with fakes of cargo and uvx first on
+PATH that note their arguments, so no real check runs. Which references count is asked
+of bin/checks-needed directly, which is faster."""
 
 import os
 import shutil
@@ -86,16 +89,6 @@ def commit(repo: Path, message: str = "change") -> None:
     git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", message)
 
 
-def passed_list(repo: Path) -> Path:
-    return repo / ".git/checks-passed"
-
-
-def mark_passed(repo: Path) -> None:
-    """Put HEAD's tree on the list of trees that passed the checks."""
-    with passed_list(repo).open("a") as passed:
-        passed.write(git(repo, "rev-parse", "HEAD^{tree}") + "\n")
-
-
 @pytest.fixture(scope="module")
 def template(tmp_path_factory) -> Path:
     root = tmp_path_factory.mktemp("template") / "repo"
@@ -109,7 +102,6 @@ def template(tmp_path_factory) -> Path:
         shutil.copy(REPO / "bin" / script, root / "bin" / script)
     git(root, "init", "-q")
     commit(root, "init")
-    mark_passed(root)
     return root
 
 
@@ -121,10 +113,11 @@ def repo(template, tmp_path) -> Path:
 
 
 def hook(
-    repo: Path, *args: str, env: dict | None = None
+    repo: Path, *args: str, env: dict | None = None, base: str | None = "HEAD"
 ) -> tuple[set[str], subprocess.CompletedProcess]:
-    """Run the hook with fake cargo and uvx; return the checks it ran (nextest,
-    doctest, clippy, pytest) and the hook's run."""
+    """Run the hook with fake cargo and uvx, and CHECK_BASE set to the commit `base`
+    names (None: unset); return the checks it ran (nextest, doctest, clippy, pytest)
+    and the hook's run."""
     fakes = repo.parent / "fakes"
     fakes.mkdir(exist_ok=True)
     for tool in ("cargo", "uvx"):
@@ -132,8 +125,14 @@ def hook(
         (fakes / tool).chmod(0o755)
     log = repo.parent / "calls"
     log.write_text("")
-    hook_env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    hook_env = {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith("GIT_") and k != "CHECK_BASE"
+    }
     hook_env |= {"PATH": f"{fakes}{os.pathsep}{os.environ['PATH']}"}
+    if base is not None:
+        hook_env["CHECK_BASE"] = git(repo, "rev-parse", base)
     hook_env |= {"FAKE_LOG": str(log), **(env or {})}
     done = subprocess.run(
         [str(repo / "bin/agent-pre-commit"), *args],
@@ -160,9 +159,11 @@ def hook(
     return ran, done
 
 
-def run(repo: Path, *args: str, env: dict | None = None) -> set[str]:
+def run(
+    repo: Path, *args: str, env: dict | None = None, base: str | None = "HEAD"
+) -> set[str]:
     """The checks the hook ran."""
-    return hook(repo, *args, env=env)[0]
+    return hook(repo, *args, env=env, base=base)[0]
 
 
 def needed(tree: Path, *paths: str) -> set[str]:
@@ -261,43 +262,40 @@ def test_a_root_file_a_bin_test_reads_runs_bin_tests(repo):
     assert run(repo) == {"pytest"}
 
 
-def test_nothing_staged_as_in_ci_runs_every_check(repo):
+def test_without_check_base_as_in_ci_every_check_runs(repo):
+    change(repo, "docs/notes.md")
+    assert run(repo, base=None) == EVERY
+
+
+def test_nothing_changed_since_check_base_runs_every_check(repo):
     assert run(repo) == EVERY
 
 
-def test_a_tree_not_known_to_pass_runs_every_check(repo):
-    passed_list(repo).unlink()
+def test_a_recheck_runs_only_what_the_commits_since_check_base_need(repo):
     change(repo, "docs/notes.md")
-    assert run(repo) == EVERY
-
-
-def test_the_list_keeps_the_last_1000_trees(repo):
-    head = git(repo, "rev-parse", "HEAD^{tree}")
-    passed_list(repo).write_text(
-        "".join(f"{n:040x}\n" for n in range(1500)) + head + "\n"
-    )
-    change(repo, "docs/notes.md")
-    run(repo)
-    trees = passed_list(repo).read_text().splitlines()
-    assert len(trees) == 1000
-    assert trees[-2:] == [head, git(repo, "write-tree")]
-
-
-def test_a_pass_puts_the_committed_tree_on_the_list(repo):
-    change(repo, "docs/notes.md")
-    run(repo)
-    tree = git(repo, "write-tree")
-    assert passed_list(repo).read_text().splitlines()[-1] == tree
     commit(repo)
-    change(repo, "docs/notes.md", "again\n")
-    assert run(repo) == set()
+    assert run(repo, base="HEAD~1") == set()
+    change(repo, "docs/format.md")
+    commit(repo)
+    assert run(repo, base="HEAD~2") == RUST
+
+
+def test_a_check_base_git_cant_diff_against_runs_every_check(repo):
+    change(repo, "docs/notes.md")
+    ran, done = hook(repo, env={"CHECK_BASE": "0" * 40}, base=None)
+    assert ran == EVERY
+    assert "can't diff against CHECK_BASE" in done.stderr
+
+
+def test_the_hook_keeps_no_record_of_its_own(repo):
+    change(repo, "docs/notes.md")
+    run(repo)
+    assert not (repo / ".git/checks-passed").exists()
 
 
 def test_quick_runs_clippy_for_a_crates_change_and_nothing_for_docs(repo):
     change(repo, "crates/app/src/lib.rs", "pub fn f() {}\n")
     assert run(repo, "--quick") == {"clippy"}
-    tree = git(repo, "write-tree")
-    assert tree not in passed_list(repo).read_text().split(), "--quick ran no tests"
     git(repo, "reset", "-q")
     change(repo, "docs/notes.md")
     assert run(repo, "--quick") == set()
@@ -306,7 +304,6 @@ def test_quick_runs_clippy_for_a_crates_change_and_nothing_for_docs(repo):
 def test_a_tree_without_checks_needed_runs_every_check(repo):
     git(repo, "rm", "-q", "bin/checks-needed")
     commit(repo)
-    mark_passed(repo)
     change(repo, "docs/notes.md")
     assert run(repo) == EVERY
 
@@ -314,7 +311,6 @@ def test_a_tree_without_checks_needed_runs_every_check(repo):
 def test_a_failing_checks_needed_runs_every_check_and_says_so(repo):
     (repo / "bin/checks-needed").write_text("#!/bin/sh\necho broken >&2\nexit 3\n")
     commit(repo)
-    mark_passed(repo)
     change(repo, "docs/notes.md")
     ran, done = hook(repo)
     assert ran == EVERY
@@ -330,6 +326,18 @@ def test_a_staged_change_to_the_rules_runs_every_check(repo, script):
         text.write("# a comment\n")
     git(repo, "add", script)
     assert run(repo) == EVERY
+
+
+@pytest.mark.parametrize(
+    "script", ["bin/checks-needed", "bin/agent-pre-commit", "bin/agent-quick-check"]
+)
+def test_a_change_to_the_rules_since_check_base_runs_every_check(repo, script):
+    with (repo / script).open("a") as text:
+        text.write("# a comment\n")
+    git(repo, "add", script)
+    commit(repo)
+    change(repo, "docs/notes.md")
+    assert run(repo, base="HEAD~1") == EVERY
 
 
 def test_the_staged_checks_needed_decides_not_the_working_copy(repo):
@@ -351,7 +359,6 @@ def test_the_index_git_commit_paths_builds_decides(repo):
 def test_a_crate_reading_relative_to_the_root_makes_every_path_an_input(repo):
     change(repo, "crates/app/src/root.rs", 'pub const ROOT: &str = "../..";\n')
     commit(repo)
-    mark_passed(repo)
     change(repo, "docs/notes.md")
     assert run(repo) == RUST
 
@@ -359,6 +366,5 @@ def test_a_crate_reading_relative_to_the_root_makes_every_path_an_input(repo):
 def test_a_workspace_member_outside_crates_is_a_build_input(repo):
     change(repo, "tools/xtask/Cargo.toml", '[package]\nname = "xtask"\n')
     commit(repo)
-    mark_passed(repo)
     change(repo, "tools/xtask/src/main.rs", "fn main() {}\n")
     assert run(repo) == EVERY
