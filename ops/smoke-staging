@@ -503,6 +503,9 @@ if [[ $mode == eval ]]; then
       echo "WAIT $2 $1 ($ID): not decided yet"
       fail=$((fail + 1))
       stopped=1
+    elif [[ -z $status ]]; then
+      echo "FAIL $2 $1 ($ID): GET /e/$ID answered $CODE: $(printf '%s' "$BODY" | head -c 300)"
+      fail=$((fail + 1))
     else
       echo "FAIL $2 $1 ($ID): got $status"
       fail=$((fail + 1))
