@@ -135,6 +135,25 @@ async fn the_home_page_puts_the_line_for_agents_before_the_first_card() {
     assert!(at_line < at_card);
 }
 
+/// The markup of the home page's line to paste to an agent, its paragraph's.
+fn paste_line(body: &str) -> &str {
+    let start = body.find(r#"<p class="paste">"#).expect("a paste line");
+    let end = body[start..].find("</p>").expect("the paste line's end");
+    &body[start..start + end]
+}
+
+#[tokio::test]
+async fn the_home_pages_agent_line_links_the_installer_it_names() {
+    let app = test_app().await;
+    let page = app.send(opened("/")).await;
+    let installer = format!("{PUBLIC_URL}/skill.md");
+    let line = paste_line(&page.body);
+    assert!(
+        line.contains(&format!(r#"<a href="{installer}">{installer}</a>"#)),
+        "{line}"
+    );
+}
+
 #[tokio::test]
 async fn an_agent_opening_the_home_page_gets_a_few_lines_that_point_to_the_skill() {
     let app = test_app().await;
