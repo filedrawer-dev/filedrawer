@@ -248,6 +248,19 @@ def test_a_failure_on_the_server_stops_the_wizard(smoke):
     assert not (smoke.secrets / "SMOKE_TEST_TOKEN").exists()
 
 
+@pytest.mark.parametrize(
+    "reply",
+    ["a-new\n", "a-new fdt_s3cret\n", "a-new\tfdt_\n", "a-new\tfdt_s3cret extra\n"],
+)
+def test_a_reply_that_isnt_an_account_tab_token_stores_nothing(smoke, reply):
+    smoke.host.answer("*", stdout=reply, stdin="create-token")
+    result = smoke.run()
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "Making the smoke-test account failed" in result.stdout
+    assert not (smoke.secrets / "SMOKE_TEST_TOKEN").exists()
+    assert "SMOKE_ACCOUNT" not in smoke.env_file.read_text()
+
+
 # The screening and admin stages, run alone: ops/provision-vps screening | admin
 
 API_KEY = "sk-ant-api03-" + "k" * 40

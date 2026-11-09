@@ -283,6 +283,7 @@ screen_test_setting() {
 # Returns 1 when the server fails to make it, having said why.
 ci_account() {
   local role=$1 saved=$2 secret=$3 what=$4 account reply status=0
+  local account_and_token=$'^a-[^[:space:]]+\tfdt_[^[:space:]]+$'
   account=$(_existing "$saved" || true)
   if [[ -n "$account" ]] && staging_has_secret "$secret" \
     && { (( ONLY_NEW )) || ! confirm "$secret is set already. Make a new token anyway?"; }; then
@@ -293,7 +294,7 @@ ci_account() {
   reply=$(remote ci-account.sh "ROLE=$role" "ACCOUNT=$account") || status=$?
   if (( status == 3 )); then
     not_deployed_yet smoke "$what"
-  elif (( status != 0 )) || [[ ! "$reply" =~ ^a-[^[:space:]]+$'\t'fdt_[^[:space:]]+$ ]]; then
+  elif (( status != 0 )) || [[ ! "$reply" =~ $account_and_token ]]; then
     warn "Making the $what failed; the server said why above. Rerun to try again."
     return 1
   else
