@@ -208,10 +208,12 @@ def test_install_refuses_other_arguments(box, args):
 
 def test_every_secret_and_variable_the_workflow_reads_is_one_the_ops_scripts_set():
     workflow = (REPO / ".github/workflows/ci.yml").read_text()
-    # provision-vps sets the server's; protect-skill-tags, the skill tags' deploy key.
-    setters = (REPO / "ops/provision-vps").read_text() + (
-        REPO / "ops/protect-skill-tags"
-    ).read_text()
+    # Every ops script, so a new one that sets a secret needs no line here.
+    setters = "".join(
+        path.read_text()
+        for path in sorted((REPO / "ops").rglob("*"))
+        if path.is_file() and os.access(path, os.X_OK)
+    )
     read = set(re.findall(r"\$\{\{\s*(?:secrets|vars)\.(\w+)\s*\}\}", workflow))
     set_by_scripts = set(
         re.findall(
