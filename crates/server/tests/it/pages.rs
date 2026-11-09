@@ -135,6 +135,17 @@ async fn the_home_page_puts_the_line_for_agents_before_the_first_card() {
     assert!(at_line < at_card);
 }
 
+/// The value of attribute `name` in the first tag of `html` that has it.
+fn attribute<'a>(html: &'a str, name: &str) -> &'a str {
+    let key = format!(" {name}=\"");
+    let start = html
+        .find(&key)
+        .map(|at| at + key.len())
+        .unwrap_or_else(|| panic!("no {name} in {html}"));
+    let end = html[start..].find('"').expect("the attribute's end");
+    &html[start..start + end]
+}
+
 /// The markup of the home page's line to paste to an agent, its paragraph's.
 fn paste_line(body: &str) -> &str {
     let start = body.find(r#"<p class="paste">"#).expect("a paste line");
@@ -150,6 +161,57 @@ async fn the_home_pages_agent_line_links_the_installer_it_names() {
     let line = paste_line(&page.body);
     assert!(
         line.contains(&format!(r#"<a href="{installer}">{installer}</a>"#)),
+        "{line}"
+    );
+}
+
+#[tokio::test]
+async fn the_home_page_alone_runs_a_script_of_the_sites_own() {
+    let app = test_app().await;
+    let page = app.send(opened("/")).await;
+    let policy = header(&page, "content-security-policy");
+    assert!(policy.contains("default-src 'none'"), "{policy:?}");
+    assert!(policy.contains("script-src 'self'"), "{policy:?}");
+    let script_tag = &page.body[page.body.find("<script").expect("a script")..];
+    let href = attribute(script_tag, "src");
+    assert!(href.starts_with("/static/copy.js?v="), "{href}");
+    let script = app.get(href).await;
+    assert_eq!(script.status, StatusCode::OK);
+    assert!(
+        content_type(&script).starts_with("text/javascript"),
+        "{script:?}"
+    );
+    assert_eq!(header(&script, "x-content-type-options"), "nosniff");
+    assert!(header(&script, "cache-control").contains("max-age"));
+    assert!(
+        script.body.contains("navigator.clipboard"),
+        "{}",
+        script.body
+    );
+
+    let search = app.send(opened("/search")).await;
+    let policy = header(&search, "content-security-policy");
+    assert!(policy.contains("default-src 'none'"), "{policy:?}");
+    assert!(!policy.contains("script-src"), "{policy:?}");
+}
+
+#[tokio::test]
+async fn the_copy_button_starts_hidden_and_names_the_line_it_copies() {
+    let app = test_app().await;
+    let page = app.send(opened("/")).await;
+    let line = paste_line(&page.body);
+    let button = &line[line.find("<button").expect("a copy button")..];
+    let button = &button[..button.find('>').unwrap()];
+    // Hidden until the script runs, so a browser without script shows no dead button.
+    assert!(button.contains(" hidden"), "{button}");
+    let target = attribute(button, "data-copy");
+    // A screen reader hears what "Copy" copies.
+    assert_eq!(attribute(button, "aria-describedby"), target);
+    let installer = format!("{PUBLIC_URL}/skill.md");
+    assert!(
+        line.contains(&format!(
+            r#"id="{target}">Read <a href="{installer}">{installer}</a>"#
+        )),
         "{line}"
     );
 }

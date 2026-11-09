@@ -9,7 +9,7 @@ use crate::AppState;
 use crate::entries::{self, Filters};
 use crate::error::AppError;
 use crate::pages::{Drawer, HomePage, page};
-use crate::respond::wants_page;
+use crate::respond::{RunsOwnScript, wants_page};
 
 /// How many of the latest entries the home page shows.
 const LATEST: i64 = 10;
@@ -23,13 +23,16 @@ pub async fn home(State(state): State<AppState>, headers: HeaderMap) -> Result<R
             .into_response());
     }
     let latest = entries::search(&state.pool, &Filters::default(), LATEST, 0).await?;
-    Ok(page(
+    let mut response = page(
         StatusCode::OK,
         &HomePage {
             public_url: &state.public_url,
             drawer: Drawer::new("", "", &latest),
         },
-    ))
+    );
+    // Its copy button's script (design.md, Pages for people).
+    response.extensions_mut().insert(RunsOwnScript);
+    Ok(response)
 }
 
 /// What `/` tells an agent: what the archive is, and where to start.

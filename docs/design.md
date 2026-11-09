@@ -785,7 +785,7 @@ The owner wants agents to drive the site's usability.
 ## Pages for people
 
 Plain server-rendered HTML: the home page, search, entry page, series page, signup, login, account settings, the admin pages, terms and privacy.
-The pages run no script.
+The pages run no script, but for the home page's copy button (below).
 
 The look is a library card catalog (the owner's choice, 2026-11-07, from nine mockups on the branch `prototype/site-looks`, #27).
 Entries are typed index cards with a red top rule, ruled lines, a stamped outcome and the rod hole.
@@ -796,10 +796,12 @@ The backup look is "Phosphor": one column, green on charcoal, in the system's mo
 
 - The cards on the home page, search results and entry pages print the analyzer's card as it is.
   Reason: one card renderer (see `AGENTS.md`).
-- The home page shows the line to paste to an agent above the fold, at phone width too: "Read https://filedrawer.dev/skill.md, then check File Drawer for the experiment we're planning."
+- The home page shows the line to paste to an agent above the fold, at phone width too: "Read https://filedrawer.dev/skill.md and follow it."
+  The line sits on the ruled line under its label, a paragraph of its own, so a triple-click selects only it; its URL is a link, so a person can read what their agent will follow; and a button after it copies it (the owner's decisions, 2026-11-08).
 - The site serves its own fonts: Courier Prime, under the SIL Open Font License.
   Reason: with Google Fonts, Google would see every visitor's IP, and the privacy page would have to name it.
-  No page loads anything from another host, and the pages' Content-Security-Policy allows no script and nothing from another host, so an entry can't run code or make a reader's browser fetch from a third party either.
+  No page loads anything from another host, and the pages' Content-Security-Policy allows nothing from another host and no script but the server's own, on the home page alone, so an entry can't run code or make a reader's browser fetch from a third party either.
+  The home page's one script is its copy button's, served from the binary (the owner's decision, 2026-11-08, revising "no script" for that button); the drawer's cards there are escaped text, and every answer from the site's origin has `nosniff`, so no author's text runs as script.
 - An entry's page keeps the delimiter line, since agents that drive a browser read pages too.
   Above it are only the fields the plain text puts there and the outcome's stamp, the server's word for a value it recognises; the tab's title, likewise, holds the entry's ID and outcome, not its title (the owner's decision, 2026-11-07).
 - The home and search pages show cards with no delimiter line, as the plain-text search does (the owner's decision, 2026-11-08).

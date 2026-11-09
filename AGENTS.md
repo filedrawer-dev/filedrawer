@@ -45,7 +45,7 @@ The field test's entries and logs are in `field-test/`, git-excluded and local o
   `CODING_STANDARDS.md` holds the rules the review applies.
 - `crates/server/templates`: the HTML pages, askama templates.
   A template can't reach a field from inside a macro call, so `matches!(file.state, ...)` fails to compile; give the type a method instead.
-- `crates/server/static`: the pages' one stylesheet and the Courier Prime fonts, with their licence, compiled into the binary.
+- `crates/server/static`: the pages' one stylesheet, the home page's one script (its copy button), and the Courier Prime fonts, with their licence, compiled into the binary.
   Colours are tokens on `:root`, light by default and dark under `prefers-color-scheme: dark`; a change of look changes the tokens, not the rules.
 - `skills/`: `filedrawer-search` and `filedrawer-submit`, the skills agents install from this repo's git tags and the server serves at `/skills/<name>/` (design.md, Skills).
   They aren't skills for working on this repo, which live in `.claude/skills/`.

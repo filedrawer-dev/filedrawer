@@ -1,6 +1,8 @@
 //! Plain text by default, JSON when the request's Accept header asks for it, and
 //! HTML only for a browser opening a page (design.md, Agent interface).
 
+use std::sync::LazyLock;
+
 use axum::body::Body;
 use axum::extract::{FromRequestParts, Request};
 use axum::http::request::Parts;
@@ -124,12 +126,28 @@ impl Reading {
 /// another.
 const VARY: &str = "Sec-Fetch-Dest, Accept";
 
-/// The pages' Content-Security-Policy: no script, and nothing from another host, so
-/// an entry's text can't run code or make a reader's browser fetch from a third
-/// party (design.md, Pages for people). Chrome applies `form-action` to a form
+/// The pages' Content-Security-Policy: no script, unless a page is marked
+/// `RunsOwnScript`, and nothing from another host, so an entry's text can't run code
+/// or make a reader's browser fetch from a third party (design.md, Pages for
+/// people). Chrome applies `form-action` to a form
 /// POST's redirects too, so a sign-in that redirects to another site (GitHub's, at
 /// build step 6) must start from a link, not a form.
 const PAGE_POLICY: &str = "default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'";
+
+/// The policy of a page marked `RunsOwnScript`: the pages' policy, plus the server's
+/// own scripts. Only the server serves this origin's scripts, and every answer has
+/// `nosniff`, so no text an author wrote can run as one.
+static OWN_SCRIPT_POLICY: LazyLock<header::HeaderValue> = LazyLock::new(|| {
+    header::HeaderValue::from_str(&format!("{PAGE_POLICY}; script-src 'self'"))
+        .expect("the policy is ASCII")
+});
+
+/// Marks a page, in its response's extensions, as one that runs the server's own
+/// script: the home page, whose copy button copies the line to paste to an agent
+/// (design.md, Pages for people). Every other page runs none. Set it only on a page
+/// that rendered: an error turned into a page keeps its response's extensions.
+#[derive(Debug, Clone, Copy)]
+pub struct RunsOwnScript;
 
 /// What a request asked for, read from its headers before it is handled.
 #[derive(Debug, Clone, Copy)]
@@ -159,6 +177,7 @@ impl Asked {
         } else {
             response
         };
+        let own_script = response.extensions().get::<RunsOwnScript>().is_some();
         let headers = response.headers_mut();
         headers.append(header::VARY, header::HeaderValue::from_static(VARY));
         // `private` keeps a shared cache, such as a proxy added later, from serving
@@ -182,10 +201,12 @@ impl Asked {
             .and_then(|value| value.to_str().ok())
             .is_some_and(|value| value.starts_with("text/html"));
         if html {
-            headers.insert(
-                header::CONTENT_SECURITY_POLICY,
-                header::HeaderValue::from_static(PAGE_POLICY),
-            );
+            let policy = if own_script {
+                OWN_SCRIPT_POLICY.clone()
+            } else {
+                header::HeaderValue::from_static(PAGE_POLICY)
+            };
+            headers.insert(header::CONTENT_SECURITY_POLICY, policy);
         }
         response
     }

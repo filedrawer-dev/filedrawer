@@ -51,6 +51,7 @@ const NOT_FOR_AGENTS: &[&str] = &[
     // skills needn't name it (CODING_STANDARDS.md, Untrusted text).
     "/",
     "/static/site.css",
+    "/static/copy.js",
     "/static/fonts/{name}",
 ];
 

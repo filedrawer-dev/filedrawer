@@ -93,6 +93,15 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
    paragraph of its own, so a triple-click selects only it. */
 .paste-label { margin-top: 1.5em !important; }
 .paste { padding-left: 3ch; }
+/* Its copy button, after its last word: it fits within a rule, so the text stays on
+   them, and a selection of the line leaves it out. */
+.copy { font: inherit; font-size: .8em; font-weight: 700; line-height: 1.3; letter-spacing: .08em; text-transform: uppercase;
+  min-width: 10ch; padding: 0 .4rem; margin-left: 1ch; vertical-align: .1em; background: transparent; color: var(--ink);
+  border: 1.5px solid var(--ink); border-radius: 3px; user-select: none; }
+.copy:hover { background: var(--ink); color: var(--card); }
+.copy:focus-visible { outline-color: var(--ink); }
+/* Read by a screen reader, unseen: the copy button's news, which a label change doesn't announce. */
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .paste code { font: inherit; font-weight: 700; }
 
 /* Divider-card tabs: the outcome filters, then the subject search. */
