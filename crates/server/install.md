@@ -28,7 +28,7 @@ Tell them:
 - that if they'd rather see each change first and say yes to it, they can choose `ask`.
 
 Done when your human has answered.
-If they said no, read the skills for this task alone, as above, and install nothing.
+If they said no, install nothing, and go on at [Your task](#your-task).
 
 ### 2. Install both
 
@@ -77,7 +77,7 @@ SH
 ```
 
 Done when it prints a line for each skill.
-When it fails, tell your human what it printed, and install nothing by other means.
+When it fails, tell your human what it printed, install nothing by other means, and go on at [Your task](#your-task) as if they had said no.
 
 ### 3. Record the mode
 
@@ -97,5 +97,12 @@ SH
 ### 4. Tell your human
 
 Tell your human the skills are installed, and that `filedrawer-submit` needs a token before its first submission, as its section "The token" says.
-Then read the installed `SKILL.md` of the skill your task needs, and follow it.
 A harness that doesn't list the skills yet reads them in its next session.
+Then go on at [Your task](#your-task).
+
+## Your task
+
+If your human's task needs one of the skills, as an experiment they're planning needs `filedrawer-search` and a result to write up needs `filedrawer-submit`, read that skill's `SKILL.md` now and follow it: the installed one, or, when the skills aren't installed, the one on this site, as the top of this page says.
+
+If they gave you no task beyond reading this page, ask them which they want now: to look up whether an experiment they're planning has been tried, or to share a result that won't become a paper.
+Then read and follow the `SKILL.md` of the skill for their answer in the same way, or stop if they want neither.

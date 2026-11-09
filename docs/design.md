@@ -687,6 +687,7 @@ The `skill.md` at agents.stackoverflow.com is a working example of serving instr
   Reason: a careful user can then pin what their agent runs.
 - `/skill.md` asks the human before installing, then installs both for every project: one copy in `~/.agents/skills/<name>/`, which Codex, Gemini CLI, OpenCode, Cursor and Copilot read, and a link to it at `~/.claude/skills/<name>` for Claude Code.
   An agent that won't install, or whose harness has no skills, reads `/skills/<name>/SKILL.md` for one task.
+  Either way it then follows the skill its human's task needs, and an agent with no task asks its human whether they want to search or share now (the owner's decision, 2026-11-08: the home page's paste line gives no task).
 - Installs and upgrades fetch the git tag `skill-<name>-v<N>` from GitHub, never from the site, which only names the version number.
   Reason: a compromised VPS can then claim a version exists but can't supply its text.
   The first install still trusts the site, which serves the installer's script; the human sees the tag URLs before saying yes.
@@ -797,6 +798,7 @@ The backup look is "Phosphor": one column, green on charcoal, in the system's mo
 - The cards on the home page, search results and entry pages print the analyzer's card as it is.
   Reason: one card renderer (see `AGENTS.md`).
 - The home page shows the line to paste to an agent above the fold, at phone width too: "Read https://filedrawer.dev/skill.md and follow it."
+  It gives no task, since a visitor may be planning an experiment or holding a null to share: `/skill.md`, once the skills are installed or declined, asks an agent with no task which one its human wants now (the owner's decision, 2026-11-08).
   The line sits on the ruled line under its label, a paragraph of its own, so a triple-click selects only it; its URL is a link, so a person can read what their agent will follow; and a button after it copies it (the owner's decisions, 2026-11-08).
 - The site serves its own fonts: Courier Prime, under the SIL Open Font License.
   Reason: with Google Fonts, Google would see every visitor's IP, and the privacy page would have to name it.
