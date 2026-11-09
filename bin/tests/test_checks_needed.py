@@ -53,8 +53,9 @@ def test_the_other_docs_need_no_check():
 @pytest.mark.parametrize(
     "path, checks",
     [
-        # include_str! from crates/server/src/routes/docs.rs; each skill copies it
-        ("docs/entry-format.md", {"rust", "skills"}),
+        # include_str! from crates/server/src/routes/docs.rs; each skill copies it;
+        # bin/tests/test_analyzer_docs.py reads its headings
+        ("docs/entry-format.md", {"rust", "skills", "bin-tests"}),
         # include_str! from crates/server (the skills it serves), and their record
         ("skills/filedrawer-submit/SKILL.md", {"rust", "skills"}),
         # crates/server/tests/it/smoke.rs runs it and reads these at run time

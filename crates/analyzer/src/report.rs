@@ -11,31 +11,47 @@ pub const MAX_LOGS: usize = 10;
 /// A reason the server refuses an entry. Anything else it can't read is a [`Warning`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Refusal {
+    /// No front matter the analyzer can read, with why.
     FrontMatterUnreadable(String),
+    /// A required field is missing: its name.
     MissingField(&'static str),
+    /// A required body section is missing: its heading.
     MissingSection(&'static str),
+    /// The entry is over [`MAX_ENTRY_BYTES`].
     TooLarge {
+        /// The entry's size.
         bytes: usize,
     },
+    /// `logs` lists more than [`MAX_LOGS`] URLs.
     TooManyLogs {
+        /// How many it lists.
         count: usize,
     },
+    /// `code` names GitHub or Hugging Face without a 40-character commit (design.md,
+    /// Submission and screening, step 2). A Zenodo concept record is refused by the
+    /// server's online check instead.
     UnpinnedCode {
+        /// The link as written.
         url: String,
     },
+    /// `## Reproduce` fetches code at a branch or tag rather than a commit.
     MovingRef {
+        /// The command that does it.
         command: String,
     },
+    /// An `embargo_until` that isn't a date, as written.
     EmbargoUnreadable(String),
     /// A front-matter key asking for an embargo, refused while embargoes are paused
     /// (entry-format.md, Accept, warn, and re-render).
     EmbargoPaused {
+        /// The key as written.
         field: String,
     },
-    /// A long run of encoded text that hides readable text, such as base64: `kind`
-    /// names the encoding, and `start` is the run's first characters.
+    /// A long run of encoded text that hides readable text, such as base64.
     EncodedText {
+        /// The encoding.
         kind: crate::encoded::Encoding,
+        /// The run's first characters.
         start: String,
     },
     /// A `series` value that isn't `<id>@<version>[#<section>]` with a version from 1
@@ -101,29 +117,50 @@ impl fmt::Display for Refusal {
 /// The kind of thing the server couldn't read, or read with a doubt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WarningKind {
+    /// A mapping written `{a, b}`, where a comma splits a value into keys.
     FlowMapping,
+    /// A paper written as a bare number, which YAML reads as a decimal.
     NumberForPaper,
+    /// `published_in` that is neither a DOI nor `arXiv:<id>`.
     NotAPaper,
+    /// A `replicates` or `reanalyzes` item in no form the format takes.
     NotAReference,
+    /// `replicates` or `reanalyzes` past [`crate::MAX_REFERENCES`] items.
     TooManyReferences,
+    /// A value the format doesn't name, for a field whose values it does.
     UnrecognisedValue,
+    /// A field the format doesn't name; the server keeps it.
     UnrecognisedField,
+    /// A field the server removes, such as `label` or one starting `fd_`.
     StrippedField,
+    /// A field of the wrong shape, such as a list where one value belongs.
     MalformedField,
+    /// A `code`, `logs` or `data` link on a host the server doesn't check.
     HostNotListed,
+    /// A `code` link whose pin only the server's check at submission can confirm,
+    /// such as a Zenodo record.
     PinNotChecked,
+    /// No Results table the analyzer can read.
     ResultsNotRead,
+    /// No line saying the intervals' level.
     LevelNotStated,
+    /// A Results row the analyzer can't read.
     RowNotRead,
+    /// An `outcome` cell that isn't `effect`, `no_effect` or `inconclusive`.
     ClaimNotRead,
+    /// An `n` in none of the forms the format names, which are `16/16`, `96 paired`
+    /// and `160 (2 days)`.
     OddN,
+    /// A `no_effect_at` cell that isn't a plain decimal.
     NoEffectAtNotRead,
 }
 
 /// Something the server accepted but couldn't fully read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Warning {
+    /// What sort of thing went unread.
     pub kind: WarningKind,
+    /// What the author reads, on one line.
     pub message: String,
 }
 

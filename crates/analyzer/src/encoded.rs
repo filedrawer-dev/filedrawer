@@ -12,10 +12,15 @@ use crate::report::Refusal;
 /// An encoding the server refuses long runs of.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Encoding {
+    /// Standard or URL-safe base64.
     Base64,
+    /// Base32.
     Base32,
+    /// Hexadecimal.
     Hex,
+    /// Percent escapes outside a link.
     UrlEncoding,
+    /// Base85 (Ascii85).
     Base85,
 }
 
@@ -50,6 +55,7 @@ const SHOWN: usize = 16;
 /// decodes to).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Decoded {
+    /// The encoding the run is in.
     pub kind: Encoding,
     /// The run's first characters, as a refusal shows them.
     pub start: String,
@@ -74,9 +80,13 @@ pub fn refusals(text: &str) -> Vec<Refusal> {
 /// A compressed stream, as its signature names it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Compression {
+    /// A gzip stream.
     Gzip,
+    /// A bzip2 stream.
     Bzip2,
+    /// An xz stream.
     Xz,
+    /// A zip archive.
     Zip,
 }
 

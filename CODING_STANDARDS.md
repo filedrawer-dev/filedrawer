@@ -89,7 +89,8 @@ Entry text, series descriptions, feedback and screening notes are written by str
   Every crate starts with `#![forbid(unsafe_code)]`.
 - A new dependency needs a reason in its commit message.
   Prefer the crates design.md names under Stack.
-- Public items in the analyzer have a doc comment that points to the section of `docs/entry-format.md` they implement.
+- Public items in the analyzer, their fields and variants included, have a doc comment, and each file's `//!` header points to the section of `docs/entry-format.md` or `docs/design.md` it implements, as `(entry-format.md, Fields)`.
+  The analyzer's `#![warn(missing_docs)]`, which clippy turns into an error, checks the comments of everything the crate exports, and `bin/tests/test_analyzer_docs.py` checks that each header's section of entry-format.md exists; a `pub` item no `pub use` exports is review's to check.
 
 ## Python in `bin/`
 

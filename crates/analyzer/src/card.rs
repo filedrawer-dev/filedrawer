@@ -20,17 +20,23 @@ pub const LINE_CAPS: [usize; 11] = [200, 200, 300, 300, 150, 300, 200, 300, 300,
 /// card shows placeholders such as `<id>` for what's missing.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct CardContext {
+    /// The entry's ID, line 1.
     pub id: Option<String>,
+    /// Who posted it, line 11.
     pub author: Option<Author>,
     /// Haiku's one-line doubt that the body matches the outcome.
     pub screening_note: Option<String>,
+    /// The entry cites an attachment set: "code attached".
     pub code_attached: bool,
+    /// The link check found the `code` link dead.
     pub code_link_dead: bool,
+    /// The link check found a `logs` link dead.
     pub logs_link_dead: bool,
     /// What the server's online check of the `code` link's pin flags, if anything.
     pub pin: Option<PinFlag>,
     /// The ID of the version that superseded this one.
     pub superseded_by_version: Option<String>,
+    /// The entries that replicate this one, line 10.
     pub replications: Vec<Replication>,
 }
 
@@ -53,6 +59,7 @@ pub enum PinFlag {
 pub struct Author {
     /// `None` once the account is deleted: the card then says so and shows no name.
     pub display_name: Option<String>,
+    /// The account's ID, `a-...`.
     pub account_id: String,
     /// Linked GitHub or ORCID handles, as the card shows them.
     pub handles: Vec<String>,
@@ -62,8 +69,11 @@ pub struct Author {
 /// Replications).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Replication {
+    /// The replication's ID.
     pub id: String,
+    /// Its outcome.
     pub outcome: Choice<Outcome>,
+    /// Posted by the original's own account.
     pub self_replication: bool,
 }
 

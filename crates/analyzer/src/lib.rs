@@ -1,7 +1,10 @@
 #![forbid(unsafe_code)]
+// Every public item, field and variant has a doc comment (CODING_STANDARDS.md,
+// Style); clippy's -D warnings, at each commit, turns a missing one into an error.
+#![warn(missing_docs)]
 //! Reads a File Drawer entry by docs/entry-format.md: what would refuse it, what the
-//! server couldn't read, the Results table, and the card. The server and the
-//! `entry-check` CLI share this code.
+//! server couldn't read (docs/entry-format.md, Accept, warn, and re-render), the
+//! Results table, and the card. The server and the `entry-check` CLI share this code.
 
 mod body;
 mod card;
@@ -56,12 +59,17 @@ pub fn encoded_text(text: &str) -> Vec<String> {
 /// Everything the analyzer read from one entry.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Analysis {
+    /// The front matter's fields the format names.
     pub fields: Fields,
     /// Front-matter fields the format doesn't name. The server stores them.
     pub unrecognised_fields: Vec<String>,
+    /// The body's fixed sections.
     pub sections: Sections,
+    /// The Results table, or why none was read.
     pub results: Results,
+    /// Every reason the server would refuse the entry.
     pub refusals: Vec<Refusal>,
+    /// What the server would accept but couldn't fully read.
     pub warnings: Vec<Warning>,
 }
 
@@ -69,10 +77,15 @@ pub struct Analysis {
 /// (entry-format.md, Body).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Sections {
+    /// `## Setup`.
     pub setup: Option<String>,
+    /// `## Results`.
     pub results: Option<String>,
+    /// `## Caveats`.
     pub caveats: Option<String>,
+    /// `## Not tried`.
     pub not_tried: Option<String>,
+    /// `## Reproduce`.
     pub reproduce: Option<String>,
 }
 

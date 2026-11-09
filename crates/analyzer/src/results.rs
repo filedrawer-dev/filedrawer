@@ -14,7 +14,9 @@ pub const CORE_COLUMNS: [&str; 6] = ["model", "condition", "estimate", "ci_low",
 /// The Results table, or why the analyzer couldn't read one.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Results {
+    /// No table the analyzer could read, with why.
     NotRead(String),
+    /// The table it read.
     Read(ResultsTable),
 }
 
@@ -22,7 +24,9 @@ pub enum Results {
 /// Results table).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResultsTable {
+    /// The "Intervals:" line above the table.
     pub intervals: Intervals,
+    /// The rows, headline row first.
     pub rows: Vec<Row>,
 }
 
@@ -31,16 +35,20 @@ pub struct ResultsTable {
 pub struct Intervals {
     /// The level as written, without the percent sign, such as "95".
     pub level: Option<String>,
+    /// The interval method as written, such as "Wilson".
     pub method: Option<String>,
+    /// The sampling unit as written, from "per prompt".
     pub per: Option<String>,
 }
 
 /// One row: its cells by lowercased column name, its claim and its reading.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Row {
+    /// Each cell as written, by lowercased column name.
     pub cells: BTreeMap<String, String>,
     /// `None` when the row claims nothing.
     pub claim: Option<Claim>,
+    /// What the analyzer read from the row's numbers.
     pub reading: Reading,
 }
 
@@ -54,6 +62,7 @@ impl Row {
 /// What the analyzer read from a row's numbers.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Reading {
+    /// The row's numbers.
     Read(Interval),
     /// The row couldn't be read, with the reason, such as "estimate is not a number".
     NotRead(String),
@@ -63,8 +72,11 @@ pub enum Reading {
 /// numbers).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Interval {
+    /// The `estimate` cell.
     pub estimate: f64,
+    /// The `ci_low` cell.
     pub low: f64,
+    /// The `ci_high` cell.
     pub high: f64,
     /// The no-effect value, and whether the interval includes it. `None` on a single
     /// group with no `no_effect_at`, whose level has no no-effect value.
@@ -77,7 +89,9 @@ pub struct Interval {
 pub struct NoEffect {
     /// As written in `no_effect_at`, or "0" by default.
     pub value_text: String,
+    /// The value as a number.
     pub value: f64,
+    /// Whether the interval includes it.
     pub included: bool,
 }
 
@@ -108,9 +122,13 @@ pub fn row_note(row: &Row) -> String {
 /// How many rows make each claim, for the card's tally.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Tally {
+    /// Rows claiming `effect`.
     pub effect: usize,
+    /// Rows claiming `no_effect`.
     pub no_effect: usize,
+    /// Rows claiming `inconclusive`.
     pub inconclusive: usize,
+    /// Rows claiming nothing.
     pub no_claim: usize,
 }
 

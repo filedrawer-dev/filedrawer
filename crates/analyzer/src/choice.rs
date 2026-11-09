@@ -4,13 +4,18 @@
 /// but the card shows it only as "unrecognised <field>" (entry-format.md, The card).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Choice<T> {
+    /// No value: the entry leaves the field out or empty, or gives it a list or
+    /// mapping, which is warned.
     #[default]
     Absent,
+    /// One of the values the format names.
     Known(T),
+    /// A value the format doesn't name, as written.
     Unrecognised(String),
 }
 
 impl<T: Copy> Choice<T> {
+    /// The value, when it is one the format names.
     pub fn known(&self) -> Option<T> {
         match self {
             Choice::Known(value) => Some(*value),
@@ -21,16 +26,22 @@ impl<T: Copy> Choice<T> {
 
 /// The values one field may take, and the field's name for messages and cards.
 pub trait Vocabulary: Sized + Copy {
+    /// The field's name, as messages and cards give it.
     const FIELD: &'static str;
+    /// The value `text` names, if it is one of the field's.
     fn parse(text: &str) -> Option<Self>;
+    /// The value as an entry writes it.
     fn name(self) -> &'static str;
 }
 
+/// Declares a field's values: an enum with one variant per value, each documented by
+/// the text an entry writes for it, and its `Vocabulary`.
 macro_rules! vocabulary {
     ($(#[$doc:meta])* $ty:ident, $field:literal, { $($variant:ident => $text:literal),+ $(,)? }) => {
         $(#[$doc])*
+        #[doc = concat!("The values of `", $field, "`.")]
         #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-        pub enum $ty { $($variant),+ }
+        pub enum $ty { $(#[doc = concat!("`", $text, "`")] $variant),+ }
 
         impl Vocabulary for $ty {
             const FIELD: &'static str = $field;

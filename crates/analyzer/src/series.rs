@@ -17,7 +17,9 @@ pub const MAX_TITLE_CHARS: usize = 300;
 /// front matter with `title`, then the description as the body.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SeriesText {
+    /// The series' title.
     pub title: String,
+    /// The description, markdown.
     pub description: String,
 }
 
@@ -100,8 +102,11 @@ fn title_of(yaml: &str) -> Result<String, String> {
 /// `<id>@<version>`, optionally `#<section>`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SeriesCite {
+    /// The series' ID, as the server gave it.
     pub id: String,
+    /// The description's version, from 1.
     pub version: i64,
+    /// The section of the description, by its heading's anchor.
     pub section: Option<String>,
 }
 
