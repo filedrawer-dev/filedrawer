@@ -104,13 +104,11 @@ async fn admin_grant_lets_the_accounts_browser_session_reach_the_admin_pages() {
         test.page("/admin", Some(&cookie)).await.status,
         StatusCode::NOT_FOUND
     );
-    let page = test.page("/account", Some(&cookie)).await;
-    let start = page.body.find("<code>a-").unwrap() + 6;
-    let account = &page.body[start..start + 12];
+    let account = common::account_id(&test, &cookie).await;
     assert_eq!(
         printed(&filedrawer(
             &database,
-            &["admin", "grant", "--account", account],
+            &["admin", "grant", "--account", &account],
             &[]
         )),
         account

@@ -305,11 +305,7 @@ async fn rejecting_a_batch_member_sends_back_the_rest_but_leaves_flagged_ones_to
     let page = app
         .page(&format!("/admin/e/{}", ids[3]), Some(&cookie))
         .await;
-    assert!(
-        page.body.contains("batch has already failed"),
-        "{}",
-        page.body
-    );
+    assert!(page.body.contains("batch-failed"), "{}", page.body);
 
     // Publishing one now sends it back with its batch.
     decide(&app, &cookie, &format!("/admin/e/{}/publish", ids[3]), &[]).await;
@@ -365,8 +361,7 @@ async fn the_owners_page_says_why_the_screen_sent_an_entry_there_and_the_author_
     let id = in_review(&app, "").await;
     let page = app.page(&format!("/admin/e/{id}"), Some(&cookie)).await;
     assert!(
-        page.body
-            .contains("Why it's here: the screens saw a likely hazard ("),
+        page.body.contains("the screens saw a likely hazard ("),
         "{}",
         page.body
     );
@@ -386,8 +381,7 @@ async fn the_owners_page_says_when_the_review_guard_sent_an_entry() {
         .page(&format!("/admin/e/{guarded}"), Some(&cookie))
         .await;
     assert!(
-        page.body
-            .contains("Why it's here: the account is under the review guard"),
+        page.body.contains("the account is under the review guard"),
         "{}",
         page.body
     );
@@ -581,9 +575,7 @@ async fn a_refused_new_version_names_the_series_it_would_have_versioned() {
     );
     let queue = app.page("/admin", Some(&cookie)).await;
     assert!(
-        queue
-            .body
-            .contains(&format!("as a new version of <code>{series}</code>")),
+        queue.body.contains(&format!("<code>{series}</code>")),
         "{}",
         queue.body
     );

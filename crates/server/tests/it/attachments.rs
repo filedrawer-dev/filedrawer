@@ -694,8 +694,7 @@ mod screened {
         assert_eq!(page.status, StatusCode::OK, "{}", page.body);
         assert!(page.body.contains("attack.py"), "{}", page.body);
         assert!(
-            page.body
-                .contains("Its bytes are missing from the server's disk."),
+            page.body.contains(r#"<p class="missing">"#),
             "{}",
             page.body
         );
@@ -833,9 +832,8 @@ mod screened {
         assert_eq!(models.asked(), vec![]);
         let page = app.page(&format!("/admin/e/{id}"), Some(&cookie)).await;
         assert!(
-            page.body.contains(
-                "Why it's here: attached file bomb.py: it decodes and decompresses to more than 4 MiB"
-            ),
+            page.body
+                .contains("attached file bomb.py: it decodes and decompresses to more than 4 MiB"),
             "{}",
             page.body
         );

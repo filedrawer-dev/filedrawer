@@ -539,6 +539,18 @@ pub async fn browser_account(app: &TestApp, email: &str) -> (String, String) {
     (cookie, token)
 }
 
+/// The account ID the account page shows for a session.
+pub async fn account_id(app: &TestApp, cookie: &str) -> String {
+    let page = app.page("/account", Some(cookie)).await;
+    let start = page
+        .body
+        .find("<code>a-")
+        .map(|at| at + "<code>".len())
+        .unwrap_or_else(|| panic!("the page shows no account ID: {}", page.body));
+    let end = start + page.body[start..].find('<').expect("the ID's end");
+    page.body[start..end].to_string()
+}
+
 /// The `status` an entry's author reads with `token`; `None` when the reply has no
 /// status line, as a public entry's page hasn't.
 pub async fn author_status(app: &TestApp, token: &str, id: &str) -> Option<String> {
@@ -632,13 +644,7 @@ fn encode(text: &str) -> String {
 /// does.
 pub async fn owner(app: &TestApp) -> String {
     let (cookie, _) = browser_account(app, "owner@example.com").await;
-    let page = app.page("/account", Some(&cookie)).await;
-    let start = page
-        .body
-        .find("<code>a-")
-        .expect("the page shows the account ID")
-        + 6;
-    admin::grant(&app.pool, &page.body[start..start + 12])
+    admin::grant(&app.pool, &account_id(app, &cookie).await)
         .await
         .unwrap();
     cookie

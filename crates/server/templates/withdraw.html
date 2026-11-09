@@ -15,7 +15,7 @@
 <p class="error">It can't be withdrawn: {{ why }}.</p>
 <p><a href="/account">Back to your account</a></p>
 {% else %}
-<p>Withdrawing deletes {% if members.len() == 1 %}it{% else %}them all{% endif %}, since {% if members.len() == 1 %}it was{% else %}none was{% endif %} ever public. It can't be undone.</p>
+<p class="final">Withdrawing deletes {% if members.len() == 1 %}it{% else %}them all{% endif %}, since {% if members.len() == 1 %}it was{% else %}none was{% endif %} ever public. It can't be undone.</p>
 {% if !made_public.is_empty() %}
 <p>Every other entry that uses this text is public, so withdrawing makes it public:</p>
 <ul>

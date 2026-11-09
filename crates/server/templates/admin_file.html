@@ -4,7 +4,7 @@
 {% block content %}
 <p><a href="/admin">Review queue</a></p>
 <h1>Attached file</h1>
-<p><code>{{ file.sha256 }}</code>, {{ file.bytes }} bytes, screened: {{ file.verdict.as_deref().unwrap_or("not yet") }}{% if let Some(reason) = file.reason %} ({{ reason }}){% endif %}.</p>
+<p><code>{{ file.sha256 }}</code>, {{ file.bytes }} bytes, screened: <span class="verdict">{{ file.verdict.as_deref().unwrap_or("not yet") }}</span>{% if let Some(reason) = file.reason %} ({{ reason }}){% endif %}.</p>
 {% match file.state %}
 {% when FileState::Banned with (at) %}
 <p>Removed as a hazard {{ at }}: it is served for no entry, refused at upload and when cited, and its uploaders are under the review guard.</p>

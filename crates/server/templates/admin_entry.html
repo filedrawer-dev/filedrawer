@@ -7,7 +7,7 @@
 <p><code>{{ entry.id }}</code>, {{ entry.status }}, from {{ entry.display_name.as_deref().unwrap_or("account deleted") }} <code>{{ entry.account_id }}</code>, submitted {{ entry.submitted_at }}{% if let Some(batch) = entry.batch_id %}, in batch <code>{{ batch }}</code>, which publishes as one{% endif %}.</p>
 <p>Why it's here: {{ entry.review_reason.as_deref().unwrap_or("not kept; it went to review before reasons were stored") }}.</p>
 {% if batch_failed && entry.status != "frozen" %}
-<p class="error">Its batch has already failed: another member was rejected, so publishing it sends it back with its batch. Rejecting or holding it puts its account under the review guard.</p>
+<p class="error batch-failed">Its batch has already failed: another member was rejected, so publishing it sends it back with its batch. Rejecting or holding it puts its account under the review guard.</p>
 {% endif %}
 {% if entry.status == "frozen" %}
 <p>Frozen because the invite code its account signed up with was revoked. Release sends it to the screen, as if its hold had just ended; Reject rejects it without guarding the account.</p>
@@ -40,12 +40,12 @@
 <h2>Attached files</h2>
 <p>Publishing the entry passes any file the screen hasn't judged, for later entries too.</p>
 {% for file in files %}
-<h3><a href="/admin/f/{{ file.sha256 }}"><code>{{ file.path }}</code></a> ({{ file.verdict.as_deref().unwrap_or("not screened") }}{% if file.banned %}, removed as a hazard{% else if file.removed %}, removed{% endif %})</h3>
+<h3><a href="/admin/f/{{ file.sha256 }}"><code>{{ file.path }}</code></a> ({{ file.verdict.as_deref().unwrap_or("not screened") }}{% if file.banned %}, <span class="banned">removed as a hazard</span>{% else if file.removed %}, removed{% endif %})</h3>
 {% match file.text %}
 {% when Some with (text) %}
 <pre>{{ text }}</pre>
 {% when None %}
-<p>Its bytes are missing from the server's disk.</p>
+<p class="missing">Its bytes are missing from the server's disk.</p>
 {% endmatch %}
 {% endfor %}
 {% endif %}

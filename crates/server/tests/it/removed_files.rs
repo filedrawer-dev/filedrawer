@@ -135,7 +135,11 @@ async fn removing_a_file_as_a_hazard_keeps_the_screens_verdict() {
     let cookie = owner(&app).await;
     owner_does(&app, &cookie, &sha, "remove-hazard").await;
     let page = app.page(&format!("/admin/f/{sha}"), Some(&cookie)).await;
-    assert!(page.body.contains("screened: pass"), "{}", page.body);
+    assert!(
+        page.body.contains(r#"<span class="verdict">pass</span>"#),
+        "{}",
+        page.body
+    );
 }
 
 #[tokio::test]
@@ -302,7 +306,16 @@ async fn the_owners_page_for_a_file_shows_it_and_where_it_is_used() {
 
     owner_does(&app, &cookie, &sha, "remove").await;
     let page = app.page(&path, Some(&cookie)).await;
-    assert!(page.body.contains("Removed"), "{}", page.body);
+    assert!(
+        page.body.contains(&format!("{path}/remove-hazard\"")),
+        "{}",
+        page.body
+    );
+    assert!(
+        !page.body.contains(&format!("{path}/remove\"")),
+        "{}",
+        page.body
+    );
     // A file removed plainly can still be removed as a hazard, which bans it.
     owner_does(&app, &cookie, &sha, "remove-hazard").await;
     let upload = upload(&app, &app.token, one_file("steer.py", SCRIPT)).await;
@@ -364,5 +377,9 @@ async fn the_review_page_links_each_attached_file_to_its_page() {
     run_worker(&app).await;
     assert_eq!(status_with(&app, &app.token, &id).await, "review");
     let page = app.page(&format!("/admin/e/{id}"), Some(&cookie)).await;
-    assert!(page.body.contains("removed as a hazard"), "{}", page.body);
+    assert!(
+        page.body.contains(r#"<span class="banned">"#),
+        "{}",
+        page.body
+    );
 }

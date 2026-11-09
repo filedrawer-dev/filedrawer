@@ -6,7 +6,9 @@ use crate::common;
 
 use axum::http::StatusCode;
 use common::series::{DESCRIPTION, citing, create, make_public, series_doc, submit_with};
-use common::{DELIMITER, TestApp, browser_account, date_in, entry, field, id_in, test_app};
+use common::{
+    DELIMITER, TestApp, account_id, browser_account, date_in, entry, field, id_in, test_app,
+};
 use filedrawer_server::jobs::publish_due;
 use serde_json::json;
 use time::Duration;
@@ -550,18 +552,6 @@ async fn a_section_anchor_may_be_longer_than_a_slug() {
         )
         .await;
     assert_eq!(cited.status, StatusCode::CREATED, "{}", cited.body);
-}
-
-/// The account ID the account page shows for a session.
-async fn account_id(app: &TestApp, cookie: &str) -> String {
-    let page = app.page("/account", Some(cookie)).await;
-    let start = page
-        .body
-        .find("<code>a-")
-        .expect("the page shows the account ID")
-        + 6;
-    let end = start + page.body[start..].find('<').unwrap();
-    page.body[start..end].to_string()
 }
 
 #[tokio::test]

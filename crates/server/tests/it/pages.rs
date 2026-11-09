@@ -135,6 +135,13 @@ async fn the_home_page_puts_the_line_for_agents_before_the_first_card() {
     assert!(at_line < at_card);
 }
 
+/// The text of `html`'s title element.
+fn title(html: &str) -> &str {
+    html.split_once("<title>")
+        .and_then(|(_, rest)| rest.split_once("</title>"))
+        .map_or("", |(title, _)| title)
+}
+
 /// The value of attribute `name` in the first tag of `html` that has it.
 fn attribute<'a>(html: &'a str, name: &str) -> &'a str {
     let key = format!(" {name}=\"");
@@ -208,10 +215,12 @@ async fn the_copy_button_starts_hidden_and_names_the_line_it_copies() {
     // A screen reader hears what "Copy" copies.
     assert_eq!(attribute(button, "aria-describedby"), target);
     let installer = format!("{PUBLIC_URL}/skill.md");
+    let copied = &line[line
+        .find(&format!(r#"id="{target}">"#))
+        .unwrap_or_else(|| panic!("no element {target}: {line}"))..];
+    let copied = &copied[..copied.find("</code>").expect("the copied line's end")];
     assert!(
-        line.contains(&format!(
-            r#"id="{target}">Read <a href="{installer}">{installer}</a>"#
-        )),
+        copied.contains(&format!(r#"<a href="{installer}">{installer}</a>"#)),
         "{line}"
     );
 }
@@ -251,10 +260,9 @@ async fn the_entry_page_shows_no_entry_text_above_the_delimiter() {
         );
         assert!(below.contains(text), "{text} is missing below it:\n{below}");
     }
-    assert!(
-        above.contains(&format!("<title>Entry {id} · null · File Drawer</title>")),
-        "{above}"
-    );
+    let title = title(above);
+    assert!(title.contains(&id), "{above}");
+    assert!(title.contains("null"), "{above}");
 }
 
 /// The page for a public entry whose `## Reproduce` section is `reproduce`.
@@ -532,7 +540,7 @@ async fn the_older_link_shows_only_when_there_is_an_older_page() {
     let app = test_app().await;
     public_entry(&app).await;
     let one = app.send(opened("/search?limit=1")).await;
-    assert!(!one.body.contains("Older"), "{}", one.body);
+    assert!(!one.body.contains("page=2"), "{}", one.body);
     app.submit(&entry("A second result", "")).await;
     let two = app.send(opened("/search?limit=1")).await;
     assert!(
@@ -541,7 +549,7 @@ async fn the_older_link_shows_only_when_there_is_an_older_page() {
         two.body
     );
     let last = app.send(opened("/search?limit=1&page=2")).await;
-    assert!(!last.body.contains("Older"), "{}", last.body);
+    assert!(!last.body.contains("page=3"), "{}", last.body);
 }
 
 #[tokio::test]
@@ -551,12 +559,8 @@ async fn the_search_pages_title_repeats_the_words_only_in_part() {
     let page = app
         .send(opened(&format!("/search?q={}", words.replace(' ', "+"))))
         .await;
-    let title = page
-        .body
-        .split_once("<title>")
-        .and_then(|(_, rest)| rest.split_once("</title>"))
-        .map_or("", |(title, _)| title);
-    assert!(title.starts_with("Search: account suspended"), "{title}");
+    let title = title(&page.body);
+    assert!(title.contains("account suspended"), "{title}");
     assert!(!title.contains("help page"), "{title}");
 }
 

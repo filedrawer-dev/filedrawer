@@ -59,6 +59,10 @@ Python goes in `bin/` and only for scripts and tools, never in the server's requ
   Routes that need a browser session or refuse a token get a test that proves the refusal.
 - Tests go through public interfaces: the analyzer's `analyze` and `render_card`, the `entry-check` binary, the router.
   No test reaches into a private function.
+- A test finds a page's content by a URL, an id, a class or other markup, never by the words a template puts around it.
+  The owner rewords the pages by hand (`bin/live-preview`), and a test that pinned the old words refuses the next commit.
+  Text the server writes itself, such as an error message, a stored reason or a field's value, may be checked word for word.
+  Where only a template's words mark what a test needs, give the element a class.
 - Expected values come from the docs or from worked examples, never from running the code and pasting what it printed.
 - Card rules that must hold for any input, such as line caps and author text never adding a line, get property tests with `proptest`.
 - Fixtures are made up.

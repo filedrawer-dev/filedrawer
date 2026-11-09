@@ -33,7 +33,7 @@ async fn the_owner_creates_a_code_and_sees_its_uses_and_expiry() {
     assert_eq!(code.len(), 20, "{code}");
     let page = app.page("/admin/invites", Some(&cookie)).await;
     assert!(page.body.contains("Apart sprint"), "{}", page.body);
-    assert!(page.body.contains("0 of 120"), "{}", page.body);
+    assert!(shows_uses(&page.body, 0, 120), "{}", page.body);
     assert!(page.body.contains(&date_in(14)), "{}", page.body);
     // Nobody else reaches it.
     let (other, _) = common::browser_account(&app, "mallory@example.com").await;
@@ -93,7 +93,7 @@ async fn a_sprint_behind_one_ip_signs_up_and_verifies_past_the_per_ip_limits() {
         again.body
     );
     let page = app.page("/admin/invites", Some(&cookie)).await;
-    assert!(page.body.contains("4 of 10"), "{}", page.body);
+    assert!(shows_uses(&page.body, 4, 10), "{}", page.body);
 }
 
 #[tokio::test]
@@ -284,6 +284,17 @@ async fn revoke(app: &TestApp, cookie: &str, code: &str) -> Reply {
         .await
 }
 
+/// Whether the invites page offers to revoke `code`.
+fn offers_revoke(page: &str, code: &str) -> bool {
+    page.contains(&format!("action=\"/admin/invites/{code}/revoke\""))
+}
+
+/// Whether the invites page shows a code taken `used` times of its `max` uses.
+fn shows_uses(page: &str, used: u32, max: u32) -> bool {
+    page.contains(&format!(r#"<span class="used">{used}</span>"#))
+        && page.contains(&format!(r#"<span class="max-uses">{max}</span>"#))
+}
+
 async fn status_of(app: &TestApp, token: &str, id: &str) -> String {
     common::author_status(app, token, id)
         .await
@@ -338,8 +349,10 @@ async fn revoking_freezes_the_codes_unscreened_entries_and_nothing_else() {
         "{}",
         late.body
     );
+    // A revoked code is still listed, with no form to revoke it.
     let page = app.page("/admin/invites", Some(&cookie)).await;
-    assert!(page.body.contains(", revoked 2"), "{}", page.body);
+    assert!(page.body.contains(&code), "{}", page.body);
+    assert!(!offers_revoke(&page.body, &code), "{}", page.body);
     let queue = app.page("/admin", Some(&cookie)).await;
     assert!(queue.body.contains("Steering pending"), "{}", queue.body);
 }
@@ -434,7 +447,7 @@ async fn only_the_owner_revokes_and_releases() {
         StatusCode::NOT_FOUND
     );
     let page = app.page("/admin/invites", Some(&cookie)).await;
-    assert!(!page.body.contains(", revoked 2"), "{}", page.body);
+    assert!(offers_revoke(&page.body, &code), "{}", page.body);
     let (_, token) = invited_account(&app, &code, "grace@example.com").await;
     let reply = app
         .post_as("/entries", Some(&token), entry("Steering one", ""))

@@ -5,7 +5,7 @@ use crate::common;
 
 use axum::http::StatusCode;
 use common::series::{citing, create, make_public, submit_with};
-use common::{DELIMITER, PASSWORD, TestApp, browser_account, date_in, entry, test_app};
+use common::{DELIMITER, PASSWORD, TestApp, account_id, browser_account, date_in, entry, test_app};
 
 const EMAIL: &str = "grace@example.com";
 
@@ -33,11 +33,15 @@ async fn deleting_an_account_keeps_its_public_entries_without_its_name() {
     let page = app.page("/account/delete", Some(&cookie)).await;
     assert_eq!(page.status, StatusCode::OK, "{}", page.body);
     assert!(
-        page.body.contains("2 entries that aren't public"),
+        page.body.contains(r#"<span class="unpublished">2</span>"#),
         "{}",
         page.body
     );
-    assert!(page.body.contains("1 public entry"), "{}", page.body);
+    assert!(
+        page.body.contains(r#"<span class="public">1</span>"#),
+        "{}",
+        page.body
+    );
 
     let wrong = delete(&app, &cookie, "not the password").await;
     assert_eq!(wrong.status, StatusCode::UNAUTHORIZED, "{}", wrong.body);
@@ -190,17 +194,6 @@ async fn a_public_series_outlives_its_creator() {
 }
 
 /// The account ID the account page shows for a session.
-async fn account_id(app: &TestApp, cookie: &str) -> String {
-    let page = app.page("/account", Some(cookie)).await;
-    let start = page
-        .body
-        .find("<code>a-")
-        .expect("the page shows the account ID")
-        + 6;
-    let end = start + page.body[start..].find('<').unwrap();
-    page.body[start..end].to_string()
-}
-
 #[tokio::test]
 async fn deleting_an_account_frees_a_version_only_its_entries_held_back() {
     let app = test_app().await;

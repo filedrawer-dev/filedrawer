@@ -38,7 +38,7 @@
 <tr><td><code>{{ one.id }}</code></td><td>{{ one.status }}</td><td>{{ one.title }}</td><td><form method="get" action="/account/e/{{ one.id }}/withdraw"><button type="submit">Withdraw</button></form></td></tr>
 {% endfor %}
 {% for chain in with_owner %}
-<tr><td><code>{{ chain.id }}</code></td><td></td><td>{{ chain.title }}</td><td>Its newest version, <code>{{ chain.newest }}</code>, waits on the archive's owner. To withdraw them, ask the archive's owner, who can reject the whole chain.</td></tr>
+<tr><td><code>{{ chain.id }}</code></td><td></td><td>{{ chain.title }}</td><td>Its newest version, <code class="with-owner">{{ chain.newest }}</code>, waits on the archive's owner. To withdraw them, ask the archive's owner, who can reject the whole chain.</td></tr>
 {% endfor %}
 </table>
 {% endif %}

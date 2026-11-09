@@ -55,6 +55,12 @@ fn offers(page: &str, id: &str) -> bool {
     page.contains(&format!("action=\"/account/e/{id}/withdraw\""))
 }
 
+/// Whether the account page says version `id`, the newest of its chain, waits on the
+/// archive's owner.
+fn with_owner(page: &str, id: &str) -> bool {
+    page.contains(&format!(r#"<code class="with-owner">{id}</code>"#))
+}
+
 async fn status(app: &TestApp, token: &str, id: &str) -> String {
     author_status(app, token, id).await.unwrap_or_default()
 }
@@ -146,7 +152,11 @@ async fn withdrawing_from_the_confirm_page_deletes_the_entry() {
     let confirm = app.page(&path, Some(&cookie)).await;
     assert_eq!(confirm.status, StatusCode::OK, "{}", confirm.body);
     assert!(confirm.body.contains("Held back"), "{}", confirm.body);
-    assert!(confirm.body.contains("can't be undone"), "{}", confirm.body);
+    assert!(
+        confirm.body.contains(r#"<p class="final">"#),
+        "{}",
+        confirm.body
+    );
     assert!(
         confirm
             .body
@@ -302,9 +312,7 @@ async fn only_the_latest_version_is_withdrawn() {
     assert_eq!(status(&app, &token, &third).await, "review");
     let page = app.page("/account", Some(&cookie)).await;
     assert!(!offers(&page.body, &second), "{}", page.body);
-    assert!(page.body.contains(&third), "{}", page.body);
-    assert!(page.body.contains("archive's owner"), "{}", page.body);
-    assert!(page.body.contains("reject"), "{}", page.body);
+    assert!(with_owner(&page.body, &third), "{}", page.body);
     let reply = refused(&app, &cookie, &second, &[&first, &second, &third]).await;
     assert!(reply.body.contains("owner"), "{}", reply.body);
 }
@@ -333,8 +341,7 @@ async fn a_newest_version_with_the_owners_verdict_is_with_the_owner_too() {
     let page = app.page("/account", Some(&cookie)).await;
     assert!(!offers(&page.body, &first), "{}", page.body);
     assert!(!offers(&page.body, &second), "{}", page.body);
-    assert!(page.body.contains(&second), "{}", page.body);
-    assert!(page.body.contains("archive's owner"), "{}", page.body);
+    assert!(with_owner(&page.body, &second), "{}", page.body);
     let reply = refused(&app, &cookie, &first, &[&first, &second]).await;
     assert!(reply.body.contains("owner"), "{}", reply.body);
     assert!(

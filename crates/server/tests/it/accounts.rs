@@ -7,6 +7,23 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use common::{PASSWORD, PUBLIC_URL, entry, logged_in, new_token, signed_up_and_verified, test_app};
 
+/// Whether account page `page` offers to send the verification email again, as it
+/// does only while the address is unverified.
+fn offers_verification(page: &str) -> bool {
+    assert!(
+        page.contains("action=\"/logout\""),
+        "not the account page: {page}"
+    );
+    page.contains("action=\"/account/verify-email\"")
+}
+
+/// The text of a form page's error paragraph, or "" when it has none.
+fn error_on(page: &str) -> &str {
+    page.split_once(r#"<p class="error">"#)
+        .and_then(|(_, rest)| rest.split_once("</p>"))
+        .map_or("", |(error, _)| error)
+}
+
 #[tokio::test]
 async fn signup_verify_login_and_submit_with_a_new_token() {
     let app = test_app().await;
@@ -16,7 +33,7 @@ async fn signup_verify_login_and_submit_with_a_new_token() {
     assert_eq!(page.status, StatusCode::OK);
     assert!(page.body.contains("Grace"), "{}", page.body);
     assert!(page.body.contains("grace@example.com"), "{}", page.body);
-    assert!(page.body.contains("verified"), "{}", page.body);
+    assert!(!offers_verification(&page.body), "{}", page.body);
     let token = new_token(&app, &cookie).await;
     let reply = app.post_as("/entries", Some(&token), entry("T", "")).await;
     assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
@@ -70,7 +87,7 @@ async fn the_verification_link_opens_a_page_and_only_its_post_verifies() {
     // Opening the link verified nothing: the account still can't make a token.
     let cookie = logged_in(&app, "grace@example.com", PASSWORD).await;
     let account = app.page("/account", Some(&cookie)).await.body;
-    assert!(account.contains("not verified"), "{account}");
+    assert!(offers_verification(&account), "{account}");
     let reply = app
         .form("/account/tokens", &[("name", "agent")], Some(&cookie))
         .await;
@@ -93,10 +110,7 @@ async fn a_token_on_an_account_whose_email_isnt_verified_cant_submit() {
     )
     .await;
     let cookie = logged_in(&app, "grace@example.com", PASSWORD).await;
-    let page = app.page("/account", Some(&cookie)).await.body;
-    let marker = "account <code>";
-    let start = page.find(marker).unwrap() + marker.len();
-    let account: String = page[start..].chars().take_while(|c| *c != '<').collect();
+    let account = common::account_id(&app, &cookie).await;
     let token = filedrawer_server::admin::create_token(&app.pool, &account, "cli")
         .await
         .unwrap();
@@ -145,7 +159,7 @@ async fn signup_checks_its_fields() {
             .await;
         assert_eq!(reply.status, StatusCode::UNPROCESSABLE_ENTITY, "{email}");
         assert!(
-            reply.body.contains(complaint),
+            error_on(&reply.body).contains(complaint),
             "{complaint}: {}",
             reply.body
         );
@@ -383,7 +397,7 @@ async fn an_unverified_account_can_ask_for_another_verification_email() {
     .await;
     let cookie = logged_in(&app, "grace@example.com", PASSWORD).await;
     let page = app.page("/account", Some(&cookie)).await.body;
-    assert!(page.contains("not verified"), "{page}");
+    assert!(offers_verification(&page), "{page}");
     let reply = app.form("/account/verify-email", &[], Some(&cookie)).await;
     assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.body);
     assert_eq!(app.sent().await.len(), 2);
@@ -479,7 +493,7 @@ async fn whoever_resets_an_address_gets_the_account_with_no_tokens_left() {
     // The reset proved the address, so Grace can make a token and submit.
     let cookie = logged_in(&app, "grace@example.com", PASSWORD).await;
     let page = app.page("/account", Some(&cookie)).await.body;
-    assert!(page.contains(", verified"), "{page}");
+    assert!(!offers_verification(&page), "{page}");
     let grace = new_token(&app, &cookie).await;
     let reply = app.post_as("/entries", Some(&grace), entry("T", "")).await;
     assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
