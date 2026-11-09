@@ -16,6 +16,14 @@ from pathlib import Path
 
 import pytest
 
+# Autouse fixtures, registered by import: each test, and each module's fixtures, fail
+# when they leave a process running. leftover_processes.py is a copy of llm-toolbox's,
+# which the host has none of to import: change it there and copy it back.
+from leftover_processes import (  # noqa: F401
+    _leftover_processes_of_module,
+    _leftover_processes_of_test,
+)
+
 OPENERS = ("wslview", "explorer.exe", "xdg-open", "open")
 # Tools that reach other machines. A test that needs one uses fake_host.
 NETWORK_TOOLS = ("gh", "ssh", "scp", "sftp", "curl")

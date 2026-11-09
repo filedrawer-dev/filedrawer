@@ -132,4 +132,4 @@ To check that a new test catches a mutant the run missed, write the change its l
 The version and hashes live only there, and its docstring says how to move to a new release.
 The first commit on a machine without network access is refused; `SKIP=lychee git commit` skips only that check.
 
-To keep a line `slop-lint` flags, end it with `<!-- slop-lint: ignore -->`. `bin/pre-commit-run` and `bin/slop-lint` are copies of llm-toolbox's tools. Update them by copying from there.
+To keep a line `slop-lint` flags, end it with `<!-- slop-lint: ignore -->`. `bin/pre-commit-run`, `bin/slop-lint` and `bin/tests/leftover_processes.py` are copies of llm-toolbox's. Update them by copying from there.

@@ -23,7 +23,7 @@ repos:
         language: system
         types: [python]
         # Copies from llm-toolbox change there and are copied back (CODING_STANDARDS.md).
-        exclude: ^bin/(pre-commit-run|slop-lint)$
+        exclude: ^bin/(pre-commit-run|slop-lint|tests/leftover_processes\.py)$
       # Only when a .rs file is staged, so a docs commit needs no cargo.
       - id: cargo-fmt
         name: cargo fmt
