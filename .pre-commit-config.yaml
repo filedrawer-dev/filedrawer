@@ -24,6 +24,20 @@ repos:
         types: [python]
         # Copies from llm-toolbox change there and are copied back (CODING_STANDARDS.md).
         exclude: ^bin/(pre-commit-run|slop-lint|tests/leftover_processes\.py)$
+      # The same two for the scripts that run through `uv run --script`: identify,
+      # which pre-commit's `types` go by, doesn't read that shebang as Python.
+      # bin/tests/test_ruff_reaches_python_scripts.py fails on a Python script in bin/
+      # or ops/ that misses ruff check or ruff format.
+      - id: ruff-uv-scripts
+        name: ruff check (uv run scripts)
+        entry: uvx ruff@0.14.4 check
+        language: system
+        files: &uv-scripts ^bin/(field-test-batches|live-preview)$
+      - id: ruff-format-uv-scripts
+        name: ruff format (uv run scripts)
+        entry: uvx ruff@0.14.4 format
+        language: system
+        files: *uv-scripts
       # Only when a .rs file is staged, so a docs commit needs no cargo.
       - id: cargo-fmt
         name: cargo fmt

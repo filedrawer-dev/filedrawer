@@ -10,8 +10,11 @@ put its own recording fakes ahead of these.
 
 import json
 import os
+import re
 import shutil
+import subprocess
 import sys
+from collections.abc import Iterable
 from pathlib import Path
 
 import pytest
@@ -94,6 +97,31 @@ def no_shared_sccache(monkeypatch):
 def opened_urls() -> Path:
     """Where the no_browser fakes note the URLs a test's subprocess opened."""
     return Path(os.environ["NO_BROWSER_DIR"]) / "opened"
+
+
+def uv_cached(*argv: str) -> bool:
+    """Whether uvx runs `argv` offline, from uv's cache alone. The tests that run
+    pre-commit or ruff skip without it, as on a machine that never fetched them."""
+    if shutil.which("uvx") is None:
+        return False
+    done = subprocess.run(
+        ["uvx", "--offline", "-q", *argv], capture_output=True, check=False
+    )
+    return done.returncode == 0
+
+
+def hook_blocks(config: str) -> dict[str, str]:
+    """The hooks in `config`, laid out as this repo's .pre-commit-config.yaml is: each
+    hook's lines, by its id."""
+    return {
+        found.group(1): found.group(0)
+        for found in re.finditer(r"^      - id: (\S+)\n(?:        .*\n)+", config, re.M)
+    }
+
+
+def local_config(blocks: Iterable[str]) -> str:
+    """A pre-commit config of its own that holds `blocks`, as hook_blocks gives them."""
+    return "repos:\n  - repo: local\n    hooks:\n" + "".join(blocks)
 
 
 @pytest.fixture

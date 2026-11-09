@@ -102,6 +102,8 @@ Entry text, series descriptions, feedback and screening notes are written by str
   pytest.ini's timeout is the one hang guard, set far above any loaded run, since a slow machine may let a bug pass but must never fail a test.
 - `uvx ruff@0.14.4 check` and `uvx ruff@0.14.4 format --check` pass.
   0.14.4 is the version `.pre-commit-config.yaml` pins; a newer ruff checks more rules than the hook does.
+  pre-commit hands the ruff hooks the files identify tags as Python, which misses a script run through `uv run --script`.
+  Such a script goes in the `files` of the `ruff-uv-scripts` and `ruff-format-uv-scripts` hooks; `bin/tests/test_ruff_reaches_python_scripts.py` fails until it does.
 - A failure prints one line saying what failed and what to do, and exits non-zero.
   A hook's refusal ends with a `COMMIT REFUSED:` line.
 - `bin/pre-commit-run`, `bin/slop-lint` and `bin/tests/leftover_processes.py` are copies of llm-toolbox's.

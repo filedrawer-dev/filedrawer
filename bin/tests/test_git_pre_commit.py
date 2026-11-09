@@ -8,12 +8,12 @@ lacks pre-commit or ruff, or cargo is missing.
 """
 
 import os
-import re
 import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
+from conftest import hook_blocks, local_config, uv_cached
 
 REPO = Path(__file__).resolve().parents[2]
 UGLY_PY = "x = {'a':1}\n"
@@ -24,24 +24,13 @@ UGLY_MD = "One. Two.\n"
 TIDY_MD = "One.\nTwo.\n"
 
 
-def cached(*argv: str) -> bool:
-    if shutil.which("uvx") is None:
-        return False
-    done = subprocess.run(
-        ["uvx", "--offline", "-q", *argv], capture_output=True, check=False
-    )
-    return done.returncode == 0
-
-
 def formatter_hooks() -> str:
     """This repo's ruff-format, cargo-fmt and sentence-lines hooks, as a config of
     their own."""
-    config = (REPO / ".pre-commit-config.yaml").read_text()
-    blocks = [
-        re.search(rf"^      - id: {hook}\n(?:        .*\n)+", config, re.M).group(0)
-        for hook in ("ruff-format", "cargo-fmt", "sentence-lines")
-    ]
-    return "repos:\n  - repo: local\n    hooks:\n" + "".join(blocks)
+    hooks = hook_blocks((REPO / ".pre-commit-config.yaml").read_text())
+    return local_config(
+        hooks[hook] for hook in ("ruff-format", "cargo-fmt", "sentence-lines")
+    )
 
 
 def git(repo: Path, *args: str) -> str:
@@ -54,7 +43,8 @@ def git(repo: Path, *args: str) -> str:
 @pytest.fixture
 def repo(tmp_path):
     if not (
-        cached("pre-commit@4.7.0", "--version") and cached("ruff@0.14.4", "--version")
+        uv_cached("pre-commit@4.7.0", "--version")
+        and uv_cached("ruff@0.14.4", "--version")
     ):
         pytest.skip("needs pre-commit 4.7.0 and ruff 0.14.4 in uv's cache")
     if shutil.which("cargo") is None:
