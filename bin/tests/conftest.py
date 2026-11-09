@@ -73,6 +73,16 @@ def no_network_tools(tmp_path_factory, monkeypatch):
     monkeypatch.setenv("PATH", f"{fakes}{os.pathsep}{os.environ['PATH']}")
 
 
+@pytest.fixture(autouse=True)
+def no_shared_sccache(monkeypatch):
+    """No test's build goes through sccache: sandbox-setup sets RUSTC_WRAPPER=sccache,
+    and when the server has gone idle a build starts it again, a server every session
+    on the machine shares, which the test would leave running. Empty, not unset: a bash
+    sources /etc/sandbox-persistent.sh, which sets an unset one again; cargo takes an
+    empty one as none."""
+    monkeypatch.setenv("RUSTC_WRAPPER", "")
+
+
 def opened_urls() -> Path:
     """Where the no_browser fakes note the URLs a test's subprocess opened."""
     return Path(os.environ["NO_BROWSER_DIR"]) / "opened"
