@@ -1,0 +1,46 @@
+#!/bin/sh
+# Git's pre-push hook (.githooks/pre-push links here; install.py points git at
+# .githooks). A push to origin's main is refused when a skill in the commit pushed has
+# a version that origin's tag skill-NAME-vN, or origin/main's record, holds with other
+# contents: CI's release-skills job would fail on it after the push and block the
+# staging deploy (design.md, Skills). It runs bin/skills sync --check on the pushed
+# commit's skills/ and docs/entry-format.md, which fetches origin's main and skill tags
+# first; the push itself needs the network, so the fetch almost always works. Exit 2
+# from the check, which couldn't check, only warns. Other remotes, other branches and
+# deletes pass. It runs on the owner's host too, and needs only sh, git, tar and
+# python3.
+set -u
+[ "$1" = origin ] || exit 0
+bin=$(dirname "$(readlink -f "$0")")
+top=$(git rev-parse --show-toplevel)
+tree=
+out=
+trap 'rm -rf "$tree" "$out"' EXIT
+trap 'exit 130' INT TERM HUP
+refused=
+while read -r local_ref local_sha remote_ref _; do
+  [ "$remote_ref" = refs/heads/main ] || continue
+  # A delete pushes the null object name, all zeros.
+  case "$local_sha" in *[!0]*) ;; *) continue ;; esac
+  rm -rf "$tree" "$out"
+  tree=$(mktemp -d)
+  out=$(mktemp)
+  # Each command reads from /dev/null: the hook's stdin holds the remaining refs.
+  if git -C "$top" archive "$local_sha" -- skills docs/entry-format.md </dev/null | tar -x -C "$tree" &&
+    (cd "$top" && "$bin/skills" sync --check --root "$tree") </dev/null >"$out" 2>&1; then
+    status=0
+  else
+    status=$?
+  fi
+  # Shown however it ends, so a fetch that failed is said even when the check passes.
+  cat "$out" >&2
+  if [ "$status" -eq 1 ]; then
+    refused="$refused $local_ref"
+  elif [ "$status" -ne 0 ]; then
+    echo "pre-push: couldn't check the skills in $local_ref (exit $status), so the push goes ahead" >&2
+  fi
+done
+if [ -n "$refused" ]; then
+  echo "PUSH REFUSED: the skills in$refused are out of step with origin; run \`bin/skills sync\`, commit, and push again" >&2
+  exit 1
+fi

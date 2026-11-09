@@ -16,6 +16,7 @@ HOOK_NAMES = (
     "post-merge",
     "post-checkout",
     "post-rewrite",
+    "pre-push",
     "agent-pre-commit",
     "agent-quick-check",
     "agent-commit-check",

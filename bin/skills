@@ -17,9 +17,9 @@ record.
 sync and --check first fetch origin's main and its skill-* tags, for at most
 $FILEDRAWER_FETCH_SECONDS seconds (20); when the fetch fails they say so and compare
 with what was fetched last. --check prints a line for each file sync would change; the
-commit checks run it. --root DIR reads or writes the tree in
-DIR, such as agent-pre-commit's copy of the index, which has no .git, while git still
-runs on the repo holding the current directory.
+commit checks and the pre-push hook (bin/git-pre-push) run it. --root DIR reads or
+writes the tree in DIR, such as agent-pre-commit's copy of the index, which has no
+.git, while git still runs on the repo holding the current directory.
 
 release, for each skill at version N: when origin has the tag skill-NAME-vN, it
 fetches the tag and fails unless the tag's folder equals this commit's; when origin
@@ -59,7 +59,8 @@ class Unreadable(Exception):
 
 
 def git(root: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
-    """git ARGS in ROOT; when CHECK, a failure raises Unreadable with git's last line."""
+    """git ARGS in ROOT; when CHECK, a failure raises Unreadable with git's last
+    line."""
     done = subprocess.run(
         ["git", *args], cwd=root, capture_output=True, text=True, check=False
     )

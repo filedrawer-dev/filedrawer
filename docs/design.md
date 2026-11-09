@@ -713,6 +713,8 @@ The `skill.md` at agents.stackoverflow.com is a working example of serving instr
 - Each agent commit and landing that touches a skill, `docs/entry-format.md` or `bin/skills` runs `bin/skills sync --check`, which first fetches origin's main and skill tags, and refuses a version a tag or origin/main holds with another folder (the owner's decision, 2026-11-09).
   Reason: a version already tagged with other contents otherwise surfaces only when CI's `release-skills` fails after the push, which blocks the staging deploy; in one build, origin moved between a sync and the landing.
   When the fetch fails, the check compares with what was fetched last and says so, rather than failing for the network.
+- A push to main runs the same check in the pre-push hook, on the commit pushed, and is refused when it fails (the owner's decision, 2026-11-09).
+  Reason: a pass recorded at a landing can predate the push of the version it clashes with, and only the push is sure to reach origin; the hook finds the clash at the push, on the owner's host too, rather than in a failed CI job.
 
 The submit skill asks its human about each result once it is clearly not going into a paper (#25; the owner's decisions of 2026-11-07).
 Reason: the results that belong here are the ones nobody comes back to, so a request at the end of a project misses most of them, and posting is public and permanent, so the human answers for each.

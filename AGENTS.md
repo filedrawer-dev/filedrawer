@@ -53,7 +53,7 @@ The field test's entries and logs are in `field-test/`, git-excluded and local o
   They aren't skills for working on this repo, which live in `.claude/skills/`.
   They describe only what the server does, so update them with each change to a route.
   Then run `bin/skills sync`, which also follows a change to `docs/entry-format.md`: it copies the format into each skill and records each version in `skills/versions.txt`, bumping past every version origin's tags or origin/main already hold; a test refuses a skill changed without it.
-  Commits and landings run `bin/skills sync --check`, which fetches origin's tags first and refuses a version tagged with other contents.
+  Commits and landings run `bin/skills sync --check`, which fetches origin's tags first and refuses a version tagged with other contents; so does a push to main, through the pre-push hook (`bin/git-pre-push`).
   CI's `release-skills` job tags each new version before staging deploys, with a deploy key `ops/protect-skill-tags` sets up (`-h`).
 - `ops/smoke-staging` follows the submit skill against staging as an agent would, and checks that each skill's tag holds what the site serves; `screen` checks staging's real screen and `eval` its labelled cases (`ops/screen-eval/`).
   CI runs the first two after each deploy, each as a test account of its own.
@@ -110,6 +110,7 @@ Each check asks `agent-commit-gate` for a place there only as it starts (`$CHECK
 Every check runs without `CHECK_BASE` (CI, an agent without llm-toolbox, or no commit known to pass), when nothing differs from it, when the change touches those rules, when git can't diff against it, and when `bin/checks-needed` is missing, fails or runs past 60 s.
 A small fix commit gets the same two checks through `bin/agent-quick-check`.
 CI runs all of them.
+A push to main runs `.githooks/pre-push` (`bin/git-pre-push`), which refuses a commit whose skills are out of step with origin's tags.
 Run `cargo fmt` after each batch of edits to `.rs` files: otherwise the hook reformats them at commit, and edits you make after that no longer match the text you hold.
 `python3 install.py` enables the hooks once per clone and installs cargo-nextest and sqlx-cli; sandbox-setup runs it after a recreate.
 The hooks are links in `.githooks/` to scripts in `bin/`, and `core.hooksPath` is `.githooks`, which git reads from the top of the worktree that runs the hook.
