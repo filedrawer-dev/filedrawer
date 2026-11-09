@@ -50,14 +50,6 @@ Add a new entry at the end of the topic it belongs to, or start a topic when non
 - Chosen: count them, so a reader sees how many rows the tally covers.
 - Against: the example lists only the three claims, and the "and N more rows" on line 4 already says how many rows there are.
 
-#### Card line 1 with both `replicates` and `reanalyzes`
-
-- Options: both counts and then one key, the first `replicates` item's (`replicates 1, reanalyzes 2: 10.2139/ssrn.7439840`), or each relation with its own key (`replicates 1: 10.2139/ssrn.7439840; reanalyzes 2: arXiv:2507.01413`), as the owner's preview showed on 2026-11-08.
-- Chosen: one key, last.
-  The owner kept the rule that each line starts with the server's words and the rest is the author's, and a key is author text: with two keys, the second relation's words would follow the first key, and two long keys could pass line 1's 200 characters, which only author text may be cut to fit.
-- Against: the second relation's first work is then only on the entry's page, and the preview the owner chose showed both.
-  Treating the keys as the server's words (they follow a strict grammar) and capping each would allow both.
-
 ### Entries and the analyzer
 
 #### The 100 KB entry cap
