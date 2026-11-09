@@ -1047,9 +1047,9 @@ PY
 req POST /entries/batch "$dir/batch.json" application/json
 check "batch: 201 pending" '[[ $CODE == 201 && $(field status) == pending ]]'
 BID=$(field id)
-members=$(printf '%s\n' "$BODY" | sed -n 's/^entry: \([^ ]*\) .*/\1/p')
-PILOT=$(sed -n 1p <<< "$members")
-MAIN=$(sed -n 2p <<< "$members")
+mapfile -t members < <(printf '%s\n' "$BODY" | sed -n 's/^entry: \([^ ]*\) .*/\1/p')
+PILOT=${members[0]:-}
+MAIN=${members[1]:-}
 req POST "/e/$PILOT/publish"
 check "a member can't publish alone" '[[ $CODE == 409 ]]'
 req POST "/batches/$BID/publish"
