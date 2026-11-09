@@ -122,7 +122,8 @@ async fn the_home_page_puts_the_line_for_agents_before_the_first_card() {
     let page = app.send(opened("/")).await;
     assert_eq!(page.status, StatusCode::OK);
     assert!(content_type(&page).starts_with("text/html"));
-    let line = format!("Read {PUBLIC_URL}/skill.md, then check File Drawer for the experiment we");
+    // Found by its URL, which stays when the wording around it changes.
+    let line = format!("{PUBLIC_URL}/skill.md");
     let at_line = page
         .body
         .find(&line)
