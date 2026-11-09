@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# Git's pre-commit hook. Link both hooks in once per clone:
-#   ln -sf ../../bin/git-pre-commit .git/hooks/pre-commit
-#   ln -sf ../../bin/agent-pre-commit .git/hooks/agent-pre-commit
-# (python3 install.py links these and the other hooks.)
+# Git's pre-commit hook, run through the link .githooks/pre-commit once python3
+# install.py has set core.hooksPath to .githooks; agent-pre-commit and the other checks
+# are linked beside it there.
 # A commit runs the quick checks in .pre-commit-config.yaml (slop-lint, lychee, ruff,
 # and cargo fmt when a .rs file is staged) through bin/pre-commit-run. The formatters
 # write: a person's commit that needs formatting is refused with the files rewritten,

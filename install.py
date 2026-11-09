@@ -1,16 +1,27 @@
 #!/usr/bin/env python3
-"""Set up a machine to work on File Drawer: link the git hooks and install the cargo
-tools the checks and the SQL workflow need. sandbox-setup/setup.py runs it after a
-sandbox recreate, after rustup is in place.
+"""Set up a machine to work on File Drawer: point git at the hooks in .githooks and
+install the cargo tools the checks and the SQL workflow need. sandbox-setup/setup.py
+runs it after a sandbox recreate, after rustup is in place.
 
-    python3 install.py        link the hooks; install what's missing
+    python3 install.py        enable the hooks; install what's missing
     python3 install.py -h     this text
+
+The hooks: .githooks holds a link to a script in bin/ for each hook git runs
+(pre-commit, and post-merge, post-checkout and post-rewrite, which rebuild
+target/dev.db when the migrations change) and each check llm-toolbox's
+agent-commit-gate runs from beside pre-commit (agent-pre-commit, agent-quick-check,
+agent-commit-check). core.hooksPath=.githooks is relative, so git reads it from the
+top of whichever worktree runs the hook: each worktree, and each commit wt-ship checks
+out as it lands, runs its own copies of the scripts. The setting goes in the config
+every worktree shares, so running this from any of them enables the hooks for all.
+It also removes the links an older install.py put in the shared .git/hooks, which git
+no longer reads, and names any other hook left there.
 
 The tools (cargo install --locked, so they build from their locked dependencies):
   cargo-nextest  runs the Rust tests in bin/agent-pre-commit and CI
   sqlx-cli       `sqlx` and `cargo sqlx prepare`, for changing a query (AGENTS.md, SQL)
 
-Safe to rerun: a hook already linked and a tool already on PATH are left alone.
+Safe to rerun: hooks already enabled and a tool already on PATH are left alone.
 """
 
 import shutil
@@ -19,18 +30,7 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent
-HOOKS = {
-    "pre-commit": "bin/git-pre-commit",
-    "agent-pre-commit": "bin/agent-pre-commit",
-    # What llm-toolbox's agent-commit-gate runs for an agent's small fix commit.
-    "agent-quick-check": "bin/agent-quick-check",
-    # What it runs for an agent's other commits; wt-ship runs agent-pre-commit as it lands.
-    "agent-commit-check": "bin/agent-commit-check",
-    # Rebuild target/dev.db when a merge, checkout or rebase brings new migrations.
-    "post-merge": "bin/git-post-change",
-    "post-checkout": "bin/git-post-change",
-    "post-rewrite": "bin/git-post-change",
-}
+HOOKS_PATH = ".githooks"
 # (command that shows it is installed, cargo install arguments)
 CARGO_TOOLS = [
     ("cargo-nextest", ["cargo-nextest"]),
@@ -38,34 +38,37 @@ CARGO_TOOLS = [
 ]
 
 
-def link_hooks(repo: Path = REPO) -> None:
-    """Links each of HOOKS into the git directory `repo` shares: its own `.git`, or,
-    in a worktree, whose `.git` is a file, the main tree's, which every worktree reads
-    hooks from."""
-    common = subprocess.run(
-        [
-            "git",
-            "-C",
-            str(repo),
-            "rev-parse",
-            "--path-format=absolute",
-            "--git-common-dir",
-        ],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.strip()
-    hooks = Path(common) / "hooks"
-    hooks.mkdir(exist_ok=True)
-    for name, target in HOOKS.items():
-        link = hooks / name
-        wanted = Path("../..") / target
-        if link.is_symlink() and Path(link.readlink()) == wanted:
-            continue
-        if link.exists() or link.is_symlink():
+def git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", "-C", str(repo), *args], capture_output=True, text=True, check=check
+    )
+
+
+def enable_hooks(repo: Path = REPO) -> None:
+    """Set core.hooksPath to HOOKS_PATH in the config `repo` shares with its other
+    worktrees, then clear out the shared .git/hooks: remove each link the older
+    install.py made there, `../` and the tracked link's target, and name each other
+    hook left, which git no longer runs."""
+    current = git(repo, "config", "--local", "core.hooksPath", check=False)
+    if current.stdout.strip() != HOOKS_PATH:
+        git(repo, "config", "--local", "core.hooksPath", HOOKS_PATH)
+        print(f"set core.hooksPath to {HOOKS_PATH}")
+    common_dir = git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    old_hooks = Path(common_dir.stdout.strip()) / "hooks"
+    for tracked in sorted((repo / HOOKS_PATH).iterdir()):
+        link = old_hooks / tracked.name
+        if (
+            tracked.is_symlink()
+            and link.is_symlink()
+            and link.readlink() == Path("..") / tracked.readlink()
+        ):
             link.unlink()
-        link.symlink_to(wanted)
-        print(f"linked .git/hooks/{name} -> {target}")
+            print(f"removed .git/hooks/{tracked.name}, the old link")
+    for left in sorted(old_hooks.iterdir()) if old_hooks.is_dir() else []:
+        if left.suffix != ".sample":
+            print(
+                f".git/hooks/{left.name}: git no longer runs it ({HOOKS_PATH} has the hooks)"
+            )
 
 
 def install_tools() -> bool:
@@ -92,7 +95,7 @@ def main() -> int:
     if any(arg in ("-h", "--help") for arg in sys.argv[1:]):
         print(__doc__)
         return 0
-    link_hooks()
+    enable_hooks()
     return 0 if install_tools() else 1
 
 

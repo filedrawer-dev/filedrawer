@@ -62,7 +62,7 @@ The field test's entries and logs are in `field-test/`, git-excluded and local o
 ### SQL
 
 Queries go through sqlx's checked macros (`CODING_STANDARDS.md`), which compile against `.sqlx/`, the committed query data, when `DATABASE_URL` is unset, as in CI and the commit hook: `bin/agent-pre-commit` builds a copy of the index with no `.env`, so a stale `.sqlx/` refuses the commit.
-After a merge, checkout or rebase brings new migrations, the git hooks rebuild `target/dev.db` (`bin/sqlx-refresh --if-stale`; `python3 install.py` links them).
+After a merge, checkout or rebase brings new migrations, the git hooks rebuild `target/dev.db` (`bin/sqlx-refresh --if-stale`; `python3 install.py` enables them).
 After adding or changing a query or a migration, run `bin/sqlx-refresh`.
 It rebuilds `target/dev.db` from the migrations (writing `.env` if it's missing), so an edited, unpushed migration needs no cleanup, then runs `cargo sqlx prepare --workspace`.
 
@@ -108,7 +108,11 @@ Every check runs without `CHECK_BASE` (CI, an agent without llm-toolbox, or no c
 A small fix commit gets the same clippy through `bin/agent-quick-check`.
 CI runs all of them.
 Run `cargo fmt` after each batch of edits to `.rs` files: otherwise the hook reformats them at commit, and edits you make after that no longer match the text you hold.
-`python3 install.py` links the hooks once per clone and installs cargo-nextest and sqlx-cli; sandbox-setup runs it after a recreate.
+`python3 install.py` enables the hooks once per clone and installs cargo-nextest and sqlx-cli; sandbox-setup runs it after a recreate.
+The hooks are links in `.githooks/` to scripts in `bin/`, and `core.hooksPath` is `.githooks`, which git reads from the top of the worktree that runs the hook.
+So each worktree runs its own copies, and a commit that changes a hook script is checked by its own version, at commit and when wt-ship lands it.
+A tree checked out at a commit older than `.githooks/` runs no hooks: rebase it onto main before you commit there.
+A clone set up by an older `install.py` keeps its links in `.git/hooks` to the main tree's scripts, which still work, until its next `python3 install.py` removes them.
 
 The Rust tests run under cargo-nextest, set in `.config/nextest.toml` to print only the tests that fail, with their output, and a summary line.
 To run them that way, run `cargo nextest run --cargo-quiet`. nextest skips doctests, so the full check also runs `cargo test --doc`.
