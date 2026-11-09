@@ -844,6 +844,18 @@ Python is fine for scripts and internal tools.
 - On 2026-11-04 Anthropic published no Rust SDK, so the server calls the HTTP API directly.
   The model IDs were `claude-haiku-5-5` and `claude-sonnet-5-5`.
   At build time, check all of this again with the claude-api skill.
+- Each crate's integration tests build as one test binary, `tests/it/main.rs`, with each file in `tests/it/` a module of it, and test builds keep line tables but no other debug info (`[profile.test]`), so a backtrace still names file and line (2026-11-09, #35).
+  A test in each `main.rs` fails when a file there has no `mod` line, since cargo would never build it.
+  Reason: with a binary per file, 35 in all, each compiled the shared `common` module again and linked about 170 MB, 5.9 GB of test binaries.
+  Timed with hyperfine inside `heavy --alone` on 16 cores, medians of 5 runs, the series before and after both changes taken back to back on 2026-11-09 from 04:50:
+  - rebuilding the tests after touching one server source file (`cargo nextest run --no-run`): 22.4 s before, 4.3 s after;
+  - one server test after the same touch (`cargo nextest run -p filedrawer-server -E 'test(NAME)'`): 119 s before, 4.2 s after; before, `--test read` built only that file's binary and took 36.7 s;
+  - the same test after touching its own file: 15.5 s before, 3.9 s after;
+  - the test binaries: 42 of 5.9 GB before, 6 of 169 MB after; `target/debug/deps` after a test build: 6.8 GB before, 1.1 GB after.
+  Of that, one binary alone took the rebuild to 6.7 s and the binaries to 421 MB, and line tables to 5.7 s and 169 MB (00:40 to 00:51).
+  The full check, `bin/agent-pre-commit` with no `CHECK_BASE`, went from 116 s and 167 s to 86 s and 90 s in alternating runs from 04:07, its test build from 59 s and 65 s to 35 s and 37 s; a third pair, taken while the host slowed every step about fivefold, took 595 s and 596 s.
+  The mutants profile's rebuild after a function body changes, as each mutant's does, went from 13.7 s to 7.3 s on 4 cores with `CARGO_INCREMENTAL=1`, as `.github/workflows/mutants.yml` builds.
+  `cargo build` and `cargo run` keep the dev profile's full debug info, so a tree that runs them besides the tests builds its dependencies twice, the second time mostly from sccache.
 
 ## Hosting and operations
 
