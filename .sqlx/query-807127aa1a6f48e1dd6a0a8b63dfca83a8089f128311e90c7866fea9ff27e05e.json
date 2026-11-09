@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO derived_versions (name, version) VALUES ('entry_references', ?)\n         ON CONFLICT (name) DO UPDATE SET version = excluded.version",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "807127aa1a6f48e1dd6a0a8b63dfca83a8089f128311e90c7866fea9ff27e05e"
+}

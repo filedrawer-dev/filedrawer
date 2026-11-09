@@ -34,5 +34,12 @@ pub async fn open(path: &str) -> Result<SqlitePool, sqlx::Error> {
         .connect_with(options)
         .await?;
     sqlx::migrate!("./migrations").run(&pool).await?;
+    refresh_derived(&pool).await?;
     Ok(pool)
+}
+
+/// Rebuilds each table derived from entries' text whose format has changed since it
+/// was filled, as a new analyzer's reference keys (`entries::rebuild_stale_references`).
+pub async fn refresh_derived(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    crate::entries::rebuild_stale_references(pool).await
 }

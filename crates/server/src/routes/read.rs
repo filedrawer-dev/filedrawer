@@ -1,7 +1,8 @@
 //! Reading: `/e/<id>`, `/search`, `/cards.txt` and `/tags` (design.md, Agent interface).
 
 use analyzer::{
-    ANALYZER_VERSION, Claim, Kind, Outcome, Results, Stage, Vocabulary, analyze, row_note,
+    ANALYZER_VERSION, Claim, Kind, Outcome, Reference, Results, Stage, Vocabulary, analyze,
+    row_note,
 };
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -458,6 +459,7 @@ pub struct SearchQuery {
     model: Option<String>,
     row_model: Option<String>,
     row_claim: Option<String>,
+    cites: Option<String>,
     limit: Option<i64>,
     page: Option<i64>,
 }
@@ -480,6 +482,7 @@ pub async fn search(
         model: query.model.clone().filter(|model| !model.is_empty()),
         row_model: query.row_model.clone().filter(|model| !model.is_empty()),
         row_claim: known::<Claim>("row_claim", query.row_claim.as_deref())?,
+        cites: cited_key(query.cites.as_deref())?,
     };
     let limit = query.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
     let page_number = query.page.unwrap_or(1).max(1);
@@ -529,6 +532,7 @@ impl SearchQuery {
             ("model", &self.model),
             ("row_model", &self.row_model),
             ("row_claim", &self.row_claim),
+            ("cites", &self.cites),
         ] {
             if let Some(value) = value.as_deref().filter(|value| !value.is_empty()) {
                 query.append_pair(name, value);
@@ -555,6 +559,26 @@ fn known<T: Vocabulary>(name: &str, value: Option<&str>) -> Result<Option<T>, Ap
                     T::FIELD
                 ))
             }),
+    }
+}
+
+/// The key `cites=` asks for. A value in no form a reference takes is refused rather
+/// than matching nothing, which would read as "nobody followed it up"; so is a slug,
+/// which names an entry only within its own account.
+fn cited_key(value: Option<&str>) -> Result<Option<String>, AppError> {
+    let Some(value) = value.filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    match Reference::parse(value) {
+        Some(Reference::Slug(_)) => Err(AppError::BadRequest(format!(
+            "`cites={}` names a slug, which names an entry only within its author's account; use the entry's ID",
+            echoed(value)
+        ))),
+        Some(reference) => Ok(Some(reference.key())),
+        None => Err(AppError::BadRequest(format!(
+            "`cites={}` isn't a form the server reads; give an entry ID, `arXiv:<id>`, a DOI or a URL",
+            echoed(value)
+        ))),
     }
 }
 

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO entry_references (entry_seq, relation, position, key)\n                 VALUES (?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "2f256149964d06d1846c4843ce4137516f96fea7a23e24d5f894b433581a1409"
+}

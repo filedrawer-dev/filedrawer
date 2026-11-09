@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM entry_references WHERE entry_seq = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "37b6a2859f6739ceda05152e06c3b43c9cb147f5f534e631c8807f763f704a51"
+}

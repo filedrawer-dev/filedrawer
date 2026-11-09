@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT version FROM derived_versions WHERE name = 'entry_references'",
+  "describe": {
+    "columns": [
+      {
+        "name": "version",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "derived_versions",
+            "name": "version"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "9922c85145bbf23afb451ddb0794e2ea12ad31f49d884c4f2265e22cd9848770"
+}

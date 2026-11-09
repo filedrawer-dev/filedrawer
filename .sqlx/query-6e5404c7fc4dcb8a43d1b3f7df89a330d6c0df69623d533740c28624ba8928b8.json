@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT seq AS \"seq!: i64\", source, previous_seq FROM entries ORDER BY seq",
+  "describe": {
+    "columns": [
+      {
+        "name": "seq!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "source",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "source"
+          }
+        }
+      },
+      {
+        "name": "previous_seq",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "previous_seq"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "6e5404c7fc4dcb8a43d1b3f7df89a330d6c0df69623d533740c28624ba8928b8"
+}

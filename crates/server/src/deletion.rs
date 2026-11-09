@@ -286,6 +286,7 @@ async fn delete_entry(transaction: &mut SqliteConnection, seq: i64) -> Result<()
         sqlx::query!("DELETE FROM entry_models WHERE entry_seq = ?", seq),
         sqlx::query!("DELETE FROM entry_tags WHERE entry_seq = ?", seq),
         sqlx::query!("DELETE FROM entry_rows WHERE entry_seq = ?", seq),
+        sqlx::query!("DELETE FROM entry_references WHERE entry_seq = ?", seq),
         sqlx::query!("DELETE FROM entry_unknown_fields WHERE entry_seq = ?", seq),
         sqlx::query!("DELETE FROM entry_runs WHERE entry_seq = ?", seq),
         sqlx::query!("DELETE FROM slugs WHERE entry_seq = ?", seq),

@@ -1,8 +1,8 @@
 //! Storing entries and reading them back (design.md, Entry status; Agent interface).
 
 use analyzer::{
-    Analysis, Author, CardContext, Choice, Claim, Kind, Outcome, Results, Role, Stage, Vocabulary,
-    analyze, render_card,
+    Analysis, Author, CardContext, Choice, Claim, Kind, Outcome, REFERENCE_KEYS_VERSION, Reference,
+    Results, Role, Stage, Vocabulary, analyze, render_card,
 };
 use sqlx::SqlitePool;
 
@@ -333,6 +333,9 @@ pub async fn replace_on(
     sqlx::query!("DELETE FROM entry_runs WHERE entry_seq = ?", seq)
         .execute(&mut *transaction)
         .await?;
+    sqlx::query!("DELETE FROM entry_references WHERE entry_seq = ?", seq)
+        .execute(&mut *transaction)
+        .await?;
     let kept = sqlx::query!(
         "SELECT previous_seq, batch_seq, account_id FROM entries WHERE seq = ?",
         seq
@@ -428,7 +431,86 @@ async fn write_derived(
         .execute(&mut *transaction)
         .await?;
     }
+    write_references(&mut *transaction, seq, analysis, previous_seq).await
+}
+
+/// Stores the keys of what an entry's `replicates` and `reanalyzes` name, for search's
+/// `cites` filter. A version that points to a paper and names nothing itself carries
+/// the version before it's, as its rows are carried (see `write_derived`).
+async fn write_references(
+    transaction: &mut sqlx::SqliteConnection,
+    seq: i64,
+    analysis: &Analysis,
+    previous_seq: Option<i64>,
+) -> Result<(), sqlx::Error> {
+    let fields = &analysis.fields;
+    let relations = fields.follow_ups();
+    let names_nothing = relations.iter().all(|(_, items)| items.is_empty());
+    if let (true, Some(previous), Some(_)) = (names_nothing, previous_seq, &fields.published_in) {
+        sqlx::query!(
+            "INSERT INTO entry_references (entry_seq, relation, position, key)
+             SELECT ?, relation, position, key FROM entry_references WHERE entry_seq = ?",
+            seq,
+            previous
+        )
+        .execute(&mut *transaction)
+        .await?;
+        return Ok(());
+    }
+    for (relation, items) in relations {
+        for (position, item) in (1_i64..).zip(items) {
+            let Some(key) = Reference::parse(item).map(|reference| reference.key()) else {
+                continue;
+            };
+            sqlx::query!(
+                "INSERT INTO entry_references (entry_seq, relation, position, key)
+                 VALUES (?, ?, ?, ?)",
+                seq,
+                relation,
+                position,
+                key
+            )
+            .execute(&mut *transaction)
+            .await?;
+        }
+    }
     Ok(())
+}
+
+/// Rebuilds `entry_references` from every entry's text when the keys it holds are of
+/// another format than the analyzer's, or the table was never filled: entries stored
+/// before it existed get theirs. In seq order, so a version that carries its
+/// predecessor's keys finds them.
+pub async fn rebuild_stale_references(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    let current = i64::from(REFERENCE_KEYS_VERSION);
+    let mut transaction = crate::db::write_tx(pool).await?;
+    let stored =
+        sqlx::query_scalar!("SELECT version FROM derived_versions WHERE name = 'entry_references'")
+            .fetch_optional(&mut *transaction)
+            .await?;
+    if stored == Some(current) {
+        return Ok(());
+    }
+    sqlx::query!("DELETE FROM entry_references")
+        .execute(&mut *transaction)
+        .await?;
+    let entries = sqlx::query!(
+        r#"SELECT seq AS "seq!: i64", source, previous_seq FROM entries ORDER BY seq"#
+    )
+    .fetch_all(&mut *transaction)
+    .await?;
+    for entry in entries {
+        let analysis = analyze(&entry.source);
+        write_references(&mut transaction, entry.seq, &analysis, entry.previous_seq).await?;
+    }
+    sqlx::query!(
+        "INSERT INTO derived_versions (name, version) VALUES ('entry_references', ?)
+         ON CONFLICT (name) DO UPDATE SET version = excluded.version",
+        current
+    )
+    .execute(&mut *transaction)
+    .await?;
+    transaction.commit().await
 }
 
 /// An entry that isn't public, as its author's token sees it.
@@ -889,6 +971,10 @@ pub struct Filters {
     pub model: Option<String>,
     pub row_model: Option<String>,
     pub row_claim: Option<Claim>,
+    /// The key of a work entries name in `replicates` or `reanalyzes`, never a slug's.
+    /// A public entry's ID stands for every public version of its chain, and for the
+    /// chain's slug among its own account's entries.
+    pub cites: Option<String>,
 }
 
 /// Public entries matching `filters`: best match first when there are search words
@@ -905,7 +991,31 @@ pub async fn search(
     let row_claim = filters.row_claim.map(Claim::name);
     sqlx::query_as!(
         PublicEntry,
-        r#"SELECT e.seq AS "seq!: i64", e.id, e.source, e.account_id,
+        r#"WITH RECURSIVE
+             -- `cites` names a public entry: the public versions of its chain, and
+             -- its slug if a public version registered it, stand for it too. A
+             -- version that isn't public never widens the match (design.md, Agent
+             -- interface).
+             named(seq) AS (SELECT seq FROM entries WHERE id = ?11 AND status = 'public'),
+             back(seq, previous_seq) AS (
+               SELECT n.seq, p.previous_seq FROM named n JOIN entries p ON p.seq = n.seq
+               UNION
+               SELECT p.seq, p.previous_seq FROM back b JOIN entries p ON p.seq = b.previous_seq),
+             chain(seq) AS (
+               SELECT seq FROM back WHERE previous_seq IS NULL
+               UNION
+               SELECT n.seq FROM chain c JOIN entries n ON n.previous_seq = c.seq),
+             cited(key, account_id) AS (
+               SELECT ?11, NULL WHERE ?11 IS NOT NULL
+               UNION
+               SELECT v.id, NULL FROM chain c JOIN entries v ON v.seq = c.seq
+               WHERE v.status = 'public'
+               UNION
+               SELECT 'slug:' || s.slug, s.account_id FROM slugs s
+               JOIN chain c ON c.seq = s.entry_seq
+               JOIN entries r ON r.seq = s.entry_seq
+               WHERE r.status = 'public')
+           SELECT e.seq AS "seq!: i64", e.id, e.source, e.account_id,
                   a.display_name AS "display_name?: String", e.submitted_at, e.published_at,
                   (SELECT p.id FROM entries p WHERE p.seq = e.previous_seq AND p.status = 'public') AS "previous_id?",
                   (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS "superseded_by?",
@@ -929,6 +1039,11 @@ pub async fn search(
              AND ((?7 IS NULL AND ?8 IS NULL) OR e.seq IN (
                     SELECT entry_seq FROM entry_rows
                     WHERE (?7 IS NULL OR model = ?7) AND (?8 IS NULL OR claim = ?8)))
+             -- A slug names an entry only among its own account's.
+             AND (?11 IS NULL OR EXISTS (
+                    SELECT 1 FROM entry_references r JOIN cited k ON k.key = r.key
+                    WHERE r.entry_seq = e.seq
+                      AND (k.account_id IS NULL OR k.account_id = e.account_id)))
            ORDER BY
              -- CASE runs the MATCH only when there are words; MATCH NULL is an error.
              CASE WHEN ?1 IS NULL THEN NULL ELSE (
@@ -945,7 +1060,8 @@ pub async fn search(
         filters.row_model,
         row_claim,
         limit,
-        offset
+        offset,
+        filters.cites
     )
     .fetch_all(pool)
     .await

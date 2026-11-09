@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM entry_references",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "ea81ad7555366f43c9faeb3bd3851b4a985bde581e451507dddfcee9967d4602"
+}

@@ -7,6 +7,7 @@ mod accounts;
 mod allowance;
 mod attachments;
 mod batches;
+mod cites;
 mod cli;
 mod common;
 mod config;
