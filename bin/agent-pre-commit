@@ -7,11 +7,14 @@
 # The checks run on what's staged: a copy of the index in a temporary folder, so
 # unstaged changes can neither fail a commit nor rescue it. Each check's output shows
 # only when it fails. They run one after the other, since cargo locks target/ anyway.
-# bin/tests, the tests of the hook scripts, run through uvx with a pinned pytest, so the
-# host needs no venv. The Rust checks wait for Cargo.toml, and share the repo's target/
-# so dependencies build once. The tests run under cargo-nextest, which prints only the
-# failures and a summary (.config/nextest.toml); it skips doctests, so cargo test --doc
-# runs those.
+# bin/tests, the tests of the hook scripts, run through uvx with a pinned pytest and the
+# plugins bin/tests/pytest.ini uses, so the host needs no venv. Commits and wt-ship's
+# landing checks run the main tree's copy of this script (.git/hooks links to it) on
+# each commit's tree, so a tree that needs a change here, such as a new plugin, lands
+# after the change does. The Rust checks wait for Cargo.toml, and share the repo's
+# target/ so dependencies build once. The tests run under cargo-nextest, which prints
+# only the failures and a summary (.config/nextest.toml); it skips doctests, so cargo
+# test --doc runs those.
 # Each check runs only when the change needs it: the Rust checks for a build input,
 # bin/tests for what those tests read. The change is what the index holds against
 # $CHECK_BASE, which llm-toolbox's agent-commit-gate sets to the nearest commit whose
@@ -76,7 +79,7 @@ unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_OBJECT_DIRECTORY GIT_PREFIX CHECK
 failed=0
 if [ -z "$quick" ] && needs bin-tests; then
   queue_first bin-tests
-  uvx --quiet --with pytest-timeout==2.4.0 pytest@9.2.0 -q -p no:cacheprovider bin/tests >"$logs/pytest" 2>&1 || { cat "$logs/pytest"; failed=1; }
+  uvx --quiet --with pytest-timeout==2.4.0 --with pytest-xdist==3.8.0 pytest@9.2.0 -q -p no:cacheprovider bin/tests >"$logs/pytest" 2>&1 || { cat "$logs/pytest"; failed=1; }
 fi
 if [ -f Cargo.toml ] && needs rust; then
   queue_first rust
