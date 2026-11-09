@@ -1,0 +1,497 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["jinja2==3.1.6"]
+# ///
+"""Preview the home page live while drafting its text.
+
+    bin/live-preview                 build the server, start it with seed entries,
+                                     and serve the preview on port 8090
+    bin/live-preview --no-build      start the server as last built
+    bin/live-preview --upstream URL  preview against a server already running
+
+Askama compiles the templates into the binary, so seeing a template edit otherwise
+means a rebuild that waits in heavy's queue. Here a browser's GET / is rendered on
+each request from the checkout's base.html and home.html, with Jinja standing in for
+askama, and the drawer of entries taken from a dev server's own home page. The
+stylesheet and copy.js come from disk, at URLs that change with them, on every page.
+The page reloads itself when one of the four files changes, though a save on the
+host can reach the sandbox too late for that; reloading by hand always shows the
+latest save. Every other request (other pages, forms, an agent's GET /) goes to the
+dev server unchanged, so other pages' markup is what it was built with.
+
+The dev server is `filedrawer serve` in the dev environment, built first with
+`heavy --share -- cargo build --bin filedrawer` (plain cargo without heavy), on
+127.0.0.1:SERVER_PORT, with its database in target/live-preview/. A new database is
+seeded with the analyzer's example fixture, ops/smoke-fixture.md and
+ops/screen-eval/public/*.md, published at once, so the drawer isn't empty.
+
+From the host, publish the port once, then open http://localhost:8090:
+
+    sbx ports <sandbox name, as `hostname` prints it> --publish 8090:8090
+
+A file the host's editor replaces by renaming a new one into place can read stale in
+the sandbox (sandbox-setup's refresh-mount), so when the checkout is on a virtiofs
+mount, each render drops the kernel's dentry and inode caches as refresh-mount does,
+at most once every 2 s. Ctrl-C stops the preview and the dev server.
+"""
+
+import argparse
+import contextlib
+import html
+import http.server
+import os
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import threading
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+import jinja2
+
+REPO = Path(__file__).resolve().parents[1]
+
+# The askama calls base.html and home.html make, with the attribute Jinja renders
+# in their place.
+ASKAMA_CALLS = {
+    "crate::routes::assets::stylesheet_href()": "css_href",
+    "crate::routes::assets::copy_script_href()": "script_href",
+}
+
+RELOAD = """<script>(function(){let v=null;setInterval(async()=>{try{
+const t=await (await fetch('/__live/version',{cache:'no-store'})).text();
+if(v!==null&&t!==v)location.reload();v=t;}catch(e){}},500)})();</script>"""
+
+# Headers that describe one hop's connection or the body as sent, which the proxy
+# sets itself.
+HOP_HEADERS = {
+    "connection",
+    "keep-alive",
+    "transfer-encoding",
+    "content-length",
+    "content-encoding",
+}
+
+# The fixtures a new database is seeded with, as git pathspecs.
+SEED_ENTRIES = (
+    ":(glob)crates/analyzer/tests/**/fixtures/example.md",
+    "ops/smoke-fixture.md",
+    ":(glob)ops/screen-eval/public/*.md",
+)
+
+
+class NoRedirects(urllib.request.HTTPRedirectHandler):
+    """Hands a redirect back to the browser instead of following it."""
+
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+# Loopback only: no proxy the environment names, and no redirect followed.
+OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirects)
+
+
+def on_virtiofs(path: Path) -> bool:
+    """Whether `path` is on a virtiofs mount, as the sandbox's host mount is."""
+    best, kind = "", ""
+    for line in Path("/proc/mounts").read_text().splitlines():
+        fields = line.split()
+        point = fields[1]
+        inside = str(path) == point or str(path).startswith(point.rstrip("/") + "/")
+        if inside and len(point) > len(best):
+            best, kind = point, fields[2]
+    return kind == "virtiofs"
+
+
+class Preview:
+    """The checkout's home page as its templates render now, around the dev server's
+    drawer."""
+
+    def __init__(self, root: Path, upstream: str, public_url: str) -> None:
+        self.templates = root / "crates/server/templates"
+        self.static = root / "crates/server/static"
+        self.watched = [
+            self.templates / "base.html",
+            self.templates / "home.html",
+            self.static / "site.css",
+            self.static / "copy.js",
+        ]
+        self.upstream = upstream
+        self.public_url = public_url
+        # LIVE_PREVIEW_KEEP_CACHES, set by its tests, whose scratch folders can sit on
+        # the host mount too, keeps them.
+        self.drops_caches = on_virtiofs(root) and not os.environ.get(
+            "LIVE_PREVIEW_KEEP_CACHES"
+        )
+        self.lock = threading.Lock()
+        self.last_drop = 0.0
+        self.folder_stamps: list[int] = []
+
+    def drop_caches(self) -> None:
+        """Drop the kernel's dentry and inode caches, so a file the host replaced reads
+        as it is now: on a virtiofs mount only, at most once every 2 s."""
+        if not self.drops_caches:
+            return
+        with self.lock:
+            if time.monotonic() - self.last_drop < 2:
+                return
+            subprocess.run(
+                ["sudo", "-n", "sh", "-c", "echo 2 > /proc/sys/vm/drop_caches"],
+                capture_output=True,
+                check=False,
+            )
+            self.last_drop = time.monotonic()
+
+    def version(self) -> str:
+        """What changes when a watched file does: the page polls it to reload."""
+        stamps = [folder.stat().st_mtime_ns for folder in (self.templates, self.static)]
+        if stamps != self.folder_stamps:
+            # A file renamed into place changes its folder.
+            self.folder_stamps = stamps
+            self.drop_caches()
+        return ",".join(self.stamp(path) for path in self.watched)
+
+    @staticmethod
+    def stamp(path: Path) -> str:
+        info = path.stat()
+        return f"{info.st_ino}-{info.st_mtime_ns}-{info.st_size}"
+
+    def source(self, name: str) -> str:
+        if name == "drawer.html":
+            return "{{ drawer_html|safe }}"
+        text = (self.templates / name).read_text()
+        for call, attribute in ASKAMA_CALLS.items():
+            text = re.sub(
+                r"\{\{\s*" + re.escape(call) + r"\s*\}\}",
+                f"{{{{ {attribute} }}}}",
+                text,
+            )
+        return text
+
+    def render(self, server_page: str) -> str:
+        """The home page, from `server_page`, the dev server's own, for its drawer."""
+        self.drop_caches()
+        start = server_page.index('<nav class="guides"')
+        end = server_page.index('<p class="foot">')
+        environment = jinja2.Environment(
+            loader=jinja2.FunctionLoader(self.source),
+            autoescape=True,
+            keep_trailing_newline=True,
+            undefined=jinja2.StrictUndefined,
+        )
+        html = environment.get_template("home.html").render(
+            public_url=self.public_url,
+            drawer_html=server_page[start:end].rstrip() + "\n",
+            css_href=f"/static/site.css?live={self.stamp(self.static / 'site.css')}",
+            script_href=f"/static/copy.js?live={self.stamp(self.static / 'copy.js')}",
+        )
+        return html.replace("</body>", RELOAD + "\n</body>", 1)
+
+
+def error_page(error: Exception) -> str:
+    message = html.escape(f"{type(error).__name__}: {error}")
+    return f"<!DOCTYPE html><title>Template error</title><pre>{message}</pre>{RELOAD}"
+
+
+class ServerDown(Exception):
+    """The dev server didn't answer; its message says so in one line."""
+
+
+def handler_for(preview: Preview) -> type[http.server.BaseHTTPRequestHandler]:
+    class Handler(http.server.BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def send(
+            self, status: int, headers: list[tuple[str, str]], body: bytes
+        ) -> None:
+            self.send_response(status)
+            for key, value in headers:
+                self.send_header(key, value)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            if self.command != "HEAD":
+                self.wfile.write(body)
+
+        def reply(self, status: int, body: bytes, kind: str) -> None:
+            self.send(
+                status, [("Content-Type", kind), ("Cache-Control", "no-store")], body
+            )
+
+        def from_server(self) -> tuple[int, list[tuple[str, str]], bytes]:
+            length = int(self.headers.get("Content-Length") or 0)
+            body = self.rfile.read(length) if length else None
+            headers = {
+                k: v for k, v in self.headers.items() if k.lower() not in HOP_HEADERS
+            }
+            request = urllib.request.Request(
+                preview.upstream + self.path,
+                data=body,
+                method=self.command,
+                headers=headers,
+            )
+            try:
+                with OPENER.open(request) as answer:
+                    return answer.status, list(answer.headers.items()), answer.read()
+            except urllib.error.HTTPError as error:
+                return error.code, list(error.headers.items()), error.read()
+            except OSError as error:
+                reason = getattr(error, "reason", error)
+                raise ServerDown(
+                    f"live-preview: the dev server at {preview.upstream} didn't answer "
+                    f"({reason}); restart bin/live-preview\n"
+                ) from error
+
+        def answer(self) -> None:
+            try:
+                self.answer_from_server()
+            except ServerDown as down:
+                self.reply(502, str(down).encode(), "text/plain; charset=utf-8")
+
+        def answer_from_server(self) -> None:
+            path = self.path.split("?", 1)[0]
+            browser = (
+                self.headers.get("Sec-Fetch-Dest", "").strip().lower() == "document"
+            )
+            if self.command != "GET" or path != "/" or not browser:
+                status, headers, body = self.from_server()
+                kept = [(k, v) for k, v in headers if k.lower() not in HOP_HEADERS]
+                return self.send(status, kept, body)
+            status, _, body = self.from_server()
+            try:
+                page = preview.render(body.decode())
+            # Any error shows in the tab, which reloads once the template is fixed.
+            except Exception as error:
+                page = error_page(error)
+            self.reply(status, page.encode(), "text/html; charset=utf-8")
+
+        def do_GET(self) -> None:
+            path = self.path.split("?", 1)[0]
+            if path == "/__live/version":
+                return self.reply(200, preview.version().encode(), "text/plain")
+            if path == "/static/site.css":
+                css = (preview.static / "site.css").read_bytes()
+                return self.reply(200, css, "text/css; charset=utf-8")
+            if path == "/static/copy.js":
+                script = (preview.static / "copy.js").read_bytes()
+                return self.reply(200, script, "text/javascript; charset=utf-8")
+            self.answer()
+
+        do_HEAD = do_POST = do_PUT = do_DELETE = answer
+
+        def log_message(self, format, *args) -> None:
+            pass
+
+    return Handler
+
+
+def run(command: list[str], **kwargs) -> str:
+    """`command`'s output, or an exit naming it and the last line it printed when it
+    fails."""
+    done = subprocess.run(
+        command, capture_output=True, text=True, check=False, **kwargs
+    )
+    if done.returncode != 0:
+        last = (done.stderr.strip().splitlines() or ["no output"])[-1]
+        sys.exit(f"live-preview: {Path(command[0]).name} {command[1]} failed: {last}")
+    return done.stdout.strip()
+
+
+class DevServer:
+    """The checkout's `filedrawer serve` in the dev environment, its database in
+    target/live-preview/."""
+
+    def __init__(self, root: Path, port: int, public_url: str) -> None:
+        self.root = root
+        self.binary = root / "target/debug/filedrawer"
+        self.data = root / "target/live-preview"
+        self.database = self.data / "filedrawer.db"
+        self.port = port
+        self.url = f"http://127.0.0.1:{port}"
+        self.public_url = public_url
+        # Written once seeding ends, so a database whose seeding was cut short is
+        # made again rather than left half full.
+        self.seeded = self.data / "seeded"
+
+    def environment(self) -> dict[str, str]:
+        """Only what the server needs: no SMTP, GitHub or staging setting this shell
+        holds reaches it."""
+        return {
+            "PATH": os.environ.get("PATH", ""),
+            "HOME": os.environ.get("HOME", ""),
+            "RUST_LOG": os.environ.get("RUST_LOG", "warn"),
+            "FILEDRAWER_DATABASE": str(self.database),
+            "FILEDRAWER_LISTEN": f"127.0.0.1:{self.port}",
+            "FILEDRAWER_ENVIRONMENT": "dev",
+            "FILEDRAWER_SCREENER": "pass-all",
+            "FILEDRAWER_LINK_CHECKS": "off",
+            "FILEDRAWER_PUBLISHER_SECONDS": "2",
+            "FILEDRAWER_PUBLIC_URL": self.public_url,
+        }
+
+    def build(self) -> None:
+        command = ["cargo", "build", "-q", "--bin", "filedrawer"]
+        if shutil.which("heavy"):
+            command = ["heavy", "--share", "--", *command]
+        print("live-preview: building the server", flush=True)
+        if subprocess.run(command, cwd=self.root, check=False).returncode != 0:
+            sys.exit("live-preview: the build failed; fix it, or run with --no-build")
+
+    def start(self, cleanup: contextlib.ExitStack) -> None:
+        """Start the server, seeding a new database first; `cleanup` stops it."""
+        if not self.binary.exists():
+            sys.exit(
+                f"live-preview: no server at {self.binary}; run without --no-build"
+            )
+        if not self.seeded.exists():
+            shutil.rmtree(self.data, ignore_errors=True)
+        self.data.mkdir(parents=True, exist_ok=True)
+        token = None
+        if not self.database.exists():
+            # Before the server starts, since both would run the migrations on a new file.
+            account = self.admin("create-account", "--display-name", "Live Preview")
+            token = self.admin("create-token", "--account", account, "--name", "seed")
+        server = subprocess.Popen([self.binary, "serve"], env=self.environment())
+        cleanup.callback(stop, server)
+        self.wait_for(server)
+        if token:
+            self.seed(token)
+
+    def admin(self, *args: str) -> str:
+        return run([str(self.binary), "admin", *args], env=self.environment())
+
+    def wait_for(self, server: subprocess.Popen) -> None:
+        for _ in range(120):
+            try:
+                with OPENER.open(self.url + "/tags"):
+                    return
+            except OSError:
+                pass
+            if server.poll() is not None:
+                sys.exit(f"live-preview: the dev server exited ({server.returncode})")
+            time.sleep(0.5)
+        sys.exit(
+            f"live-preview: the dev server didn't answer {self.url}/tags in a minute"
+        )
+
+    def post(self, path: str, token: str, name: str, body: bytes | None = None) -> str:
+        """The server's answer to a POST for fixture `name`, or an exit when the server
+        stops answering."""
+        request = urllib.request.Request(
+            self.url + path,
+            data=body,
+            method="POST",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        try:
+            with OPENER.open(request) as answer:
+                return answer.read().decode()
+        except urllib.error.HTTPError:
+            raise
+        except OSError as error:
+            reason = getattr(error, "reason", error)
+            sys.exit(
+                f"live-preview: the dev server stopped answering at {name} ({reason})"
+            )
+
+    def seed(self, token: str) -> None:
+        """Submit each seed fixture with `token` and publish it at once."""
+        names = run(
+            ["git", "-C", str(self.root), "ls-files", *SEED_ENTRIES]
+        ).splitlines()
+        published = 0
+        for name in names:
+            try:
+                text = self.post(
+                    "/entries", token, name, (self.root / name).read_bytes()
+                )
+                entry = re.search(r"^id: (\S+)", text, re.MULTILINE)
+                if entry is None:
+                    print(f"live-preview: no id in the server's answer to {name}")
+                    continue
+                self.post(f"/e/{entry.group(1)}/publish", token, name)
+            except urllib.error.HTTPError as error:
+                why = error.read().decode().strip().splitlines()[:1] or [
+                    str(error.code)
+                ]
+                print(f"live-preview: the server refused {name}: {why[0]}")
+                continue
+            published += 1
+        self.seeded.touch()
+        print(f"live-preview: seeded {published} entries", flush=True)
+
+
+def stop(server: subprocess.Popen) -> None:
+    server.terminate()
+    server.wait()
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "--root",
+        type=Path,
+        default=REPO,
+        help="the checkout to preview (default: this one)",
+    )
+    parser.add_argument(
+        "--port", type=int, default=8090, help="the preview's port, on every interface"
+    )
+    parser.add_argument(
+        "--server-port",
+        type=int,
+        default=8091,
+        help="the dev server's port, on 127.0.0.1",
+    )
+    parser.add_argument(
+        "--upstream", help="a dev server already running, such as http://127.0.0.1:8091"
+    )
+    parser.add_argument(
+        "--no-build", action="store_true", help="start the dev server as last built"
+    )
+    args = parser.parse_args()
+    root = args.root.resolve()
+
+    # Bound first, before the build: the dev server's public URL names this port,
+    # which --port 0 leaves to the system. Its handler comes once there's an upstream.
+    try:
+        listener = http.server.ThreadingHTTPServer(
+            ("0.0.0.0", args.port), http.server.BaseHTTPRequestHandler
+        )
+    except OSError as error:
+        sys.exit(
+            f"live-preview: port {args.port} is taken ({error.strerror}); pass --port"
+        )
+    public_url = f"http://localhost:{listener.server_port}"
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    with contextlib.ExitStack() as cleanup:
+        try:
+            upstream = args.upstream
+            if upstream is None:
+                server = DevServer(root, args.server_port, public_url)
+                if not args.no_build:
+                    server.build()
+                server.start(cleanup)
+                upstream = server.url
+            listener.RequestHandlerClass = handler_for(
+                Preview(root, upstream, public_url)
+            )
+            print(
+                f"live-preview: http://127.0.0.1:{listener.server_port}/ previews {root}; "
+                f"from the host, {public_url}",
+                flush=True,
+            )
+            listener.serve_forever()
+        except KeyboardInterrupt:
+            pass
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
