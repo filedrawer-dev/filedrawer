@@ -21,6 +21,12 @@ opt-level = 3
 [profile.dev.package.sha2]
 opt-level = 3
 
+# Test builds keep line tables, so a backtrace still names each frame's file and line,
+# but no other debug info, which made the test binaries 2.5 times as large and their
+# rebuild a sixth slower (#35; design.md, Stack).
+[profile.test]
+debug = "line-tables-only"
+
 # cargo-mutants builds with this profile (.cargo/mutants.toml): without debug info, each
 # mutant links its test binaries faster.
 [profile.mutants]
