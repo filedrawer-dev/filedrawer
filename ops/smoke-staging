@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2016  # check NAME 'CONDITION' evals CONDITION, so its $ stay quoted
 # Smoke test of a File Drawer server, staging by default, following the submit skill as an
 # agent would: submit, the hour's hold, a fix with PUT, publish, search, a new
 # version, and a batch with slugs and runs. Each entry's title says it is a smoke

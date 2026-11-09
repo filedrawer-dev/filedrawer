@@ -98,7 +98,7 @@ The commit hook's `bin/sentence-lines` keeps it that way and leaves entries as t
 Start a worktree with `bin/new-worktree TOPIC` (`-h`): it adds `../filedrawer-wt-TOPIC` beside the main tree and starts its warm build in the background, which sccache makes quick.
 
 Committing runs the hook's checks, so read its output rather than running them first; the full check runs when wt-ship lands each commit.
-Every commit runs `bin/slop-lint` on staged markdown, lychee (links and anchors, offline) over every markdown file, actionlint with shellcheck (when a workflow is staged), and `bin/sentence-lines` on staged markdown, ruff, and `cargo fmt` (when a `.rs` file is staged), which write: a person's commit that needs formatting is refused with the files rewritten, to stage, and `bin/pre-commit-run` stages an agent's and checks again.
+Every commit runs `bin/slop-lint` on staged markdown, lychee (links and anchors, offline) over every markdown file, actionlint with shellcheck (when a workflow is staged), shellcheck on staged shell scripts in `bin/` and `ops/`, and `bin/sentence-lines` on staged markdown, ruff, and `cargo fmt` (when a `.rs` file is staged), which write: a person's commit that needs formatting is refused with the files rewritten, to stage, and `bin/pre-commit-run` stages an agent's and checks again.
 An agent's commit then runs only clippy, for a build input, and the skills check, for a change to the skills (`bin/agent-commit-check`, which `agent-commit-gate` runs in the full check's place because `bin/git-pre-commit` sets `AGENT_CHECK_AT_COMMIT`): run the tests you wrote or touched before you commit.
 wt-ship runs the full check, `bin/agent-pre-commit`, on each commit when it lands, while it holds the main tree: the skills check, the tests in `bin/tests`, clippy and the Rust tests, each only when the change needs it.
 The change is what differs from `$CHECK_BASE`, which llm-toolbox's `agent-commit-gate` sets to the nearest commit that passed: at a commit, usually HEAD, so what's staged; on wt-ship's recheck, the commit before, or for the first, the tip it rebased onto.
@@ -133,5 +133,9 @@ To check that a new test catches a mutant the run missed, write the change its l
 `bin/lychee` downloads lychee once per machine and checks it against the SHA-256 pinned in the script.
 The version and hashes live only there, and its docstring says how to move to a new release.
 The first commit on a machine without network access is refused; `SKIP=lychee git commit` skips only that check.
+So is a commit there that stages a shell script while uv's cache lacks the pinned shellcheck; `SKIP=shellcheck git commit` skips only that one, and CI still runs it.
+
+shellcheck refuses errors, warnings and infos, not style.
+To keep a finding that's intended, put `# shellcheck disable=SCnnnn  # why` on the line before it, as `ops/smoke-staging` does; a directive right after the shebang covers the file, as its SC2016 one does, since its `check` calls single-quote their conditions on purpose.
 
 To keep a line `slop-lint` flags, end it with `<!-- slop-lint: ignore -->`. `bin/pre-commit-run`, `bin/slop-lint` and `bin/tests/leftover_processes.py` are copies of llm-toolbox's. Update them by copying from there.

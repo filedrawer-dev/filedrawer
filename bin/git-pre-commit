@@ -2,12 +2,12 @@
 # Git's pre-commit hook, run through the link .githooks/pre-commit once python3
 # install.py has set core.hooksPath to .githooks; agent-pre-commit and the other checks
 # are linked beside it there.
-# A commit runs the quick checks in .pre-commit-config.yaml (slop-lint, lychee, ruff,
-# and cargo fmt when a .rs file is staged) through bin/pre-commit-run. The formatters
-# write: a person's commit that needs formatting is refused with the files rewritten,
-# to stage; for an agent's commit, bin/pre-commit-run stages what they rewrote and
-# runs the checks again, when every rewritten file was staged with no unstaged changes,
-# so it can't stage work the agent left out.
+# A commit runs the quick checks in .pre-commit-config.yaml (AGENTS.md, Checks, lists
+# them) through bin/pre-commit-run. The formatters write: a person's commit that
+# needs formatting is refused with the files rewritten, to stage; for an agent's
+# commit, bin/pre-commit-run stages what they rewrote and runs the checks again, when
+# every rewritten file was staged with no unstaged changes, so it can't stage work the
+# agent left out.
 # Agents' commits ($AI_AGENT set) also run llm-toolbox's agent-commit-gate, told by
 # AGENT_CHECK_AT_COMMIT that it runs for a commit, so it runs bin/agent-commit-check
 # (clippy and the skills check) in place of agent-pre-commit; wt-ship runs
