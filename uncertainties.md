@@ -484,7 +484,7 @@ Add a new entry at the end of the topic it belongs to, or start a topic when non
 
 - Options: a setting that turns the checks off, or no setting, with every fixture the binary's tests submit kept free of listed-host links.
 - Chosen: the setting, which production refuses, like `FILEDRAWER_SCREENER=pass-all`.
-  `crates/server/tests/smoke.rs` sets it, since `ops/smoke-staging eval` submits the `ops/screen-eval/` cases, which link github.com.
+  `crates/server/tests/it/smoke.rs` sets it, since `ops/smoke-staging eval` submits the `ops/screen-eval/` cases, which link github.com.
 - Against: one more setting, and the binary's tests no longer exercise the checks; the router tests do, with a fake web.
 
 #### Staging without a GitHub token

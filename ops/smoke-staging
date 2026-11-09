@@ -24,7 +24,7 @@ text. Prints PASS or FAIL for each check, then a tally, and exits 1 when any che
 
 CI runs it after each deploy as the smoke-test account, which ops/provision-vps smoke
 sets up and names to staging as FILEDRAWER_SMOKE_ACCOUNT: its entries aren't
-screened, so the smoke test calls no model. crates/server/tests/smoke.rs runs it
+screened, so the smoke test calls no model. crates/server/tests/it/smoke.rs runs it
 against a local server, so a reply it relies on can't change unnoticed.
 
 It reads two settings from the environment and prints neither:
@@ -178,7 +178,7 @@ for name in FILEDRAWER_STAGING_KEY FILEDRAWER_STAGING_API_KEY; do
 done
 
 # Every entry starts from a made-up, bland fixture that passes cleanly and holds
-# nothing a hazard screen could flag; crates/server/tests/smoke.rs fails if a change
+# nothing a hazard screen could flag; crates/server/tests/it/smoke.rs fails if a change
 # to it breaks this script.
 fixture="$(dirname "$0")/smoke-fixture.md"
 tag="smoke$(date -u +%Y%m%d%H%M%S)"

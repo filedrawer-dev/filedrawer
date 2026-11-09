@@ -1,7 +1,7 @@
 """ops/smoke-staging screen against a fake server, for the replies a real one can't be
 made to give in order: a check that fails, then a day's cap spent; the screen
 rejecting the series sent to learn why a case wasn't decided. The real server's
-replies are covered by crates/server/tests/smoke.rs."""
+replies are covered by crates/server/tests/it/smoke.rs."""
 
 import hashlib
 import json

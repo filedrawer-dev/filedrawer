@@ -112,6 +112,8 @@ Run `cargo fmt` after each batch of edits to `.rs` files: otherwise the hook ref
 
 The Rust tests run under cargo-nextest, set in `.config/nextest.toml` to print only the tests that fail, with their output, and a summary line.
 To run them that way, run `cargo nextest run --cargo-quiet`. nextest skips doctests, so the full check also runs `cargo test --doc`.
+Each crate's integration tests build as one binary, `tests/it/main.rs`, with each file in `tests/it/` a module of it, so a new test file needs a `mod` line there; a test in `main.rs` fails without one.
+To run one file's tests, filter on its module: `cargo nextest run --cargo-quiet -p filedrawer-server -E 'test(/^read::/)'`.
 Install nextest once per machine: `cargo install cargo-nextest --locked`, or the prebuilt binary from https://get.nexte.st/latest/linux.
 
 Mutation testing (cargo-mutants, set in `.cargo/mutants.toml`) runs in CI, only when started by hand, since a full run takes about 10 runner-hours: `gh workflow run mutants.yml`.

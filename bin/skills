@@ -29,8 +29,8 @@ from pathlib import Path
 RECORD_HEADER = """\
 # Each skill's version, and its folder's hash as
 # `cd skills/NAME && find . -type f | LC_ALL=C sort | xargs sha256sum | sha256sum`
-# prints it. `bin/skills sync` writes this file; crates/server/tests/skill_folders.rs
-# checks it.
+# prints it. `bin/skills sync` writes this file;
+# crates/server/tests/it/skill_folders.rs checks it.
 """
 
 

@@ -40,7 +40,7 @@ def test_the_other_docs_need_no_check():
     [
         # include_str! from crates/server/src/routes/docs.rs
         ("docs/entry-format.md", {"rust"}),
-        # crates/server/tests/smoke.rs runs it and reads these at run time
+        # crates/server/tests/it/smoke.rs runs it and reads these at run time
         ("ops/smoke-staging", {"rust", "bin-tests"}),
         ("ops/smoke-fixture.md", {"rust", "bin-tests"}),
         ("ops/screen-eval/public/refusal-categories.md", {"rust", "bin-tests"}),
