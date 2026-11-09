@@ -1,7 +1,7 @@
-"""Tests for bin/new-worktree, which adds a worktree beside the main tree and starts
-its warm build in the background. Each runs a copy of the script committed to a
-scratch repo, since it finds its repo from its own path, with a fake bgrun first on
-PATH that notes its arguments."""
+"""Tests for bin/new-worktree, which adds a worktree beside the main tree and starts its
+warm build in the background, unless --no-build. Each runs a copy of the script
+committed to a scratch repo, since it finds its repo from its own path, with a fake
+bgrun first on PATH that notes its arguments."""
 
 import os
 import shutil
@@ -83,6 +83,18 @@ def test_adds_a_worktree_beside_the_main_tree_and_starts_its_warm_build(repo):
     ]
     assert str(tree) in done.stdout
     assert "waitone --pid 4242" in done.stdout
+
+
+def test_no_build_makes_the_tree_and_starts_no_build(repo):
+    done = repo.run("docs", "--no-build")
+    assert done.returncode == 0, done.stderr
+    tree = repo.tmp / "proj-wt-docs"
+    assert git(tree, "rev-parse", "HEAD") == git(repo.main, "rev-parse", "HEAD")
+    assert detached(tree)
+    assert repo.log.read_text() == ""
+    assert not (tree / "target").exists()
+    assert str(tree) in done.stdout
+    assert "waitone" not in done.stdout
 
 
 def test_run_from_another_worktree_it_still_starts_beside_the_main_tree(repo):

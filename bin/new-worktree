@@ -5,6 +5,8 @@
                                         tree's HEAD
     bin/new-worktree TOPIC --at REV     detached at REV instead, as the main tree
                                         reads it
+    bin/new-worktree TOPIC --no-build   without the warm build, for a change with
+                                        no build input
 
 Run the copy in the main tree or in any worktree: it finds its repo from its own path,
 and the new tree always goes beside the main tree, named for it and TOPIC (letters,
@@ -14,6 +16,12 @@ The warm build is `heavy -- cargo nextest run --cargo-quiet --no-run`, started w
 bgrun in the new tree, its log in the tree's target/warm.log. The script prints the
 build's PID and doesn't wait: heavy's queue has no time limit. `waitone --pid PID`
 waits for it.
+
+--no-build skips it, for a change that touches no build input (AGENTS.md, Checks),
+such as most of docs/, bin/ and ops/: its commits run no Rust check, so the build
+only helps a tool run by hand that builds the server, such as bin/live-preview.
+`bin/checks-needed --why PATH` says whether a path is a build input;
+docs/entry-format.md and ops/smoke-staging are.
 
 What it reuses from the main checkout: the dependencies it compiled that sccache
 (RUSTC_WRAPPER, set by sandbox-setup) still holds in its shared cache, so the tree's
@@ -26,8 +34,8 @@ a mount without copy-on-write.
 The build compiles its queries against .sqlx/, with no database. After changing a
 query or a migration, run bin/sqlx-refresh there (AGENTS.md, SQL).
 
-Exit status: 0 the tree was made and its build started, 2 a usage error, a refused
-topic or path, or git or bgrun failed.
+Exit status: 0 the tree was made and its build started (or, with --no-build, the
+tree was made), 2 a usage error, a refused topic or path, or git or bgrun failed.
 """
 
 import argparse
@@ -79,6 +87,11 @@ def main(argv: list[str] | None = None) -> int:
         default="HEAD",
         help="the commit to detach at, as the main tree reads it (default: its HEAD)",
     )
+    parser.add_argument(
+        "--no-build",
+        action="store_true",
+        help="start no warm build, for a change with no build input",
+    )
     args = parser.parse_args(argv)
     if not TOPIC.fullmatch(args.topic):
         return fail(
@@ -109,6 +122,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     if added.returncode != 0:
         return fail(f"git worktree add failed: {last_line(added.stderr)}")
+    at = subprocess.run(
+        ["git", "-C", str(tree), "log", "-1", "--format=%h %s"],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout.strip()
+    print(f"{tree}, detached at {at}")
+    if args.no_build:
+        return 0
     (tree / "target").mkdir(exist_ok=True)
     log = tree / "target/warm.log"
     started = subprocess.run(
@@ -124,13 +146,6 @@ def main(argv: list[str] | None = None) -> int:
             "build there by hand, or remove it with `git worktree remove`"
         )
     pid = started.stdout.strip().splitlines()[-1]
-    at = subprocess.run(
-        ["git", "-C", str(tree), "log", "-1", "--format=%h %s"],
-        capture_output=True,
-        text=True,
-        check=False,
-    ).stdout.strip()
-    print(f"{tree}, detached at {at}")
     print(f"warm build: PID {pid}, log {log}; `waitone --pid {pid}` waits for it")
     return 0
 

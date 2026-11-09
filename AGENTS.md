@@ -96,6 +96,8 @@ The commit hook's `bin/sentence-lines` keeps it that way and leaves entries as t
 ## Checks
 
 Start a worktree with `bin/new-worktree TOPIC` (`-h`): it adds `../filedrawer-wt-TOPIC` beside the main tree and starts its warm build in the background, which sccache makes quick.
+For a change with no build input (below), such as most of `docs/`, `bin/` and `ops/`, add `--no-build`, since its commits run no Rust check and so need no build.
+`bin/checks-needed --why PATH` says whether a path is a build input.
 
 Committing runs the hook's checks, so read its output rather than running them first; the full check runs when wt-ship lands each commit.
 Every commit runs `bin/slop-lint` on staged markdown, lychee (links and anchors, offline) over every markdown file, actionlint with shellcheck (when a workflow is staged), shellcheck on staged shell scripts in `bin/` and `ops/`, and `bin/sentence-lines` on staged markdown, ruff, and `cargo fmt` (when a `.rs` file is staged), which write: a person's commit that needs formatting is refused with the files rewritten, to stage, and `bin/pre-commit-run` stages an agent's and checks again.
