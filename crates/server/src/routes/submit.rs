@@ -20,7 +20,7 @@ use crate::link_checks::{self, CheckedLink, LinkFlags};
 use crate::links::{self, Linked, SlugRule};
 use crate::respond::{DELIMITER, Format, card_and_warnings};
 use crate::series::{self, Cited};
-use crate::{AppState, allowance, attachments, removed_files, time};
+use crate::{AppState, allowance, attachments, removed_files, time, warnings};
 use ::time::format_description::well_known::Rfc3339;
 use ::time::{Date, OffsetDateTime};
 use analyzer::{SeriesCite, parse_series_cite, without_series};
@@ -263,7 +263,9 @@ async fn one_check(
 /// A held entry, as a reply describes it.
 struct Held<'a> {
     id: &'a str,
+    seq: i64,
     account: &'a TokenAccount,
+    source: &'a str,
     analysis: &'a Analysis,
     links: &'a [CheckedLink],
     publish_at: &'a str,
@@ -276,10 +278,17 @@ struct Held<'a> {
 
 /// The reply to a submission or resubmission: the server's fields, then below the
 /// delimiter the headline row as read, the card and the warnings.
-fn held_reply(state: &AppState, format: Format, status: StatusCode, held: &Held<'_>) -> Response {
+async fn held_reply(
+    state: &AppState,
+    format: Format,
+    status: StatusCode,
+    held: &Held<'_>,
+) -> Result<Response, AppError> {
     let Held {
         id,
+        seq,
         account,
+        source,
         analysis,
         links,
         publish_at,
@@ -293,8 +302,8 @@ fn held_reply(state: &AppState, format: Format, status: StatusCode, held: &Held<
         analysis,
     ));
     let card = render_card(analysis, &context);
-    let mut warnings: Vec<String> = analysis.warnings.iter().map(ToString::to_string).collect();
-    warnings.extend(link_checks::warnings(links));
+    let warnings =
+        warnings::entry_warnings(&state.pool, &account.id, seq, source, analysis, links).await?;
     let embargo = parse_date(analysis.fields.embargo_until.as_deref()).map(|date| date.to_string());
     let previous_line = previous.map_or(String::new(), |id| format!("previous: {id}\n"));
     let embargo_line = embargo
@@ -323,7 +332,7 @@ fn held_reply(state: &AppState, format: Format, status: StatusCode, held: &Held<
         "card": card,
         "warnings": warnings,
     });
-    format.reply(status, text, json)
+    Ok(format.reply(status, text, json))
 }
 
 /// Takes the allowance unit of entry `seq`, which `account_id` has just stored in
@@ -375,14 +384,16 @@ pub async fn submit(
     let screen_from = commit_with_unit(&state, transaction, &account.id, seq, now.date()).await?;
     let held = Held {
         id: &id,
+        seq,
         account: &account,
+        source: &accepted.source,
         analysis: &accepted.analysis,
         links: &links,
         publish_at: &publish_at,
         previous: None,
         screen_from,
     };
-    Ok(held_reply(&state, format, StatusCode::CREATED, &held))
+    held_reply(&state, format, StatusCode::CREATED, &held).await
 }
 
 /// `POST /e/<id>/versions`: a correction of a public or embargoed entry, as a new
@@ -468,14 +479,16 @@ pub async fn new_version(
     let screen_from = commit_with_unit(&state, transaction, &account.id, seq, now.date()).await?;
     let held = Held {
         id: &new_id,
+        seq,
         account: &account,
+        source: &accepted.source,
         analysis: &accepted.analysis,
         links: &links,
         publish_at: &publish_at,
         previous: Some(&id),
         screen_from,
     };
-    Ok(held_reply(&state, format, StatusCode::CREATED, &held))
+    held_reply(&state, format, StatusCode::CREATED, &held).await
 }
 
 /// Refuses one entry whose slug, runs or references don't check out. `seq` is the
@@ -591,14 +604,16 @@ pub async fn resubmit(
         commit_with_unit(&state, transaction, &account.id, entry.seq, now.date()).await?;
     let held = Held {
         id: &id,
+        seq: entry.seq,
         account: &account,
+        source: &accepted.source,
         analysis: &accepted.analysis,
         links: &links,
         publish_at: &publish_at,
         previous: entry.previous_id.as_deref(),
         screen_from,
     };
-    Ok(held_reply(&state, format, StatusCode::OK, &held))
+    held_reply(&state, format, StatusCode::OK, &held).await
 }
 
 pub async fn publish(

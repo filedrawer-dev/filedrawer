@@ -23,7 +23,7 @@ use crate::queue;
 use crate::respond::{DELIMITER, Format, card_and_warnings};
 use crate::routes::submit::{Accepted, accept, cited_series, cited_set};
 use crate::series::Cited;
-use crate::{AppState, allowance, time};
+use crate::{AppState, allowance, time, warnings};
 use ::time::{Date, OffsetDateTime};
 
 /// Every string in `value`, however deeply nested.
@@ -213,20 +213,42 @@ pub async fn submit_batch(
     };
     let seqs: Vec<i64> = members.iter().map(|(seq, _, _)| *seq).collect();
     let screen_from = allowance::last_screen_from(&state.pool, &seqs, now.date()).await?;
-    let members: Vec<(String, &Accepted, &[CheckedLink])> = members
-        .into_iter()
-        .zip(&links)
-        .map(|((_, id, member), links)| (id, member, links.as_slice()))
-        .collect();
+    let mut replied = Vec::new();
+    for ((seq, id, member), links) in members.into_iter().zip(&links) {
+        let warnings = warnings::entry_warnings(
+            &state.pool,
+            &account.id,
+            seq,
+            &member.source,
+            &member.analysis,
+            links,
+        )
+        .await?;
+        replied.push(Member {
+            id,
+            accepted: member,
+            links,
+            warnings,
+        });
+    }
     Ok(batch_reply(
         &state,
         &account,
         format,
         &batch_id,
         &publish_at,
-        &members,
+        &replied,
         screen_from,
     ))
+}
+
+/// A stored member of a batch, as its reply shows it.
+struct Member<'a> {
+    id: String,
+    accepted: &'a Accepted,
+    links: &'a [CheckedLink],
+    /// Every warning for it (`warnings::entry_warnings`).
+    warnings: Vec<String>,
 }
 
 /// A batch that passed every check: its runs, and each member with its series cite,
@@ -292,7 +314,7 @@ fn batch_reply(
     format: Format,
     batch_id: &str,
     publish_at: &str,
-    members: &[(String, &Accepted, &[CheckedLink])],
+    members: &[Member<'_>],
     screen_from: Option<Date>,
 ) -> Response {
     let publish = format!("{}/batches/{batch_id}/publish", state.public_url);
@@ -302,12 +324,18 @@ fn batch_reply(
         account.line(),
         allowance::screen_from_lines(screen_from)
     );
-    for (id, _, _) in members {
+    for Member { id, .. } in members {
         text.push_str(&format!("entry: {id} {}/e/{id}\n", state.public_url));
     }
     text.push_str(&format!("{DELIMITER}\n"));
     let mut json_members = Vec::new();
-    for (id, member, links) in members {
+    for Member {
+        id,
+        accepted: member,
+        links,
+        warnings,
+    } in members
+    {
         let context = LinkFlags::of(links).on(entries::own_card_context(
             id,
             &account.id,
@@ -315,18 +343,11 @@ fn batch_reply(
             &member.analysis,
         ));
         let card = render_card(&member.analysis, &context);
-        let mut warnings: Vec<String> = member
-            .analysis
-            .warnings
-            .iter()
-            .map(ToString::to_string)
-            .collect();
-        warnings.extend(link_checks::warnings(links));
         text.push_str(&format!(
             "\nentry {id}, slug {}\nprimary row: {}\n{}",
             member.analysis.fields.slug.as_deref().unwrap_or(""),
             member.analysis.primary_row_summary(),
-            card_and_warnings(&card, &warnings)
+            card_and_warnings(&card, warnings)
         ));
         json_members.push(json!({
             "id": id,

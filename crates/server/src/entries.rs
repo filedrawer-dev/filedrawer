@@ -1155,6 +1155,22 @@ pub async fn public_by_slug(
     .await
 }
 
+/// Whether `id` names a public entry, or any entry of `account_id`'s.
+pub async fn public_or_own(
+    pool: &SqlitePool,
+    account_id: &str,
+    id: &str,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar!(
+        r#"SELECT EXISTS (SELECT 1 FROM entries
+               WHERE id = ? AND (status = 'public' OR account_id = ?)) AS "found!: bool""#,
+        id,
+        account_id
+    )
+    .fetch_one(pool)
+    .await
+}
+
 /// Whether `account_id` has given out `slug`.
 pub async fn slug_taken(
     pool: &SqlitePool,

@@ -27,6 +27,7 @@ mod link_checks;
 mod migrations;
 mod pages;
 mod read;
+mod reader_warnings;
 mod removed_files;
 mod review;
 mod screening;

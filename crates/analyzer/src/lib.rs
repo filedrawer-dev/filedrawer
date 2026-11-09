@@ -8,6 +8,7 @@ mod card;
 mod choice;
 mod encoded;
 mod fields;
+mod file_mentions;
 mod front_matter;
 mod links;
 mod references;
@@ -27,6 +28,7 @@ pub use encoded::{
     starts_zlib,
 };
 pub use fields::{DataItem, Fields, Model, PositiveControl, SmallestEffect, Writer};
+pub use file_mentions::file_mentions;
 pub use links::{
     GithubCommit, LISTED_HOSTS, Pin, code_pin, github_commit, listed_host, zenodo_record,
 };

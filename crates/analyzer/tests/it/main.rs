@@ -7,6 +7,7 @@ mod card;
 mod cli;
 mod common;
 mod encoded;
+mod file_mentions;
 mod front_matter;
 mod references;
 mod results;

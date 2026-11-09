@@ -26,7 +26,7 @@ use crate::respond::{
     DELIMITER, Format, Reading, author_name, card_and_warnings, echoed, one_line, wants_page,
 };
 use crate::series;
-use crate::{AppState, allowance, attachments, deletion, time};
+use crate::{AppState, allowance, attachments, deletion, time, warnings};
 use analyzer::slug_references;
 use url::Url;
 
@@ -394,8 +394,15 @@ async fn own_entry(
         &analysis,
     ));
     let card = render_card(&analysis, &context);
-    let mut warnings: Vec<String> = analysis.warnings.iter().map(ToString::to_string).collect();
-    warnings.extend(link_checks::warnings(&links));
+    let warnings = warnings::entry_warnings(
+        &state.pool,
+        &account.id,
+        entry.seq,
+        &entry.source,
+        &analysis,
+        &links,
+    )
+    .await?;
     // A model wrote the reasons from the entry, so they are author text.
     let reasons: Vec<String> = entry
         .rejection_reasons
