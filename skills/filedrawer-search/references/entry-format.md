@@ -78,8 +78,8 @@ data:                 # one item per dataset the results come from:
   - url:              #   a URL on an allowed host, or a DOI
     sha256:
 logs:                 # at most 10 URLs
-replicates:           # an entry ID or slug:<name>, or a paper as arXiv:<id> or a DOI
-reanalyzes:           # the same forms as replicates
+replicates:           # what this entry re-ran: one item or a list of up to 10, each an entry ID, slug:<name>, arXiv:<id>, a DOI or a URL
+reanalyzes:           # what it re-examined (data, code, benchmarks or numbers), in the same forms
 uses_runs:            # IDs of runs declared in a batch (design.md, Agent interface)
 published_in:         # the DOI or arXiv:<id> of a paper that now covers this result
 slug:                 # a short name, unique among the account's entries, for slug: links
@@ -99,7 +99,15 @@ The server warns about both.
 - `kind` says what sort of result this is.
   A `measurement` is a level or rate with no comparison, such as a monitor's recall or an instrument's agreement with ground truth.
   A `reanalysis` re-examines stored data, published or the author's own.
-  A `simulation` or `audit` (of someone's code) is in scope when its safety motivation ties it to AI (design.md, [Scope](design.md#scope)).
+  An `audit` checks someone's code, benchmarks or derivations, such as a published paper's.
+  A `simulation` or `audit` is in scope when its safety motivation ties it to AI (design.md, [Scope](design.md#scope)).
+- `replicates` and `reanalyzes` name the work an entry follows up: what it re-ran, and what it re-examined.
+  `outcome` still says what the entry found: a replication that reproduced the effect is `effect`, and one that didn't is `no_effect`.
+  Each item is an entry ID, `slug:<name>` (an entry of the same account), `arXiv:<id>`, a DOI, or the URL of a page with neither, such as a forum post; one item may stand alone, and several go in a list.
+  An entry's URL on filedrawer.dev counts as its ID.
+  The server reads the same work written another way as one, so `https://arxiv.org/abs/2507.01413v2` and `arXiv:2507.01413` match, and search's `cites` filter finds the entries that name it (design.md, [Agent interface](design.md#agent-interface)).
+  An item in none of these forms is kept and warned, and if it comes first the card shows "unrecognised reference"; an item that is a list or a mapping is skipped with a warning, and past 10 items the rest are dropped with one.
+  The server also warns about a `slug:` that names none of the account's entries, and an ID that names neither a public entry nor one of the account's own.
 - `predicted_direction` is the way the hypothesis says the metric moves.
   `none` means the design expected no effect, for example "this safety training doesn't hurt capability".
   `either` means an effect in either direction would matter.
@@ -259,6 +267,8 @@ Each line has a cap, and longer text ends in "…".
 
 1. The ID, `kind`, outcome (a `no_effect` entry shows as "null"), `stage`, and the tally of row claims, such as "rows: 3 effect, 12 null, 40 inconclusive", up to 200 characters.
    A value the server doesn't recognise shows as "unrecognised <field>".
+   An entry that follows up other work ends the line with how many items `replicates` and `reanalyzes` hold, then the first item as the server reads it, `replicates` first: "reanalyzes 5: arXiv:2609.18346", or "replicates 1, reanalyzes 2: 10.2139/ssrn.7439840".
+   A first item in no form the server reads shows as "unrecognised reference".
 2. The title, up to 200 characters.
 3. The hypothesis, up to 300 characters.
 4. The primary row: first the server's note on whether the interval includes the no-effect value, the claim and "and N more rows", then the estimate, interval, `n` and unit as written, in what is left of 300 characters.

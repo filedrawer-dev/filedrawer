@@ -50,6 +50,14 @@ Add a new entry at the end of the topic it belongs to, or start a topic when non
 - Chosen: count them, so a reader sees how many rows the tally covers.
 - Against: the example lists only the three claims, and the "and N more rows" on line 4 already says how many rows there are.
 
+#### Card line 1 with both `replicates` and `reanalyzes`
+
+- Options: both counts and then one key, the first `replicates` item's (`replicates 1, reanalyzes 2: 10.2139/ssrn.7439840`), or each relation with its own key (`replicates 1: 10.2139/ssrn.7439840; reanalyzes 2: arXiv:2507.01413`), as the owner's preview showed on 2026-11-08.
+- Chosen: one key, last.
+  The owner kept the rule that each line starts with the server's words and the rest is the author's, and a key is author text: with two keys, the second relation's words would follow the first key, and two long keys could pass line 1's 200 characters, which only author text may be cut to fit.
+- Against: the second relation's first work is then only on the entry's page, and the preview the owner chose showed both.
+  Treating the keys as the server's words (they follow a strict grammar) and capping each would allow both.
+
 ### Entries and the analyzer
 
 #### The 100 KB entry cap
@@ -432,6 +440,15 @@ Add a new entry at the end of the topic it belongs to, or start a topic when non
 - Against: the footer then changes again at step 5, and a page that names the licences without the privacy terms may read as complete.
 
 ## Architecture
+
+### Storage
+
+#### When the reference keys are rebuilt
+
+- Options: at startup when `REFERENCE_KEYS_VERSION` differs from the stored one, or at every startup.
+- Chosen: on a version change, since a rebuild reads every entry.
+- Against: if a deploy rolls back to a binary from before `entry_references`, the entries it stores get no keys, and the next binary, finding the version current, doesn't fill them, so `cites=` misses them until each gets a new version.
+  A rebuild at every startup would cost a read of every entry, still small before launch.
 
 ### API
 
