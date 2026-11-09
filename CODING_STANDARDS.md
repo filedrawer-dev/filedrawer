@@ -94,7 +94,8 @@ Entry text, series descriptions, feedback and screening notes are written by str
   Never call `.venv/bin/...`, since the hooks also run on the host.
 - `-h` prints what the script does and its options.
   The module docstring says the same.
-- Tests live in `bin/tests` and run under `uvx --with pytest-timeout==2.4.0 pytest@9.2.0 bin/tests`, as `bin/agent-pre-commit` does; `bin/tests/pytest.ini` sets the timeout, so name a path under `bin/tests` for pytest to find it.
+- Tests live in `bin/tests` and run under `uvx --with pytest-timeout==2.4.0 --with pytest-xdist==3.8.0 pytest@9.2.0 bin/tests`, as `bin/agent-pre-commit` does; `bin/tests/pytest.ini` sets the workers and the timeout, so name a path under `bin/tests` for pytest to find it, and add `-n0` to run one file without starting workers.
+  The tests run in parallel, so they share no files, ports or settings: each works in its own `tmp_path`, and a server binds port 0.
   Each script has tests, and they don't touch the network: they serve fakes over `file://` or set an override variable, as `bin/tests/test_lychee.py` does.
 - A test sets no wall-clock limit of its own: no `timeout=` in a call and no `pytest.mark.timeout` (`bin/tests/test_no_wall_clock_limits.py`).
   pytest.ini's timeout is the one hang guard, set far above any loaded run, since a slow machine may let a bug pass but must never fail a test.

@@ -910,6 +910,17 @@ Python is fine for scripts and internal tools.
 - Monitoring: a free external uptime checker emails the owner when the site is down.
   Litestream, the restore test and the memory timer ping healthchecks.io, which emails the owner when one goes quiet or reports a failure.
 
+## Checks
+
+- `bin/tests` runs in parallel, in pytest-xdist's workers: one per core the run may use, at most 8 (`bin/tests/pytest.ini`; 2026-11-09, #37).
+  Reason: inside `heavy --alone` on the sandbox's 16 vCPUs (a laptop i7-1260P: 4 performance cores with 2 threads each and 8 efficiency cores, under one power budget), hyperfine timed the suite at 79.7 s serial (3 runs), and at 21.2 s with 4 workers, 18.0 s with 6, 17.3 s with 8, 17.5 s with 12 and 18.7 s with 16 (5 runs each, standard deviations 0.5 to 1.9 s).
+  From 6 workers on the time stays level, within the noise, while the CPU time grows, from 77 s at 6 and 93 s at 8 to 141 s at 16, time other sessions on the machine lose.
+  The cap is 8, the default in the owner's coding skill and the lowest mean here; 6 would do as well.
+  No test shares a file, port or setting with another: each works in its own `tmp_path`, and servers bind port 0.
+- No test in `bin/tests` sets a wall-clock limit of its own; pytest.ini's 600 s per test is the only one, a guard against a hang (2026-11-09, #37).
+  Reason: beside another session's check, a wizard test that takes 2 s alone ran past its 60 s limit and refused a commit (2026-11-08).
+  A slow machine may let a bug pass, but must never fail a test.
+
 ## Licences
 
 - Entries: CC-BY 4.0, for every entry.

@@ -2,8 +2,7 @@
 
 The CLI tests serve a fake release archive over file://, whose `lychee` is a shell
 script that prints its arguments, and point the script at it with the two override
-variables. bin/agent-pre-commit runs them with
-`uvx --quiet pytest@9.2.0 -q -p no:cacheprovider bin/tests`.
+variables. bin/agent-pre-commit runs them with the rest of bin/tests.
 """
 
 import hashlib
