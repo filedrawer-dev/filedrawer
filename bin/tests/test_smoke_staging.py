@@ -106,7 +106,6 @@ def screen(tmp_path):
             capture_output=True,
             text=True,
             check=False,
-            timeout=60,
         )
 
     yield run
@@ -205,7 +204,6 @@ def eval_run(tmp_path):
             capture_output=True,
             text=True,
             check=False,
-            timeout=60,
         )
 
     run.servers = servers
@@ -317,7 +315,6 @@ def families_run(tmp_path):
             capture_output=True,
             text=True,
             check=False,
-            timeout=120,
         )
         return result, server
 
@@ -379,7 +376,6 @@ def test_a_poll_interval_that_isnt_a_positive_number_is_refused_first(poll):
         capture_output=True,
         text=True,
         check=False,
-        timeout=60,
     )
     assert result.returncode == 2, result.stdout + result.stderr
     assert "FILEDRAWER_SCREEN_POLL_SECONDS" in result.stderr
@@ -413,7 +409,6 @@ def test_a_sample_takes_entries_with_a_bom_or_windows_line_ends_and_nothing_else
             capture_output=True,
             text=True,
             check=False,
-            timeout=60,
         )
     finally:
         server.shutdown()
@@ -463,7 +458,6 @@ def test_a_family_whose_entries_cant_be_read_is_a_failure_not_a_silent_gap(
             capture_output=True,
             text=True,
             check=False,
-            timeout=60,
         )
     finally:
         server.shutdown()

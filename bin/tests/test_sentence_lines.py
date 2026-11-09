@@ -195,7 +195,7 @@ LEFT = {
 
 def run(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [str(SCRIPT), *args], capture_output=True, text=True, timeout=30, check=False
+        [str(SCRIPT), *args], capture_output=True, text=True, check=False
     )
 
 
@@ -276,13 +276,17 @@ def test_a_file_that_isnt_utf8_fails_in_one_line(tmp_path):
     assert path.read_bytes() == b"One. \xff Two.\n"
 
 
-def test_a_megabyte_line_is_quick(tmp_path):
+def test_a_megabyte_line_finishes(tmp_path):
+    """pytest.ini's timeout fails this when the work grows much faster than the line,
+    as a backtracking regex's would. It takes under half a second alone and took up to
+    8.5 s beside other sessions' builds (2026-11-08), so it sets no limit of its own,
+    in CPU time either: this guest counts the time the host takes from a vCPU as the
+    task's own."""
     path = write(tmp_path / "doc.md", "Word one. " * 100_000 + "\n")
     done = subprocess.run(
         [str(SCRIPT), str(path)],
         capture_output=True,
         text=True,
-        timeout=20,
         check=False,
     )
     assert done.returncode == 0, done.stderr

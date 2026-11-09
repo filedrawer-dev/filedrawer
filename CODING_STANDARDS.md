@@ -96,6 +96,8 @@ Entry text, series descriptions, feedback and screening notes are written by str
   The module docstring says the same.
 - Tests live in `bin/tests` and run under `uvx --with pytest-timeout==2.4.0 pytest@9.2.0 bin/tests`, as `bin/agent-pre-commit` does; `bin/tests/pytest.ini` sets the timeout, so name a path under `bin/tests` for pytest to find it.
   Each script has tests, and they don't touch the network: they serve fakes over `file://` or set an override variable, as `bin/tests/test_lychee.py` does.
+- A test sets no wall-clock limit of its own: no `timeout=` in a call and no `pytest.mark.timeout` (`bin/tests/test_no_wall_clock_limits.py`).
+  pytest.ini's timeout is the one hang guard, set far above any loaded run, since a slow machine may let a bug pass but must never fail a test.
 - `uvx ruff@0.14.4 check` and `uvx ruff@0.14.4 format --check` pass.
   0.14.4 is the version `.pre-commit-config.yaml` pins; a newer ruff checks more rules than the hook does.
 - A failure prints one line saying what failed and what to do, and exits non-zero.

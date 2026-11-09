@@ -30,7 +30,6 @@ def test_nextest_kills_a_test_that_hangs(tmp_path):
         env={**os.environ, "CARGO_TARGET_DIR": str(tmp_path / "target")},
         capture_output=True,
         text=True,
-        timeout=100,
         check=False,
     )
     assert done.returncode != 0, done.stdout + done.stderr

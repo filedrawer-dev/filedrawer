@@ -153,7 +153,6 @@ def hook(
         env=hook_env,
         capture_output=True,
         text=True,
-        timeout=60,
         check=False,
     )
     assert done.returncode == code, done.stdout + done.stderr
@@ -184,7 +183,6 @@ def needed(tree: Path, *paths: str) -> set[str]:
         input="\0".join(paths),
         capture_output=True,
         text=True,
-        timeout=10,
         check=False,
     )
     assert done.returncode == 0, done.stdout + done.stderr

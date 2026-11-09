@@ -46,7 +46,6 @@ def run_check(repo, name):
         env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")},
         capture_output=True,
         text=True,
-        timeout=100,
         check=False,
     )
 

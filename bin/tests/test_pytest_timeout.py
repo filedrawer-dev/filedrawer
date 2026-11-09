@@ -24,7 +24,7 @@ def test_the_hooks_pytest_fails_a_test_that_hangs(tmp_path):
         "import time\n\ndef test_hang():\n    time.sleep(60)\n"
     )
     done = subprocess.run(
-        argv, cwd=tmp_path, capture_output=True, text=True, timeout=50, check=False
+        argv, cwd=tmp_path, capture_output=True, text=True, check=False
     )
     assert done.returncode == 1, done.stdout + done.stderr
     assert "Timeout" in done.stdout, done.stdout

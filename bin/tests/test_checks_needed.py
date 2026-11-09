@@ -18,7 +18,6 @@ def checks_needed(*paths: str) -> subprocess.CompletedProcess:
         input="\0".join(paths),
         capture_output=True,
         text=True,
-        timeout=30,
         check=False,
     )
     assert done.returncode == 0, done.stdout + done.stderr
@@ -75,7 +74,6 @@ def test_a_tree_that_isnt_a_folder_fails_in_one_line():
         input="docs/design.md",
         capture_output=True,
         text=True,
-        timeout=30,
         check=False,
     )
     assert done.returncode != 0
@@ -85,7 +83,7 @@ def test_a_tree_that_isnt_a_folder_fails_in_one_line():
 
 def test_help_says_what_it_does():
     done = subprocess.run(
-        [str(SCRIPT), "-h"], capture_output=True, text=True, timeout=30, check=False
+        [str(SCRIPT), "-h"], capture_output=True, text=True, check=False
     )
     assert done.returncode == 0
     assert "agent-pre-commit" in done.stdout

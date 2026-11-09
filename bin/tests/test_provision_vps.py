@@ -13,15 +13,6 @@ from conftest import opened_urls
 
 REPO = Path(__file__).resolve().parents[2]
 WIZARD = REPO / "ops/provision-vps"
-# A wizard that loops on a prompt its answers don't cover would hang the run: on
-# 2026-11-06 one waited 15 hours. A test that takes this long fails instead. A run
-# takes about 2 s alone, but over 60 s at nice 10 on a full machine, since each fake
-# tool starts a Python interpreter (2026-11-08), so the limit allows for load.
-WIZARD_TIMEOUT = 300
-
-# Some tests run the wizard up to three times, so they get three runs' time rather
-# than pytest.ini's 120 s.
-pytestmark = pytest.mark.timeout(3 * WIZARD_TIMEOUT)
 
 
 def run_wizard(
@@ -36,7 +27,6 @@ def run_wizard(
         capture_output=True,
         text=True,
         check=False,
-        timeout=WIZARD_TIMEOUT,
     )
 
 
@@ -58,7 +48,6 @@ def run(tmp_path, fake_host):
             capture_output=True,
             text=True,
             check=False,
-            timeout=WIZARD_TIMEOUT,
         )
 
     return run
