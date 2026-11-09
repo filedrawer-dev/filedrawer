@@ -28,8 +28,12 @@
 # fails or runs past 60 s. agent-commit-gate keeps the record of passed trees; this
 # script keeps none.
 # --quick runs clippy alone, for bin/agent-quick-check and bin/agent-commit-check; the
-# gate gives each a CHECK_BASE of its own (`agent-commit-gate -h`).
-# Every check here is a build or a test suite, so none may start outside heavy's queue.
+# gate gives each a CHECK_BASE of its own (`agent-commit-gate -h`). Both modes first
+# run the skills check, bin/skills sync --check, which needs no build and runs outside
+# heavy's queue. It is the one check that reaches the repo: it fetches origin's main
+# and skill tags into it, writing only those refs.
+# Every other check here is a build or a test suite, so none may start outside heavy's
+# queue.
 # The gate runs this script first outside it when the file names $CHECK_QUEUE_EXIT, as
 # here, with that variable set (`agent-commit-gate -h`). Each check's block then starts
 # with queue_first, which says why and exits with that code, and the gate runs the
@@ -47,7 +51,7 @@ trap 'rm -rf "$tree" "$logs"' EXIT
 trap 'exit 130' INT TERM HUP
 git -C "$repo" checkout-index -a --prefix="$tree/"
 need_every_check() {
-  printf 'rust %s\nbin-tests %s\n' "$1" "$1" >"$logs/needed"
+  printf 'rust %s\nbin-tests %s\nskills %s\n' "$1" "$1" "$1" >"$logs/needed"
 }
 # Before the git variables go, since `git commit PATHS` stages into its own index.
 if [ -z "${CHECK_BASE:-}" ]; then
@@ -77,6 +81,23 @@ cd "$tree"
 # should reach it.
 unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_OBJECT_DIRECTORY GIT_PREFIX CHECK_BASE CHECK_QUEUE_EXIT
 failed=0
+# The skills' record against origin's tags, in both modes and before any queue exit,
+# since it needs no build: its failure ends the run at once rather than after a queued
+# build. It runs from the repo, whose tags and origin/main it fetches, on the staged
+# copy. Exit 2 means it couldn't check, as a tree whose bin/skills predates --check
+# answers, so it warns and goes on.
+if needs skills && [ -x bin/skills ]; then
+  if (cd "$repo" && "$tree/bin/skills" sync --check --root "$tree") >"$logs/skills" 2>&1; then
+    :
+  else
+    status=$?
+    cat "$logs/skills"
+    if [ "$status" -eq 1 ]; then
+      exit 1
+    fi
+    echo "agent-pre-commit: couldn't check the skills (bin/skills exit $status), so that check was skipped" >&2
+  fi
+fi
 if [ -z "$quick" ] && needs bin-tests; then
   queue_first bin-tests
   uvx --quiet --with pytest-timeout==2.4.0 --with pytest-xdist==3.8.0 pytest@9.2.0 -q -p no:cacheprovider bin/tests >"$logs/pytest" 2>&1 || { cat "$logs/pytest"; failed=1; }

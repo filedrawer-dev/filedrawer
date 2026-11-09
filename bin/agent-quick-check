@@ -2,10 +2,11 @@
 # The quick check for agents' small fix commits: llm-toolbox's agent-commit-gate runs it
 # in place of agent-pre-commit for a fixup!, squash! or amend! commit of at most 20
 # lines, in files it only modifies, none a test; wt-ship runs the full check on each
-# commit when it lands. It is agent-pre-commit's clippy, the one fast check
-# the pre-commit hook lacks (cargo fmt and ruff run there), on a copy of what's staged,
-# and only when the change since CHECK_BASE holds a build input, as agent-pre-commit
-# decides. Since clippy is a build, it waits its turn in heavy's queue: this file names
-# $CHECK_QUEUE_EXIT, so the gate runs it first outside the queue, and agent-pre-commit
-# exits with that code before clippy starts (`agent-commit-gate -h`).
+# commit when it lands. It is agent-pre-commit's --quick, on a copy of what's staged:
+# the skills check, when the change since CHECK_BASE touches the skills, and clippy, the
+# one fast check the pre-commit hook lacks (cargo fmt and ruff run there), when it holds
+# a build input, as agent-pre-commit decides. Since clippy is a build, it waits its
+# turn in heavy's queue: this file names $CHECK_QUEUE_EXIT, so the gate runs it first
+# outside the queue, where the skills check runs, and agent-pre-commit exits with that
+# code before clippy starts (`agent-commit-gate -h`).
 exec "$(dirname "$0")/agent-pre-commit" --quick

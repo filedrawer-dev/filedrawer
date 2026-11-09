@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Which of bin/agent-pre-commit's slow checks a change needs.
+"""Which of bin/agent-pre-commit's checks a change needs.
 
     git diff --cached -z --name-only --no-renames BASE | bin/checks-needed [TREE]
     bin/checks-needed --why PATH [TREE]
@@ -12,6 +12,7 @@ name and the first path that needs it:
 
     rust       cargo nextest, cargo test --doc and clippy
     bin-tests  pytest over bin/tests
+    skills     bin/skills sync --check, which needs no build
 
 No paths needs every check: with nothing changed, nothing narrows them.
 
@@ -50,6 +51,8 @@ crate (bin/tests/test_checks_needed.py reads their references), or is what the s
 there reach, as above. That takes in the bin tests' own `REPO / "..."` joins. Mentions
 in prose don't count.
 
+A path needs skills when it lies in skills/, or is docs/entry-format.md or bin/skills.
+
 The rules miss a path a crate builds without a `..` step, and a Python path not
 derived from __file__. CI runs every check, so it catches what they miss.
 """
@@ -81,6 +84,9 @@ RUST_PATHS = (
 RUST_NAMES = frozenset({"Cargo.toml", "Cargo.lock", "build.rs"})
 RUST_NAMES_RULE = "any Cargo.toml, Cargo.lock or build.rs: a build input"
 BIN_TESTS_PATHS = ("bin", "ops", ".gitattributes")
+# What the skills' record follows: their folders, the format each copies, and the
+# script that keeps it.
+SKILLS_PATHS = ("skills", "docs/entry-format.md", "bin/skills")
 CRATE_SOURCES = (".rs", ".toml", ".html")
 # Not walked: git's own folder, and cargo's output in a working tree.
 SKIP_DIRS = {".git", "target"}
@@ -456,6 +462,13 @@ def main(argv: list[str]) -> int:
     checks = {
         "rust": Inputs(tree, rust, by_name=dict.fromkeys(RUST_NAMES, RUST_NAMES_RULE)),
         "bin-tests": Inputs(tree, bin_tests),
+        "skills": Inputs(
+            tree,
+            {
+                ref: Step(f"{ref}: the skills' record follows it")
+                for ref in SKILLS_PATHS
+            },
+        ),
     }
     if why is not None:
         chains = {name: inputs.why(why) for name, inputs in checks.items()}

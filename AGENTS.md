@@ -52,7 +52,8 @@ The field test's entries and logs are in `field-test/`, git-excluded and local o
 - `skills/`: `filedrawer-search` and `filedrawer-submit`, the skills agents install from this repo's git tags and the server serves at `/skills/<name>/` (design.md, Skills).
   They aren't skills for working on this repo, which live in `.claude/skills/`.
   They describe only what the server does, so update them with each change to a route.
-  Then run `bin/skills sync`, which also follows a change to `docs/entry-format.md`: it copies the format into each skill and records each version in `skills/versions.txt`, bumping a version already pushed; a test refuses a skill changed without it.
+  Then run `bin/skills sync`, which also follows a change to `docs/entry-format.md`: it copies the format into each skill and records each version in `skills/versions.txt`, bumping past every version origin's tags or origin/main already hold; a test refuses a skill changed without it.
+  Commits and landings run `bin/skills sync --check`, which fetches origin's tags first and refuses a version tagged with other contents.
   CI's `release-skills` job tags each new version before staging deploys, with a deploy key `ops/protect-skill-tags` sets up (`-h`).
 - `ops/smoke-staging` follows the submit skill against staging as an agent would, and checks that each skill's tag holds what the site serves; `screen` checks staging's real screen and `eval` its labelled cases (`ops/screen-eval/`).
   CI runs the first two after each deploy, each as a test account of its own.
@@ -98,8 +99,8 @@ Start a worktree with `bin/new-worktree TOPIC` (`-h`): it adds `../filedrawer-wt
 
 Committing runs the hook's checks, so read its output rather than running them first; the full check runs when wt-ship lands each commit.
 Every commit runs `bin/slop-lint` on staged markdown, lychee (links and anchors, offline) over every markdown file, actionlint with shellcheck (when a workflow is staged), and `bin/sentence-lines` on staged markdown, ruff, and `cargo fmt` (when a `.rs` file is staged), which write: a person's commit that needs formatting is refused with the files rewritten, to stage, and `bin/pre-commit-run` stages an agent's and checks again.
-An agent's commit then runs only clippy, and only for a build input (`bin/agent-commit-check`, which `agent-commit-gate` runs in the full check's place because `bin/git-pre-commit` sets `AGENT_CHECK_AT_COMMIT`): run the tests you wrote or touched before you commit.
-wt-ship runs the full check, `bin/agent-pre-commit`, on each commit when it lands, while it holds the main tree: the tests in `bin/tests`, clippy and the Rust tests, each only when the change needs it.
+An agent's commit then runs only clippy, for a build input, and the skills check, for a change to the skills (`bin/agent-commit-check`, which `agent-commit-gate` runs in the full check's place because `bin/git-pre-commit` sets `AGENT_CHECK_AT_COMMIT`): run the tests you wrote or touched before you commit.
+wt-ship runs the full check, `bin/agent-pre-commit`, on each commit when it lands, while it holds the main tree: the skills check, the tests in `bin/tests`, clippy and the Rust tests, each only when the change needs it.
 The change is what differs from `$CHECK_BASE`, which llm-toolbox's `agent-commit-gate` sets to the nearest commit that passed: at a commit, usually HEAD, so what's staged; on wt-ship's recheck, the commit before, or for the first, the tip it rebased onto.
 The Rust checks run for a build input: anything in `crates/`, the Cargo files, `.sqlx/`, `.cargo/` and `.config/`, and the files the crates embed or their tests read, such as `docs/entry-format.md` and `ops/smoke-staging`.
 `bin/tests` runs for a change in `bin/`, `ops/` or a crate (one of its tests reads the crates' references), or to a file those tests read, such as `.pre-commit-config.yaml`.
@@ -107,7 +108,7 @@ A commit of other docs runs neither, and doesn't wait in heavy's queue either.
 Each check asks `agent-commit-gate` for a place there only as it starts (`$CHECK_QUEUE_EXIT`, `agent-commit-gate -h`), so a commit that needs none passes in seconds.
 `bin/checks-needed` finds the embeds and reads in the sources on each commit, so a new `include_str!` needs no list kept by hand; its `-h` gives the rules.
 Every check runs without `CHECK_BASE` (CI, an agent without llm-toolbox, or no commit known to pass), when nothing differs from it, when the change touches those rules, when git can't diff against it, and when `bin/checks-needed` is missing, fails or runs past 60 s.
-A small fix commit gets the same clippy through `bin/agent-quick-check`.
+A small fix commit gets the same two checks through `bin/agent-quick-check`.
 CI runs all of them.
 Run `cargo fmt` after each batch of edits to `.rs` files: otherwise the hook reformats them at commit, and edits you make after that no longer match the text you hold.
 `python3 install.py` enables the hooks once per clone and installs cargo-nextest and sqlx-cli; sandbox-setup runs it after a recreate.

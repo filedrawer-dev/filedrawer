@@ -53,8 +53,10 @@ def test_the_other_docs_need_no_check():
 @pytest.mark.parametrize(
     "path, checks",
     [
-        # include_str! from crates/server/src/routes/docs.rs
-        ("docs/entry-format.md", {"rust"}),
+        # include_str! from crates/server/src/routes/docs.rs; each skill copies it
+        ("docs/entry-format.md", {"rust", "skills"}),
+        # include_str! from crates/server (the skills it serves), and their record
+        ("skills/filedrawer-submit/SKILL.md", {"rust", "skills"}),
         # crates/server/tests/it/smoke.rs runs it and reads these at run time
         ("ops/smoke-staging", {"rust", "bin-tests"}),
         ("ops/smoke-fixture.md", {"rust", "bin-tests"}),
@@ -74,8 +76,14 @@ def test_the_checks_a_change_to_each_path_needs(path, checks):
 
 
 def test_why_names_the_crate_source_that_embeds_a_doc():
-    lines = why("docs/entry-format.md").splitlines()
-    assert lines[0] == "rust", lines
+    output = why("docs/entry-format.md").splitlines()
+    # The rust check's chain, up to the next check's name (skills follows it too).
+    end = next(
+        (i for i, line in enumerate(output[1:], 1) if not line.startswith(" ")),
+        len(output),
+    )
+    lines = output[:end]
+    assert lines[0] == "rust", output
     assert lines[-1] == "  docs/entry-format.md", lines
     assert re.fullmatch(
         r"  crates/server/\S+\.rs:\d+: \S*/docs/entry-format\.md"
@@ -85,7 +93,7 @@ def test_why_names_the_crate_source_that_embeds_a_doc():
 
 
 def test_nothing_staged_needs_every_check():
-    assert needed() == {"rust", "bin-tests"}
+    assert needed() == {"rust", "bin-tests", "skills"}
 
 
 def test_each_check_names_the_first_path_that_needs_it():

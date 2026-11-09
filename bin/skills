@@ -2,29 +2,43 @@
 """Keep the skills in skills/ on record, and tag each new version (design.md, Skills).
 
     bin/skills sync                  after changing a skill or docs/entry-format.md
+    bin/skills sync --check          exit 1, writing nothing, when sync would change a file
     bin/skills release --push-url U  in CI: tag each new version, pushing to U
 
-sync copies docs/entry-format.md into each skill's references/. A version is frozen
-once pushed, since it is then tagged or about to be: when origin/main's versions.txt
-records a skill's version with another hash than its folder's, sync bumps
-metadata.version, and every X-Filedrawer-Skill header the skill sends, to the next
-number. Then it records each skill's version and hash. It reads origin/main as last
-fetched, and needs no network.
+sync copies docs/entry-format.md into each skill's references/ and records each
+skill's version and folder hash in skills/versions.txt. A version is frozen once
+pushed: when origin's tag skill-NAME-vN, or origin/main's versions.txt, records version
+N of a skill with another hash than its folder's, sync bumps metadata.version, and
+every X-Filedrawer-Skill header the skill sends, to one past the highest version
+either records. A folder's hash covers what `git add -A` would stage in it, and sync
+names any untracked files there, since a commit that leaves them out won't match the
+record.
+
+sync and --check first fetch origin's main and its skill-* tags, for at most
+$FILEDRAWER_FETCH_SECONDS seconds (20); when the fetch fails they say so and compare
+with what was fetched last. --check prints a line for each file sync would change; the
+commit checks run it. --root DIR reads or writes the tree in
+DIR, such as agent-pre-commit's copy of the index, which has no .git, while git still
+runs on the repo holding the current directory.
 
 release, for each skill at version N: when origin has the tag skill-NAME-vN, it
 fetches the tag and fails unless the tag's folder equals this commit's; when origin
 hasn't, it tags this commit and pushes the tag to U. Run it from the repo, on the
 commit to tag.
 
-Both work on the git repo holding the current directory.
+Exit status: 0 in step, written or tagged; 1 a file sync would change (--check), or a
+tag that holds another folder (release); 2 something it couldn't read or run, such as
+a record that isn't NAME VERSION SHA256, or a usage error.
 """
 
 import argparse
 import hashlib
+import os
 import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 RECORD_HEADER = """\
 # Each skill's version, and its folder's hash as
@@ -32,16 +46,26 @@ RECORD_HEADER = """\
 # prints it. `bin/skills sync` writes this file;
 # crates/server/tests/it/skill_folders.rs checks it.
 """
+# What the fetch updates, and nothing else: origin's main and the skills' tags.
+FETCHED = (
+    "+refs/heads/main:refs/remotes/origin/main",
+    "+refs/tags/skill-*:refs/tags/skill-*",
+)
+TAG = re.compile(r"^skill-(.+)-v(\d+)$")
+
+
+class Unreadable(Exception):
+    """Something the run couldn't read or run: exit status 2."""
 
 
 def git(root: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
-    """git ARGS in ROOT; when CHECK, a failure ends the run with git's last line."""
+    """git ARGS in ROOT; when CHECK, a failure raises Unreadable with git's last line."""
     done = subprocess.run(
         ["git", *args], cwd=root, capture_output=True, text=True, check=False
     )
     if check and done.returncode != 0:
         last = done.stderr.strip().splitlines()[-1:] or [f"exit {done.returncode}"]
-        sys.exit(f"git {' '.join(args)} failed: {last[0]}")
+        raise Unreadable(f"git {' '.join(args)} failed: {last[0]}")
     return done
 
 
@@ -53,22 +77,12 @@ def skill_names(root: Path) -> list[str]:
     return sorted(p.parent.name for p in (root / "skills").glob("*/SKILL.md"))
 
 
-def folder_hash(folder: Path) -> str:
-    files = sorted(
-        "./" + p.relative_to(folder).as_posix()
-        for p in folder.rglob("*")
-        if p.is_file()
-    )
-    listing = "".join(
-        f"{hashlib.sha256((folder / f).read_bytes()).hexdigest()}  {f}\n" for f in files
-    )
-    return hashlib.sha256(listing.encode()).hexdigest()
-
-
 def version(skill_md: Path) -> int:
     match = re.search(r'^  version: "(\d+)"$', skill_md.read_text(), re.MULTILINE)
     if not match:
-        sys.exit(f'{skill_md}: no metadata.version line, such as `  version: "1"`')
+        raise Unreadable(
+            f'{skill_md}: no metadata.version line, such as `  version: "1"`'
+        )
     return int(match.group(1))
 
 
@@ -78,50 +92,218 @@ def parse_record(text: str, source: str) -> dict[str, tuple[int, str]]:
         if line and not line.startswith("#"):
             fields = line.split()
             if len(fields) != 3 or not fields[1].isdigit():
-                sys.exit(
+                raise Unreadable(
                     f"{source}: {line!r} isn't NAME VERSION SHA256; fix it, then rerun"
                 )
             record[fields[0]] = (int(fields[1]), fields[2])
     return record
 
 
-def sync(root: Path) -> None:
-    record_file = root / "skills/versions.txt"
+def fetch(repo: Path) -> None:
+    """Fetches origin's main and skill tags into the repo, within the time limit. When
+    that fails it says so, and the comparison uses what was fetched last."""
+    seconds = os.environ.get("FILEDRAWER_FETCH_SECONDS", "20")
+    done = subprocess.run(
+        # SIGTERM first, on which git removes its lock files; SIGKILL 5 s later.
+        ["timeout", "-k", "5", seconds, "git"]
+        + ["-c", "http.lowSpeedLimit=1000", "-c", "http.lowSpeedTime=10"]
+        + ["fetch", "--quiet", "--no-auto-gc", "--no-auto-maintenance"]
+        + ["--no-write-fetch-head", "origin", *FETCHED],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=os.environ | {"GIT_TERMINAL_PROMPT": "0"},
+    )
+    if done.returncode == 0:
+        return
+    said = done.stderr.strip().splitlines()
+    fatal = [line.removeprefix("fatal: ") for line in said if line.startswith("fatal:")]
+    why = (fatal or said[-1:] or [f"exit {done.returncode}"])[0]
+    if done.returncode in (124, 137):
+        why = f"no answer within {seconds} s"
+    # The reflog's date is the fetch's; the commit's own date may be years older.
+    entry = git(
+        repo,
+        "log",
+        "-g",
+        "-1",
+        "--date=relative",
+        "--format=%gd",
+        "refs/remotes/origin/main",
+        check=False,
+    ).stdout.strip()
+    when = entry.partition("@{")[2].rstrip("}")
+    print(
+        f"skills: couldn't fetch origin ({why}); comparing with what was fetched "
+        + (f"last, {when}" if when else "before, if anything"),
+        file=sys.stderr,
+    )
+
+
+def frozen(repo: Path) -> dict[str, dict[int, str]]:
+    """Each skill's versions that origin has frozen, with the folder hash each holds:
+    from the skill-NAME-vN tags and origin/main's record, as last fetched."""
+    known: dict[str, dict[int, str]] = {}
+    tags = git(
+        repo, "for-each-ref", "--format=%(refname:short)", "refs/tags/skill-*"
+    ).stdout.split()
+    for tag in tags:
+        match = TAG.match(tag)
+        if not match:
+            continue
+        name, number = match[1], int(match[2])
+        text = git(repo, "show", f"{tag}:skills/versions.txt", check=False).stdout
+        recorded = parse_record(text, f"{tag}:skills/versions.txt").get(name)
+        if recorded and recorded[0] == number:
+            known.setdefault(name, {})[number] = recorded[1]
+    origin = "refs/remotes/origin/main"
+    text = git(repo, "show", f"{origin}:skills/versions.txt", check=False).stdout
+    for name, (number, digest) in parse_record(
+        text, f"{origin}:skills/versions.txt"
+    ).items():
+        known.setdefault(name, {}).setdefault(number, digest)
+    return known
+
+
+def folder_files(tree: Path, name: str, in_git: bool) -> set[str]:
+    """The files of skills/NAME, relative to it: in the repo's own work tree, what
+    `git add -A` would stage there; in a tree with no .git, every file."""
+    folder = tree / "skills" / name
+    if not in_git:
+        return {
+            p.relative_to(folder).as_posix() for p in folder.rglob("*") if p.is_file()
+        }
+    listed = git(
+        tree,
+        "ls-files",
+        "-z",
+        "--cached",
+        "--others",
+        "--exclude-standard",
+        "--",
+        f"skills/{name}",
+    ).stdout
+    prefix = f"skills/{name}/"
+    return {
+        path.removeprefix(prefix)
+        for path in listed.split("\0")
+        if path and (tree / path).is_file()
+    }
+
+
+def folder_hash(folder: Path, files: set[str], planned: dict[Path, bytes]) -> str:
+    """The hash versions.txt's header defines, over `files` as `planned` would leave
+    them."""
+    listing = ""
+    for name in sorted("./" + f for f in files):
+        path = folder / name[2:]
+        data = planned[path] if path in planned else path.read_bytes()
+        listing += f"{hashlib.sha256(data).hexdigest()}  {name}\n"
+    return hashlib.sha256(listing.encode()).hexdigest()
+
+
+class Plan(NamedTuple):
+    """What sync would do to a tree."""
+
+    writes: dict[Path, bytes]
+    # Each skill whose version is frozen with other contents: (name, version, new).
+    bumps: list[tuple[str, int, int]]
+    # A line for each other file that is out of step.
+    stale: list[str]
+
+
+def plan(tree: Path, known: dict[str, dict[int, str]], in_git: bool) -> Plan:
+    """What sync would write in `tree`, and why."""
+    record_file = tree / "skills/versions.txt"
     record = (
         parse_record(record_file.read_text(), "skills/versions.txt")
         if record_file.exists()
         else {}
     )
-    pushed_text = git(
-        root, "show", "origin/main:skills/versions.txt", check=False
-    ).stdout
-    pushed = parse_record(pushed_text, "origin/main:skills/versions.txt")
-    format_text = (root / "docs/entry-format.md").read_bytes()
-    for name in skill_names(root):
-        folder = root / "skills" / name
-        (folder / "references").mkdir(exist_ok=True)
-        (folder / "references/entry-format.md").write_bytes(format_text)
+    on_record = dict(record)
+    format_text = (tree / "docs/entry-format.md").read_bytes()
+    planned: dict[Path, bytes] = {}
+    bumps = []
+    said = []
+    for name in skill_names(tree):
+        folder = tree / "skills" / name
+        files = folder_files(tree, name, in_git) | {"references/entry-format.md"}
+        copy = folder / "references/entry-format.md"
+        if not copy.exists() or copy.read_bytes() != format_text:
+            planned[copy] = format_text
+            said.append(f"{copy.relative_to(tree)} differs from docs/entry-format.md")
         skill = folder / "SKILL.md"
         number = version(skill)
-        text = skill.read_text()
-        pushed_number, pushed_hash = pushed.get(name, (None, None))
-        if pushed_number == number and pushed_hash != folder_hash(folder):
-            text = text.replace(f'  version: "{number}"', f'  version: "{number + 1}"')
+        digest = folder_hash(folder, files, planned)
+        versions = known.get(name, {})
+        if versions.get(number, digest) != digest:
+            new = max(versions) + 1
+            text = skill.read_text()
+            text = text.replace(f'  version: "{number}"', f'  version: "{new}"')
             text = text.replace(
                 f'X-Filedrawer-Skill: {name}/{number}"',
-                f'X-Filedrawer-Skill: {name}/{number + 1}"',
+                f'X-Filedrawer-Skill: {name}/{new}"',
             )
-            skill.write_text(text)
-            print(f"{name}: version {number} was pushed, so this is {number + 1}")
-            number += 1
-        record[name] = (number, folder_hash(folder))
+            planned[skill] = text.encode()
+            bumps.append((name, number, new))
+            number = new
+            digest = folder_hash(folder, files, planned)
+        record[name] = (number, digest)
     lines = "".join(
         f"{name} {n} {digest}\n" for name, (n, digest) in sorted(record.items())
     )
-    record_file.write_text(RECORD_HEADER + lines)
+    if not record_file.exists() or record_file.read_text() != RECORD_HEADER + lines:
+        planned[record_file] = (RECORD_HEADER + lines).encode()
+        stale = [name for name in record if on_record.get(name) != record[name]]
+        said.extend(
+            f"skills/versions.txt: {name}'s line doesn't match its folder (a file there "
+            "that isn't staged, or one that is but shouldn't be, also does this: stage "
+            "or remove it)"
+            for name in stale
+        )
+        if not stale:
+            said.append("skills/versions.txt differs from what sync writes")
+    return Plan(planned, bumps, said)
 
 
-def release(root: Path, push_url: str) -> None:
+FROZEN = "{0}: version {1} is tagged or pushed with other contents"
+
+
+def sync(repo: Path, tree: Path) -> int:
+    fetch(repo)
+    in_git = tree == repo
+    planned = plan(tree, frozen(repo), in_git)
+    for path, data in planned.writes.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    for name, number, new in planned.bumps:
+        print(FROZEN.format(name, number) + f", so this is {new}")
+    if in_git:
+        untracked = git(
+            tree, "ls-files", "-z", "--others", "--exclude-standard", "--", "skills"
+        ).stdout
+        for path in filter(None, untracked.split("\0")):
+            print(
+                f"{path} isn't tracked: a commit that leaves it out won't match the record"
+            )
+    return 0
+
+
+def check(repo: Path, tree: Path) -> int:
+    fetch(repo)
+    planned = plan(tree, frozen(repo), tree == repo)
+    if not planned.writes:
+        return 0
+    for name, number, new in planned.bumps:
+        print(FROZEN.format(name, number) + f"; sync makes it {new}")
+    for line in planned.stale:
+        print(line)
+    print("Run `bin/skills sync`, then stage what it writes.")
+    return 1
+
+
+def release(root: Path, push_url: str) -> int:
     failed = False
     for name in skill_names(root):
         number = version(root / "skills" / name / "SKILL.md")
@@ -132,7 +314,7 @@ def release(root: Path, push_url: str) -> None:
                 print(f"tagged {tag}")
                 continue
             if not tag_on_origin(root, tag):
-                sys.exit(f"pushing {tag} failed:\n{pushed.stderr}")
+                raise Unreadable(f"pushing {tag} failed:\n{pushed.stderr}")
         git(
             root,
             "fetch",
@@ -159,8 +341,7 @@ def release(root: Path, push_url: str) -> None:
                 file=sys.stderr,
             )
             failed = True
-    if failed:
-        sys.exit(1)
+    return 1 if failed else 0
 
 
 def tag_on_origin(root: Path, tag: str) -> bool:
@@ -169,21 +350,41 @@ def tag_on_origin(root: Path, tag: str) -> bool:
     )
 
 
-def main() -> None:
+def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("sync", help="copy the format and record each skill's version")
+    sync_parser = commands.add_parser(
+        "sync", help="copy the format and record each skill's version"
+    )
+    sync_parser.add_argument(
+        "--check",
+        action="store_true",
+        help="write nothing; exit 1, naming each, when sync would change a file",
+    )
+    sync_parser.add_argument(
+        "--root",
+        type=Path,
+        help="the tree to read or write (default: the repo holding this folder)",
+    )
     rel = commands.add_parser("release", help="tag each new skill version")
     rel.add_argument("--push-url", required=True, help="where to push new tags")
     args = parser.parse_args()
-    root = repo_root()
-    if args.command == "sync":
-        sync(root)
-    else:
-        release(root, args.push_url)
+    try:
+        repo = repo_root()
+        if args.command == "release":
+            return release(repo, args.push_url)
+        tree = args.root.resolve() if args.root else repo
+        return check(repo, tree) if args.check else sync(repo, tree)
+    except (Unreadable, OSError) as error:
+        print(f"skills: {error}", file=sys.stderr)
+        return 2
+    except Exception as error:  # noqa: BLE001
+        # A bug here mustn't read as a stale skill, which exit 1 means.
+        print(f"skills: couldn't check: {error!r}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

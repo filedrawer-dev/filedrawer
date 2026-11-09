@@ -257,6 +257,11 @@ def test_renaming_an_embedded_file_runs_the_cargo_checks(repo):
         ("tool.toml", {"bin-tests"}),  # a bin test joins it onto the repo
         ("bin/other", {"bin-tests"}),
         ("docs/notes.md", set()),  # in prose and a scratch path only
+        # The skills' record follows their folders and the format they copy.
+        ("skills/demo/SKILL.md", {"skills"}),
+        ("skills/versions.txt", {"skills"}),
+        ("docs/entry-format.md", {"skills"}),
+        ("bin/skills", {"skills", "bin-tests"}),
     ],
 )
 def test_the_checks_a_change_to_each_reference_needs(template, path, checks):
@@ -566,3 +571,88 @@ def test_a_check_queue_exit_that_is_no_exit_status_from_1_to_255_is_ignored(
 )
 def test_each_check_opts_in_to_a_first_run_outside_the_queue(script):
     assert "CHECK_QUEUE_EXIT" in (REPO / "bin" / script).read_text()
+
+
+SKILL_MD = """---
+name: demo
+description: A demo skill.
+metadata:
+  version: "1"
+---
+
+# Demo
+"""
+
+
+@pytest.fixture
+def skills_repo(repo) -> Path:
+    """`repo` with a skill on record, as `bin/skills sync` leaves it, and no origin:
+    the check's fetch fails, so it compares the tree with itself."""
+    (repo / "docs/entry-format.md").write_text("# Format\n")
+    (repo / "skills/demo").mkdir(parents=True)
+    (repo / "skills/demo/SKILL.md").write_text(SKILL_MD)
+    shutil.copy(REPO / "bin/skills", repo / "bin/skills")
+    done = subprocess.run(
+        [str(repo / "bin/skills"), "sync"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert done.returncode == 0, done.stdout + done.stderr
+    commit(repo, "a skill")
+    return repo
+
+
+def edit_skill(repo: Path, text: str) -> None:
+    change(repo, "skills/demo/SKILL.md", SKILL_MD.replace("# Demo", text))
+
+
+def test_a_skill_change_synced_passes_with_no_build_or_test(skills_repo):
+    edit_skill(skills_repo, "# Demo, edited")
+    subprocess.run(
+        [str(skills_repo / "bin/skills"), "sync"],
+        cwd=skills_repo,
+        check=True,
+        capture_output=True,
+    )
+    git(skills_repo, "add", "-A")
+    assert run(skills_repo) == set()
+
+
+@pytest.mark.parametrize("args", [(), ("--quick",)], ids=["full", "quick"])
+def test_a_skill_changed_without_sync_is_refused_in_both_modes(skills_repo, args):
+    edit_skill(skills_repo, "# Demo, edited")
+    _, done = hook(skills_repo, *args, code=1)
+    assert "skills/versions.txt" in done.stdout + done.stderr
+    assert "bin/skills sync" in done.stdout + done.stderr
+
+
+def test_outside_the_queue_a_stale_skill_fails_at_once_not_after_the_queue(skills_repo):
+    edit_skill(skills_repo, "# Demo, edited")
+    change(skills_repo, "crates/app/src/lib.rs", "pub fn f() {}\n")
+    _, done = hook(skills_repo, env=QUEUE_EXIT, code=1)
+    assert (skills_repo.parent / "calls").read_text() == ""
+    assert "skills/versions.txt" in done.stdout + done.stderr
+
+
+def test_an_unrelated_change_runs_no_skills_check(skills_repo):
+    # A stale skill already committed: a skills check that ran would refuse.
+    edit_skill(skills_repo, "# Demo, stale")
+    commit(skills_repo, "a stale skill")
+    change(skills_repo, "docs/notes.md")
+    assert run(skills_repo) == set()
+
+
+def test_a_skills_script_that_cant_check_warns_and_passes(skills_repo):
+    # A worktree forked before `sync --check` existed, say: argparse exits 2.
+    old = (
+        "#!/bin/sh\necho 'skills: error: unrecognized arguments: --check' >&2\nexit 2\n"
+    )
+    change(skills_repo, "bin/skills", old)
+    (skills_repo / "bin/skills").chmod(0o755)
+    git(skills_repo, "add", "bin/skills")
+    edit_skill(skills_repo, "# Demo, edited")
+    ran, done = hook(skills_repo)
+    assert "pytest" in ran  # bin/skills changed, so the bin tests run as before
+    assert "couldn't check the skills" in done.stderr
