@@ -974,9 +974,11 @@ check "skill.md is live" '[[ $CODE == 200 ]]'
 # browser's request here carries one too.
 # home_type [CURL-ARGS...]: the Content-Type of /.
 home_type() { curl -s -o /dev/null -w '%{content_type}' --max-time 10 -K <(headers) "$@" "$base/"; }
+# shellcheck disable=SC2034  # read by check's condition
 browser=$(home_type -H 'Sec-Fetch-Dest: document' -H 'Sec-Fetch-Mode: navigate' \
   -H 'Authorization: Basic c21va2U6dGVzdA==')
 check "a browser opening / gets the page" '[[ $browser == text/html* ]]'
+# shellcheck disable=SC2034  # read by check's condition
 agent=$(home_type)
 check "an agent opening / gets plain text" '[[ $agent == text/plain* ]]'
 
@@ -1049,6 +1051,7 @@ check "batch: 201 pending" '[[ $CODE == 201 && $(field status) == pending ]]'
 BID=$(field id)
 mapfile -t members < <(printf '%s\n' "$BODY" | sed -n 's/^entry: \([^ ]*\) .*/\1/p')
 PILOT=${members[0]:-}
+# shellcheck disable=SC2034  # read by check's condition
 MAIN=${members[1]:-}
 req POST "/e/$PILOT/publish"
 check "a member can't publish alone" '[[ $CODE == 409 ]]'
