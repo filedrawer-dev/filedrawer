@@ -43,7 +43,10 @@ gh api -X PUT "$repo/environments/skill-tags" --input - > /dev/null <<'JSON'
 {"deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}}
 JSON
 policies="$repo/environments/skill-tags/deployment-branch-policies"
-if ! gh api "$policies" --jq '.branch_policies[].name' | grep -qx main; then
+# Read whole first: `gh … | grep -q`, under pipefail, fails when grep's early exit
+# kills gh with SIGPIPE, and a main policy already there would be made again.
+names=$(gh api "$policies" --jq '.branch_policies[].name')
+if ! grep -qx main <<<"$names"; then
   gh api -X POST "$policies" -f name=main -f type=branch > /dev/null
 fi
 gh secret set SKILL_TAGS_SSH_KEY --env skill-tags < "$key_dir/key"
