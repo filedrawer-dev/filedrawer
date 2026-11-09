@@ -1,51 +1,73 @@
 #!/usr/bin/env python3
-"""Compare entry-check's outcomes on the field-test entries with a saved baseline.
+"""Compare entry-check's outcomes on the field-test entries with those of an earlier
+entry-check.
 
-    bin/field-test-diff save    run entry-check over every field-test/**/*.md and save
-                                each file's outcome as the baseline
-    bin/field-test-diff         run it again and print only the files whose outcome
-                                changed since the baseline; exit 1 when any did
+    bin/field-test-diff                 the working tree's entry-check against the one
+                                        at the commit this branch forked from main
+    bin/field-test-diff --against REV   against the one at REV instead
 
-Run `save` before an analyzer change and the plain form after it: the field-test
-entries are honest work, so a newly refused one is a false refusal to look at. An
+Run it after an analyzer change, through heavy, since it builds: the field-test
+entries are honest work, so a newly refused one is a false refusal to look at. It
+prints the commit it compares with, then only the files whose outcome changed. An
 outcome is accepted or refused, the warning count, and each refusal's reason cut
-before its first `(` or colon, so the baseline and the output hold no entry text
-(every refusal puts an author's value after one of them) but keep the field a
-refusal names: field-test/ is local and never published (AGENTS.md). It builds
-entry-check with cargo first, unless --entry-check names a command.
+before its first `(` or colon, so the output holds no entry text (every refusal puts
+an author's value after one of them) but keeps the field a refusal names: field-test/
+is local and never published (AGENTS.md).
 
-Exit status: 0 unchanged (or saved), 1 an outcome changed, 2 no baseline, a usage
-error, or entry-check couldn't be built or run.
+The entry-check at REV is built in target/field-test-base/: REV's files go in src/,
+emptied first and written with the current time (an archive of REV's tree), since cargo
+would take files dated as the commit for older than its last build and reuse that
+build; it builds with a target folder of its own there, kept across runs, and the
+binary is kept per tree, so a second run at the same commit builds nothing.
+
+Exit status: 0 unchanged, 1 an outcome changed, 2 a usage error, an unknown commit,
+or an entry-check that couldn't be built or run.
 """
 
 import argparse
-import json
+import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-DEFAULT_BASELINE = REPO / "target/field-test-baseline.json"
+BASE = REPO / "target/field-test-base"
+
+
+class Failed(Exception):
+    """A step that couldn't be done: exit status 2, with this one line."""
+
+
+def git(*args: str, cwd: Path = REPO) -> str:
+    done = subprocess.run(
+        ["git", "-C", str(cwd), *args], capture_output=True, text=True, check=False
+    )
+    if done.returncode != 0:
+        last = done.stderr.strip().splitlines()[-1:] or [f"exit {done.returncode}"]
+        raise Failed(f"git {' '.join(args)}: {last[0]}")
+    return done.stdout.strip()
 
 
 def main_tree() -> Path:
     """The main tree of this script's repo, which alone has field-test/ (it is
     git-excluded), even when the script runs from a worktree."""
-    common = subprocess.run(
-        [
-            "git",
-            "-C",
-            str(REPO),
-            "rev-parse",
-            "--path-format=absolute",
-            "--git-common-dir",
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return Path(common.stdout.strip()).parent if common.returncode == 0 else REPO
+    try:
+        common = git("rev-parse", "--path-format=absolute", "--git-common-dir")
+    except Failed:
+        return REPO
+    return Path(common).parent
+
+
+def fork_point() -> str:
+    """The commit HEAD forked from the main tree's branch: HEAD itself in the main
+    tree, and in a worktree, where it left main, however far main has moved since."""
+    branch = git("branch", "--show-current", cwd=main_tree()) or "main"
+    try:
+        return git("merge-base", "HEAD", f"refs/heads/{branch}")
+    except Failed as why:
+        raise Failed(f"{why}; name the commit to compare with: --against REV") from why
 
 
 def outcome(output: str) -> str:
@@ -60,19 +82,75 @@ def outcome(output: str) -> str:
     return "; ".join([status, *reasons])
 
 
-def outcomes(directory: Path, entry_check: list[str]) -> dict[str, str]:
+def outcomes(directory: Path, entry_check: Path) -> dict[str, str]:
     found = {}
     for path in sorted(directory.rglob("*.md")):
-        done = subprocess.run(
-            [*entry_check, str(path)], capture_output=True, text=True, check=False
-        )
+        try:
+            done = subprocess.run(
+                [str(entry_check), str(path)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except OSError as error:
+            raise Failed(f"can't run {entry_check}: {error.strerror}") from error
         found[str(path.relative_to(directory))] = outcome(done.stdout + done.stderr)
     return found
 
 
-def fail(why: str) -> int:
-    print(f"field-test-diff: {why}", file=sys.stderr)
-    return 2
+def build(cwd: Path, target: Path, what: str) -> Path:
+    """cargo's build of entry-check in `cwd`, into `target`."""
+    built = subprocess.run(
+        ["cargo", "build", "-q", "-p", "filedrawer-analyzer", "--bin", "entry-check"],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=os.environ | {"CARGO_TARGET_DIR": str(target)},
+    )
+    if built.returncode != 0:
+        raise Failed(
+            f"building entry-check {what} failed; run `cargo build -p filedrawer-analyzer "
+            f"--bin entry-check` in {cwd} to see why"
+        )
+    return target / "debug/entry-check"
+
+
+def base_entry_check(commit: str) -> Path:
+    """The entry-check built from `commit`'s tree, kept per tree."""
+    tree = git("rev-parse", "--verify", f"{commit}^{{tree}}")
+    kept = BASE / f"entry-check-{tree}"
+    if kept.exists():
+        return kept
+    source = BASE / "src"
+    try:
+        shutil.rmtree(source, ignore_errors=True)
+        source.mkdir(parents=True, exist_ok=True)
+        # An archive of a tree, not a commit, dates every file now (git-archive(1)).
+        # Read whole, then unpacked, so a tar that stops early can't block git on a
+        # full pipe.
+        archive = subprocess.run(
+            ["git", "-C", str(REPO), "archive", "--format=tar", tree],
+            capture_output=True,
+            check=False,
+        )
+        unpacked = subprocess.run(
+            ["tar", "-x", "-C", str(source)],
+            input=archive.stdout,
+            capture_output=True,
+            check=False,
+        )
+        if archive.returncode != 0 or unpacked.returncode != 0:
+            raise Failed(
+                f"extracting {commit[:12]} into {source} failed; remove {BASE} and rerun"
+            )
+        built = build(source, BASE / "target", f"at {commit[:12]}")
+        partial = kept.with_suffix(".partial")
+        shutil.copy2(built, partial)
+        partial.replace(kept)
+    except OSError as error:
+        raise Failed(f"{error}; remove {BASE} and rerun") from error
+    return kept
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -81,54 +159,34 @@ def main(argv: list[str] | None = None) -> int:
         epilog=__doc__.split("\n\n", 1)[1],
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("action", nargs="?", choices=["save"], help="save the baseline")
+    parser.add_argument(
+        "--against",
+        metavar="REV",
+        help="the commit whose entry-check to compare with (default: the fork point)",
+    )
     parser.add_argument(
         "--dir",
         type=Path,
         default=main_tree() / "field-test",
         help="the entries to check (default: the main tree's field-test/, from a worktree too)",
     )
-    parser.add_argument(
-        "--baseline",
-        type=Path,
-        default=DEFAULT_BASELINE,
-        help="where the baseline is kept (default: target/field-test-baseline.json)",
-    )
-    parser.add_argument(
-        "--entry-check", help="the entry-check command (default: cargo's build of it)"
-    )
     args = parser.parse_args(argv)
-    if not args.dir.is_dir():
-        return fail(f"no folder {args.dir}")
-    if not args.action and not args.baseline.exists():
-        return fail(
-            f"no baseline at {args.baseline}; run `bin/field-test-diff save` first"
-        )
-    if args.entry_check:
-        entry_check = [args.entry_check]
-    else:
-        built = subprocess.run(
-            ["cargo", "build", "-q", "--bin", "entry-check"],
-            cwd=REPO,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if built.returncode != 0:
-            return fail(
-                "building entry-check failed; run `cargo build --bin entry-check` to see why"
-            )
-        entry_check = [str(REPO / "target/debug/entry-check")]
     try:
-        now = outcomes(args.dir, entry_check)
-    except OSError as error:
-        return fail(f"can't run {entry_check[0]}: {error.strerror}")
-    if args.action == "save":
-        args.baseline.parent.mkdir(parents=True, exist_ok=True)
-        args.baseline.write_text(json.dumps(now, indent=1, sort_keys=True) + "\n")
-        print(f"saved {len(now)} outcomes to {args.baseline}")
-        return 0
-    before = json.loads(args.baseline.read_text())
+        if not args.dir.is_dir():
+            raise Failed(f"no folder {args.dir}")
+        commit = git(
+            "rev-parse", "--verify", f"{args.against or fork_point()}^{{commit}}"
+        )
+        named = git("log", "-1", "--format=%h %s", commit)
+        # This tree's first: a change that doesn't compile fails before the base's
+        # longer first build.
+        current = build(REPO, REPO / "target", "in this tree")
+        before = outcomes(args.dir, base_entry_check(commit))
+        now = outcomes(args.dir, current)
+    except Failed as why:
+        print(f"field-test-diff: {why}", file=sys.stderr)
+        return 2
+    print(f"compared with entry-check at {named}")
     changed = sorted(
         path for path in before.keys() | now.keys() if before.get(path) != now.get(path)
     )

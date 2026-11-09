@@ -37,7 +37,7 @@ The field test's entries and logs are in `field-test/`, git-excluded and local o
   Reason: in the field test every agent wrote its own parser and card renderer, a dozen in all, and each read the spec differently.
 - `entry-check FILE...` checks entries offline, for contributing agents and field tests: `cargo run -q --bin entry-check -- FILE...`.
   It exits 1 when the server would refuse an entry.
-  Run `bin/field-test-diff save` before an analyzer change and `bin/field-test-diff` after it (`-h`): it lists the field-test entries whose outcome changed, without their contents.
+  After an analyzer change, run `bin/field-test-diff` through `heavy` (`-h`): it builds entry-check at the commit your branch forked from, or at `--against REV`, and lists the field-test entries whose outcome changed, without their contents.
 - `crates/server`: the `filedrawer` binary.
   `filedrawer -h` lists its commands and settings.
   Production refuses to start with the pass-all screener, without SMTP settings, or without `FILEDRAWER_GITHUB_TOKEN`, which the link checks call GitHub's API with (staging shares it: `ops/provision-vps github`); email goes to the log when no SMTP settings are set.
