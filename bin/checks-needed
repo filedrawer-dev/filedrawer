@@ -2,6 +2,7 @@
 """Which of bin/agent-pre-commit's slow checks a change needs.
 
     git diff --cached -z --name-only --no-renames BASE | bin/checks-needed [TREE]
+    bin/checks-needed --why PATH [TREE]
 
 TREE (default .) holds the files as staged; agent-pre-commit passes its copy of the
 index. The paths that differ from BASE come NUL-separated on stdin: agent-pre-commit
@@ -13,6 +14,22 @@ name and the first path that needs it:
     bin-tests  pytest over bin/tests
 
 No paths needs every check: with nothing changed, nothing narrows them.
+
+--why PATH says why a change to PATH, relative to TREE's root, needs each check it
+needs: the check's name, then the chain of references that made PATH one of its
+inputs, a step a line, ending at PATH. The first step is one of the rules below; each
+after it is a reference in a file under the step before, as FILE:LINE, the reference
+as written, and the path it reaches, `.` for the repo root. Were a bin test to join a
+name onto the repo, as `REPO / script` (here in a made-up bin/tests/test_example.py),
+every path would be an input:
+
+    bin-tests
+      bin: bin/tests covers it
+      bin/tests/test_example.py:12: REPO / script -> .
+      docs/design.md
+
+When several chains reach PATH, it prints a shortest, and of a file's references to
+one path, the first; when no chain does, `no check needs PATH`. It reads no stdin.
 
 A path needs rust when it is a build input, or lies in a folder that is one:
 - crates/, .sqlx/, .cargo/, .config/, .gitattributes, any Cargo.toml, Cargo.lock or
@@ -37,10 +54,13 @@ The rules miss a path a crate builds without a `..` step, and a Python path not
 derived from __file__. CI runs every check, so it catches what they miss.
 """
 
+import argparse
 import ast
 import os
 import re
 import sys
+from collections import deque
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 # A reference to the repo root, under which every path lies.
@@ -59,6 +79,7 @@ RUST_PATHS = (
     ".rustfmt.toml",
 )
 RUST_NAMES = frozenset({"Cargo.toml", "Cargo.lock", "build.rs"})
+RUST_NAMES_RULE = "any Cargo.toml, Cargo.lock or build.rs: a build input"
 BIN_TESTS_PATHS = ("bin", "ops", ".gitattributes")
 CRATE_SOURCES = (".rs", ".toml", ".html")
 # Not walked: git's own folder, and cargo's output in a working tree.
@@ -100,13 +121,33 @@ def within(path: str, ref: str) -> bool:
     return ref == ROOT or path == ref or path.startswith(ref + "/")
 
 
+def cite(path: str, line: int, text: str, ref: str) -> str:
+    """A reference as --why shows it: where it is, what it says and what it reaches."""
+    return f"{path}:{line}: {text} -> {ref or '.'}"
+
+
+def line_at(text: str, offset: int) -> int:
+    """The line, counted from 1, that `offset` in `text` lies on."""
+    return text.count("\n", 0, offset) + 1
+
+
+@dataclass(frozen=True)
+class Step:
+    """How a path became a check's input: the line --why shows for it, and `via`, the
+    input under which the file that names it lies; None for a path the check starts
+    from by rule."""
+
+    text: str
+    via: str | None = None
+
+
 class Tree:
     """The staged files under `root`, as paths relative to it."""
 
     def __init__(self, root: Path):
         self.root = root
         # What each script reaches, read once for both checks.
-        self.refs: dict[str, set[str]] = {}
+        self.refs: dict[str, dict[str, str]] = {}
         self.paths = []
         for folder, dirs, files in os.walk(root):
             dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS)
@@ -144,11 +185,12 @@ class Tree:
             names = names[1:]
         return "shell" if names[:1] and names[0] in SHELLS else None
 
-    def script_refs(self, path: str) -> set[str]:
-        """The paths the script at `path` reaches; none for a file that isn't one."""
+    def script_refs(self, path: str) -> dict[str, str]:
+        """The paths the script at `path` reaches, each with the first reference that
+        does, as cite() gives it; none for a file that isn't a script."""
         if path not in self.refs:
             language = self.language(path)
-            self.refs[path] = set()
+            self.refs[path] = {}
             if language == "shell":
                 self.refs[path] = shell_refs(self.text(path), path)
             elif language == "python":
@@ -156,21 +198,30 @@ class Tree:
         return self.refs[path]
 
 
-def shell_refs(text: str, path: str) -> set[str]:
+def shell_refs(text: str, path: str) -> dict[str, str]:
     """The paths a shell script reaches through its own folder, directly or through a
-    name assigned it; its own folder and those above it don't count."""
+    name assigned it, each with its first reference; its own folder and those above it
+    don't count."""
     folder = parent(path)
     bound = {}
     for name, value in ASSIGNMENT.findall(text):
         if own := SELF_PATH.search(value):
             bound[name] = resolve(folder, own.group(1) or "")
-    found = {resolve(folder, rel) for rel in SELF_PATH.findall(text) if rel}
-    found |= {
-        resolve(bound[name], rel)
-        for name, rel in NAME_PATH.findall(text)
-        if bound.get(name) is not None
-    }
-    return {ref for ref in found if ref is not None and not within(folder, ref)}
+    found = [
+        (resolve(folder, match.group(1)), match)
+        for match in SELF_PATH.finditer(text)
+        if match.group(1)
+    ]
+    found += [
+        (resolve(bound[match.group(1)], match.group(2)), match)
+        for match in NAME_PATH.finditer(text)
+        if bound.get(match.group(1)) is not None
+    ]
+    refs = {}
+    for ref, match in sorted(found, key=lambda pair: pair[1].start()):
+        if ref is not None and not within(folder, ref) and ref not in refs:
+            refs[ref] = cite(path, line_at(text, match.start()), match.group(0), ref)
+    return refs
 
 
 class PythonPaths:
@@ -178,9 +229,13 @@ class PythonPaths:
     with ast so that docstrings and other literals don't count."""
 
     def __init__(self, source: str, path: str):
+        self.source = source
         self.path = path
         self.names: dict[str, str] = {}
-        self.found: set[str] = set()
+        # Each path reached, with the first join that reaches it in the file.
+        self.joins: dict[str, ast.expr] = {}
+        # The same, as cite() gives each.
+        self.found: dict[str, str] = {}
         if "__file__" not in source:
             return
         try:
@@ -203,21 +258,34 @@ class PythonPaths:
         for node in nodes:
             if isinstance(node, ast.BinOp | ast.Call):
                 self.value(node)
+        for ref, join in self.joins.items():
+            text = " ".join((ast.get_source_segment(source, join) or "").split())
+            self.found[ref] = cite(path, join.lineno, text, ref)
 
-    def join(self, base: str | None, parts: list[ast.expr]) -> str | None:
-        """base joined with the parts, noting what it reaches. A part that isn't a
-        string constant reaches the folder before it, where the script reads a name it
-        builds."""
+    def join(
+        self, base: str | None, parts: list[ast.expr], node: ast.expr
+    ) -> str | None:
+        """base joined with the parts, noting what `node`, the join, reaches. A part
+        that isn't a string constant reaches the folder before it, where the script
+        reads a name it builds."""
         for part in parts:
             if base is None:
                 return None
             if not (isinstance(part, ast.Constant) and isinstance(part.value, str)):
-                self.found.add(base)
+                self.note(base, node)
                 return None
             base = resolve(base, part.value)
         if base is not None:
-            self.found.add(base)
+            self.note(base, node)
         return base
+
+    def note(self, ref: str, node: ast.expr) -> None:
+        first = self.joins.get(ref)
+        if first is None or (node.lineno, node.col_offset) < (
+            first.lineno,
+            first.col_offset,
+        ):
+            self.joins[ref] = node
 
     def value(self, node: ast.AST) -> str | None:
         """The repo path `node` evaluates to, or None."""
@@ -244,39 +312,76 @@ class PythonPaths:
                     found = None if found is None else parent(found)
                 return found
             case ast.BinOp(left=left, op=ast.Div(), right=right):
-                return self.join(self.value(left), [right])
+                return self.join(self.value(left), [right], node)
             case ast.Call(func=ast.Attribute(value=inner, attr="joinpath"), args=parts):
-                return self.join(self.value(inner), parts)
+                return self.join(self.value(inner), parts, node)
             case ast.Call(
                 func=ast.Attribute(value=inner, attr="with_name"), args=parts
             ):
                 found = self.value(inner)
-                return self.join(None if found is None else parent(found), parts)
+                return self.join(None if found is None else parent(found), parts, node)
         return None
 
 
-def closure(tree: Tree, seeds: set[str]) -> set[str]:
-    """The seeds, and every path the scripts among them reach, in turn."""
-    refs = set(seeds)
-    todo = sorted(seeds)
-    read = set()
-    while todo:
-        ref = todo.pop()
-        if ref == ROOT:
-            continue
-        for path in tree.under(ref):
-            if path in read:
+class Inputs:
+    """A check's inputs: the paths it starts from, and every path the scripts among
+    them reach, in turn, each with the Step that made it one."""
+
+    def __init__(
+        self,
+        tree: Tree,
+        starts: dict[str, Step],
+        by_name: dict[str, str] | None = None,
+    ):
+        # The file names that are inputs wherever they lie, each with its rule's line.
+        self.by_name = by_name or {}
+        self.steps = dict(starts)
+        # Breadth first, so each path's first Step lies on a shortest chain.
+        todo = deque(self.steps)
+        read = set()
+        while todo:
+            ref = todo.popleft()
+            if ref == ROOT:
                 continue
-            read.add(path)
-            for found in tree.script_refs(path) - refs:
-                refs.add(found)
-                todo.append(found)
-    return refs
+            for path in tree.under(ref):
+                if path in read:
+                    continue
+                read.add(path)
+                for found, text in tree.script_refs(path).items():
+                    if found not in self.steps:
+                        self.steps[found] = Step(text, via=ref)
+                        todo.append(found)
+
+    def needs(self, path: str) -> bool:
+        """Whether `path` is an input."""
+        return PurePosixPath(path).name in self.by_name or any(
+            within(path, ref) for ref in self.steps
+        )
+
+    def chain(self, ref: str) -> list[str]:
+        """The lines of the steps from a path the check starts from to `ref`."""
+        lines = []
+        while ref is not None:
+            step = self.steps[ref]
+            lines.append(step.text)
+            ref = step.via
+        return lines[::-1]
+
+    def why(self, path: str) -> list[str] | None:
+        """A shortest chain that makes `path` an input, ending at it; None when no
+        chain does."""
+        if rule := self.by_name.get(PurePosixPath(path).name):
+            return [rule, path]
+        holders = [ref for ref in self.steps if within(path, ref)]
+        if not holders:
+            return None
+        return [*min((self.chain(ref) for ref in holders), key=len), path]
 
 
-def crate_refs(tree: Tree, crates: list[str]) -> set[str]:
-    """The paths the crates' sources name with a `..` step."""
-    refs = set()
+def crate_refs(tree: Tree, crates: list[str]) -> dict[str, Step]:
+    """The paths the crates' sources name with a `..` step, each with the Step of the
+    first source that does."""
+    refs = {}
     for path in tree.paths:
         crate = max((c for c in crates if within(path, c)), key=len, default=None)
         if crate is None or not path.endswith(CRATE_SOURCES):
@@ -284,12 +389,17 @@ def crate_refs(tree: Tree, crates: list[str]) -> set[str]:
         text = tree.text(path)
         if "../" not in text and "/.." not in text:
             continue
-        folders = {parent(path), crate, f"{crate}/templates"}
-        for token in PATH_TOKEN.findall(text):
+        folders = (parent(path), crate, f"{crate}/templates")
+        for match in PATH_TOKEN.finditer(text):
+            token = match.group(0)
             # A lone `..` is Rust's range and rest syntax, not a path.
             if token == ".." or ".." not in token.split("/"):
                 continue
-            refs |= {resolve(folder, token) for folder in folders} - {None}
+            line = line_at(text, match.start())
+            for folder in folders:
+                ref = resolve(folder, token)
+                if ref is not None and ref not in refs:
+                    refs[ref] = Step(cite(path, line, token, ref), via=crate)
     return refs
 
 
@@ -306,10 +416,23 @@ def crate_folders(tree: Tree) -> list[str]:
 
 
 def main(argv: list[str]) -> int:
-    if argv[:1] in (["-h"], ["--help"]):
-        print(__doc__.strip())
-        return 0
-    root = Path(argv[0] if argv else ".")
+    parser = argparse.ArgumentParser(
+        prog="checks-needed",
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("tree", nargs="?", default=".", metavar="TREE")
+    parser.add_argument("--why", metavar="PATH")
+    args = parser.parse_args(argv)
+    why = None if args.why is None else resolve(ROOT, args.why)
+    if args.why is not None and (args.why.startswith("/") or not why):
+        print(
+            f"checks-needed: --why {args.why} is no path inside TREE; name one from"
+            " TREE's root",
+            file=sys.stderr,
+        )
+        return 2
+    root = Path(args.tree)
     if not root.is_dir():
         print(
             f"checks-needed: {root} isn't a folder; pass the staged tree",
@@ -317,24 +440,40 @@ def main(argv: list[str]) -> int:
         )
         return 2
     sys.stdout.reconfigure(errors="backslashreplace")
+    tree = Tree(root)
+    crates = crate_folders(tree)
+    crate_steps = {
+        crate: Step(f"{crate}: a crate (it holds a Cargo.toml)") for crate in crates
+    }
+    rust = {ref: Step(f"{ref}: a build input") for ref in RUST_PATHS}
+    # A crate's own rule comes before any reference to it, which mustn't replace it.
+    for layer in (crate_steps, crate_refs(tree, crates)):
+        for ref, step in layer.items():
+            rust.setdefault(ref, step)
+    bin_tests = {ref: Step(f"{ref}: bin/tests covers it") for ref in BIN_TESTS_PATHS}
+    for ref, step in crate_steps.items():
+        bin_tests.setdefault(ref, step)
+    checks = {
+        "rust": Inputs(tree, rust, by_name=dict.fromkeys(RUST_NAMES, RUST_NAMES_RULE)),
+        "bin-tests": Inputs(tree, bin_tests),
+    }
+    if why is not None:
+        chains = {name: inputs.why(why) for name, inputs in checks.items()}
+        if not any(chains.values()):
+            print(f"no check needs {why}")
+        for name, chain in chains.items():
+            if chain:
+                print(name, *(f"  {line}" for line in chain), sep="\n")
+        return 0
     changed = [
         path
         for path in sys.stdin.buffer.read().decode(errors="surrogateescape").split("\0")
         if path
     ]
-    tree = Tree(root)
-    crates = crate_folders(tree)
-    rust = closure(tree, {*RUST_PATHS, *crates, *crate_refs(tree, crates)})
-    bin_tests = closure(tree, {*BIN_TESTS_PATHS, *crates})
-    needs = {
-        "rust": lambda path: PurePosixPath(path).name in RUST_NAMES
-        or any(within(path, ref) for ref in rust),
-        "bin-tests": lambda path: any(within(path, ref) for ref in bin_tests),
-    }
-    for name, need in needs.items():
+    for name, inputs in checks.items():
         if not changed:
             print(f"{name} (nothing differs from the base)")
-        elif first := next((path for path in changed if need(path)), None):
+        elif first := next((path for path in changed if inputs.needs(path)), None):
             print(f"{name} {first}")
     return 0
 

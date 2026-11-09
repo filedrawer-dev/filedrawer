@@ -3,6 +3,7 @@ from the references the crates and bin/tests make today. A change that adds or d
 such a reference updates this list. bin/tests/test_agent_pre_commit.py covers each
 kind of reference in a scratch workspace."""
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -28,11 +29,25 @@ def needed(*paths: str) -> set[str]:
     return {line.split(" ", 1)[0] for line in checks_needed(*paths).stdout.splitlines()}
 
 
+def why(*paths: str) -> str:
+    """bin/checks-needed --why for each path: for each check it needs, the chain of
+    references that made it an input, which a failure message shows to blame one."""
+    chains = []
+    for path in paths:
+        done = subprocess.run(
+            [str(SCRIPT), "--why", path, str(REPO)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert done.returncode == 0, done.stdout + done.stderr
+        chains.append(done.stdout)
+    return "".join(chains)
+
+
 def test_the_other_docs_need_no_check():
-    assert (
-        needed("docs/design.md", "README.md", "AGENTS.md", "docs/field-test.md")
-        == set()
-    )
+    docs = ("docs/design.md", "README.md", "AGENTS.md", "docs/field-test.md")
+    assert needed(*docs) == set(), why(*docs)
 
 
 @pytest.mark.parametrize(
@@ -50,10 +65,23 @@ def test_the_other_docs_need_no_check():
         # read by bin/tests/test_deploy.py
         (".github/workflows/ci.yml", {"bin-tests"}),
         ("crates/server/src/config.rs", {"rust", "bin-tests"}),
+        # crates/analyzer/src/file_mentions.rs names its own crate's folder with `../`
+        ("crates/analyzer/src/lib.rs", {"rust", "bin-tests"}),
     ],
 )
 def test_the_checks_a_change_to_each_path_needs(path, checks):
-    assert needed(path) == checks
+    assert needed(path) == checks, why(path)
+
+
+def test_why_names_the_crate_source_that_embeds_a_doc():
+    lines = why("docs/entry-format.md").splitlines()
+    assert lines[0] == "rust", lines
+    assert lines[-1] == "  docs/entry-format.md", lines
+    assert re.fullmatch(
+        r"  crates/server/\S+\.rs:\d+: \S*/docs/entry-format\.md"
+        r" -> docs/entry-format\.md",
+        lines[-2],
+    ), lines
 
 
 def test_nothing_staged_needs_every_check():
@@ -87,3 +115,4 @@ def test_help_says_what_it_does():
     )
     assert done.returncode == 0
     assert "agent-pre-commit" in done.stdout
+    assert "bin/checks-needed --why PATH" in done.stdout

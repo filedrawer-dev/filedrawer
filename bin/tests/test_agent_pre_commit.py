@@ -189,6 +189,18 @@ def needed(tree: Path, *paths: str) -> set[str]:
     return {line.split(" ", 1)[0] for line in done.stdout.splitlines()}
 
 
+def why(tree: Path, path: str) -> str:
+    """What bin/checks-needed --why says made `path` in `tree` an input of each check."""
+    done = subprocess.run(
+        [str(tree / "bin/checks-needed"), "--why", path, str(tree)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert done.returncode == 0, done.stdout + done.stderr
+    return done.stdout
+
+
 RUST = {"nextest", "doctest", "clippy"}
 EVERY = RUST | {"pytest"}
 
@@ -259,6 +271,141 @@ def test_names_a_python_script_builds_from_each_other_are_read_in_time(repo):
         'b = a / "y"\n'
     )
     assert needed(repo, "docs/notes.md") == set()
+
+
+# The chains --why prints, file:line by file:line through LAYOUT.
+
+
+def test_why_follows_a_crates_embed_to_the_file(template):
+    assert why(template, "docs/format.md") == (
+        "rust\n"
+        "  crates/app: a crate (it holds a Cargo.toml)\n"
+        "  crates/app/src/lib.rs:1: ../../../docs/format.md -> docs/format.md\n"
+        "  docs/format.md\n"
+    )
+
+
+def test_why_follows_a_crates_test_through_the_scripts_it_runs(template):
+    assert why(template, "data/any.json") == (
+        "rust\n"
+        "  crates/app: a crate (it holds a Cargo.toml)\n"
+        "  crates/app/tests/run.rs:2: /../../ops/run -> ops/run\n"
+        '  ops/run:5: $(dirname "$0")/../bin/pyhelper -> bin/pyhelper\n'
+        '  bin/pyhelper:6: Path(__file__).parents[1].joinpath("data", name) -> data\n'
+        "  data/any.json\n"
+        "bin-tests\n"
+        "  bin: bin/tests covers it\n"
+        '  bin/pyhelper:6: Path(__file__).parents[1].joinpath("data", name) -> data\n'
+        "  data/any.json\n"
+    )
+
+
+def test_why_follows_a_name_a_shell_script_assigns_its_folder(template):
+    assert why(template, "conf/settings.toml").split("bin-tests\n")[1] == (
+        "  ops: bin/tests covers it\n"
+        "  ops/run:6: $repo/conf/settings.toml -> conf/settings.toml\n"
+        "  conf/settings.toml\n"
+    )
+
+
+def test_why_names_the_rule_for_a_path_no_file_names(template):
+    assert why(template, "Cargo.lock") == (
+        "rust\n  any Cargo.toml, Cargo.lock or build.rs: a build input\n  Cargo.lock\n"
+    )
+    assert why(template, ".sqlx/query-1.json") == (
+        "rust\n  .sqlx: a build input\n  .sqlx/query-1.json\n"
+    )
+
+
+def test_why_blames_a_join_onto_the_root_with_a_name_for_every_path(repo):
+    (repo / "bin/tests/test_join.py").write_text(
+        "from pathlib import Path\n"
+        "REPO = Path(__file__).resolve().parents[2]\n"
+        "def read(script):\n"
+        "    return (REPO / script).read_text()\n"
+    )
+    assert why(repo, "docs/notes.md") == (
+        "bin-tests\n"
+        "  bin: bin/tests covers it\n"
+        "  bin/tests/test_join.py:4: REPO / script -> .\n"
+        "  docs/notes.md\n"
+    )
+
+
+def test_why_starts_a_crate_outside_crates_at_its_own_rule(repo):
+    # Another crate's path dependency names it too, a step further from a rule.
+    (repo / "tools/xtask").mkdir(parents=True)
+    (repo / "tools/xtask/Cargo.toml").write_text('[package]\nname = "xtask"\n')
+    with (repo / "crates/app/Cargo.toml").open("a") as manifest:
+        manifest.write('[dependencies]\nxtask = { path = "../../tools/xtask" }\n')
+    assert why(repo, "tools/xtask/src/main.rs").split("bin-tests\n")[0] == (
+        "rust\n"
+        "  tools/xtask: a crate (it holds a Cargo.toml)\n"
+        "  tools/xtask/src/main.rs\n"
+    )
+
+
+def test_a_crate_naming_its_own_folder_still_needs_its_checks(repo):
+    (repo / "crates/app/src/up.rs").write_text('pub const UP: &str = "../";\n')
+    assert needed(repo, "crates/app/src/lib.rs") == {"rust", "bin-tests"}
+    assert why(repo, "crates/app/src/lib.rs") == (
+        "rust\n"
+        "  crates: a build input\n"
+        "  crates/app/src/lib.rs\n"
+        "bin-tests\n"
+        "  crates/app: a crate (it holds a Cargo.toml)\n"
+        "  crates/app/src/lib.rs\n"
+    )
+
+
+def test_why_reads_no_stdin(template, tmp_path):
+    # A write-only stdin fails a read at once, where an open pipe would wait forever.
+    with (tmp_path / "write-only").open("w") as write_only:
+        done = subprocess.run(
+            [str(template / "bin/checks-needed"), "--why", "docs/format.md"],
+            cwd=template,
+            stdin=write_only,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.startswith("rust\n"), done.stdout
+
+
+def test_why_cites_a_python_files_first_join_to_a_path(repo):
+    # The later line's join is the one the walk meets first.
+    (repo / "bin/tests/test_two.py").write_text(
+        "from pathlib import Path\n"
+        "REPO = Path(__file__).resolve().parents[2]\n"
+        "def test_two():\n"
+        '    return REPO / "tool.toml"\n'
+        'CONFIG = REPO / "tool.toml"\n'
+    )
+    (repo / "bin/tests/test_tool.py").unlink()
+    assert why(repo, "tool.toml") == (
+        "bin-tests\n"
+        "  bin: bin/tests covers it\n"
+        '  bin/tests/test_two.py:4: REPO / "tool.toml" -> tool.toml\n'
+        "  tool.toml\n"
+    )
+
+
+@pytest.mark.parametrize("path", ["/etc/hosts", "../outside", "."])
+def test_why_refuses_a_path_outside_the_tree_in_one_line(template, path):
+    done = subprocess.run(
+        [str(template / "bin/checks-needed"), "--why", path, str(template)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert done.returncode == 2
+    assert done.stdout == ""
+    assert len(done.stderr.splitlines()) == 1, done.stderr
+
+
+def test_why_says_when_no_check_needs_the_path(template):
+    assert why(template, "docs/notes.md") == "no check needs docs/notes.md\n"
 
 
 def test_a_change_under_bin_runs_bin_tests_and_no_cargo(repo):
