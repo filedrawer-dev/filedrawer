@@ -1,7 +1,9 @@
 #!/bin/sh
-# Slow checks for agents' commits: the tests and clippy, the steps that follow the
-# pre-commit hooks (cargo fmt is one of those). bin/git-pre-commit runs this when
-# $AI_AGENT is set, and CI runs it directly.
+# The full check: the tests and clippy, the steps that follow the pre-commit hooks
+# (cargo fmt is one of those). wt-ship runs it, through llm-toolbox's
+# agent-commit-gate, on each commit when it lands; at an agent's commit the gate runs
+# bin/agent-commit-check in its place, and only an agent without the gate runs this
+# from bin/git-pre-commit. CI runs it directly.
 # The checks run on what's staged: a copy of the index in a temporary folder, so
 # unstaged changes can neither fail a commit nor rescue it. Each check's output shows
 # only when it fails. They run one after the other, since cargo locks target/ anyway.
@@ -13,16 +15,17 @@
 # Each check runs only when the change needs it: the Rust checks for a build input,
 # bin/tests for what those tests read. The change is what the index holds against
 # $CHECK_BASE, which llm-toolbox's agent-commit-gate sets to the nearest commit whose
-# tree passed this script (`agent-commit-gate -h`): at a commit, usually HEAD, so the
-# staged paths; on wt-ship's or build-state finish's recheck, the commit the rebase or
-# the fold put this one on. The staged copy of bin/checks-needed decides (its -h lists
+# tree passed this script, or for --quick at a commit, either this or the commit check
+# (`agent-commit-gate -h`): at a commit, usually HEAD, so the
+# staged paths; on wt-ship's recheck, the commit before, or the tip the rebase put this
+# one on. The staged copy of bin/checks-needed decides (its -h lists
 # the rules). Every check runs without CHECK_BASE (CI, an agent without llm-toolbox,
 # no commit known to pass), when nothing differs from it, when the change touches
 # these rules, when git can't diff against it, and when bin/checks-needed is missing,
 # fails or runs past 60 s. agent-commit-gate keeps the record of passed trees; this
 # script keeps none.
-# --quick runs clippy alone, for bin/agent-quick-check, which the gate gives the
-# same CHECK_BASE.
+# --quick runs clippy alone, for bin/agent-quick-check and bin/agent-commit-check; the
+# gate gives each a CHECK_BASE of its own (`agent-commit-gate -h`).
 # Every check here is a build or a test suite, so none may start outside heavy's queue.
 # The gate runs this script first outside it when the file names $CHECK_QUEUE_EXIT, as
 # here, with that variable set (`agent-commit-gate -h`). Each check's block then starts
@@ -49,7 +52,7 @@ if [ -z "${CHECK_BASE:-}" ]; then
 elif ! git -C "$repo" diff --cached -z --name-only --no-renames "$CHECK_BASE" -- >"$logs/changed"; then
   echo "agent-pre-commit: git can't diff against CHECK_BASE $CHECK_BASE, so every check runs" >&2
   need_every_check "(git can't diff against CHECK_BASE)"
-elif tr '\0' '\n' <"$logs/changed" | grep -qxE 'bin/(checks-needed|agent-pre-commit|agent-quick-check)'; then
+elif tr '\0' '\n' <"$logs/changed" | grep -qxE 'bin/(checks-needed|agent-pre-commit|agent-quick-check|agent-commit-check)'; then
   need_every_check "(the change touches these rules)"
 elif [ ! -x "$tree/bin/checks-needed" ]; then
   need_every_check "(no bin/checks-needed staged)"

@@ -24,6 +24,8 @@ HOOKS = {
     "agent-pre-commit": "bin/agent-pre-commit",
     # What llm-toolbox's agent-commit-gate runs for an agent's small fix commit.
     "agent-quick-check": "bin/agent-quick-check",
+    # What it runs for an agent's other commits; wt-ship runs agent-pre-commit as it lands.
+    "agent-commit-check": "bin/agent-commit-check",
     # Rebuild target/dev.db when a merge, checkout or rebase brings new migrations.
     "post-merge": "bin/git-post-change",
     "post-checkout": "bin/git-post-change",

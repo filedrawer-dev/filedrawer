@@ -102,7 +102,12 @@ def template(tmp_path_factory) -> Path:
         path.write_text(text)
         if text.startswith("#!"):
             path.chmod(0o755)
-    for script in ("agent-pre-commit", "agent-quick-check", "checks-needed"):
+    for script in (
+        "agent-pre-commit",
+        "agent-quick-check",
+        "agent-commit-check",
+        "checks-needed",
+    ):
         shutil.copy(REPO / "bin" / script, root / "bin" / script)
     git(root, "init", "-q")
     commit(root, "init")
@@ -320,7 +325,13 @@ def test_a_failing_checks_needed_runs_every_check_and_says_so(repo):
 
 @pytest.mark.parametrize("committed", [False, True], ids=["staged", "committed"])
 @pytest.mark.parametrize(
-    "script", ["bin/checks-needed", "bin/agent-pre-commit", "bin/agent-quick-check"]
+    "script",
+    [
+        "bin/checks-needed",
+        "bin/agent-pre-commit",
+        "bin/agent-quick-check",
+        "bin/agent-commit-check",
+    ],
 )
 def test_a_change_to_the_rules_since_check_base_runs_every_check(
     repo, script, committed
@@ -405,6 +416,8 @@ def test_a_check_queue_exit_that_is_no_exit_status_from_1_to_255_is_ignored(
     assert "saw-CHECK_QUEUE_EXIT" not in (repo.parent / "calls").read_text()
 
 
-@pytest.mark.parametrize("script", ["agent-pre-commit", "agent-quick-check"])
-def test_both_checks_opt_in_to_a_first_run_outside_the_queue(script):
+@pytest.mark.parametrize(
+    "script", ["agent-pre-commit", "agent-quick-check", "agent-commit-check"]
+)
+def test_each_check_opts_in_to_a_first_run_outside_the_queue(script):
     assert "CHECK_QUEUE_EXIT" in (REPO / "bin" / script).read_text()

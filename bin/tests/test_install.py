@@ -46,3 +46,6 @@ def test_hooks_link_into_the_shared_git_dir_from_a_worktree(tmp_path):
         link = main / ".git" / "hooks" / name
         assert link.is_symlink(), name
         assert link.readlink() == Path("../..") / target, name
+    # What llm-toolbox's agent-commit-gate runs at an agent's commit.
+    commit_check = main / ".git" / "hooks" / "agent-commit-check"
+    assert commit_check.readlink() == Path("../../bin/agent-commit-check")

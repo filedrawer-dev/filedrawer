@@ -106,5 +106,5 @@ Entry text, series descriptions, feedback and screening notes are written by str
 ## GitHub workflows
 
 - A `run:` block runs a few commands in a row.
-  Logic that loops, parses files or builds output, as `bin/mutants-summary` does for `.github/workflows/mutants.yml`, goes in a script in `bin/` or `ops/` with tests, so the commit hook tests it.
+  Logic that loops, parses files or builds output, as `bin/mutants-summary` does for `.github/workflows/mutants.yml`, goes in a script in `bin/` or `ops/` with tests, so the full check tests it.
   Acting on one command's exit status, as the `screen-staging` job does, stays in the YAML.

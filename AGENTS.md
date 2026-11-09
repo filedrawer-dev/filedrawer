@@ -94,23 +94,24 @@ The commit hook's `bin/sentence-lines` keeps it that way and leaves entries as t
 
 Start a worktree with `bin/new-worktree TOPIC` (`-h`): it adds `../filedrawer-wt-TOPIC` beside the main tree and starts its warm build in the background, which sccache makes quick.
 
-Committing runs the checks, so commit and read the hook's output instead of running them first.
+Committing runs the hook's checks, so read its output rather than running them first; the full check runs when wt-ship lands each commit.
 Every commit runs `bin/slop-lint` on staged markdown, lychee (links and anchors, offline) over every markdown file, actionlint with shellcheck (when a workflow is staged), and `bin/sentence-lines` on staged markdown, ruff, and `cargo fmt` (when a `.rs` file is staged), which write: a person's commit that needs formatting is refused with the files rewritten, to stage, and `bin/pre-commit-run` stages an agent's and checks again.
-Agents' commits add the tests in `bin/tests`, clippy and the Rust tests (`bin/agent-pre-commit`), each only when the change needs it.
-The change is what differs from `$CHECK_BASE`, which llm-toolbox's `agent-commit-gate` sets to the nearest commit that passed them: at a commit, usually HEAD, so what's staged; on a recheck by wt-ship or `build-state finish`, the commit it was rebased or folded onto.
+An agent's commit then runs only clippy, and only for a build input (`bin/agent-commit-check`, which `agent-commit-gate` runs in the full check's place because `bin/git-pre-commit` sets `AGENT_CHECK_AT_COMMIT`): run the tests you wrote or touched before you commit.
+wt-ship runs the full check, `bin/agent-pre-commit`, on each commit when it lands, while it holds the main tree: the tests in `bin/tests`, clippy and the Rust tests, each only when the change needs it.
+The change is what differs from `$CHECK_BASE`, which llm-toolbox's `agent-commit-gate` sets to the nearest commit that passed: at a commit, usually HEAD, so what's staged; on wt-ship's recheck, the commit before, or for the first, the tip it rebased onto.
 The Rust checks run for a build input: anything in `crates/`, the Cargo files, `.sqlx/`, `.cargo/` and `.config/`, and the files the crates embed or their tests read, such as `docs/entry-format.md` and `ops/smoke-staging`.
 `bin/tests` runs for a change in `bin/`, `ops/` or a crate (one of its tests reads the crates' references), or to a file those tests read, such as `.pre-commit-config.yaml`.
 A commit of other docs runs neither, and doesn't wait in heavy's queue either.
 Each check asks `agent-commit-gate` for a place there only as it starts (`$CHECK_QUEUE_EXIT`, `agent-commit-gate -h`), so a commit that needs none passes in seconds.
 `bin/checks-needed` finds the embeds and reads in the sources on each commit, so a new `include_str!` needs no list kept by hand; its `-h` gives the rules.
 Every check runs without `CHECK_BASE` (CI, an agent without llm-toolbox, or no commit known to pass), when nothing differs from it, when the change touches those rules, when git can't diff against it, and when `bin/checks-needed` is missing, fails or runs past 60 s.
-A small fix commit gets only clippy (`bin/agent-quick-check`, run by `agent-commit-gate`), and only for a build input, which waits its turn in heavy's queue; `build-state finish` runs the rest.
+A small fix commit gets the same clippy through `bin/agent-quick-check`.
 CI runs all of them.
 Run `cargo fmt` after each batch of edits to `.rs` files: otherwise the hook reformats them at commit, and edits you make after that no longer match the text you hold.
 `python3 install.py` links the hooks once per clone and installs cargo-nextest and sqlx-cli; sandbox-setup runs it after a recreate.
 
 The Rust tests run under cargo-nextest, set in `.config/nextest.toml` to print only the tests that fail, with their output, and a summary line.
-To run them that way, run `cargo nextest run --cargo-quiet`. nextest skips doctests, so the hook also runs `cargo test --doc`.
+To run them that way, run `cargo nextest run --cargo-quiet`. nextest skips doctests, so the full check also runs `cargo test --doc`.
 Install nextest once per machine: `cargo install cargo-nextest --locked`, or the prebuilt binary from https://get.nexte.st/latest/linux.
 
 Mutation testing (cargo-mutants, set in `.cargo/mutants.toml`) runs in CI, only when started by hand, since a full run takes about 10 runner-hours: `gh workflow run mutants.yml`.

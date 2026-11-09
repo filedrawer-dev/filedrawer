@@ -1,4 +1,5 @@
-"""Tests for the commit hook's formatting: this repo's formatter hooks write, and
+"""Tests for the commit hook: that an agent's commit tells agent-commit-gate it runs
+for a commit, and the hook's formatting: this repo's formatter hooks write, and
 bin/pre-commit-run (a copy of llm-toolbox's) restages an agent's files they rewrote
 when each was fully staged. Each runs the real bin/git-pre-commit, bin/pre-commit-run
 and pre-commit 4.7.0, offline from uv's cache, in a scratch repo whose config holds
@@ -75,10 +76,18 @@ def repo(tmp_path):
     return root
 
 
-def hook(repo: Path, agent: bool) -> subprocess.CompletedProcess:
+def hook(
+    repo: Path, agent: bool, gate: Path | None = None
+) -> subprocess.CompletedProcess:
+    """Run the hook as git would. With `gate`, a folder holding a fake agent-commit-gate,
+    the agent check's line runs it; without, the line is skipped."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     env.pop("AI_AGENT", None)
-    env["AGENT_PRE_COMMIT"] = "1"  # the slow agent check isn't under test
+    if gate is None:
+        env["AGENT_PRE_COMMIT"] = "1"  # the slow agent check isn't under test
+    else:
+        env.pop("AGENT_PRE_COMMIT", None)
+        env["PATH"] = f"{gate}{os.pathsep}{env['PATH']}"
     env["PRE_COMMIT_HOME"] = str(repo.parent / "pre-commit-home")
     env["UV_OFFLINE"] = "1"
     if agent:
@@ -180,3 +189,19 @@ def test_an_agents_file_with_unstaged_changes_is_refused_and_left_staged_as_it_w
     assert done.returncode == 1
     assert git(repo, "show", ":tool.py") == UGLY_PY
     assert "not for this commit" in (repo / "tool.py").read_text()
+
+
+def test_an_agents_commit_tells_the_gate_it_runs_for_a_commit(repo, tmp_path):
+    """The line sets AGENT_CHECK_AT_COMMIT, so the gate may run agent-commit-check in
+    agent-pre-commit's place (llm-toolbox's agent-commit-gate -h)."""
+    fake = tmp_path / "fake-bin"
+    fake.mkdir()
+    seen = tmp_path / "seen"
+    gate = fake / "agent-commit-gate"
+    gate.write_text(f'#!/bin/sh\necho "${{AGENT_CHECK_AT_COMMIT:-unset}}" > "{seen}"\n')
+    gate.chmod(0o755)
+
+    done = hook(repo, agent=True, gate=fake)
+
+    assert done.returncode == 0, done.stderr
+    assert seen.read_text().strip() == "1"
