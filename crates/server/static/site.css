@@ -89,8 +89,11 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
 
 /* The home page's README card. */
 .pitch { max-width: 40rem; margin: 0 auto 2.5rem; }
-.agent { margin-top: 1.5em !important; }
-.agent code { font: inherit; font-weight: 700; }
+/* The line to paste to an agent: on the ruled line after its label, indented, and a
+   paragraph of its own, so a triple-click selects only it. */
+.paste-label { margin-top: 1.5em !important; }
+.paste { padding-left: 3ch; }
+.paste code { font: inherit; font-weight: 700; }
 
 /* Divider-card tabs: the outcome filters, then the subject search. */
 .guides { display: flex; gap: .4rem; align-items: flex-end; flex-wrap: wrap; margin-bottom: -1px; }
