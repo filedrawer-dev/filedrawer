@@ -42,8 +42,9 @@ The field test's entries and logs are in `field-test/`, git-excluded and local o
   It exits 1 when the server would refuse an entry.
   After an analyzer change, run `bin/field-test-diff` through `heavy` (`-h`): it builds entry-check at the commit your branch forked from, or at `--against REV`, and lists the field-test entries whose outcome changed, without their contents.
 - `crates/server`: the `filedrawer` binary.
-  `filedrawer -h` lists its commands and settings.
-  Production refuses to start with the pass-all screener, without SMTP settings, or without `FILEDRAWER_GITHUB_TOKEN`, which the link checks call GitHub's API with (staging shares it: `ops/provision-vps github`), or without `FILEDRAWER_DAILY_EMAIL_PING`, the healthchecks.io URL the owner's daily email pings after each run (`crates/server/src/daily_email.rs`); email goes to the log when no SMTP settings are set.
+  `filedrawer -h` lists its commands and every setting, with what production refuses; a test (`cli::help_names_every_setting_serve_reads`) fails when it misses one `config.rs` reads, so read it there rather than keep a list here.
+  The GitHub token is shared with staging (`ops/provision-vps github`).
+  Email goes to the log when no SMTP settings are set, but staging has real ones (`ops/remote/mail.sh`), so a feature that emails the owner reaches their inbox from staging too, where CI publishes test entries after each deploy.
   `crates/server/install.md` is what agents read at `/skill.md`: it installs the two skills in `skills/`.
   A new route is named there or in a skill, or listed in `NOT_FOR_AGENTS` in `crates/server/tests/it/skill.rs` (CODING_STANDARDS.md, Untrusted text, says which); a test refuses one that is neither.
   `CODING_STANDARDS.md` holds the rules the review applies.
@@ -135,6 +136,8 @@ To run them that way, run `cargo nextest run --cargo-quiet`. nextest skips docte
 Each crate's integration tests build as one binary, `tests/it/main.rs`, with each file in `tests/it/` a module of it, so a new test file needs a `mod` line there; a test in `main.rs` fails without one.
 To run one file's tests, filter on its module: `cargo nextest run --cargo-quiet -p filedrawer-server -E 'test(/^read::/)'`.
 Run a targeted run like that, a few tests that take seconds, through `heavy --quick -- CMD`, which starts it at once on quiet cores and otherwise next in heavy's queue (`heavy -h`); a whole suite goes through plain `heavy`.
+After an edit to a crate, that run first rebuilds the test binary, a minute or more, which overruns `--quick`: build it first as a background call, `bgrun --wait -o LOG -- heavy --share -- cargo nextest run --cargo-quiet --no-run`, then run the tests with `--quick`.
+A `mutate-check` rebuilds for each mutant, so it goes through plain `heavy` the same way.
 Give a foreground `heavy --quick` call a Bash timeout of 600000 ms, since it may wait behind a running job; llm-toolbox's heavy-gate refuses one without it.
 Install nextest once per machine: `cargo install cargo-nextest --locked`, or the prebuilt binary from https://get.nexte.st/latest/linux.
 

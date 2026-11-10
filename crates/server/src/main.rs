@@ -25,8 +25,11 @@ serve runs the server. It reads FILEDRAWER_DATABASE (the SQLite file),
 FILEDRAWER_LISTEN (such as 127.0.0.1:8080), FILEDRAWER_ENVIRONMENT (production,
 staging or dev), FILEDRAWER_SCREENER (pass-all; production refuses it) and
 FILEDRAWER_PUBLIC_URL (such as https://staging.filedrawer.dev), which emails link to
-and forms must come from. Attached files' bytes are kept in files/ beside the
-database file.
+and forms must come from. FILEDRAWER_SCREENER=anthropic screens with Claude and
+needs FILEDRAWER_ANTHROPIC_API_KEY, so production needs it too; FILEDRAWER_SCREENING_DAILY_USD caps what it
+spends in a UTC day (1.00 unless set). Attached files' bytes are kept in files/
+beside the database file, and served from FILEDRAWER_FILES_URL (such as
+https://files.staging.filedrawer.dev); without it attachments are off.
 
 FILEDRAWER_SCREEN_TEST_ACCOUNT names staging's screen-test account, which
 `ops/smoke-staging eval` submits as: it isn't held to an account's share of the

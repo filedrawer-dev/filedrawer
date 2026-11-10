@@ -294,3 +294,34 @@ fn unpack_names_nothing_from_inside_what_it_wont_open() {
         )
     );
 }
+
+/// Every whole `FILEDRAWER_*` name in `text`.
+fn setting_names(text: &str) -> Vec<&str> {
+    text.split(|c: char| !(c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'))
+        .filter(|word| word.starts_with("FILEDRAWER_") && word.len() > "FILEDRAWER_".len())
+        .collect()
+}
+
+/// The settings module's source, which names every setting `serve` reads.
+const CONFIG_SOURCE: &str = include_str!("../../src/config.rs");
+
+#[test]
+fn help_names_every_setting_serve_reads() {
+    let output = Command::new(env!("CARGO_BIN_EXE_filedrawer"))
+        .arg("-h")
+        .env_clear()
+        .output()
+        .unwrap();
+    let help = printed(&output);
+    let named = setting_names(&help);
+    let mut missing: Vec<&str> = setting_names(CONFIG_SOURCE)
+        .into_iter()
+        .filter(|name| !named.contains(name))
+        .collect();
+    missing.sort_unstable();
+    missing.dedup();
+    assert!(
+        missing.is_empty(),
+        "`filedrawer -h` doesn't name {missing:?}, which config.rs reads"
+    );
+}
