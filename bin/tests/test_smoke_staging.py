@@ -465,3 +465,149 @@ def test_a_family_whose_entries_cant_be_read_is_a_failure_not_a_silent_gap(
     assert (
         "FAIL a family's entries: bin/field-test-batches couldn't read" in result.stdout
     )
+
+
+# ops/smoke-staging read: the checks that post nothing, as ops/deploy-production runs
+# against production.
+
+COMMIT = "c" * 40
+
+
+def site(commit: str = COMMIT) -> ThreadingHTTPServer:
+    """A server that answers the read-only checks as production would, and serves the
+    skills' tags at /refs/tags/... as GitHub's raw host does. Its `requests` lists
+    each request's method, path and headers."""
+    requests: list[tuple[str, str, dict]] = []
+    versions = {"filedrawer-search": 4, "filedrawer-submit": 9}
+
+    def skill(name: str) -> str:
+        return f'name: {name}\n  files: "SKILL.md"\nfor {{{{BASE}}}}\n'
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *_args) -> None:
+            pass
+
+        def reply(self, body: bytes) -> None:
+            requests.append((self.command, self.path, dict(self.headers)))
+            tagged = [
+                name
+                for name, n in versions.items()
+                if self.path == f"/refs/tags/skill-{name}-v{n}/skills/{name}/SKILL.md"
+            ]
+            served = [
+                name for name in versions if self.path == f"/skills/{name}/SKILL.md"
+            ]
+            if tagged:
+                code, data, kind = 200, skill(tagged[0]).encode(), "text/plain"
+            elif served:
+                base = f"http://127.0.0.1:{self.server.server_address[1]}"
+                text = skill(served[0]).replace("{{BASE}}", base)
+                code, data, kind = 200, text.encode(), "text/markdown"
+            elif self.path in ("/skill.md", "/tags"):
+                code, data, kind = 200, b"text\n", "text/markdown"
+            elif self.path == "/":
+                html = self.headers.get("Sec-Fetch-Dest") == "document"
+                code, data = 200, b"home\n"
+                kind = "text/html" if html else "text/plain"
+            else:
+                code, data, kind = 404, b"not found\n", "text/plain"
+            self.send_response(code)
+            self.send_header("Content-Type", kind)
+            self.send_header("Content-Length", str(len(data)))
+            if self.path == "/skill.md":
+                self.send_header(
+                    "X-Filedrawer-Skills", "filedrawer-search/4, filedrawer-submit/9"
+                )
+                self.send_header("X-Filedrawer-Commit", commit)
+            self.end_headers()
+            if body:
+                self.wfile.write(data)
+
+        def do_GET(self) -> None:
+            self.reply(b"x")
+
+        def do_HEAD(self) -> None:
+            self.reply(b"")
+
+        def do_POST(self) -> None:
+            self.reply(b"x")
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server.requests = requests
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+@pytest.fixture
+def read(tmp_path):
+    servers = []
+
+    def run(*args: str, commit: str = COMMIT, url: str | None = None, **env):
+        server = site(commit)
+        servers.append(server)
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        result = subprocess.run(
+            ["bash", SCRIPT, "read", *args, url or base],
+            env={
+                "PATH": os.environ["PATH"],
+                "FILEDRAWER_OPS_DIR": str(tmp_path),
+                "FILEDRAWER_SKILL_TAGS_URL": base,
+                **env,
+            },
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        result.requests = server.requests
+        return result
+
+    yield run
+    for server in servers:
+        server.shutdown()
+
+
+def test_read_checks_a_server_with_no_key_and_writes_nothing(read):
+    result = read("--commit", COMMIT)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "FAIL" not in result.stdout
+    assert "PASS the server runs " + COMMIT in result.stdout
+    assert (
+        "PASS filedrawer-search 4: the tag's SKILL.md is what the site serves"
+        in result.stdout
+    )
+    assert "PASS /tags answers" in result.stdout
+    site_requests = [r for r in result.requests if not r[1].startswith("/refs/")]
+    assert {method for method, _, _ in site_requests} <= {"GET", "HEAD"}
+    for _, path, headers in result.requests:
+        assert "X-Staging-Key" not in headers, path
+        assert not headers.get("Authorization", "").startswith("Bearer"), path
+
+
+def test_read_keeps_an_exported_staging_key_from_any_other_host(read):
+    """The owner's shell exports FILEDRAWER_STAGING_KEY, and ops/deploy-production
+    runs read against production from it."""
+    result = read("--commit", COMMIT, FILEDRAWER_STAGING_KEY="the-staging-key")
+    assert result.returncode == 0, result.stdout + result.stderr
+    for _, path, headers in result.requests:
+        assert "X-Staging-Key" not in headers, path
+
+
+def test_read_fails_when_the_server_runs_another_commit(read):
+    result = read("--commit", COMMIT, commit="d" * 40)
+    assert result.returncode == 1
+    assert f"FAIL the server runs {COMMIT}" in result.stdout
+    assert "d" * 40 in result.stdout
+
+
+@pytest.mark.parametrize("commit", ["abc", "C" * 40, ""])
+def test_read_takes_only_a_full_commit(read, commit):
+    result = read("--commit", commit)
+    assert result.returncode == 2
+    assert "--commit takes a full commit" in result.stderr
+
+
+def test_read_of_staging_needs_the_staging_key_and_reaches_nothing_without_it(read):
+    result = read(url="https://staging.filedrawer.dev")
+    assert result.returncode == 2
+    assert "staging key" in result.stderr
+    assert result.requests == []

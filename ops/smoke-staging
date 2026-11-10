@@ -8,7 +8,8 @@ set -uo pipefail
 
 usage() {
   cat <<'EOF'
-usage: ops/smoke-staging [--wait SECONDS] [URL]
+usage: ops/smoke-staging [--wait SECONDS] [--commit SHA] [URL]
+       ops/smoke-staging read [--wait SECONDS] [--commit SHA] [URL]
        ops/smoke-staging screen [--wait SECONDS] [URL]
        ops/smoke-staging eval [--field-test N | --families | --resume RUNFILE]
                               [--wait SECONDS] [URL]
@@ -21,7 +22,14 @@ text. Prints PASS or FAIL for each check, then a tally, and exits 1 when any che
 
   --wait SECONDS  first wait up to SECONDS for URL/skill.md to answer 200, as just
                   after a deploy (default: try once)
+  --commit SHA    also check that the server runs commit SHA (its X-Filedrawer-Commit)
   -h, --help      print this
+
+`read` runs only the checks that write nothing: /skill.md and /tags answer, a
+browser opening / gets the page and an agent plain text, each skill version's git tag
+holds what the site serves, and with --commit, the commit. It needs no token, and
+sends the staging key only to staging.filedrawer.dev. ops/deploy-production runs it
+against production after each deploy. The default mode runs these checks too.
 
 CI runs it after each deploy as the smoke-test account, which ops/provision-vps smoke
 sets up and names to staging as FILEDRAWER_SMOKE_ACCOUNT: its entries aren't
@@ -114,6 +122,7 @@ if ! [[ "$poll_seconds" =~ ^[0-9]+(\.[0-9]+)?$ ]] || ! awk -v p="$poll_seconds" 
   exit 2
 fi
 mode=smoke
+commit=""
 field_tests=10
 field_tests_given=0
 families=0
@@ -121,7 +130,10 @@ resume_file=""
 while (( $# )); do
   case "$1" in
     -h | --help) usage; exit 0 ;;
-    screen | eval) mode=$1; shift ;;
+    screen | eval | read) mode=$1; shift ;;
+    --commit)
+      [[ "${2:-}" =~ ^[0-9a-f]{40}$ ]] || { echo "smoke-staging: --commit takes a full commit, 40 lowercase hex characters" >&2; exit 2; }
+      commit=$2; shift 2 ;;
     --field-test)
       [[ "${2:-}" =~ ^[0-9]+$ ]] || { echo "smoke-staging: --field-test takes a number" >&2; exit 2; }
       field_tests=$2; field_tests_given=1; shift 2 ;;
@@ -158,25 +170,47 @@ setting_from() {
   [[ -r "$1" ]] && sed -n "s/^$2='\(.*\)'\$/\1/p" "$1" | head -1
 }
 
-if [[ $mode == screen || $mode == eval ]]; then
-  ops_dir="${FILEDRAWER_OPS_DIR:-$(dirname "$0")}"
+ops_dir="${FILEDRAWER_OPS_DIR:-$(dirname "$0")}"
+# need_staging_key: FILEDRAWER_STAGING_KEY, else STAGING_KEY in ops/.vps.env; exits
+# when neither is set.
+need_staging_key() {
   FILEDRAWER_STAGING_KEY="${FILEDRAWER_STAGING_KEY:-$(setting_from "$ops_dir/.vps.env" STAGING_KEY)}"
   if [[ -z "$FILEDRAWER_STAGING_KEY" ]]; then
     echo "smoke-staging: no staging key: set FILEDRAWER_STAGING_KEY, or STAGING_KEY in $ops_dir/.vps.env" >&2
     exit 2
   fi
+}
+
+if [[ $mode == screen || $mode == eval ]]; then
+  need_staging_key
   FILEDRAWER_STAGING_API_KEY="${FILEDRAWER_STAGING_SCREEN_API_KEY:-$(setting_from "$ops_dir/.screen-test.env" SCREEN_TEST_TOKEN)}"
   if [[ -z "$FILEDRAWER_STAGING_API_KEY" ]]; then
     echo "smoke-staging: no screen-test token: set FILEDRAWER_STAGING_SCREEN_API_KEY, or SCREEN_TEST_TOKEN in $ops_dir/.screen-test.env" >&2
     exit 2
   fi
 fi
-for name in FILEDRAWER_STAGING_KEY FILEDRAWER_STAGING_API_KEY; do
-  if [[ -z "${!name:-}" ]]; then
-    echo "smoke-staging: $name is not set; -h says what it holds" >&2
-    exit 2
+if [[ $commit && $mode != smoke && $mode != read ]]; then
+  echo "smoke-staging: --commit goes with the smoke test or read" >&2
+  exit 2
+fi
+host=${base#*://}
+host=${host%%/*}
+if [[ $mode == read ]]; then
+  # The staging key goes to staging alone, where Caddy wants it.
+  if [[ $host == staging.filedrawer.dev ]]; then
+    need_staging_key
+  else
+    FILEDRAWER_STAGING_KEY=""
   fi
-done
+  FILEDRAWER_STAGING_API_KEY=""
+else
+  for name in FILEDRAWER_STAGING_KEY FILEDRAWER_STAGING_API_KEY; do
+    if [[ -z "${!name:-}" ]]; then
+      echo "smoke-staging: $name is not set; -h says what it holds" >&2
+      exit 2
+    fi
+  done
+fi
 
 # Every entry starts from a made-up, bland fixture that passes cleanly and holds
 # nothing a hazard screen could flag; crates/server/tests/it/smoke.rs fails if a change
@@ -197,7 +231,7 @@ check() {
 # The User-Agent tells this script's entries and searches from agents' (#45).
 headers() {
   printf 'user-agent = "ops/smoke-staging"\n'
-  printf 'header = "X-Staging-Key: %s"\n' "$FILEDRAWER_STAGING_KEY"
+  [[ -n "$FILEDRAWER_STAGING_KEY" ]] && printf 'header = "X-Staging-Key: %s"\n' "$FILEDRAWER_STAGING_KEY"
   [[ "${1:-}" == token ]] && printf 'header = "Authorization: Bearer %s"\n' "$FILEDRAWER_STAGING_API_KEY"
 }
 
@@ -236,6 +270,65 @@ if (( wait_seconds > 0 )); then
     fi
     sleep 2
   done
+fi
+
+# read_checks: the checks that write nothing, which `read` runs alone.
+read_checks() {
+  anon /skill.md
+  check "/skill.md answers" '[[ $CODE == 200 ]]'
+  anon /tags
+  check "/tags answers" '[[ $CODE == 200 ]]'
+
+  # The pages for people (design.md, Agent interface): HTML only for a browser opening
+  # a page. On staging a browser's request also carries its password as Authorization:
+  # Basic, which Caddy passes on and which mustn't count as an agent's token, so the
+  # browser's request here carries one too.
+  local browser agent
+  # shellcheck disable=SC2034  # read by check's condition
+  browser=$(home_type -H 'Sec-Fetch-Dest: document' -H 'Sec-Fetch-Mode: navigate' \
+    -H 'Authorization: Basic c21va2U6dGVzdA==')
+  check "a browser opening / gets the page" '[[ $browser == text/html* ]]'
+  # shellcheck disable=SC2034  # read by check's condition
+  agent=$(home_type)
+  check "an agent opening / gets plain text" '[[ $agent == text/plain* ]]'
+
+  # The skills (design.md, Skills): a HEAD of /skill.md names each one's version, and
+  # each version's git tag, rendered as the installer renders it, holds what the site
+  # serves at /skills/<name>/, so an install from the tag gets what this server
+  # describes.
+  local heads skills running tags_url pair name n files file
+  heads=$(curl -sSI --suppress-connect-headers --max-time 10 -K <(headers) "$base/skill.md" | tr -d '\r')
+  skills=$(sed -n 's/^[Xx]-[Ff]iledrawer-[Ss]kills: //p' <<< "$heads")
+  running=$(sed -n 's/^[Xx]-[Ff]iledrawer-[Cc]ommit: //p' <<< "$heads")
+  if [[ -n $commit ]]; then
+    check "the server runs $commit (it says ${running:-nothing})" '[[ $running == "$commit" ]]'
+  fi
+  check "skill.md names both skills' versions" \
+    '[[ $skills =~ ^filedrawer-search/[0-9]+,\ filedrawer-submit/[0-9]+$ ]]'
+  tags_url=${FILEDRAWER_SKILL_TAGS_URL:-https://raw.githubusercontent.com/filedrawer-dev/filedrawer}
+  for pair in ${skills//,/}; do
+    name=${pair%/*}
+    n=${pair#*/}
+    files=$(curl -s -K <(headers) "$base/skills/$name/SKILL.md" | sed -n 's/^  files: "\(.*\)"$/\1/p')
+    check "$name $n: SKILL.md lists its files" '[[ -n $files ]]'
+    for file in $files; do
+      curl -fsSL --max-time 30 "$tags_url/refs/tags/skill-$name-v$n/skills/$name/$file" 2>/dev/null |
+        sed "s#[{]{BASE}}#$base#g; s#[{]{HOST}}#$host#g" > "$dir/tagged"
+      CODE=$(curl -s -o "$dir/served" -w '%{http_code}' -K <(headers) "$base/skills/$name/$file")
+      check "$name $n: the tag's $file is what the site serves" \
+        '[[ $CODE == 200 && -s $dir/tagged ]] && cmp -s "$dir/tagged" "$dir/served"'
+    done
+  done
+}
+
+# home_type [CURL-ARGS...]: the Content-Type of /.
+home_type() { curl -s -o /dev/null -w '%{content_type}' --max-time 10 -K <(headers) "$@" "$base/"; }
+
+if [[ $mode == read ]]; then
+  read_checks
+  echo "read $base: $pass passed, $fail failed"
+  (( fail == 0 ))
+  exit
 fi
 
 # send FILE [quiet]: submits FILE; sets ID. A refused submission is a FAIL, or with
@@ -970,44 +1063,7 @@ fi
 
 req GET /skill.md
 check "skill.md is live" '[[ $CODE == 200 ]]'
-
-# The pages for people (design.md, Agent interface): HTML only for a browser opening a
-# page. On staging a browser's request also carries its password as Authorization:
-# Basic, which Caddy passes on and which mustn't count as an agent's token, so the
-# browser's request here carries one too.
-# home_type [CURL-ARGS...]: the Content-Type of /.
-home_type() { curl -s -o /dev/null -w '%{content_type}' --max-time 10 -K <(headers) "$@" "$base/"; }
-# shellcheck disable=SC2034  # read by check's condition
-browser=$(home_type -H 'Sec-Fetch-Dest: document' -H 'Sec-Fetch-Mode: navigate' \
-  -H 'Authorization: Basic c21va2U6dGVzdA==')
-check "a browser opening / gets the page" '[[ $browser == text/html* ]]'
-# shellcheck disable=SC2034  # read by check's condition
-agent=$(home_type)
-check "an agent opening / gets plain text" '[[ $agent == text/plain* ]]'
-
-# The skills (design.md, Skills): a HEAD of /skill.md names each one's version, and
-# each version's git tag, rendered as the installer renders it, holds what the site
-# serves at /skills/<name>/, so an install from the tag gets what this server describes.
-skills=$(curl -sSI --suppress-connect-headers --max-time 10 -K <(headers) "$base/skill.md" |
-  tr -d '\r' | sed -n 's/^[Xx]-[Ff]iledrawer-[Ss]kills: //p')
-check "skill.md names both skills' versions" \
-  '[[ $skills =~ ^filedrawer-search/[0-9]+,\ filedrawer-submit/[0-9]+$ ]]'
-tags_url=${FILEDRAWER_SKILL_TAGS_URL:-https://raw.githubusercontent.com/filedrawer-dev/filedrawer}
-host=${base#*://}
-host=${host%%/*}
-for pair in ${skills//,/}; do
-  name=${pair%/*}
-  n=${pair#*/}
-  files=$(curl -s -K <(headers) "$base/skills/$name/SKILL.md" | sed -n 's/^  files: "\(.*\)"$/\1/p')
-  check "$name $n: SKILL.md lists its files" '[[ -n $files ]]'
-  for file in $files; do
-    curl -fsSL --max-time 30 "$tags_url/refs/tags/skill-$name-v$n/skills/$name/$file" 2>/dev/null |
-      sed "s#[{]{BASE}}#$base#g; s#[{]{HOST}}#$host#g" > "$dir/tagged"
-    CODE=$(curl -s -o "$dir/served" -w '%{http_code}' -K <(headers) "$base/skills/$name/$file")
-    check "$name $n: the tag's $file is what the site serves" \
-      '[[ $CODE == 200 && -s $dir/tagged ]] && cmp -s "$dir/tagged" "$dir/served"'
-  done
-done
+read_checks
 
 make_entry single "compute: 1h" > "$dir/e1.md"
 req POST /entries "$dir/e1.md"
