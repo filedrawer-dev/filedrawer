@@ -60,6 +60,8 @@ The field test's entries and logs are in `field-test/`, git-excluded and local o
   Read its `-h` before running it, or changing staging's test accounts, their settings or CI's deploy checks: it holds the accounts, the secrets and the settings each mode reads.
 - `GET /staging/status` (staging and dev; production has no such route) shows what screening spent today against the cap, how many entries wait for it and since when, and when its last call succeeded and when the last one failed, with the API's error; and for the link checks, GitHub's hourly allowance and the calls left, the hosts that asked the server to wait, and how often the API overruled GitHub's commit page.
   Look there first when staging's screen or link checks seem stuck: `curl -H "X-Staging-Key: $FILEDRAWER_STAGING_KEY" https://staging.filedrawer.dev/staging/status`.
+- Staging's Caddy (`ops/remote/caddy.sh`) refuses every request but `robots.txt` without `X-Staging-Key` or the owner's basic auth, so a skill path that sends no header file reaches production but not staging.
+  For a run on staging, put the key line in `~/.config/filedrawer/staging.filedrawer.dev.header` (mode 600) first; the skills send that file whenever it exists, and their token commands keep the key line.
   The last calls are kept in memory, so a restart empties them until the next one.
 
 ### SQL
