@@ -24,6 +24,14 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "bin" / "live-preview"
 
+
+@pytest.fixture(autouse=True)
+def outside_heavy(monkeypatch):
+    """These tests may run inside a heavy job, as the commit checks do, which the
+    preview refuses; each runs it as from a shell outside one."""
+    monkeypatch.delenv("HEAVY_SLOT", raising=False)
+
+
 # What the dev server's own home page holds below the README card: the drawer, which
 # the preview keeps, between markup it replaces.
 DRAWER = (
@@ -262,9 +270,9 @@ def test_a_dev_server_that_doesnt_answer_gets_a_502_saying_so(tmp_path):
         stop(process)
 
 
-def fails_in_one_line(*args) -> str:
+def fails_in_one_line(*args, env=None) -> str:
     """What the script printed when it refused `args`, checked to be one line."""
-    done = subprocess.run([SCRIPT, *args], capture_output=True, text=True)
+    done = subprocess.run([SCRIPT, *args], capture_output=True, text=True, env=env)
     assert done.returncode != 0, done
     assert "Traceback" not in done.stderr, done.stderr
     assert len(done.stderr.strip().splitlines()) == 1, done.stderr
@@ -278,6 +286,17 @@ def test_a_port_in_use_is_refused_in_one_line(tmp_path):
         port = taken.getsockname()[1]
         message = fails_in_one_line("--root", tmp_path, "--port", str(port))
     assert f"port {port}" in message and "--port" in message, message
+
+
+def test_inside_a_heavy_job_it_refuses_in_one_line(tmp_path):
+    # A preview runs until stopped, so inside heavy it would hold the lane that every
+    # session's commit checks wait for; it queues its own build instead.
+    copy_pages(tmp_path)
+    env = {**os.environ, "HEAVY_SLOT": "a slot"}
+    message = fails_in_one_line(
+        "--root", tmp_path, "--port", "0", "--no-build", env=env
+    )
+    assert "without heavy" in message, message
 
 
 def test_no_build_without_a_binary_is_refused_in_one_line(tmp_path):

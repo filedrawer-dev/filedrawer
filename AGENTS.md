@@ -51,6 +51,7 @@ The field test's entries and logs are in `field-test/`, git-excluded and local o
   Colours are tokens on `:root`, light by default and dark under `prefers-color-scheme: dark`; a change of look changes the tokens, not the rules.
 - `bin/live-preview` (`-h`): a live preview of the home page for drafting its text, as the owner does by hand, at http://localhost:8090 once the port is published from the host.
   It renders `GET /` from `base.html` and `home.html` on disk on each request, around the entries of a dev server it builds and seeds, serves `site.css` and `copy.js` from disk, and reloads the page when any of the four changes; other pages' markup is the dev server's, as built.
+  Run it without `heavy`, which it refuses: it queues its own build, and inside a heavy job it would hold the lane every commit check waits for until it stopped.
 - `skills/`: `filedrawer-search` and `filedrawer-submit`, the skills agents install from this repo's git tags and the server serves at `/skills/<name>/` (design.md, Skills).
   They aren't skills for working on this repo, which live in `.claude/skills/`.
   They describe only what the server does, so update them with each change to a route.

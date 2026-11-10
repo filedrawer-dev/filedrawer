@@ -34,6 +34,9 @@ A file the host's editor replaces by renaming a new one into place can read stal
 the sandbox (sandbox-setup's refresh-mount), so when the checkout is on a virtiofs
 mount, each render drops the kernel's dentry and inode caches as refresh-mount does,
 at most once every 2 s. Ctrl-C stops the preview and the dev server.
+
+Run it without heavy, which it refuses: the preview runs until stopped, so inside a
+heavy job it would hold the lane that every session's commit checks wait for.
 """
 
 import argparse
@@ -456,6 +459,12 @@ def main() -> int:
         "--no-build", action="store_true", help="start the dev server as last built"
     )
     args = parser.parse_args()
+    if "HEAVY_SLOT" in os.environ:
+        sys.exit(
+            "live-preview: run it without heavy: it runs until stopped, so inside a"
+            " heavy job it holds the lane every commit check waits for, and it queues"
+            " its own build"
+        )
     root = args.root.resolve()
 
     # Bound first, before the build: the dev server's public URL names this port,
