@@ -56,8 +56,13 @@ def test_the_other_docs_need_no_check():
         # include_str! from crates/server/src/routes/docs.rs; each skill copies it;
         # bin/tests/test_analyzer_docs.py reads its headings
         ("docs/entry-format.md", {"rust", "skills", "bin-tests"}),
-        # include_str! from crates/server (the skills it serves), and their record
-        ("skills/filedrawer-submit/SKILL.md", {"rust", "skills"}),
+        # include_str! from crates/server (the skills it serves), and their record;
+        # crates/server/tests/it/skill.rs checks the routes the skills name
+        ("skills/filedrawer-submit/SKILL.md", {"rust", "skills", "routes"}),
+        # the router, /skill.md and the test's own NOT_FOR_AGENTS list
+        ("crates/server/src/lib.rs", {"rust", "bin-tests", "routes"}),
+        ("crates/server/install.md", {"rust", "bin-tests", "routes"}),
+        ("crates/server/tests/it/skill.rs", {"rust", "bin-tests", "routes"}),
         # crates/server/tests/it/smoke.rs runs it and reads these at run time
         ("ops/smoke-staging", {"rust", "bin-tests"}),
         ("ops/smoke-fixture.md", {"rust", "bin-tests"}),
@@ -94,7 +99,7 @@ def test_why_names_the_crate_source_that_embeds_a_doc():
 
 
 def test_nothing_staged_needs_every_check():
-    assert needed() == {"rust", "bin-tests", "skills"}
+    assert needed() == {"rust", "bin-tests", "skills", "routes"}
 
 
 def test_each_check_names_the_first_path_that_needs_it():

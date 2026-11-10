@@ -4,6 +4,7 @@
 # (`agent-commit-gate -h`); its passes go on a record of their own, so wt-ship runs the
 # full agent-pre-commit on each commit when it lands. It runs what agent-quick-check
 # runs, whose comment says how; it names $CHECK_QUEUE_EXIT too, since the gate reads
-# each check's own bytes for it. The tests a change needs are the agent's to run before
-# it commits.
-exec "$(dirname "$0")/agent-pre-commit" --quick
+# each check's own bytes for it. It adds one test, the routes test, when the router or
+# a document naming routes changed, since a review found a commit whose new routes
+# failed it. The other tests a change needs are the agent's to run before it commits.
+exec "$(dirname "$0")/agent-pre-commit" --quick --routes

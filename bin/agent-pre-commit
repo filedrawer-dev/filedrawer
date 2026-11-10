@@ -27,7 +27,10 @@
 # these rules, when git can't diff against it, and when bin/checks-needed is missing,
 # fails or runs past 60 s. agent-commit-gate keeps the record of passed trees; this
 # script keeps none.
-# --quick runs clippy alone, for bin/agent-quick-check and bin/agent-commit-check; the
+# --quick runs clippy alone, for bin/agent-quick-check and bin/agent-commit-check, and
+# --quick --routes, for the second, also the routes test when the router or a document
+# naming routes changed (bin/checks-needed's `routes`), so a new route nobody named
+# for agents or listed in NOT_FOR_AGENTS fails at its commit; the
 # gate gives each a CHECK_BASE of its own (`agent-commit-gate -h`). Both modes first
 # run the skills check, bin/skills sync --check, which needs no build and runs outside
 # heavy's queue. It is the one check that reaches the repo: it fetches origin's main
@@ -43,7 +46,13 @@
 # exit 0.
 set -e
 quick=
-[ "${1:-}" = --quick ] && quick=1
+routes=
+for arg in "$@"; do
+  case "$arg" in
+    --quick) quick=1 ;;
+    --routes) routes=1 ;;
+  esac
+done
 repo=$(git rev-parse --show-toplevel)
 tree=$(mktemp -d)
 logs=$(mktemp -d)
@@ -51,7 +60,7 @@ trap 'rm -rf "$tree" "$logs"' EXIT
 trap 'exit 130' INT TERM HUP
 git -C "$repo" checkout-index -a --prefix="$tree/"
 need_every_check() {
-  printf 'rust %s\nbin-tests %s\nskills %s\n' "$1" "$1" "$1" >"$logs/needed"
+  printf 'rust %s\nbin-tests %s\nskills %s\nroutes %s\n' "$1" "$1" "$1" "$1" >"$logs/needed"
 }
 # Before the git variables go, since `git commit PATHS` stages into its own index.
 if [ -z "${CHECK_BASE:-}" ]; then
@@ -114,5 +123,11 @@ if [ -f Cargo.toml ] && needs rust; then
     cargo test --doc --quiet >"$logs/doc" 2>&1 || { cat "$logs/doc"; failed=1; }
   fi
   cargo clippy --quiet --all-targets -- -D warnings >"$logs/clippy" 2>&1 || { cat "$logs/clippy"; failed=1; }
+  # At a commit, the one test that a new route, unnamed for agents and unlisted in
+  # NOT_FOR_AGENTS, fails; the full check's nextest runs it with the rest.
+  if [ -n "$routes" ] && needs routes && [ -f crates/server/Cargo.toml ]; then
+    cargo nextest run --cargo-quiet -p filedrawer-server \
+      -E 'test(=skill::the_documents_name_every_route_meant_for_agents)' >"$logs/routes" 2>&1 || { cat "$logs/routes"; failed=1; }
+  fi
 fi
 exit $failed

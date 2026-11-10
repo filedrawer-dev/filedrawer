@@ -258,8 +258,8 @@ def test_renaming_an_embedded_file_runs_the_cargo_checks(repo):
         ("bin/other", {"bin-tests"}),
         ("docs/notes.md", set()),  # in prose and a scratch path only
         # The skills' record follows their folders and the format they copy.
-        ("skills/demo/SKILL.md", {"skills"}),
-        ("skills/versions.txt", {"skills"}),
+        ("skills/demo/SKILL.md", {"skills", "routes"}),
+        ("skills/versions.txt", {"skills", "routes"}),
         ("docs/entry-format.md", {"skills"}),
         ("bin/skills", {"skills", "bin-tests"}),
     ],
@@ -446,6 +446,32 @@ def test_a_check_base_git_cant_diff_against_runs_every_check(repo):
     ran, done = hook(repo, base="0" * 40)  # no such commit
     assert ran == EVERY
     assert "can't diff against CHECK_BASE" in done.stderr
+
+
+def test_quick_runs_the_routes_test_when_the_router_changes(repo):
+    change(repo, "crates/server/Cargo.toml", '[package]\nname = "filedrawer-server"\n')
+    git(repo, "commit", "-qm", "the server crate")
+    change(repo, "crates/server/src/lib.rs", "pub fn f() {}\n")
+    ran, done = hook(repo, "--quick", "--routes")
+    assert ran == {"clippy", "nextest"}, done.stdout + done.stderr
+    calls = (repo.parent / "calls").read_text()
+    assert "skill::the_documents_name_every_route_meant_for_agents" in calls, calls
+    # The small-fix check runs no test.
+    assert run(repo, "--quick") == {"clippy"}
+
+
+def test_quick_runs_no_routes_test_for_another_crates_change_or_without_the_server(
+    repo,
+):
+    change(repo, "crates/server/Cargo.toml", '[package]\nname = "filedrawer-server"\n')
+    git(repo, "commit", "-qm", "the server crate")
+    change(repo, "crates/app/src/lib.rs", "pub fn f() {}\n")
+    assert run(repo, "--quick", "--routes") == {"clippy"}
+    git(repo, "reset", "-q")
+    git(repo, "rm", "-q", "crates/server/Cargo.toml")
+    git(repo, "commit", "-qm", "no server crate")
+    change(repo, "crates/server/src/lib.rs", "pub fn f() {}\n")
+    assert run(repo, "--quick", "--routes") == {"clippy"}
 
 
 def test_quick_runs_clippy_for_a_crates_change_and_nothing_for_docs(repo):

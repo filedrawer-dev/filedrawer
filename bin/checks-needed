@@ -13,6 +13,8 @@ name and the first path that needs it:
     rust       cargo nextest, cargo test --doc and clippy
     bin-tests  pytest over bin/tests
     skills     bin/skills sync --check, which needs no build
+    routes     at a commit, the test that every route is named for agents or
+               listed in NOT_FOR_AGENTS (the full check's nextest holds it)
 
 No paths needs every check: with nothing changed, nothing narrows them.
 
@@ -53,6 +55,9 @@ in prose don't count.
 
 A path needs skills when it lies in skills/, or is docs/entry-format.md or bin/skills.
 
+A path needs routes when it is crates/server/src/lib.rs (the router),
+crates/server/install.md, crates/server/tests/it/skill.rs, or lies in skills/.
+
 The rules miss a path a crate builds without a `..` step, and a Python path not
 derived from __file__. CI runs every check, so it catches what they miss.
 """
@@ -87,6 +92,14 @@ BIN_TESTS_PATHS = ("bin", "ops", ".gitattributes")
 # What the skills' record follows: their folders, the format each copies, and the
 # script that keeps it.
 SKILLS_PATHS = ("skills", "docs/entry-format.md", "bin/skills")
+# What crates/server/tests/it/skill.rs's route test compares: the router, the
+# documents that name routes, and its own list of routes not for agents.
+ROUTES_PATHS = (
+    "crates/server/src/lib.rs",
+    "crates/server/install.md",
+    "crates/server/tests/it/skill.rs",
+    "skills",
+)
 CRATE_SOURCES = (".rs", ".toml", ".html")
 # Not walked: git's own folder, and cargo's output in a working tree.
 SKIP_DIRS = {".git", "target"}
@@ -468,6 +481,10 @@ def main(argv: list[str]) -> int:
                 ref: Step(f"{ref}: the skills' record follows it")
                 for ref in SKILLS_PATHS
             },
+        ),
+        "routes": Inputs(
+            tree,
+            {ref: Step(f"{ref}: the routes test compares it") for ref in ROUTES_PATHS},
         ),
     }
     if why is not None:
