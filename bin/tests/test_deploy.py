@@ -286,12 +286,18 @@ def test_the_deploy_key_can_reach_only_stagings_install():
         assert not sudo_allows(command), command
 
 
-@pytest.mark.skipif(shutil.which("visudo") is None, reason="no visudo")
+# Classic sudo's checker. The VPS runs classic sudo, which reads regular expressions in
+# a rule; Ubuntu 26.04, CI's runner, makes sudo-rs's `visudo` the default, which
+# refuses them, and keeps classic sudo's as `visudo.ws`.
+VISUDO = shutil.which("visudo.ws") or shutil.which("visudo")
+
+
+@pytest.mark.skipif(VISUDO is None, reason="no visudo")
 def test_visudo_accepts_the_deploy_rule(tmp_path):
     rule = tmp_path / "rule"
     rule.write_text(f"deploy ALL=(root) NOPASSWD: {sudo_rule()}\n")
     result = subprocess.run(
-        ["visudo", "-cf", rule], capture_output=True, text=True, check=False
+        [VISUDO, "-cf", rule], capture_output=True, text=True, check=False
     )
     assert result.returncode == 0, result.stdout + result.stderr
 

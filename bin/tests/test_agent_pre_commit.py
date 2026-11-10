@@ -96,7 +96,7 @@ def git(repo: Path, *args: str, env: dict | None = None) -> str:
 
 def commit(repo: Path, message: str = "change") -> None:
     git(repo, "add", "-A")
-    git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", message)
+    git(repo, "commit", "-qm", message)
 
 
 @pytest.fixture(scope="module")
@@ -123,6 +123,9 @@ def template(tmp_path_factory) -> Path:
         root / "bin/tests/test_no_wall_clock_limits.py",
     )
     git(root, "init", "-q")
+    # Its own identity, since CI's runner has no global one.
+    git(root, "config", "user.name", "t")
+    git(root, "config", "user.email", "t@t")
     commit(root, "init")
     return root
 
