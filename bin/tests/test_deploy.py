@@ -10,8 +10,10 @@ import hashlib
 import os
 import re
 import shutil
+import sqlite3
 import stat
 import subprocess
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -160,13 +162,13 @@ def test_install_to_production_checks_as_productions_user_on_its_port(box):
     prod = box.root / "srv/filedrawer/production/bin"
     executable(prod / "filedrawer", binary("v1").decode())
     data = binary("v2")
-    result = install(box, "production", sha(data), data=data)
+    result = install(box, "production", sha(data), "--expect-schema", "none", data=data)
     assert result.returncode == 0, result.stderr
     assert b"v2" in (prod / "filedrawer").read_bytes()
     assert not (box.bin / "filedrawer").exists(), "staging is left alone"
     log = box.log.read_text()
     assert "-p User=filedrawer-prod " in log
-    assert "systemctl restart filedrawer-production" in log
+    assert "systemctl start filedrawer-production" in log
     assert "http://127.0.0.1:8080/tags" in log
 
 
@@ -176,7 +178,8 @@ def test_the_run_check_can_bind_no_socket_and_dies_with_its_unit(box, environmen
     transient unit that may bind no socket (it can't take the other environment's
     port) and whose children die with it, and can't see the environment's data."""
     data = binary("v2")
-    result = install(box, environment, sha(data), data=data)
+    schema = ["--expect-schema", "none"] if environment == "production" else []
+    result = install(box, environment, sha(data), *schema, data=data)
     assert result.returncode == 0, result.stderr
     [check] = [
         line for line in box.log.read_text().splitlines() if "systemd-run" in line
@@ -191,7 +194,11 @@ def test_the_run_check_can_bind_no_socket_and_dies_with_its_unit(box, environmen
         f"-p InaccessiblePaths=-/srv/filedrawer/{environment}/data",
     ):
         assert setting in check, (setting, check)
-    assert "runuser" not in box.log.read_text()
+    assert not [
+        line
+        for line in box.log.read_text().splitlines()
+        if line.startswith("runuser") and "filedrawer.new" in line
+    ], "the new binary ran outside the check's unit"
 
 
 def test_install_refuses_a_hash_mismatch_and_changes_nothing(box):
@@ -541,3 +548,330 @@ def test_deploy_user_refuses_what_isnt_one_ed25519_key(deploy_box, key):
     result = deploy_box.run(key)
     assert result.returncode != 0
     assert not (deploy_box.root / "home/deploy/.ssh/authorized_keys").exists()
+
+
+# filedrawer-install production: a copy of the database first
+
+
+def production_database(box, rows: int = 3, schema: int = 31) -> Path:
+    """Production's database, at a schema version, with `rows` entries."""
+    data = box.root / "srv/filedrawer/production/data"
+    data.mkdir(parents=True, exist_ok=True)
+    path = data / "filedrawer.db"
+    with sqlite3.connect(path) as db:
+        db.execute("PRAGMA journal_mode=WAL")
+        db.execute("CREATE TABLE _sqlx_migrations (version INTEGER PRIMARY KEY)")
+        db.executemany(
+            "INSERT INTO _sqlx_migrations VALUES (?)",
+            [(v,) for v in range(1, schema + 1)],
+        )
+        db.execute("CREATE TABLE entries (id TEXT PRIMARY KEY)")
+        db.executemany(
+            "INSERT INTO entries VALUES (?)", [(f"e{n}",) for n in range(rows)]
+        )
+    db.close()
+    return path
+
+
+def entries(path: Path) -> int:
+    with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as db:
+        count = db.execute("SELECT count(*) FROM entries").fetchone()[0]
+    db.close()
+    return count
+
+
+def deploy_copies(box) -> list[str]:
+    backups = box.root / "srv/filedrawer/production/data/backups"
+    return (
+        sorted(p.name for p in backups.glob("deploy-*.db")) if backups.exists() else []
+    )
+
+
+def when_started(box, script: str) -> None:
+    """What the fake systemctl runs when it starts production, as the new binary would
+    on its first start, such as a migration's writes."""
+    executable(box.tmp / "on-start", "#!/bin/sh\n" + script)
+
+
+@pytest.fixture
+def prod(box):
+    """box, with production's fake systemctl running `on-start` on each start."""
+    executable(
+        box.tmp / "fakes" / "systemctl",
+        f'#!/bin/sh\necho "systemctl $*" >> {box.log}\n'
+        f'if [ "$1" = start ] && [ -x {box.tmp}/on-start ]; then {box.tmp}/on-start; fi\n',
+    )
+    box.prod_bin = box.root / "srv/filedrawer/production/bin"
+    executable(box.prod_bin / "filedrawer", binary("v1").decode())
+    return box
+
+
+def install_production(box, *extra: str, data: bytes | None = None, **env):
+    data = binary("v2") if data is None else data
+    return install(box, "production", sha(data), *extra, data=data, **env)
+
+
+def test_production_stops_copies_the_database_then_starts_the_new_binary(prod):
+    database = production_database(prod)
+    result = install_production(prod, "--expect-schema", "31")
+    assert result.returncode == 0, result.stderr
+    [copy] = deploy_copies(prod)
+    assert re.fullmatch(r"deploy-\d{8}T\d{6}Z\.db", copy)
+    assert entries(database.parent / "backups" / copy) == 3
+    assert b"v2" in (prod.prod_bin / "filedrawer").read_bytes()
+    log = prod.log.read_text().splitlines()
+    stop = log.index("systemctl stop filedrawer-production")
+    [vacuum] = [n for n, line in enumerate(log) if "VACUUM INTO" in line]
+    start = log.index("systemctl start filedrawer-production")
+    assert stop < vacuum < start
+    # Root touches nothing in production's data folder: the user does.
+    assert log[vacuum].startswith("runuser -u filedrawer-prod -- sqlite3")
+
+
+def test_a_failed_health_check_puts_back_the_database_and_the_binary(prod):
+    database = production_database(prod)
+    # The new binary migrates on its first start, then never answers.
+    when_started(
+        prod,
+        f"[ -e {prod.tmp}/unhealthy ] && exit 0\n"
+        f"sqlite3 {database} \"INSERT INTO entries VALUES ('migrated')\"\n"
+        f"touch {prod.tmp}/unhealthy\n",
+    )
+    result = install_production(prod, "--expect-schema", "31")
+    assert result.returncode != 0
+    assert b"rolled back" in result.stderr
+    assert entries(database) == 3
+    assert not Path(f"{database}-wal").exists()
+    assert b"v1" in (prod.prod_bin / "filedrawer").read_bytes()
+    log = prod.log.read_text()
+    assert log.count("systemctl stop filedrawer-production") == 2
+    assert log.count("systemctl start filedrawer-production") == 2
+
+
+def test_a_rollback_that_doesnt_answer_either_says_so(prod):
+    production_database(prod)
+    (prod.tmp / "unhealthy").touch()
+    result = install_production(prod, "--expect-schema", "31")
+    assert result.returncode != 0
+    assert b"doesn't answer either" in result.stderr
+
+
+@pytest.mark.parametrize("expected", ["30", "none"])
+def test_another_schema_than_the_deploy_saw_changes_nothing(prod, expected):
+    production_database(prod)
+    result = install_production(prod, "--expect-schema", expected)
+    assert result.returncode != 0
+    assert b"schema" in result.stderr
+    assert "systemctl" not in prod.log.read_text()
+    assert b"v1" in (prod.prod_bin / "filedrawer").read_bytes()
+    assert deploy_copies(prod) == []
+
+
+def test_a_first_deploy_has_no_database_to_copy(prod):
+    result = install_production(prod, "--expect-schema", "none")
+    assert result.returncode == 0, result.stderr
+    assert deploy_copies(prod) == []
+    assert b"v2" in (prod.prod_bin / "filedrawer").read_bytes()
+
+
+def test_a_copy_that_fails_starts_the_old_binary_again(prod):
+    production_database(prod)
+    executable(prod.tmp / "fakes" / "df", "#!/bin/sh\nprintf '     Avail\\n4096\\n'\n")
+    result = install_production(prod, "--expect-schema", "31")
+    assert result.returncode != 0
+    assert b"free space" in result.stderr
+    assert b"v1" in (prod.prod_bin / "filedrawer").read_bytes()
+    assert deploy_copies(prod) == []
+    systemctl = [
+        line
+        for line in prod.log.read_text().splitlines()
+        if line.startswith("systemctl")
+    ]
+    assert systemctl == [
+        "systemctl stop filedrawer-production",
+        "systemctl start filedrawer-production",
+    ]
+
+
+def test_a_production_install_waits_its_turn_for_the_lock(prod):
+    production_database(prod)
+    backups = prod.root / "srv/filedrawer/production/data/backups"
+    backups.mkdir()
+    held = os.open(backups, os.O_RDONLY)
+    fcntl.flock(held, fcntl.LOCK_EX)
+    try:
+        result = install_production(
+            prod, "--expect-schema", "31", FILEDRAWER_LOCK_SECONDS="1"
+        )
+    finally:
+        os.close(held)
+    assert result.returncode != 0
+    assert b"lock" in result.stderr
+    assert "systemctl" not in prod.log.read_text()
+
+
+def test_it_keeps_the_newest_three_deploy_copies_within_13_days(prod):
+    production_database(prod)
+    backups = prod.root / "srv/filedrawer/production/data/backups"
+    backups.mkdir()
+    for name, days_old in [
+        ("deploy-20261020T000000Z.db", 14),
+        ("deploy-20261105T000000Z.db", 5),
+        ("deploy-20261106T000000Z.db", 4),
+        ("deploy-20261107T000000Z.db", 3),
+    ]:
+        (backups / name).write_bytes(b"")
+        when = time.time() - days_old * 86400
+        os.utime(backups / name, (when, when))
+    (backups / "filedrawer-2026-11-09.db").write_bytes(b"")
+    result = install_production(prod, "--expect-schema", "31")
+    assert result.returncode == 0, result.stderr
+    kept = deploy_copies(prod)
+    assert kept[:2] == ["deploy-20261106T000000Z.db", "deploy-20261107T000000Z.db"]
+    assert len(kept) == 3
+    assert (backups / "filedrawer-2026-11-09.db").exists(), (
+        "the nightly copies aren't its"
+    )
+
+
+@pytest.mark.parametrize(
+    "extra", [[], ["--expect-schema"], ["--expect-schema", "x"], ["--other", "31"]]
+)
+def test_production_needs_the_schema_the_deploy_saw(prod, extra):
+    result = install_production(prod, *extra)
+    assert result.returncode != 0
+    assert b"refused" in result.stderr
+    assert prod.log.read_text() == ""
+
+
+def test_staging_takes_no_schema(box):
+    data = binary("v2")
+    result = install(box, "staging", sha(data), "--expect-schema", "31", data=data)
+    assert result.returncode != 0
+    assert b"refused" in result.stderr
+
+
+def test_a_database_it_cant_read_changes_nothing(prod):
+    """Only a missing file counts as no database: an unreadable one isn't a first
+    deploy, whose copy would be skipped."""
+    database = production_database(prod)
+    database.write_bytes(b"not sqlite\n" * 400)
+    for side in ("-wal", "-shm"):
+        Path(f"{database}{side}").unlink(missing_ok=True)
+    for expected in ("31", "none"):
+        result = install_production(prod, "--expect-schema", expected)
+        assert result.returncode != 0
+        assert b"can't read" in result.stderr
+    assert "systemctl" not in prod.log.read_text()
+
+
+def failing_for(box, word: str) -> None:
+    """runuser fails, as a full disk or a planted file would make it, for any command
+    whose words include `word`; others run as before."""
+    executable(
+        box.tmp / "fakes" / "runuser",
+        f'#!/bin/sh\necho "runuser $*" >> {box.log}\nshift 3\n'
+        f'case " $* " in *" {word} "*) exit 1 ;; esac\nexec "$@"\n',
+    )
+
+
+def test_the_rollback_touches_the_data_folder_only_as_productions_user(prod):
+    database = production_database(prod)
+    (prod.tmp / "unhealthy").touch()
+    install_production(prod, "--expect-schema", "31")
+    log = prod.log.read_text().splitlines()
+    for word in ("rm", "cp", "mv"):
+        lines = [
+            line for line in log if f" {word} " in f" {line} " and str(database) in line
+        ]
+        assert lines, word
+        assert all(
+            line.startswith("runuser -u filedrawer-prod -- ") for line in lines
+        ), lines
+
+
+def test_a_failed_step_of_the_rollback_still_starts_the_service_and_says_so(prod):
+    production_database(prod)
+    (prod.tmp / "unhealthy").touch()
+    failing_for(prod, "cp")
+    result = install_production(prod, "--expect-schema", "31")
+    assert result.returncode != 0
+    assert b"couldn't put the database back" in result.stderr
+    log = prod.log.read_text().splitlines()
+    assert log[-1].startswith("curl"), "it checked the rollback's health last"
+    assert log.count("systemctl start filedrawer-production") == 2
+
+
+def test_a_failed_health_check_with_no_previous_binary_says_so(prod):
+    production_database(prod)
+    (prod.prod_bin / "filedrawer").unlink()
+    (prod.tmp / "unhealthy").touch()
+    result = install_production(prod, "--expect-schema", "31")
+    assert result.returncode != 0
+    assert b"no previous binary" in result.stderr
+    assert b"rolled back to the previous binary" not in result.stderr
+
+
+@pytest.mark.parametrize("command", ["df", "stat"])
+def test_a_failure_before_the_copy_starts_the_old_binary_again(prod, command):
+    production_database(prod)
+    if command == "df":
+        executable(prod.tmp / "fakes" / "df", "#!/bin/sh\nexit 1\n")
+    else:
+        failing_for(prod, "stat")
+    result = install_production(prod, "--expect-schema", "31")
+    assert result.returncode != 0
+    assert b"v1" in (prod.prod_bin / "filedrawer").read_bytes()
+    systemctl = [
+        line
+        for line in prod.log.read_text().splitlines()
+        if line.startswith("systemctl")
+    ]
+    assert systemctl == [
+        "systemctl stop filedrawer-production",
+        "systemctl start filedrawer-production",
+    ]
+
+
+def test_a_failed_prune_doesnt_fail_a_deploy_that_worked(prod):
+    production_database(prod)
+    failing_for(prod, "find")
+    result = install_production(prod, "--expect-schema", "31")
+    assert result.returncode == 0, result.stderr
+    assert b"deployed to production" in result.stdout
+    assert b"prune" in result.stderr
+
+
+def old_deploy_copies(prod, ages: dict[str, float]) -> Path:
+    backups = prod.root / "srv/filedrawer/production/data/backups"
+    backups.mkdir(parents=True, exist_ok=True)
+    for name, days_old in ages.items():
+        (backups / name).write_bytes(b"")
+        when = time.time() - days_old * 86400
+        os.utime(backups / name, (when, when))
+    return backups
+
+
+def test_a_copy_13_days_old_goes_though_it_is_among_the_newest(prod):
+    production_database(prod)
+    # Its name is the newest, but its file is 14 days old: age, not the count, removes it.
+    old_deploy_copies(
+        prod, {"deploy-20261109T000000Z.db": 14, "deploy-20261101T000000Z.db": 2}
+    )
+    result = install_production(prod, "--expect-schema", "31")
+    assert result.returncode == 0, result.stderr
+    kept = deploy_copies(prod)
+    assert "deploy-20261109T000000Z.db" not in kept
+    assert "deploy-20261101T000000Z.db" in kept
+
+
+def test_a_first_deploy_keeps_three_older_copies(prod):
+    old_deploy_copies(
+        prod,
+        {f"deploy-2026110{day}T000000Z.db": 1 for day in range(1, 5)},
+    )
+    result = install_production(prod, "--expect-schema", "none")
+    assert result.returncode == 0, result.stderr
+    assert deploy_copies(prod) == [
+        f"deploy-2026110{day}T000000Z.db" for day in (2, 3, 4)
+    ]

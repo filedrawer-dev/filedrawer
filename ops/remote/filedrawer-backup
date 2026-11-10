@@ -10,12 +10,19 @@
 # the copy's size. Any failure pings BACKUP_PING/fail and exits 1. A failure before
 # the rename leaves no file under the copy's name; one after it keeps the copy.
 #
+# First it deletes the copies ops/remote/filedrawer-install takes before each
+# production deploy (deploy-*.db) once they are 13 days old, even when the night's
+# copy then fails: with Hetzner's 7 days of server backups, deleted data leaves every
+# copy within 21 (#42). It shares one lock with the install, flock on backups/ itself,
+# and waits up to 10 minutes for a deploy to let go of it.
+#
 # Anyone holding the ping URL can report the job healthy, so it reaches curl on stdin
 # and no message prints it.
 set -euo pipefail
 
 : "${FILEDRAWER_DATABASE?the database to copy, as the server reads it}"
 ping_url="${BACKUP_PING-}"
+lock_seconds="${BACKUP_LOCK_SECONDS:-600}"   # tests shorten it
 if [[ ! "$ping_url" =~ ^https://hc-ping\.com/[A-Za-z0-9_./-]+$ ]]; then
   # With no ping there's nobody to tell, so it copies nothing.
   echo "BACKUP_PING isn't a healthchecks.io ping URL; ops/remote/ping.sh writes it" >&2
@@ -56,8 +63,11 @@ trap finish EXIT
 
 umask 077
 mkdir -p "$backups"
-exec 9>"$backups/.lock"
-flock -n 9 || fail "another copy is running"
+# 13 days: 18,720 minutes.
+find "$backups" -maxdepth 1 -name 'deploy-*.db' -mmin +18720 -delete
+exec 9<"$backups"
+flock -w "$lock_seconds" 9 ||
+  fail "a deploy or another copy has held the lock on $backups for ${lock_seconds}s"
 
 [[ -f "$database" ]] || fail "no database at $database"
 

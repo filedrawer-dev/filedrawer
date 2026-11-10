@@ -9,6 +9,7 @@ import os
 import sqlite3
 import stat
 import subprocess
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -206,15 +207,59 @@ def test_a_clock_behind_the_newest_copy_fails_and_touches_no_copy(job):
     assert job.pinged() == [PING + "/fail"]
 
 
-def test_a_run_while_another_holds_the_lock_fails_without_copying(job):
-    job.backups.mkdir()
-    with open(job.backups / ".lock", "w") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        result = job.run()
+def hold_the_lock(job):
+    """The lock a deploy or another copy holds: flock on the backups folder itself."""
+    job.backups.mkdir(exist_ok=True)
+    held = os.open(job.backups, os.O_RDONLY)
+    fcntl.flock(held, fcntl.LOCK_EX)
+    return held
+
+
+def test_a_run_while_the_lock_stays_held_fails_without_copying(job):
+    held = hold_the_lock(job)
+    try:
+        result = job.run(BACKUP_LOCK_SECONDS="1")
+    finally:
+        os.close(held)
     assert result.returncode != 0
-    assert "another" in result.stderr
+    assert "a deploy or another copy" in result.stderr
     assert copies(job) == []
     assert job.pinged() == [PING + "/fail"]
+
+
+def test_a_run_waits_for_a_deploy_to_let_go_of_the_lock(job):
+    held = hold_the_lock(job)
+    release = threading.Timer(2, os.close, [held])
+    started = time.monotonic()
+    release.start()
+    try:
+        result = job.run(BACKUP_LOCK_SECONDS="30")
+        waited = time.monotonic() - started
+    finally:
+        release.join()
+    assert result.returncode == 0, result.stderr
+    assert waited >= 2, "it didn't wait for the lock"
+    assert copies(job) == [f"filedrawer-{TODAY}.db"]
+
+
+def deploy_copy(job, name: str, days_old: float) -> Path:
+    job.backups.mkdir(exist_ok=True)
+    path = job.backups / name
+    make_database(path)
+    when = time.time() - days_old * 86400
+    os.utime(path, (when, when))
+    return path
+
+
+def test_deploy_copies_go_after_13_days_even_when_the_copy_fails(job):
+    """Deleted data must leave every copy within 21 days, and Hetzner keeps a
+    server's backups 7 more (design.md, Hosting and operations)."""
+    deploy_copy(job, "deploy-20261027T120000Z.db", days_old=13.1)
+    deploy_copy(job, "deploy-20261029T120000Z.db", days_old=12.5)
+    job.database.unlink()
+    result = job.run()
+    assert result.returncode != 0
+    assert copies(job) == ["deploy-20261029T120000Z.db"]
 
 
 def test_too_little_free_space_fails_before_copying(job):

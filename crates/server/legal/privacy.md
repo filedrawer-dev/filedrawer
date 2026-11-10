@@ -31,4 +31,4 @@ Deleting your account from the account page deletes your email address, login, d
 Your public entries stay up, marked "account deleted".
 To erase those too, write to <contact@filedrawer.dev>.
 Entries the operator removed stay in the database for analysis, even after their account is deleted, and so do suspended accounts until they are deleted.
-Deleted data leaves the backups and the server's deploy copies within 14 days.
+Deleted data leaves the backups and the server's deploy copies within 21 days.

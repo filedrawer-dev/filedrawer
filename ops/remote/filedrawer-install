@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Installs a deployed binary and restarts its service (design.md, Hosting and
 # operations). Runs as root: for staging through the one sudo rule the `deploy` user
-# has, for production over the owner's own SSH (#42):
-#   filedrawer-install staging|production <sha256>   < binary
+# has, for production over the owner's own SSH, from ops/deploy-production (#42):
+#   filedrawer-install staging <sha256>   < binary
+#   filedrawer-install production <sha256> --expect-schema N|none   < binary
 # It reads the binary from stdin into a root-owned file, refuses it over 64 MiB or
 # when the hash differs, and checks it runs, as the environment's service user, since
 # its code is whatever the deploy key's holder sent: in a transient unit with no
@@ -10,6 +11,15 @@
 # 10 s and takes any child it started down with it. It keeps the old binary as
 # filedrawer.previous, restarts the service, and rolls back if the server doesn't
 # answer on 127.0.0.1 within 30 s.
+#
+# Production also keeps its database: holding the lock the nightly copy takes (flock
+# on backups/), it checks the schema is still the one ops/deploy-production saw,
+# stops the service, writes a VACUUM INTO copy to backups/deploy-<UTC time>.db, then
+# starts the new binary; on a failed health check it puts back the copy with the
+# previous binary, so the new binary's migrations and writes go. It keeps the newest
+# 3 deploy copies, none 13 days old. Every file operation in production's data folder
+# runs as its user, since a bad binary running as that user could plant a symlink
+# there for root to follow.
 set -euo pipefail
 
 # The overrides are for tests, which set FILEDRAWER_ROOT. sudo's env_reset drops all
@@ -19,9 +29,11 @@ if [[ -z "$root" ]]; then
   PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
   max_bytes=67108864
   health_seconds=30
+  lock_seconds=900
 else
   max_bytes="${FILEDRAWER_MAX_BYTES:-67108864}"
   health_seconds="${FILEDRAWER_HEALTH_SECONDS:-30}"
+  lock_seconds="${FILEDRAWER_LOCK_SECONDS:-900}"
 fi
 
 refuse() {
@@ -29,14 +41,21 @@ refuse() {
   exit 2
 }
 
-[[ $# -eq 2 ]] || refuse "usage: filedrawer-install staging|production <sha256> < binary"
-environment="$1"
-expected="$2"
+usage="usage: filedrawer-install staging <sha256> < binary
+       filedrawer-install production <sha256> --expect-schema N|none < binary"
+environment="${1-}"
+expected="${2-}"
 case "$environment" in
   staging) port=8081 user=filedrawer ;;
   production) port=8080 user=filedrawer-prod ;;
   *) refuse "unknown environment '$environment'" ;;
 esac
+if [[ "$environment" == staging ]]; then
+  [[ $# -eq 2 ]] || refuse "$usage"
+else
+  [[ $# -eq 4 && "$3" == --expect-schema && "$4" =~ ^([0-9]+|none)$ ]] || refuse "$usage"
+  expect_schema="$4"
+fi
 [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || refuse "'$expected' is not a SHA-256"
 
 bin="$root/srv/filedrawer/$environment/bin"
@@ -61,12 +80,6 @@ if ! systemd-run --unit="filedrawer-check-$environment" --wait --pipe --quiet --
   exit 1
 fi
 
-if [[ -e "$bin/filedrawer" ]]; then
-  cp -p "$bin/filedrawer" "$bin/filedrawer.previous"
-fi
-mv -f "$new" "$bin/filedrawer"
-systemctl restart "$service"
-
 healthy() {
   local tries
   for (( tries = 0; tries < health_seconds; tries++ )); do
@@ -78,15 +91,130 @@ healthy() {
   return 1
 }
 
+swap_in() {
+  if [[ -e "$bin/filedrawer" ]]; then
+    cp -p "$bin/filedrawer" "$bin/filedrawer.previous"
+  fi
+  mv -f "$new" "$bin/filedrawer"
+}
+
+if [[ "$environment" == staging ]]; then
+  swap_in
+  systemctl restart "$service"
+  if healthy; then
+    echo "deployed to $environment"
+    exit 0
+  fi
+  if [[ -e "$bin/filedrawer.previous" ]]; then
+    mv -f "$bin/filedrawer.previous" "$bin/filedrawer"
+    systemctl restart "$service"
+    echo "the new server didn't answer within ${health_seconds}s; rolled back to the previous binary" >&2
+  else
+    echo "the new server didn't answer within ${health_seconds}s, and there is no previous binary to roll back to" >&2
+  fi
+  exit 1
+fi
+
+# Production. as_user runs a command as production's user, for every path in its
+# data folder.
+data="$root/srv/filedrawer/$environment/data"
+database="$data/filedrawer.db"
+backups="$data/backups"
+as_user() { runuser -u "$user" -- "$@"; }
+
+as_user mkdir -p "$backups"
+# Read-only, on the folder: opening it can't write anywhere, whatever it is.
+exec 9<"$backups"
+flock -w "$lock_seconds" 9 ||
+  refuse "the nightly copy or another deploy has held the lock on $backups for ${lock_seconds}s; nothing changed"
+
+if as_user test -e "$database"; then
+  schema=$(as_user sqlite3 -bail "file:$database?mode=ro" ".timeout 60000" \
+    "SELECT max(version) FROM _sqlx_migrations;") ||
+    refuse "can't read production's schema version from $database; nothing changed"
+else
+  schema=none
+fi
+[[ "$schema" == "$expect_schema" ]] ||
+  refuse "production's schema is $schema now, not the $expect_schema ops/deploy-production saw; run it again. Nothing changed"
+
+# copy_database: writes the copy to $copy, as production's user, when there's room
+# for it (the database and its -wal, with a margin), and checks it. Sets $why when it
+# fails.
+copy_database() {
+  local size free
+  size=$(as_user stat -c %s "$database") || { why="can't read its size"; return 1; }
+  if as_user test -e "$database-wal"; then
+    size=$(( size + $(as_user stat -c %s "$database-wal") )) || { why="can't read its -wal's size"; return 1; }
+  fi
+  local need=$(( size + size / 10 + 64 * 1024 * 1024 ))
+  free=$(df -B1 --output=avail "$backups" | tail -n 1) || { why="df failed"; return 1; }
+  [[ "$free" =~ ^[0-9]+$ ]] || { why="df said '$free'"; return 1; }
+  (( free >= need )) || { why="too little free space: $free bytes, about $need needed"; return 1; }
+  copy="$backups/deploy-$(date -u +%Y%m%dT%H%M%SZ).db" || { why="date failed"; return 1; }
+  local quoted="${copy//\'/\'\'}"
+  as_user sqlite3 -bail "file:$database?mode=ro" ".timeout 60000" "VACUUM INTO '$quoted';" ||
+    { why="sqlite3 couldn't write it"; return 1; }
+  [[ "$(as_user sqlite3 "file:$copy?mode=ro" "PRAGMA quick_check;")" == ok ]] ||
+    { why="it failed PRAGMA quick_check"; return 1; }
+}
+
+systemctl stop "$service"
+copy=""
+why=""
+if [[ "$schema" != none ]] && ! copy_database; then
+  [[ -n "$copy" ]] && as_user rm -f "$copy"
+  systemctl start "$service" || true
+  echo "couldn't copy production's database ($why); started the old binary again, nothing changed" >&2
+  exit 1
+fi
+
+swap_in
+systemctl start "$service"
+# prune: keeps the newest 3 deploy copies, and none 13 days old (18,720 minutes);
+# the names sort by time. Never the copy just taken.
+prune() {
+  local old keep=3
+  as_user find "$backups" -maxdepth 1 -name 'deploy-*.db' -mmin +18720 ! -path "$copy" -delete || return 1
+  old=$(as_user find "$backups" -maxdepth 1 -name 'deploy-*.db' ! -path "$copy") || return 1
+  mapfile -t old < <(sort <<< "$old" | sed '/^$/d')
+  [[ -n "$copy" ]] && keep=2
+  for (( i = 0; i + keep < ${#old[@]}; i++ )); do
+    as_user rm -f -- "${old[i]}" || return 1
+  done
+}
+
 if healthy; then
-  echo "deployed to $environment"
+  prune || echo "deployed, but couldn't prune the old deploy copies in $backups; the next deploy or night tries again" >&2
+  echo "deployed to $environment${copy:+; the database before it is $copy}"
   exit 0
 fi
+
+# Each step goes on when one fails, so the service always starts again, and the
+# message says what came back.
+problems=()
+systemctl stop "$service" || problems+=("systemctl stop failed")
+if [[ -n "$copy" ]]; then
+  { as_user rm -f "$database-wal" "$database-shm" &&
+    as_user cp "$copy" "$database.restoring" &&
+    as_user mv -f "$database.restoring" "$database"; } ||
+    problems+=("couldn't put the database back from $copy")
+fi
 if [[ -e "$bin/filedrawer.previous" ]]; then
-  mv -f "$bin/filedrawer.previous" "$bin/filedrawer"
-  systemctl restart "$service"
-  echo "the new server didn't answer within ${health_seconds}s; rolled back to the previous binary" >&2
+  mv -f "$bin/filedrawer.previous" "$bin/filedrawer" || problems+=("couldn't put the previous binary back")
 else
-  echo "the new server didn't answer within ${health_seconds}s, and there is no previous binary to roll back to" >&2
+  problems+=("there is no previous binary, so the new one stays")
+fi
+systemctl start "$service" || problems+=("systemctl start failed")
+summary="the new server didn't answer within ${health_seconds}s"
+if (( ${#problems[@]} == 0 )); then
+  summary+="; rolled back to the previous binary${copy:+ and the database as it was before ($copy)}"
+else
+  summary+="; rolling back: $(IFS=';'; echo "${problems[*]}" | sed 's/;/; /g')"
+fi
+if healthy; then
+  echo "$summary. It answers now." >&2
+else
+  echo "$summary. It doesn't answer either: look at journalctl -u $service" >&2
 fi
 exit 1
