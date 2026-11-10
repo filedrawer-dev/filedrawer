@@ -17,6 +17,8 @@ name and the first path that needs it:
                listed in NOT_FOR_AGENTS (the full check's nextest holds it)
     py-rules   at a commit, bin/tests/test_no_wall_clock_limits.py, which needs no
                build (the full check's bin-tests holds it)
+    test-mods  at a commit, bin/test-modules, which needs no build (the full
+               check's nextest holds the Rust test it stands in for)
 
 No paths needs every check: with nothing changed, nothing narrows them.
 
@@ -62,6 +64,8 @@ crates/server/install.md, crates/server/tests/it/skill.rs, or lies in skills/.
 
 A path needs py-rules when it lies in bin/tests/.
 
+A path needs test-mods when it lies in a crate's tests/it/, or is bin/test-modules.
+
 The rules miss a path a crate builds without a `..` step, and a Python path not
 derived from __file__. CI runs every check, so it catches what they miss.
 """
@@ -106,6 +110,8 @@ ROUTES_PATHS = (
 )
 # What bin/tests/test_no_wall_clock_limits.py reads: bin/tests' own sources.
 PY_RULES_PATHS = ("bin/tests",)
+# What bin/test-modules reads, besides each crate's tests/it.
+TEST_MODS_PATHS = ("bin/test-modules",)
 CRATE_SOURCES = (".rs", ".toml", ".html")
 # Not walked: git's own folder, and cargo's output in a working tree.
 SKIP_DIRS = {".git", "target"}
@@ -501,6 +507,22 @@ def main(argv: list[str]) -> int:
                 for ref in PY_RULES_PATHS
             },
             # The rule reads bin/tests' own sources, not what they reach.
+            follow=False,
+        ),
+        "test-mods": Inputs(
+            tree,
+            {
+                **{
+                    f"{crate}/tests/it": Step(
+                        f"{crate}/tests/it: bin/test-modules reads it"
+                    )
+                    for crate in crates
+                },
+                **{
+                    ref: Step(f"{ref}: the module check itself")
+                    for ref in TEST_MODS_PATHS
+                },
+            },
             follow=False,
         ),
     }

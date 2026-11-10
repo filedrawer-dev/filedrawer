@@ -67,6 +67,12 @@ LAYOUT = {
         '    (tmp_path / "docs").mkdir()\n'
     ),
     "tool.toml": "",
+    # The crate's integration tests, one binary: a file and a folder with mod.rs,
+    # each with its `mod` line, and a folder of data that is no module.
+    "crates/app/tests/it/main.rs": "mod common;\nmod one;\n",
+    "crates/app/tests/it/one.rs": "",
+    "crates/app/tests/it/common/mod.rs": "",
+    "crates/app/tests/it/fixtures/entry.md": "",
     "docs/format.md": "# Format\n",
     "docs/notes.md": "# Notes\n",
 }
@@ -108,6 +114,7 @@ def template(tmp_path_factory) -> Path:
         "agent-commit-check",
         "checks-needed",
         "pytest",
+        "test-modules",
     ):
         shutil.copy(REPO / "bin" / script, root / "bin" / script)
     # The rule test the commit check runs for a bin/tests change.
@@ -273,6 +280,11 @@ def test_renaming_an_embedded_file_runs_the_cargo_checks(repo):
         # The rule tests read every file in bin/tests.
         ("bin/tests/test_tool.py", {"bin-tests", "py-rules"}),
         ("bin/tests/conftest.py", {"bin-tests", "py-rules"}),
+        # The module check reads every crate's tests/it, and its own script.
+        ("crates/app/tests/it/one.rs", {"rust", "bin-tests", "test-mods"}),
+        ("crates/app/tests/it/main.rs", {"rust", "bin-tests", "test-mods"}),
+        ("crates/app/tests/it/fixtures/entry.md", {"rust", "bin-tests", "test-mods"}),
+        ("bin/test-modules", {"bin-tests", "test-mods"}),
     ],
 )
 def test_the_checks_a_change_to_each_reference_needs(template, path, checks):
@@ -325,6 +337,65 @@ def test_a_failing_rule_refuses_the_commit_with_its_output(repo):
     )
 
     assert "a wall-clock limit at test_tool.py:2" in done.stdout + done.stderr
+
+
+def commit_check(repo: Path, code: int = 0) -> str:
+    """The commit check's output, run outside the queue as the gate first runs it,
+    which must exit with `code` there."""
+    _, done = hook(repo, env=QUEUE_EXIT, script="agent-commit-check", code=code)
+    return done.stdout + done.stderr
+
+
+def test_the_commit_check_refuses_a_test_file_main_rs_has_no_mod_line_for(repo):
+    change(repo, "crates/app/tests/it/two.rs", "#[test]\nfn two() {}\n")
+    change(repo, "crates/app/tests/it/helpers/mod.rs", "")
+
+    output = commit_check(repo, code=1)
+
+    # Before the queue: no cargo or uvx call at all.
+    assert (repo.parent / "calls").read_text() == ""
+    for path, line in (
+        ("crates/app/tests/it/two.rs", "mod two;"),
+        ("crates/app/tests/it/helpers/mod.rs", "mod helpers;"),
+    ):
+        assert path in output, output
+        assert f"`{line}`" in output, output
+    assert "crates/app/tests/it/main.rs" in output, output
+    assert "one.rs" not in output and "common" not in output, output
+
+
+def test_the_commit_check_passes_a_test_file_with_its_mod_line(repo):
+    change(repo, "crates/app/tests/it/two.rs", "")
+    change(repo, "crates/app/tests/it/main.rs", "mod common;\nmod one;\nmod two;\n")
+    commit_check(repo, code=75)  # on to the queue for clippy
+
+
+def test_the_commit_check_reads_the_staged_main_rs_not_the_working_one(repo):
+    change(repo, "crates/app/tests/it/two.rs", "")
+    (repo / "crates/app/tests/it/main.rs").write_text(
+        "mod common;\nmod one;\nmod two;\n"
+    )
+    assert "`mod two;`" in commit_check(repo, code=1)
+
+
+def test_the_commit_check_ignores_an_unstaged_test_file(repo):
+    (repo / "crates/app/tests/it/two.rs").write_text("")
+    change(repo, "crates/app/tests/it/one.rs", "#[test]\nfn one() {}\n")
+    commit_check(repo, code=75)
+
+
+def test_the_module_check_runs_only_for_a_change_under_tests_it(repo):
+    # A tree that already holds a file with no `mod` line: the Rust test's to find.
+    change(repo, "crates/app/tests/it/two.rs", "")
+    commit(repo)
+    change(repo, "docs/notes.md")
+    commit_check(repo)
+
+
+def test_the_module_check_runs_only_at_a_commit(repo):
+    change(repo, "crates/app/tests/it/two.rs", "")
+    hook(repo, "--quick", env=QUEUE_EXIT, code=75)
+    hook(repo, "--quick", env=QUEUE_EXIT, script="agent-quick-check", code=75)
 
 
 def test_bin_pytest_runs_the_pinned_pytest_with_its_plugins_on_its_arguments(repo):

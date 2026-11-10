@@ -37,7 +37,10 @@
 # under bin/tests changed (bin/checks-needed's `py-rules`), since a test with a
 # wall-clock limit otherwise passes its commit and fails only the full check. It reads
 # the sources and takes seconds, so, like the skills check, it runs outside heavy's
-# queue. Both modes first
+# queue. So does --mods, which the commit check passes too: bin/test-modules, when a
+# path in a crate's tests/it changed (bin/checks-needed's `test-mods`), since a test
+# file with no `mod` line in tests/it/main.rs compiles nowhere and clippy passes it;
+# only the full check's nextest would fail. Both modes first
 # run the skills check, bin/skills sync --check, which needs no build and runs outside
 # heavy's queue. It is the one check that reaches the repo: it fetches origin's main
 # and skill tags into it, writing only those refs.
@@ -54,11 +57,13 @@ set -e
 quick=
 routes=
 rules=
+mods=
 for arg in "$@"; do
   case "$arg" in
     --quick) quick=1 ;;
     --routes) routes=1 ;;
     --rules) rules=1 ;;
+    --mods) mods=1 ;;
   esac
 done
 repo=$(git rev-parse --show-toplevel)
@@ -68,7 +73,7 @@ trap 'rm -rf "$tree" "$logs"' EXIT
 trap 'exit 130' INT TERM HUP
 git -C "$repo" checkout-index -a --prefix="$tree/"
 need_every_check() {
-  printf 'rust %s\nbin-tests %s\nskills %s\nroutes %s\npy-rules %s\n' "$1" "$1" "$1" "$1" "$1" >"$logs/needed"
+  printf 'rust %s\nbin-tests %s\nskills %s\nroutes %s\npy-rules %s\ntest-mods %s\n' "$1" "$1" "$1" "$1" "$1" "$1" >"$logs/needed"
 }
 # Before the git variables go, since `git commit PATHS` stages into its own index.
 if [ -z "${CHECK_BASE:-}" ]; then
@@ -118,6 +123,12 @@ fi
 # Outside the queue, as the skills check is: an ast read of bin/tests' sources.
 if [ -n "$rules" ] && needs py-rules && [ -x bin/pytest ] && [ -f bin/tests/test_no_wall_clock_limits.py ]; then
   bin/pytest -n0 bin/tests/test_no_wall_clock_limits.py >"$logs/rules" 2>&1 || { cat "$logs/rules"; failed=1; }
+fi
+# Outside the queue too, and in milliseconds: the staged tests/it folders and their
+# main.rs. A refusal here ends the run, since the clippy that would follow passes the
+# file anyway: a file with no `mod` line compiles nowhere.
+if [ -n "$mods" ] && needs test-mods && [ -x bin/test-modules ]; then
+  bin/test-modules . || exit 1
 fi
 if [ -z "$quick" ] && needs bin-tests; then
   queue_first bin-tests

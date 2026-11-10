@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""Refuse a crate's integration test that its tests/it/main.rs never names.
+
+    bin/test-modules [TREE]
+
+Each crate's tests/it/ builds as one binary, main.rs, with a `mod NAME;` line for each
+file or folder beside it; a file with no such line compiles nowhere, so clippy passes
+it, and only the Rust test every_file_here_is_a_module fails. bin/agent-pre-commit
+runs this at an agent's commit (its --mods), on TREE (default .), its copy of the
+index, so a test file `git add -A` swept in unregistered is refused at its commit.
+
+For each crates/*/tests/it/ holding a main.rs, the modules are its other *.rs files,
+by stem, and its folders that hold a mod.rs, by name. As in the Rust test, a module is
+named when main.rs has a line that is exactly `mod NAME;`. It prints a line for each
+module main.rs doesn't name, the file and the line to add, and exits 1; it prints
+nothing and exits 0 when every module is named. A tests/it/ without a main.rs is
+skipped.
+"""
+
+import argparse
+import sys
+from pathlib import Path
+
+
+def unregistered_modules(tree: Path) -> list[tuple[Path, Path, str]]:
+    """Each module some crate's main.rs doesn't name: its file, that main.rs and the
+    module's name, as paths relative to `tree`."""
+    found = []
+    for main in sorted(tree.glob("crates/*/tests/it/main.rs")):
+        lines = set(main.read_text(errors="replace").splitlines())
+        for path in sorted(main.parent.iterdir()):
+            if path.is_dir() and (path / "mod.rs").is_file():
+                name, file = path.name, path / "mod.rs"
+            elif path.suffix == ".rs" and path.is_file() and path != main:
+                name, file = path.stem, path
+            else:
+                continue
+            if f"mod {name};" not in lines:
+                found.append((file.relative_to(tree), main.relative_to(tree), name))
+    return found
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="test-modules",
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("tree", nargs="?", default=".", metavar="TREE")
+    tree = Path(parser.parse_args(argv).tree)
+    found = unregistered_modules(tree)
+    for file, main_rs, name in found:
+        print(
+            f"test-modules: {file} is in no test binary: {main_rs} has no line"
+            f" `mod {name};`; add it, and stage {main_rs}"
+        )
+    return 1 if found else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

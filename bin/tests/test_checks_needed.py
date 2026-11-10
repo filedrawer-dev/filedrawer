@@ -62,7 +62,13 @@ def test_the_other_docs_need_no_check():
         # the router, /skill.md and the test's own NOT_FOR_AGENTS list
         ("crates/server/src/lib.rs", {"rust", "bin-tests", "routes"}),
         ("crates/server/install.md", {"rust", "bin-tests", "routes"}),
-        ("crates/server/tests/it/skill.rs", {"rust", "bin-tests", "routes"}),
+        (
+            "crates/server/tests/it/skill.rs",
+            {"rust", "bin-tests", "routes", "test-mods"},
+        ),
+        # bin/test-modules reads each crate's tests/it
+        ("crates/analyzer/tests/it/main.rs", {"rust", "bin-tests", "test-mods"}),
+        ("bin/test-modules", {"bin-tests", "test-mods"}),
         # crates/server/tests/it/smoke.rs runs it and reads these at run time
         ("ops/smoke-staging", {"rust", "bin-tests"}),
         ("ops/smoke-fixture.md", {"rust", "bin-tests"}),
@@ -99,7 +105,14 @@ def test_why_names_the_crate_source_that_embeds_a_doc():
 
 
 def test_nothing_staged_needs_every_check():
-    assert needed() == {"rust", "bin-tests", "skills", "routes", "py-rules"}
+    assert needed() == {
+        "rust",
+        "bin-tests",
+        "skills",
+        "routes",
+        "py-rules",
+        "test-mods",
+    }
 
 
 def test_each_check_names_the_first_path_that_needs_it():
