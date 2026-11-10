@@ -413,6 +413,7 @@ def rerun(tmp_path, fake_host):
     return SimpleNamespace(
         run=run,
         tmp=tmp_path,
+        host=fake_host,
         secrets=fake_host.secrets,
         log=fake_host.log,
         present=present,
@@ -699,7 +700,9 @@ def test_production_checks_the_site_from_outside(production):
     assert any("https://www.filedrawer.dev/" in c for c in curl)
 
 
-def test_production_only_new_asks_for_nothing_the_server_has(production):
+def rerun_production(production) -> subprocess.CompletedProcess:
+    """Runs `ops/provision-vps --only-new production` with empty stdin, on a server
+    that holds every setting production needs, and an ops/.vps.env with its values."""
     for path in (
         "production-mail.env",
         "production-screening.env",
@@ -711,13 +714,17 @@ def test_production_only_new_asks_for_nothing_the_server_has(production):
         production.env_file.read_text()
         + "PROD_SMTP_USER='prod@filedrawer.dev'\nPROD_SCREENING_DAILY_USD='1'\n"
     )
-    result = run_wizard(
+    return run_wizard(
         "--only-new",
         "production",
         cwd=production.env_file.parent.parent,
         answers="",
         env=production.host.env,
     )
+
+
+def test_production_only_new_asks_for_nothing_the_server_has(production):
+    result = rerun_production(production)
     assert result.returncode == 0, result.stdout + result.stderr
     sent = production.sent()
     assert any(s.endswith(script("service.sh")) for s in sent)
@@ -799,3 +806,120 @@ def test_production_refuses_a_stage_it_doesnt_have(production):
     result = production.run("nonsense", answers="")
     assert result.returncode != 0
     assert "production account" in result.stdout + result.stderr
+
+
+# Every script in ops/remote/ reaches the server on a rerun with --only-new, or is
+# exempt below with when it does reach it. Under --only-new the owner reruns the
+# wizard to bring the server up to date, so a script it skips keeps the old version
+# there: a stricter sudo rule in deploy-user.sh once never left this machine. A new
+# script fails these tests until it is sent or exempt.
+
+REMOTE = REPO / "ops/remote"
+
+
+def remote_scripts() -> list[Path]:
+    return [path for path in REMOTE.iterdir() if path.is_file()]
+
+
+# Scripts the wizard installs on the server as programs, never runs, and where.
+INSTALLED = {
+    "filedrawer-receive": "/usr/local/bin",
+    "filedrawer-install": "/usr/local/sbin",
+}
+
+# Each reason says when the script does reach the server.
+FIELD_TEST_KEY = (
+    "The owner runs it through ops/field-test-key, to open or close a field-test key."
+)
+STAGING_ONLY_NEW_EXEMPT = {
+    "ci-account.sh": "Sent when a CI account's ID or token is missing, or when a "
+    "run without --only-new (ops/provision-vps or ops/provision-vps smoke) is asked "
+    "for a new token.",
+    "mail.sh": "Sent without --only-new, or when /etc/filedrawer/staging-mail.env is "
+    "missing, with the password the wizard then asks for.",
+    "screening.sh": "Sent without --only-new, or when "
+    "/etc/filedrawer/staging-screening.env is missing, with the API key the wizard "
+    "then asks for.",
+    "github-token.sh": "Sent without --only-new, or when /etc/filedrawer/github.env "
+    "is missing, with the token the wizard then asks for.",
+    "loopback.sh": "Production's wizard sends it on every run: its rules keep "
+    "staging off production's port.",
+    "ping.sh": "Production's wizard sends it, without --only-new or when "
+    "production-ping.env is missing.",
+    "field-test-key.sh": FIELD_TEST_KEY,
+}
+PRODUCTION_ONLY_NEW_EXEMPT = {
+    "base.sh": "Staging's wizard sends it; production shares staging's server.",
+    "deploy-user.sh": "Staging's wizard sends it, for staging's deploy key; "
+    "production's deploys come with #42.",
+    "filedrawer-receive": "Staging's wizard installs it; only staging's deploy key "
+    "runs it.",
+    "ci-account.sh": "Staging's wizard sends it, as its own exemption says: CI's "
+    "accounts are on staging.",
+    "smoke-env.sh": "Staging's wizard sends it: the smoke test runs on staging.",
+    "admin-grant.sh": "ops/provision-vps production account sends it, after the "
+    "first deploy.",
+    "mail.sh": "Sent without --only-new, or when /etc/filedrawer/production-mail.env "
+    "is missing, with the password the wizard then asks for.",
+    "screening.sh": "Sent without --only-new, or when "
+    "/etc/filedrawer/production-screening.env is missing, with the API key the "
+    "wizard then asks for.",
+    "ping.sh": "Sent without --only-new, or when /etc/filedrawer/production-ping.env "
+    "is missing, with the ping URLs the wizard then asks for.",
+    "github-token.sh": "Sent only when /etc/filedrawer/github.env, which staging "
+    "shares, is missing, or by staging's wizard (see its exemption).",
+    "field-test-key.sh": FIELD_TEST_KEY,
+}
+
+
+def sent_by_name(host) -> dict[str, list[str]]:
+    """The scripts in ops/remote/ that the ssh calls sent, each with the remote
+    command lines that took it. A secret's line may come first."""
+    scripts = {path.name: path.read_text() for path in remote_scripts()}
+    sent: dict[str, list[str]] = {}
+    for n, call in enumerate(host.calls(), start=1):
+        stdin = host.sent(n)
+        names = [name for name, text in scripts.items() if stdin.endswith(text)]
+        assert len(names) <= 1, names
+        for name in names:
+            sent.setdefault(name, []).append(call)
+    return sent
+
+
+def assert_every_script_sent_or_exempt(host, exempt: dict[str, str]) -> None:
+    scripts = {path.name for path in remote_scripts()}
+    assert set(exempt) <= scripts, (
+        f"exempt, not in ops/remote/: {set(exempt) - scripts}"
+    )
+    sent = sent_by_name(host)
+    unplaced = scripts - set(sent) - set(exempt)
+    assert not unplaced, (
+        f"--only-new sends none of {sorted(unplaced)}: send each, "
+        "or exempt it with when it reaches the server"
+    )
+    stale = set(sent) & set(exempt)
+    assert not stale, f"exempt, yet --only-new sends {sorted(stale)}"
+    for name, calls in sent.items():
+        if name in INSTALLED:
+            install = (
+                f"install -o root -g root -m 0755 /dev/stdin {INSTALLED[name]}/{name}"
+            )
+            assert calls == [install] * len(calls), (name, calls)
+        else:
+            assert all(call.endswith("bash -s") for call in calls), (name, calls)
+
+
+def test_only_new_sends_every_remote_script_or_exempts_it(rerun):
+    # CI's screen account is saved too, so the rerun keeps every account and secret.
+    env_file = rerun.tmp / "ops/.vps.env"
+    env_file.write_text(env_file.read_text() + "CI_SCREEN_ACCOUNT='a-ci'\n")
+    (rerun.secrets / "CI_SCREEN_TOKEN").write_text("kept")
+    result = rerun.run()
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert_every_script_sent_or_exempt(rerun.host, STAGING_ONLY_NEW_EXEMPT)
+
+
+def test_production_only_new_sends_every_remote_script_or_exempts_it(production):
+    result = rerun_production(production)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert_every_script_sent_or_exempt(production.host, PRODUCTION_ONLY_NEW_EXEMPT)
