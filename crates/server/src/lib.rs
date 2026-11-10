@@ -160,7 +160,9 @@ async fn not_found() -> error::AppError {
     error::AppError::NotFound
 }
 
-/// The router with every route, and their paths.
+/// The router with every route, and their paths. A new route is named in `/skill.md`
+/// or a skill, or listed in `NOT_FOR_AGENTS` in `tests/it/skill.rs`, as
+/// CODING_STANDARDS.md (Untrusted text) says which; a test refuses one that is neither.
 fn build(state: AppState) -> Routes<Router> {
     use routes::{account, admin};
     // A build whose skills lack a version stops here, at start, not on a request.

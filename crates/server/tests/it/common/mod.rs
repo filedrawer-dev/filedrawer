@@ -280,6 +280,33 @@ impl Reply {
     pub fn location(&self) -> Option<&str> {
         self.headers.get("location")?.to_str().ok()
     }
+
+    /// Whether an element of the page has `class` among its classes, so a test finds
+    /// content by markup rather than by a template's words (CODING_STANDARDS.md, Tests).
+    /// The templates quote attributes with `"` and put a space before each.
+    pub fn has_class(&self, class: &str) -> bool {
+        self.body.split(" class=\"").skip(1).any(|after| {
+            after
+                .split('"')
+                .next()
+                .is_some_and(|value| value.split_whitespace().any(|name| name == class))
+        })
+    }
+}
+
+#[test]
+fn has_class_matches_whole_class_names() {
+    let reply = Reply {
+        status: StatusCode::OK,
+        headers: HeaderMap::new(),
+        body: r#"<p class="error removal-final">x</p><p data-class="other">y</p>"#.to_string(),
+    };
+    assert!(reply.has_class("removal-final"));
+    assert!(reply.has_class("error"));
+    assert!(!reply.has_class("removal"));
+    assert!(!reply.has_class("final"));
+    assert!(!reply.has_class("x"));
+    assert!(!reply.has_class("other"));
 }
 
 impl TestApp {

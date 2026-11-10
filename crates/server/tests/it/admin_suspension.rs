@@ -138,11 +138,7 @@ async fn lifting_a_suspension_lets_the_account_write_but_restores_nothing() {
 
     // While it is suspended, none of its entries comes back.
     let page = app.page(&format!("/admin/e/{id}"), Some(&cookie)).await;
-    assert!(
-        page.body.contains("class=\"restore-refused\""),
-        "{}",
-        page.body
-    );
+    assert!(page.has_class("restore-refused"), "{}", page.body);
     let early = app
         .form(&format!("/admin/e/{id}/restore"), &[], Some(&cookie))
         .await;

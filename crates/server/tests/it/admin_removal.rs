@@ -253,18 +253,10 @@ async fn an_unpublished_batch_member_is_not_restored_and_does_not_block_deleting
     let page = app
         .page(&format!("/admin/e/{}", members[0]), Some(&cookie))
         .await;
-    assert!(
-        page.body.contains("class=\"error removal-final\""),
-        "{}",
-        page.body
-    );
+    assert!(page.has_class("removal-final"), "{}", page.body);
     let single = app.submit_held(&entry("Alone", "")).await;
     let page = app.page(&format!("/admin/e/{single}"), Some(&cookie)).await;
-    assert!(
-        !page.body.contains("class=\"error removal-final\""),
-        "{}",
-        page.body
-    );
+    assert!(!page.has_class("removal-final"), "{}", page.body);
     done(remove(&app, &cookie, &members[0]).await, &members[0]).await;
 
     let refused = restore(&app, &cookie, &members[0]).await;
@@ -391,11 +383,7 @@ async fn an_entry_whose_account_is_deleted_stays_removed() {
     let page = app.page(&format!("/admin/e/{id}"), Some(&cookie)).await;
     assert_eq!(page.status, StatusCode::OK, "{}", page.body);
     assert!(!offers_restore(&page, &id), "{}", page.body);
-    assert!(
-        page.body.contains("class=\"restore-refused\""),
-        "{}",
-        page.body
-    );
+    assert!(page.has_class("restore-refused"), "{}", page.body);
     assert_eq!(
         restore(&app, &cookie, &id).await.status,
         StatusCode::CONFLICT
@@ -416,11 +404,7 @@ async fn a_removed_batch_member_offers_no_restore() {
         .page(&format!("/admin/e/{}", members[0]), Some(&cookie))
         .await;
     assert!(!offers_restore(&page, &members[0]), "{}", page.body);
-    assert!(
-        page.body.contains("class=\"restore-refused\""),
-        "{}",
-        page.body
-    );
+    assert!(page.has_class("restore-refused"), "{}", page.body);
 }
 
 #[tokio::test]
