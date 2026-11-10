@@ -63,15 +63,17 @@ async fn a_token_lists_its_accounts_entries_newest_first() {
         "{}",
         reply.body
     );
+    let removed_line = format!(
+        "{removed}\tremoved\tremoved-one\tRemoved one\t{}",
+        code("steering")
+    );
+    let first_line = format!("{first}\tpublic\tfirst\tFirst result\t{}", code("steering"));
     assert_eq!(
         listed(&app, "/entries/mine").await,
         vec![
-            format!(
-                "{removed}\tremoved\tremoved-one\tRemoved one\t{}",
-                code("steering")
-            ),
+            removed_line.clone(),
             format!("{second}\tpending\t-\tSecond result"),
-            format!("{first}\tpublic\tfirst\tFirst result\t{}", code("steering")),
+            first_line.clone(),
         ]
     );
     // A removed entry is still the account's result, so a repo's check finds it.
@@ -81,13 +83,7 @@ async fn a_token_lists_its_accounts_entries_newest_first() {
             "/entries/mine?code=https%3A%2F%2Fgithub.com%2Fexample%2Fsteering"
         )
         .await,
-        vec![
-            format!(
-                "{removed}\tremoved\tremoved-one\tRemoved one\t{}",
-                code("steering")
-            ),
-            format!("{first}\tpublic\tfirst\tFirst result\t{}", code("steering")),
-        ]
+        vec![removed_line, first_line]
     );
 
     let reply = app
