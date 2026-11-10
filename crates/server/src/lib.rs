@@ -25,6 +25,7 @@ pub mod mail;
 mod markdown;
 mod pages;
 mod passwords;
+mod provenance;
 mod queue;
 mod removed_entries;
 mod removed_files;

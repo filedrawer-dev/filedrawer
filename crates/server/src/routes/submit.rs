@@ -18,6 +18,7 @@ use crate::error::AppError;
 use crate::jobs::{end_hold, hold_until};
 use crate::link_checks::{self, CheckedLink, LinkFlags};
 use crate::links::{self, Linked, SlugRule};
+use crate::provenance::Provenance;
 use crate::respond::{DELIMITER, Format, card_and_warnings};
 use crate::series::{self, Cited};
 use crate::{AppState, allowance, attachments, removed_files, time, warnings};
@@ -356,6 +357,7 @@ async fn commit_with_unit(
 pub async fn submit(
     State(state): State<AppState>,
     account: TokenAccount,
+    provenance: Provenance,
     format: Format,
     body: Bytes,
 ) -> Result<Response, AppError> {
@@ -377,6 +379,7 @@ pub async fn submit(
         register_slug: true,
         series: cited.as_ref(),
         attachments: set,
+        provenance: &provenance,
     };
     let mut transaction = crate::db::write_tx(&state.pool).await?;
     let (seq, id) = entries::insert_on(&mut transaction, &new).await?;
@@ -402,6 +405,7 @@ pub async fn submit(
 pub async fn new_version(
     State(state): State<AppState>,
     account: TokenAccount,
+    provenance: Provenance,
     Path(id): Path<String>,
     format: Format,
     body: Bytes,
@@ -455,6 +459,7 @@ pub async fn new_version(
         register_slug,
         series: cited.as_ref(),
         attachments: set,
+        provenance: &provenance,
     };
     let mut transaction = crate::db::write_tx(&state.pool).await?;
     let inserted = entries::insert_on(&mut transaction, &new).await;
@@ -554,6 +559,7 @@ async fn own_pending(
 pub async fn resubmit(
     State(state): State<AppState>,
     account: TokenAccount,
+    provenance: Provenance,
     Path(id): Path<String>,
     format: Format,
     body: Bytes,
@@ -591,6 +597,7 @@ pub async fn resubmit(
         hold_until: &publish_at,
         series: cited.as_ref(),
         attachments: set,
+        provenance: &provenance,
     };
     let replaced = entries::replace_on(&mut transaction, entry.seq, &replacement).await?;
     if !replaced {

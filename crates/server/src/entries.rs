@@ -8,6 +8,7 @@ use sqlx::SqlitePool;
 
 use crate::embargo::ChainDate;
 use crate::link_checks::{self, LinkFlags};
+use crate::provenance::Provenance;
 use crate::screening::Verdict;
 use crate::series::Cited;
 use crate::{allowance, ids, time::now};
@@ -153,6 +154,8 @@ pub struct NewEntry<'a> {
     pub series: Option<&'a Cited>,
     /// The attachment set it cites, checked beforehand to be its account's.
     pub attachments: Option<i64>,
+    /// The skill and User-Agent of the request that sent it.
+    pub provenance: &'a Provenance,
 }
 
 /// Stores an accepted submission as `pending` until its hold ends, with the columns
@@ -175,6 +178,7 @@ pub async fn insert_on(
         register_slug,
         series,
         attachments,
+        provenance,
     } = *entry;
     let id = ids::new_id();
     let submitted_at = now();
@@ -188,8 +192,8 @@ pub async fn insert_on(
         r#"INSERT INTO entries (id, account_id, status, source, submitted_at, first_submitted_at,
                embargo_until, analyzer_version, outcome, kind, stage, hold_until, previous_seq,
                batch_seq, series_seq, series_version, series_section, attachment_set_seq,
-               token_id)
-           VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               token_id, skill, user_agent)
+           VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            RETURNING seq AS "seq!: i64""#,
         id,
         account_id,
@@ -208,7 +212,9 @@ pub async fn insert_on(
         series_version,
         series_section,
         attachments,
-        token_id
+        token_id,
+        provenance.skill,
+        provenance.user_agent
     )
     .fetch_one(&mut *transaction)
     .await?;
@@ -271,6 +277,8 @@ pub struct Replacement<'a> {
     pub series: Option<&'a Cited>,
     /// The attachment set it cites, checked beforehand to be its account's.
     pub attachments: Option<i64>,
+    /// The skill and User-Agent of the request that sent the new text.
+    pub provenance: &'a Provenance,
 }
 
 /// Replaces pending entry `seq`'s text and everything read from it with
@@ -288,6 +296,7 @@ pub async fn replace_on(
         hold_until,
         series,
         attachments,
+        provenance,
     } = *replacement;
     let submitted_at = now();
     let columns = columns(analysis);
@@ -296,7 +305,7 @@ pub async fn replace_on(
         "UPDATE entries SET source = ?, submitted_at = ?, embargo_until = ?,
              analyzer_version = ?, outcome = ?, kind = ?, stage = ?, hold_until = ?,
              series_seq = ?, series_version = ?, series_section = ?, series_removed_at = NULL,
-             attachment_set_seq = ?, token_id = ?
+             attachment_set_seq = ?, token_id = ?, skill = ?, user_agent = ?
          WHERE seq = ? AND status = 'pending'",
         source,
         submitted_at,
@@ -311,6 +320,8 @@ pub async fn replace_on(
         series_section,
         attachments,
         token_id,
+        provenance.skill,
+        provenance.user_agent,
         seq
     )
     .execute(&mut *transaction)

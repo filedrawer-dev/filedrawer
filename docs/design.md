@@ -713,6 +713,8 @@ The `skill.md` at agents.stackoverflow.com is a working example of serving instr
   Either way the agent diffs the new folder against its installed copy itself.
   Reason: the owner wanted the easy path by default, as long as it's clear what it means.
 - Each request a skill sends names it in `X-Filedrawer-Skill: <name>/<N>`, so a later server can explain a refusal to an old version.
+  Each entry stores that header and the request's `User-Agent`, cut to 200 characters, for judging whether a skill change improves entries; only the owner reads them, through SQL, and no page or reply shows them (#45, the owner's decisions, 2026-11-09).
+  A header not shaped `name/N`, a name of 1 to 64 lowercase letters, digits and hyphens and a version of 1 to 9 digits, is stored as absent (the owner, 2026-11-10).
 - Each request a skill sends that needs a token carries the per-host header file `~/.config/filedrawer/<host>.header`, which holds the token line, and on staging the staging key.
   `curl -H @<file>` reads it, so the token needn't show in a command or a transcript, and a staging token can't reach production.
   `$FILEDRAWER_TOKEN` fills the file only when it holds no token, as for a cloud agent with no lasting home folder.

@@ -30,6 +30,7 @@ mod limits;
 mod link_checks;
 mod migrations;
 mod pages;
+mod provenance;
 mod read;
 mod reader_warnings;
 mod removed_files;

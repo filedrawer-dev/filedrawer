@@ -108,6 +108,14 @@ Add a new entry at the end of the topic it belongs to, or start a topic when non
 - Chosen: every entry, newest first, so `/search?outcome=effect` works alone.
 - Against: `/cards.txt` already returns everything, so an empty search may be a mistake worth naming.
 
+#### Which request's skill and User-Agent an entry keeps
+
+- Options: the request that wrote its current text, so a PUT overwrites the submission's; or the first submission's for good; or every request's, in a table of its own.
+- Chosen: the request that wrote the current text (a submission, a batch, a new version or a PUT); publishing records nothing.
+  An empty User-Agent, or either header not UTF-8, is stored as absent (#45).
+  The question #45 serves is which skill wrote the text that gets screened and read, and after a PUT that is the PUT's.
+- Against: a PUT from a different agent hides which one drafted the entry, and a table of every write would keep both.
+
 ### Accounts
 
 #### API tokens

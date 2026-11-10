@@ -19,6 +19,7 @@ use crate::error::AppError;
 use crate::jobs::hold_until;
 use crate::link_checks::{self, CheckedLink, LinkFlags};
 use crate::links::{self, Linked, SlugRule};
+use crate::provenance::Provenance;
 use crate::queue;
 use crate::respond::{DELIMITER, Format, card_and_warnings};
 use crate::routes::submit::{Accepted, accept, cited_series, cited_set};
@@ -101,6 +102,7 @@ async fn declared_runs(
 pub async fn submit_batch(
     State(state): State<AppState>,
     account: TokenAccount,
+    provenance: Provenance,
     format: Format,
     body: Bytes,
 ) -> Result<Response, AppError> {
@@ -199,7 +201,7 @@ pub async fn submit_batch(
         cites: &cites,
         links: &links,
     };
-    let stored = store(&state, &account, &checked, &publish_at, now).await;
+    let stored = store(&state, &account, &provenance, &checked, &publish_at, now).await;
     let (batch_id, members) = match stored {
         Ok(Some(stored)) => stored,
         Ok(None) => return Err(allowance::refusal(accepted.len())),
@@ -266,6 +268,7 @@ struct CheckedBatch<'a> {
 async fn store<'a>(
     state: &AppState,
     account: &TokenAccount,
+    provenance: &Provenance,
     checked: &CheckedBatch<'a>,
     publish_at: &str,
     now: OffsetDateTime,
@@ -293,6 +296,7 @@ async fn store<'a>(
             register_slug: true,
             series: cited.as_ref(),
             attachments: *set,
+            provenance,
         };
         let (seq, id) = entries::insert_on(&mut transaction, &new).await?;
         link_checks::store(&mut transaction, seq, links, now).await?;
