@@ -11,9 +11,9 @@ The owner and an agent settled the design on 2026-11-03 and 2026-11-04, and the 
 
 Plans and open work are GitHub issues on `filedrawer-dev/filedrawer`, not these docs: `issue-todo open --repo filedrawer-dev/filedrawer` lists every open item, and each build step's plan is an issue of its own (#16 for step 4).
 Read them before you plan work, and file new work there.
-To check whether an issue already covers something, `issue-todo open --titles` lists the open issues one a line, by number and title.
+To check whether an issue already covers something, `issue-todo open --titles` lists the open issues one a line, by number and title, with each one's count of open items and the session that claimed it, if any.
 `issue-todo show N` prints one issue's items, from its body and comments together, ticked or not.
-Other sessions build beside you, so claim an issue before you start on it, `issue-todo claim N --repo filedrawer-dev/filedrawer`, and release it (`issue-todo release N`) if you stop before it lands; skip one another session holds.
+Other sessions build beside you, so claim an issue before you start on it, `issue-todo claim N --repo filedrawer-dev/filedrawer`, and release it (`issue-todo release N`) if you stop before it lands; skip one another session holds, which `open --titles` shows as `[claimed by ID]`.
 When you choose what to build next, prefer, among the issues the plan allows, the one whose files overlap least with what the other sessions claimed or have in their worktrees (`git worktree list` names their topics), so the landings don't conflict.
 When a commit finishes an issue, end its message with `Closes #N`, so the owner's push closes it; when a slice of a plan lands, tick it with `issue-todo tick N MATCH --note <sha>`.
 `uncertainties.md` holds the choices made while building that the owner hasn't settled yet.
