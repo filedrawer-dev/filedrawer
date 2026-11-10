@@ -30,6 +30,25 @@ It names:
 - `apply-edits` for text replacements, since the `edit-script-gate` hook refuses Python scripts that read, replace and write a file (it did so 25 times in the first test);
 - the report rules below.
 
+## Agents' own fetch tools on staging
+
+A run that reads staging through an agent's built-in fetch tool, such as Claude Code's WebFetch or Codex's fetch, can't send the staging key's header, so Caddy refuses it.
+For such a run the owner opens a field-test key with `ops/field-test-key open` on their machine (`-h`; `--hours N`, 8 by default, at most 72).
+It writes the key to `/home/carver/code/claudedev/keep/filedrawer/field-test-key/key` as `key=` and `expires=` lines.
+
+- Before the run, read the file, check that `expires` is still ahead, and probe it with curl: `/tags?key=<key>` should answer 200.
+  A `closed=` or `failed=` line means no key from this file is open, and `expires=unknown` that the owner's last open got no answer, so ask them to close it.
+- Give each URL in full with the key in its query, `?key=<key>` or `&key=<key>`, before any `#`.
+  A link followed from a page loses it, and so does a redirect the server answers (to `/login` or `/account`), so the scripted turns hand over every URL.
+- The key lets through only `GET` and `HEAD`, on staging and its files host (attached files), and not `/staging*` or `/admin*`.
+  Submitting still goes through the skills, with the staging key in the header file.
+- A 403 that names the field-test key means it expired, was replaced, or the request isn't a read of a page.
+- Every agent in the sandbox shares one IP, so the server's per-IP limit counts their requests together.
+- Some fetch tools fetch from their vendor's servers, which then hold the URL and its key, and Claude Code's WebFetch caches pages for 15 minutes.
+- When the run is over, ask the owner to run `ops/field-test-key close`.
+
+Any agent running as the sandbox's user can read the key file, as it can `ops/.vps.env`.
+
 ## Reports
 
 The harness refuses report-like files written by subagents, such as `FINDINGS.md`.

@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # Caddy in front of staging. Every request but robots.txt needs either basic auth,
 # for the owner's browser, or the staging key in an X-Staging-Key header, for agents:
-# an agent's API token needs the Authorization header that basic auth uses.
+# an agent's API token needs the Authorization header that basic auth uses. While
+# ops/field-test-key holds one open, a field-test key in the query (`?key=`) lets
+# reads of pages through too, for fetch tools that can't send a header; its snippet,
+# /etc/caddy/field-test.caddy, is made here empty only when missing, so a rerun keeps
+# an open key.
 # The browser's Authorization: Basic header reaches the server too, where only a
 # Bearer token marks a request as an agent's (respond::wants_page); ops/smoke-staging
 # checks that a browser still gets the pages.
@@ -43,12 +47,21 @@ else
 fi
 unset STAGING_PASSWORD
 
+snippet="$root/etc/caddy/field-test.caddy"
+if [[ ! -e "$snippet" ]]; then
+  : > "$snippet"
+  chown root:caddy "$snippet"
+  chmod 640 "$snippet"
+fi
+
 cat > "$caddyfile" <<CONF
 # Written by ops/remote/caddy.sh; edits here are lost on the next run.
 
 # Staging is the owner's alone: every request but robots.txt needs the staging key,
 # for agents, whose API token needs the Authorization header that basic auth uses,
-# or the password, for the owner's browser. No crawler should index it.
+# or the password, for the owner's browser. No crawler should index it. An open
+# field-test key (ops/remote/field-test-key.sh) lets GETs of pages through; any other
+# request with a key in its query gets a 403 that says the key isn't valid here.
 (staging_gate) {
 	handle /robots.txt {
 		respond "User-agent: *
@@ -59,6 +72,11 @@ Disallow: /
 	handle @agent {
 		request_header -X-Staging-Key
 		reverse_proxy 127.0.0.1:8081
+	}
+	import /etc/caddy/field-test.caddy
+	@field_test_stale query key=*
+	handle @field_test_stale {
+		respond "field-test key not valid here: it is expired or replaced, or the request isn't a GET or HEAD of a page. Ask the owner to run ops/field-test-key open." 403
 	}
 	handle {
 		basic_auth {

@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+# Opens or closes staging's field-test key (design.md, Hosting): a key in a URL's
+# query, `?key=<hex>`, that lets agents' fetch tools, which can't send the staging
+# key's header, read staging's pages past Caddy's gate. It opens only GETs and HEADs,
+# never /staging* or /admin*, and lapses on its own.
+#
+# Usage: ops/field-test-key open [--hours N] [--replace] [--out PATH]
+#        ops/field-test-key close [--out PATH]
+#
+# Run it on your own machine, from a checkout with ops/.vps.env, as ops/provision-vps
+# saves it (VPS_HOST), and ssh access as root.
+#
+#   open       makes a new key, good for N hours (default 8, at most 72, by the
+#              server's clock), and writes it to the key file. It refuses while a
+#              key is open; --replace takes that one's place.
+#   close      ends the open key now, and marks the key file closed.
+#
+# The key file: --out PATH, else $FILEDRAWER_FIELD_TEST_KEY_FILE, else
+# ~/code/claudedev/keep/filedrawer/field-test-key/key, which a sandbox session reads
+# as /home/carver/code/claudedev/keep/filedrawer/field-test-key/key. It holds
+# `key=<hex>` and `expires=<UTC time>` lines, or `closed=<time>` after a close. An
+# open the server turns down leaves it as it was (`failed=<time>` if it held
+# nothing), and one that gets no answer leaves the new key with `expires=unknown`:
+# close it. It is rewritten in place, never renamed, since the sandbox can miss a
+# file the host renames into place. Mode 600.
+#
+# The key goes to the server on ssh's stdin, never in a command line, and this
+# prints only the expiry. Close it after each run: URLs with the key end up in fetch
+# tools' logs and Caddy's.
+
+set -euo pipefail
+
+usage() { sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; }
+die() { echo "field-test-key: $1" >&2; exit "${2:-1}"; }
+
+[[ $# -ge 1 ]] || { usage >&2; exit 2; }
+case "$1" in
+  -h | --help) usage; exit 0 ;;
+  open | close) command="$1"; shift ;;
+  *) usage >&2; exit 2 ;;
+esac
+
+hours=8
+replace=""
+out="${FILEDRAWER_FIELD_TEST_KEY_FILE:-$HOME/code/claudedev/keep/filedrawer/field-test-key/key}"
+while [[ $# -gt 0 ]]; do
+  if [[ "$1" == --hours || "$1" == --out ]] && [[ $# -lt 2 ]]; then
+    die "$1 needs a value" 2
+  fi
+  case "$command $1" in
+    "open --hours") hours="${2:-}"; shift 2 ;;
+    "open --replace") replace=1; shift ;;
+    *" --out") out="${2:-}"; shift 2 ;;
+    *) usage >&2; exit 2 ;;
+  esac
+done
+if [[ $command == open ]] && ! { [[ "$hours" =~ ^[1-9][0-9]?$ ]] && (( hours <= 72 )); }; then
+  die "--hours takes a whole number from 1 to 72, not '$hours'" 2
+fi
+[[ -n "$out" ]] || die "--out needs a path" 2
+
+ops_dir="${FILEDRAWER_OPS_DIR:-$(dirname "$0")}"
+setting_from() {
+  [[ -r "$1" ]] && sed -n "s/^$2='\(.*\)'\$/\1/p" "$1" | head -1
+}
+VPS_HOST=$(setting_from "$ops_dir/.vps.env" VPS_HOST || true)
+[[ -n "$VPS_HOST" ]] || die "no VPS_HOST in $ops_dir/.vps.env: run ops/provision-vps first" 2
+script="$(dirname "$0")/remote/field-test-key.sh"
+
+# remote LINE: runs the remote script as root, LINE as stdin's first line, which the
+# remote shell reads into $FIELD_TEST; prints what it prints.
+remote() {
+  { printf '%s\n' "$1"; cat "$script"; } \
+    | ssh -o BatchMode=yes "root@$VPS_HOST" 'IFS= read -r FIELD_TEST; export FIELD_TEST; bash -s'
+}
+
+# keep TEXT: rewrites the key file in place, mode 600, in a folder only you read.
+keep() {
+  umask 077
+  mkdir -p "$(dirname "$out")"
+  chmod 700 "$(dirname "$out")"
+  printf '%s' "$1" > "$out"
+  chmod 600 "$out"
+}
+
+stamp() { date -u +%FT%TZ; }
+
+if [[ $command == open ]]; then
+  key=$(openssl rand -hex 32)
+  # What the file held, for when the server turns the new key down and keeps the
+  # old state; the trailing x keeps its final newline.
+  before=$( { [[ -f "$out" ]] && cat "$out"; } ; printf x)
+  before="${before%x}"
+  [[ -n "$before" ]] || before="failed=$(stamp)"$'\n'
+  # The file first, so a key that goes live always has a copy.
+  keep "key=$key"$'\n'"expires=pending"$'\n'
+  verb=open
+  [[ -n "$replace" ]] && verb=replace
+  status=0
+  answer=$(remote "$verb $key $hours") || status=$?
+  case $status in
+    0) ;;
+    3)
+      keep "$before"
+      die "a key is already open; rerun with --replace to take its place, or close it first" ;;
+    1)
+      keep "$before"
+      die "the server turned the new key down and kept its old state; $out is as it was" ;;
+    *)
+      # ssh failed, or the server stopped part way: the new key may be live.
+      keep "key=$key"$'\n'"expires=unknown"$'\n'
+      die "no answer from the server (exit $status), so the new key may be open: run 'ops/field-test-key close'" ;;
+  esac
+  [[ "$answer" =~ ^expires=([0-9T:Z-]+)$ ]] \
+    || die "the server's answer wasn't an expiry; the key may be open: run 'ops/field-test-key close'"
+  expires="${BASH_REMATCH[1]}"
+  keep "key=$key"$'\n'"expires=$expires"$'\n'
+  echo "The field-test key is open until $expires (UTC), in $out."
+  echo "Close it after the run: ops/field-test-key close"
+else
+  answer=$(remote close) \
+    || die "the server didn't close the key, so it is still open; the key file keeps it"
+  [[ "$answer" == closed ]] || die "the server's answer wasn't 'closed'; the key may still be open"
+  keep "closed=$(stamp)"$'\n'
+  echo "The field-test key is closed; $out says so."
+fi

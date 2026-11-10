@@ -72,6 +72,7 @@ The field test's entries and logs are in `field-test/`, git-excluded and local o
   The record is a file beside staging's database and survives deploys.
 - Staging's Caddy (`ops/remote/caddy.sh`) refuses every request but `robots.txt` without `X-Staging-Key` or the owner's basic auth, so a skill path that sends no header file reaches production but not staging.
   For a run on staging, put the key line in `~/.config/filedrawer/staging.filedrawer.dev.header` (mode 600) first; the skills send that file whenever it exists, and their token commands keep the key line.
+  For fetch tools that can't send a header, the owner opens a field-test key with `ops/field-test-key open` (`-h`), which lets GETs of pages through as `?key=`; `docs/field-test.md` says how a run uses it.
 
 ### SQL
 

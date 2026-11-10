@@ -969,6 +969,11 @@ Python is fine for scripts and internal tools.
 - staging.filedrawer.dev and filedrawer.dev run on the same VPS, with separate databases and separate systemd units.
 - Staging is the owner's alone.
   Caddy puts basic auth on every staging request, reads included, and staging's `robots.txt` disallows all crawling.
+  For agents' fetch tools, which can't send the staging key's header, the owner opens a second key, the field-test key, with `ops/field-test-key open`: `?key=<key>` in a URL lets a `GET` or `HEAD` through, on staging and its files host, except to `/staging*` and `/admin*`, and Caddy strips it before the server sees the request (the owner's decisions, 2026-11-09).
+  Each `open` makes a new key, good for 8 hours by default and 72 at most, by the server's clock; the expiry sits in Caddy's matcher, so the key lapses with no timer, and `close` ends it early.
+  Any other request with a `key=` in its query gets a 403 that says the key isn't valid there, so an agent holding an expired key doesn't take it for a login page.
+  Reason: #28's header log is for the headers agents' own fetch tools send, and Caddy refused those tools before the server saw them; the staging key can't rotate after each run, since CI sends it.
+  A URL carries the key into fetch tools' logs, their vendors' servers, and Caddy's error log, which journald keeps for 14 days, so the owner closes the key after each run.
   Behind that gate, `GET /staging/status` shows what screening spent today, how many entries wait for it, and how its last calls went, with the last failure's error; and for the link checks, GitHub's hourly allowance and the calls left, the hosts asking the server to wait, and how often the API overruled GitHub's commit page (the owner's decision, 2026-11-07, choosing it from a retrospective).
   Production doesn't route it (the owner's decision, 2026-11-07).
   Reason: agents can't read the server's log, and from 2026-11-06 20:04 UTC staging's screen refused every call for four hours before anyone saw why.
