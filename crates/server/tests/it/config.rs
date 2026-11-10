@@ -99,8 +99,76 @@ fn the_anthropic_screener_needs_its_key() {
         SMTP[2],
         SMTP[3],
         ("FILEDRAWER_GITHUB_TOKEN", "github_pat_not_real"),
+        PING,
     ]);
     assert!(production.is_ok(), "{production:?}");
+}
+
+/// A healthchecks.io ping URL of the shape its checks have, not a real one.
+const PING: (&str, &str) = (
+    "FILEDRAWER_DAILY_EMAIL_PING",
+    "https://hc-ping.com/00000000-0000-0000-0000-000000000000",
+);
+
+#[test]
+fn production_needs_the_daily_emails_ping_url_and_debug_hides_it() {
+    let mut production = vec![
+        ("FILEDRAWER_ENVIRONMENT", "production"),
+        ("FILEDRAWER_SCREENER", "anthropic"),
+        ("FILEDRAWER_ANTHROPIC_API_KEY", "sk-ant-not-real"),
+        ("FILEDRAWER_GITHUB_TOKEN", "github_pat_not_real"),
+    ];
+    production.extend(SMTP);
+    let error = config(&production).unwrap_err();
+    assert_eq!(error, ConfigError::NoDailyEmailPingInProduction);
+    assert!(error.to_string().contains("FILEDRAWER_DAILY_EMAIL_PING"));
+    production.push(PING);
+    let production = config(&production).unwrap();
+    assert_eq!(
+        production
+            .daily_email_ping
+            .as_ref()
+            .map(|ping| ping.expose()),
+        Some(PING.1)
+    );
+    assert!(!format!("{production:?}").contains("0000-0000"));
+}
+
+#[test]
+fn staging_pings_only_when_the_url_is_set() {
+    assert!(config(&[]).unwrap().daily_email_ping.is_none());
+    assert!(config(&[PING]).unwrap().daily_email_ping.is_some());
+}
+
+#[test]
+fn the_ping_url_must_be_on_healthchecks_io_over_https() {
+    for url in [
+        "http://hc-ping.com/00000000-0000-0000-0000-000000000000",
+        "https://hc-ping.co/00000000-0000-0000-0000-000000000000",
+        "https://hc-ping.com.example.net/x",
+        "https://hc-ping.com",
+        "hc-ping.com/x",
+    ] {
+        let error = config(&[("FILEDRAWER_DAILY_EMAIL_PING", url)]).unwrap_err();
+        assert!(
+            matches!(
+                error,
+                ConfigError::Invalid {
+                    name: "FILEDRAWER_DAILY_EMAIL_PING",
+                    ..
+                }
+            ),
+            "{url}: {error:?}"
+        );
+    }
+}
+
+#[test]
+fn nightly_copies_are_read_from_backups_beside_the_database() {
+    assert_eq!(
+        config(&[]).unwrap().backups_dir,
+        std::path::Path::new("/tmp/backups")
+    );
 }
 
 #[test]
@@ -115,6 +183,7 @@ fn production_needs_a_github_token_and_debug_hides_it() {
     assert_eq!(error, ConfigError::NoGithubTokenInProduction);
     assert!(error.to_string().contains("FILEDRAWER_GITHUB_TOKEN"));
     production.push(("FILEDRAWER_GITHUB_TOKEN", "github_pat_not_real"));
+    production.push(PING);
     let production = config(&production).unwrap();
     assert_eq!(
         production.github_token.as_ref().map(|token| token.expose()),
@@ -262,6 +331,7 @@ fn the_attachment_cap_is_20_gb_in_production_and_2_gb_elsewhere() {
                 ("FILEDRAWER_SCREENER", "anthropic"),
                 ("FILEDRAWER_ANTHROPIC_API_KEY", "sk-not-real"),
                 ("FILEDRAWER_GITHUB_TOKEN", "github_pat_not_real"),
+                PING,
             ],
         ]
         .concat(),

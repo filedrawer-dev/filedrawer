@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO daily_email_sent (account_id, period_start) VALUES (?, ?)\n         ON CONFLICT (account_id) DO UPDATE SET period_start = excluded.period_start",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "57a099db2cf80782576b4442beec27d674e90792734b637dd3164e394d346355"
+}

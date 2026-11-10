@@ -157,6 +157,11 @@ pub async fn run_link_rechecker(state: AppState) {
         if let Err(error) = crate::link_checks::recheck_due(&state, OffsetDateTime::now_utc()).await
         {
             tracing::error!(%error, "rechecking links failed");
+            state
+                .link_checker
+                .events()
+                .recheck_failures
+                .record(error.to_string());
         }
     }
 }
@@ -169,6 +174,34 @@ pub async fn run_publisher(state: AppState, tick: std::time::Duration) {
         ticks.tick().await;
         if let Err(error) = publish_due(&state, OffsetDateTime::now_utc()).await {
             tracing::error!(%error, "running the screening queue failed");
+        }
+    }
+}
+
+/// How often the daily email's job looks whether today's run is due.
+const DAILY_EMAIL_TICK: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+
+/// How long the job waits after a failed run before trying again.
+const DAILY_EMAIL_RETRY: Duration = Duration::hours(1);
+
+/// Runs `send_daily_email` every 5 minutes, for `filedrawer serve`, so today's run
+/// goes within 5 minutes of midnight UTC, or of the server starting. A failed run is
+/// logged and tried again an hour later.
+pub async fn run_daily_email(state: AppState) {
+    let mut ticks = tokio::time::interval(DAILY_EMAIL_TICK);
+    let mut failed_at: Option<OffsetDateTime> = None;
+    loop {
+        ticks.tick().await;
+        let now = OffsetDateTime::now_utc();
+        if failed_at.is_some_and(|at| now < at + DAILY_EMAIL_RETRY && now >= at) {
+            continue;
+        }
+        match crate::daily_email::send_daily_email(&state, now).await {
+            Ok(_) => failed_at = None,
+            Err(error) => {
+                tracing::error!(%error, "the daily email failed; it is tried again in an hour");
+                failed_at = Some(now);
+            }
         }
     }
 }

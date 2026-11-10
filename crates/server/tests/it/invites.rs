@@ -11,7 +11,13 @@ use common::{Reply, TestApp, date_in, entry, field, id_in, owner, test_app};
 use filedrawer_server::limits::Limits;
 
 /// Creates a code on the owner's page and returns it.
-async fn create_code(app: &TestApp, cookie: &str, label: &str, uses: &str, days: &str) -> String {
+pub(crate) async fn create_code(
+    app: &TestApp,
+    cookie: &str,
+    label: &str,
+    uses: &str,
+    days: &str,
+) -> String {
     let made = app
         .form(
             "/admin/invites",
@@ -268,7 +274,7 @@ async fn wrong_codes_count_against_the_ips_signups() {
 // Revoking a code.
 
 /// An invited, verified account: its session and a token.
-async fn invited_account(app: &TestApp, code: &str, email: &str) -> (String, String) {
+pub(crate) async fn invited_account(app: &TestApp, code: &str, email: &str) -> (String, String) {
     let signup = sign_up_from(app, "203.0.113.5", email, Some(code)).await;
     assert_eq!(signup.status, StatusCode::OK, "{}", signup.body);
     let link = app.link_in_last_email_to(email).await;
@@ -279,7 +285,7 @@ async fn invited_account(app: &TestApp, code: &str, email: &str) -> (String, Str
     (session, token)
 }
 
-async fn revoke(app: &TestApp, cookie: &str, code: &str) -> Reply {
+pub(crate) async fn revoke(app: &TestApp, cookie: &str, code: &str) -> Reply {
     app.form(&format!("/admin/invites/{code}/revoke"), &[], Some(cookie))
         .await
 }

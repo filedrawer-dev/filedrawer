@@ -209,13 +209,17 @@ async fn over_cap(
     let (total, account) = spent_on(&state.pool, account_id, now).await?;
     let cap = state.screening_daily_nano_usd;
     let shared = held_to_share(state, account_id);
-    Ok(total >= cap
-        || (shared && account.saturating_mul(100) >= cap.saturating_mul(ACCOUNT_SHARE_PERCENT)))
+    Ok(total >= cap || (shared && reached_share(account, cap)))
+}
+
+/// Whether one account's spend in a day has reached its share of the day's `cap`.
+pub(crate) fn reached_share(spent: i64, cap: i64) -> bool {
+    spent.saturating_mul(100) >= cap.saturating_mul(ACCOUNT_SHARE_PERCENT)
 }
 
 /// Whether `account_id` is held to an account's share of the day's cap: every
 /// account but staging's screen-test account, which answers only to the day's total.
-fn held_to_share(state: &AppState, account_id: &str) -> bool {
+pub(crate) fn held_to_share(state: &AppState, account_id: &str) -> bool {
     state.screen_test_account.as_deref() != Some(account_id)
 }
 

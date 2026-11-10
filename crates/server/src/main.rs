@@ -4,6 +4,7 @@
 use std::process::ExitCode;
 
 use filedrawer_server::config::Config;
+use filedrawer_server::daily_email::HttpPinger;
 use filedrawer_server::file_store::FileStore;
 use filedrawer_server::link_checks::LinkChecker;
 use std::sync::Arc;
@@ -52,6 +53,14 @@ FILEDRAWER_LINK_CHECKS=off fetches nothing, for tests that run this binary;
 production refuses it. FILEDRAWER_PUBLISHER_SECONDS sets how often the screening
 queue runs, which is when an entry with attached code is screened: 30 seconds unless
 set, and only dev takes it, for the same tests.
+
+Once a day, after midnight UTC, the server emails the admins what screening
+published, what waits for them, what failed, and new feedback, when there is
+anything to report; outside production, only problems. After each run it pings
+FILEDRAWER_DAILY_EMAIL_PING, a healthchecks.io ping URL (https://hc-ping.com/...),
+or its /fail URL when the run failed; production refuses to start without it. The
+email reports the newest nightly copy of the database in backups/ beside the
+database file, named filedrawer-YYYY-MM-DD.db.
 
 The admin commands need only FILEDRAWER_DATABASE. create-account prints the new
 account's ID. create-token prints a new API token for the account; only its hash
@@ -253,6 +262,12 @@ async fn serve() -> ExitCode {
         }),
         // Paused (design.md, Embargo); no setting opens them.
         embargoes: filedrawer_server::Embargoes::Paused,
+        pinger: config.daily_email_ping.as_ref().map(|url| {
+            Arc::new(HttpPinger::new(url.expose()))
+                as Arc<dyn filedrawer_server::daily_email::Pinger>
+        }),
+        backups_dir: config.backups_dir.clone(),
+        started_at: time::OffsetDateTime::now_utc(),
     };
     tokio::spawn(filedrawer_server::jobs::run_publisher(
         state.clone(),
@@ -261,6 +276,7 @@ async fn serve() -> ExitCode {
     tokio::spawn(filedrawer_server::jobs::run_tidier(state.clone()));
     tokio::spawn(filedrawer_server::jobs::run_link_rechecker(state.clone()));
     tokio::spawn(filedrawer_server::jobs::run_releaser(state.clone()));
+    tokio::spawn(filedrawer_server::jobs::run_daily_email(state.clone()));
     let router = app(state);
     let shutdown = async {
         // systemd stops a service with SIGTERM; Ctrl-C is for a terminal. A failure

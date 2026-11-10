@@ -431,6 +431,23 @@ Add a new entry at the end of the topic it belongs to, or start a topic when non
 - Chosen: MIXED as well, since `mixed` is one of `outcome`'s values and a filter that can't reach it hides those entries from people browsing by outcome.
 - Against: the owner chose the look with four tabs, and mixed entries may stay rare enough that ALL covers them.
 
+#### The daily email's details
+
+The owner settled the email's sections and the rules in design.md's Admin section (#44); an agent chose these, after its brief review.
+- Feedback: at most 20 items in full, the newest; past that the oldest are only counted.
+  Against: a busy day hides some feedback from the owner until #60 rate-limits `POST /feedback`, and nothing else shows it.
+- Host pauses and GitHub's half running out are listed but don't send the email alone, and screen failures send it only while the last call failed.
+  Against: a host that keeps pausing the server, or a screen that fails often but recovers each time, never reaches the owner on a quiet day.
+- A failed run is retried an hour later, for the admins it didn't reach; a retry sends them the period up to the retry, so the admins it reached first miss what came between the two.
+  Against: retrying sooner gets the email out sooner, but floods the log and healthchecks while SMTP is down.
+- Past days' caps are judged against today's cap, and the email says "of today's cap".
+  Against: after the owner changes the cap, a day may be reported as having run out, or not, wrongly.
+- With no admin to send to, production pings `/fail`; staging and dev ping success.
+  Every admin gets the email.
+  Against: before the owner's `filedrawer admin grant` on production, healthchecks reports a failure every day.
+- The first run, or one after a wrong clock, reports from the previous UTC midnight.
+  Against: a first run late in the day reports up to 48 hours.
+
 ## Architecture
 
 ### Storage

@@ -226,6 +226,9 @@ pub fn state(pool: sqlx::SqlitePool, outbox: &Outbox, files_dir: &std::path::Pat
         screening_health: Default::default(),
         link_checker: fake_web::FakeWeb::default().checker(5000),
         embargoes: Embargoes::Open,
+        pinger: None,
+        backups_dir: files_dir.join("backups"),
+        started_at: time::OffsetDateTime::UNIX_EPOCH,
     }
 }
 

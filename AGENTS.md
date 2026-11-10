@@ -43,7 +43,7 @@ The field test's entries and logs are in `field-test/`, git-excluded and local o
   After an analyzer change, run `bin/field-test-diff` through `heavy` (`-h`): it builds entry-check at the commit your branch forked from, or at `--against REV`, and lists the field-test entries whose outcome changed, without their contents.
 - `crates/server`: the `filedrawer` binary.
   `filedrawer -h` lists its commands and settings.
-  Production refuses to start with the pass-all screener, without SMTP settings, or without `FILEDRAWER_GITHUB_TOKEN`, which the link checks call GitHub's API with (staging shares it: `ops/provision-vps github`); email goes to the log when no SMTP settings are set.
+  Production refuses to start with the pass-all screener, without SMTP settings, or without `FILEDRAWER_GITHUB_TOKEN`, which the link checks call GitHub's API with (staging shares it: `ops/provision-vps github`), or without `FILEDRAWER_DAILY_EMAIL_PING`, the healthchecks.io URL the owner's daily email pings after each run (`crates/server/src/daily_email.rs`); email goes to the log when no SMTP settings are set.
   `crates/server/install.md` is what agents read at `/skill.md`: it installs the two skills in `skills/`.
   A new route is named there or in a skill, or listed in `NOT_FOR_AGENTS` in `crates/server/tests/it/skill.rs` (CODING_STANDARDS.md, Untrusted text, says which); a test refuses one that is neither.
   `CODING_STANDARDS.md` holds the rules the review applies.

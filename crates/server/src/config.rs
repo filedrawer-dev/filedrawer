@@ -56,6 +56,29 @@ pub struct Config {
     /// attached code is screened: 30 seconds, or `FILEDRAWER_PUBLISHER_SECONDS` in dev,
     /// for tests that run the server binary.
     pub publisher_tick: std::time::Duration,
+    /// The healthchecks.io URL the daily email's job pings after each run
+    /// (design.md, Admin). Production refuses to start without one.
+    pub daily_email_ping: Option<PingUrl>,
+    /// Where the nightly copies of the database are: `backups/` beside the database
+    /// file.
+    pub backups_dir: PathBuf,
+}
+
+/// A healthchecks.io ping URL, which Debug output leaves out: anyone who has it can
+/// report the job healthy.
+#[derive(Clone)]
+pub struct PingUrl(String);
+
+impl PingUrl {
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for PingUrl {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PingUrl(..)")
+    }
 }
 
 /// A GitHub token, which Debug output leaves out.
@@ -140,6 +163,29 @@ pub enum ConfigError {
         "FILEDRAWER_PUBLISHER_SECONDS speeds up the screening queue for tests, so only dev takes it"
     )]
     PublisherTickOutsideDev,
+    #[error(
+        "production's daily email pings healthchecks.io, so a dead job or mailer gets noticed, so it needs FILEDRAWER_DAILY_EMAIL_PING"
+    )]
+    NoDailyEmailPingInProduction,
+}
+
+/// The daily email's ping URL, if set: an https URL on `hc-ping.com` with a path.
+fn ping_url(var: &impl Fn(&str) -> Option<String>) -> Result<Option<PingUrl>, ConfigError> {
+    let Some(text) = var("FILEDRAWER_DAILY_EMAIL_PING").filter(|url| !url.trim().is_empty()) else {
+        return Ok(None);
+    };
+    let text = text.trim().to_string();
+    let fits = reqwest::Url::parse(&text).is_ok_and(|url| {
+        url.scheme() == "https" && url.host_str() == Some("hc-ping.com") && url.path().len() > 1
+    });
+    if !fits {
+        return Err(ConfigError::Invalid {
+            name: "FILEDRAWER_DAILY_EMAIL_PING",
+            value: text,
+            expected: "a healthchecks.io ping URL, such as https://hc-ping.com/<uuid>",
+        });
+    }
+    Ok(Some(PingUrl(text)))
 }
 
 /// The SMTP settings, if any are set. All four must be set together.
@@ -280,10 +326,9 @@ impl Config {
             "FILEDRAWER_CI_SCREEN_ACCOUNT",
             ConfigError::CiScreenAccountInProduction,
         )?;
-        let files_dir = Path::new(&database)
-            .parent()
-            .unwrap_or(Path::new(""))
-            .join("files");
+        let beside_database = Path::new(&database).parent().unwrap_or(Path::new(""));
+        let files_dir = beside_database.join("files");
+        let backups_dir = beside_database.join("backups");
         let attachment_store_cap_bytes = match environment {
             Environment::Production => 20_000_000_000,
             Environment::Staging | Environment::Dev => 2_000_000_000,
@@ -325,7 +370,13 @@ impl Config {
                 }
             },
         };
+        let daily_email_ping = ping_url(&var)?;
+        if environment == Environment::Production && daily_email_ping.is_none() {
+            return Err(ConfigError::NoDailyEmailPingInProduction);
+        }
         Ok(Config {
+            daily_email_ping,
+            backups_dir,
             link_checks,
             publisher_tick,
             github_token,

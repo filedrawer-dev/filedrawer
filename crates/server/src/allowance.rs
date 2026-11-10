@@ -7,12 +7,11 @@
 
 use axum::http::StatusCode;
 use sqlx::{SqliteConnection, SqlitePool};
-use time::format_description::BorrowedFormatItem;
 use time::format_description::well_known::Rfc3339;
-use time::macros::format_description;
 use time::{Date, Duration, OffsetDateTime};
 
 use crate::error::AppError;
+use crate::time::DAY;
 use crate::{AppState, invites};
 
 /// The units an account gets each day in its first [`NEW_ACCOUNT_DAYS`] days.
@@ -22,9 +21,6 @@ const UNITS: i64 = 50;
 const NEW_ACCOUNT_DAYS: i64 = 7;
 /// The days, today first, that an account's units may be dated to.
 const WINDOW_DAYS: i64 = 10;
-
-/// A unit's day as the database stores it, such as `2026-11-07`.
-const DAY: &[BorrowedFormatItem<'_>] = format_description!("[year]-[month]-[day]");
 
 /// `day` as the database stores it.
 pub fn day_text(day: Date) -> String {

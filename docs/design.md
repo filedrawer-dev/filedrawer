@@ -897,10 +897,19 @@ Reason: entries and feedback can carry instructions, such as "create an invite c
   - The server logs each purge's IDs, with no content, in a file outside the database, with its own copy in B2.
     It applies the log again after any restore.
     Reason: a log inside the database would be lost by a restore to a point before the purge.
-- During ramp-up, a daily email lists what screening published.
-  Reading it is optional; it lets the owner spot-check screening.
-  Each link opens a page that needs a login.
-  Ramp-up ends when the owner says so.
+- Once a day, within minutes of midnight UTC, the server emails every admin a plain-text report of the period since its last run, if there is anything to report (#44; the owner's decisions, 2026-11-09, except the details in uncertainties.md, "The daily email's details").
+  Reason: production has no `/staging/status`, so without it nothing tells the owner that an entry waits for review, that screening is failing, or that feedback came in.
+  - It lists the entries published in the period, those waiting in review or held, with the oldest one's age, and the frozen ones; the screen's failed calls and its last error; the UTC days whose screening cap ran out, and the accounts that reached their 10% share of one; the link checks' failed rechecks, the hosts that asked the server to wait, and the GitHub calls not made because the server had spent its half of the hour's; the newest nightly copy; and new private feedback, in full.
+    Reading it is optional; it lets the owner spot-check screening.
+  - The server's lines name entries and accounts only by ID and by a link to their admin page, which needs the owner's login, since titles and display names are author text.
+    Feedback goes last, below the author-text delimiter, each line marked `| `, with control characters and bidi marks removed and `://` written `[:]//`, so no line passes for the server's and no link is live; past 20 items the oldest are only counted.
+  - In production, anything listed sends it, and entries waiting for the owner send it every day until handled.
+    Staging and dev send it only for problems (the screen's last call failing, a cap running out, a recheck failing, the nightly copies, new feedback), since CI publishes test entries on staging after each deploy.
+    A host pausing or GitHub's half running out is listed but sends nothing alone, so a transient overload doesn't email the owner.
+  - The screen's and the link checks' events are kept in memory until a run reports them, so a restart loses them; the email then says its counts run from when the server started.
+    The last run and each admin's last period are kept in the database, so a restart doesn't send twice in a day, and a send that fails for one admin is retried an hour later for that admin only, with the period up to the retry.
+  - After each run the job pings healthchecks.io (`FILEDRAWER_DAILY_EMAIL_PING`), at its `/fail` URL when the run failed or, in production, when no admin has an address; production refuses to start without the setting, so a dead job or mailer gets noticed.
+  - A missing or stale nightly copy (none dated yesterday or today in `backups/`, or no `backups/` in production) sends the email.
 - The triage agent holds a token that can read private feedback and append to the admin inbox, a page only the owner can open, and nothing else.
   It runs with no other network access, so it posts nothing public.
   Reason: feedback can carry embargoed details and instructions.
@@ -996,8 +1005,10 @@ Python is fine for scripts and internal tools.
   Reason (2026-11-06, #12): a file stored by its hash is written once, so Object Lock's 30 days would protect it only in its first month.
   A key that can't delete protects every file for as long as it is live, and purged files still leave the backups within 45 days.
   Check at build time that B2 lets such a key hide files (#4).
+- During the beta, #41's timer writes production's nightly copies into `backups/` beside the database file, as `filedrawer-YYYY-MM-DD.db`, writing each as a `.tmp` file and renaming it once whole; the owner's daily email reports the newest (see [Admin](#admin)).
+  #41's restore drill runs the binary with `FILEDRAWER_ENVIRONMENT=staging` and no ping or SMTP settings, so it neither mails nor pings (the owner's decision, 2026-11-09).
 - Monitoring: a free external uptime checker emails the owner when the site is down.
-  Litestream, the restore test and the memory timer ping healthchecks.io, which emails the owner when one goes quiet or reports a failure.
+  Litestream, the restore test, the memory timer and the daily email ping healthchecks.io, which emails the owner when one goes quiet or reports a failure.
 
 ## Checks
 

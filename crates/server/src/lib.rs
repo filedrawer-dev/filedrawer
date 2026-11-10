@@ -7,11 +7,13 @@ mod allowance;
 mod attachments;
 mod auth;
 pub mod config;
+pub mod daily_email;
 pub mod db;
 mod deletion;
 mod embargo;
 mod entries;
 mod error;
+pub mod event_log;
 pub mod file_store;
 mod ids;
 mod invites;
@@ -94,6 +96,13 @@ pub struct AppState {
     pub link_checker: std::sync::Arc<link_checks::LinkChecker>,
     /// Whether embargoes and hidden series are taken: `Paused` everywhere but tests.
     pub embargoes: Embargoes,
+    /// Where the daily email's job reports each run (`Config::daily_email_ping`).
+    pub pinger: Option<std::sync::Arc<dyn daily_email::Pinger>>,
+    /// The nightly copies of the database (`Config::backups_dir`).
+    pub backups_dir: std::path::PathBuf,
+    /// When the server started, since the events the daily email counts are kept in
+    /// memory.
+    pub started_at: ::time::OffsetDateTime,
 }
 
 /// The free disk an upload must leave (design.md, Attached code: 5 GB).

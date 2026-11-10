@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT last_run_at FROM daily_email_runs WHERE id = 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "last_run_at",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "daily_email_runs",
+            "name": "last_run_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "7a23d2215151899653d288308239d82fb50eba08671215c732e02775ce9469ff"
+}

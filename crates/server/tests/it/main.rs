@@ -14,6 +14,7 @@ mod cites;
 mod cli;
 mod common;
 mod config;
+mod daily_email;
 mod deletion;
 mod embargo;
 mod embargo_paused;

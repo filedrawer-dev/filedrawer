@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT a.id AS \"id!\", a.email AS \"email!\", s.period_start AS \"sent_from?\"\n           FROM accounts a LEFT JOIN daily_email_sent s ON s.account_id = a.id\n           WHERE a.is_admin = 1 AND a.email IS NOT NULL AND a.deleted_at IS NULL\n           ORDER BY a.id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "accounts",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "email!",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "accounts",
+            "name": "email"
+          }
+        }
+      },
+      {
+        "name": "sent_from?",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "daily_email_sent",
+            "name": "period_start"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "470cf6414978508aeac765d204b94a04d19fe1fc84cdccca7111b5487c659e02"
+}

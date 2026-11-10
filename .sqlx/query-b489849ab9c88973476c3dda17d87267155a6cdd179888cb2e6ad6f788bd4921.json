@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO daily_email_runs (id, last_run_at) VALUES (1, ?)\n         ON CONFLICT (id) DO UPDATE SET last_run_at = excluded.last_run_at",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "b489849ab9c88973476c3dda17d87267155a6cdd179888cb2e6ad6f788bd4921"
+}

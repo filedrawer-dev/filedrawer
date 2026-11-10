@@ -1,0 +1,40 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT substr(at, 1, 10) AS \"day!: String\", account_id,\n                  SUM(cost_nano_usd) AS \"spent!: i64\"\n           FROM screenings WHERE at >= ?1 AND at < ?2\n           GROUP BY 1, account_id ORDER BY 1, account_id",
+  "describe": {
+    "columns": [
+      {
+        "name": "day!: String",
+        "ordinal": 0,
+        "type_info": "Null",
+        "origin": "Expression"
+      },
+      {
+        "name": "account_id",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "screenings",
+            "name": "account_id"
+          }
+        }
+      },
+      {
+        "name": "spent!: i64",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "4b8df1d34ce892ac153de42148e94c58d3b7a6629baee61817c0ab5d70462631"
+}

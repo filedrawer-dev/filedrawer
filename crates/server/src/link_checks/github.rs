@@ -396,6 +396,7 @@ async fn github_call(
     let spent = || "the server has used its half of the hour's GitHub API calls".to_string();
     let waiting = || "GitHub's API asked the server to wait before calling it again".to_string();
     if checker.github_budget_spent() {
+        checker.events.half_spent.record(());
         return Err(spent());
     }
     if checker.pauses.holds(API_HOST) {
@@ -425,7 +426,7 @@ async fn github_call(
         if answer.remaining == Some(0) {
             return Err(spent());
         }
-        checker.pauses.pause(API_HOST, answer.retry_after);
+        checker.pause(API_HOST, answer.retry_after);
         return Err(waiting());
     }
     checker.pauses.clear(API_HOST);

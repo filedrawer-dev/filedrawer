@@ -31,6 +31,7 @@ pub use fetch::{
 pub use stored::{RECHECK_DAYS, make_due, pin_flag, recheck_due, store, stored};
 
 use crate::AppState;
+use crate::event_log::EventLog;
 use crate::respond::one_line;
 
 /// The fetcher and what the server knows of its GitHub API calls.
@@ -45,6 +46,8 @@ pub struct LinkChecker {
     pauses: pause::Pauses,
     /// How many empty answers from GitHub's commit page the API overruled.
     overruled: AtomicU64,
+    /// What the owner's daily email reports.
+    events: LinkEvents,
     /// Checks nothing.
     off: bool,
 }
@@ -63,6 +66,19 @@ pub struct LinkHealth {
     pub paused: Vec<PausedHost>,
     /// How many empty answers from GitHub's commit page the API overruled.
     pub overruled: u64,
+}
+
+/// What happened to the link checks, for the owner's daily email (design.md, Admin),
+/// a log for each kind, so a flood of one pushes out none of the others.
+#[derive(Debug, Default)]
+pub struct LinkEvents {
+    /// The listed hosts that asked the server to wait, one event each time.
+    pub paused: EventLog<String>,
+    /// The calls to GitHub's API not made because the server had spent its half
+    /// of the hour's calls.
+    pub half_spent: EventLog<()>,
+    /// The rechecks' runs that failed, each with its error.
+    pub recheck_failures: EventLog<String>,
 }
 
 /// The API calls GitHub said are left this hour.
@@ -108,6 +124,17 @@ impl LinkChecker {
     fn count_overrule(&self) {
         self.overruled.fetch_add(1, Ordering::Relaxed);
     }
+
+    /// The events kept for the owner's daily email.
+    pub fn events(&self) -> &LinkEvents {
+        &self.events
+    }
+
+    /// Pauses `host` for `retry_after` seconds, or the doubling wait, and notes it.
+    fn pause(&self, host: &str, retry_after: Option<u64>) {
+        self.pauses.pause(host, retry_after);
+        self.events.paused.record(host.to_string());
+    }
 }
 
 impl LinkChecker {
@@ -118,6 +145,7 @@ impl LinkChecker {
             github_quota: Mutex::new(None),
             pauses: pause::Pauses::default(),
             overruled: AtomicU64::new(0),
+            events: LinkEvents::default(),
             off: false,
         }
     }
@@ -455,7 +483,7 @@ impl LinkChecker {
     /// `Retry-After`. Any other answer ends the doubling of its waits.
     fn heed(&self, host: &str, status: u16, retry_after: Option<u64>) {
         if status == 429 || (status == 503 && retry_after.is_some()) {
-            self.pauses.pause(host, retry_after);
+            self.pause(host, retry_after);
         } else {
             self.pauses.clear(host);
         }

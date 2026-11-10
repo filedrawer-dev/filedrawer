@@ -128,7 +128,11 @@ pub struct Failure {
 
 /// [`Health`] behind its lock, shared by the screen's callers and the status route.
 #[derive(Debug, Default)]
-pub struct ScreeningHealth(std::sync::Mutex<Health>);
+pub struct ScreeningHealth {
+    health: std::sync::Mutex<Health>,
+    /// Every failed call, for the owner's daily email.
+    failures: crate::event_log::EventLog<Failure>,
+}
 
 impl ScreeningHealth {
     /// Notes how `screening` of `subject` went, stamped now, when it ended: a failure
@@ -138,11 +142,13 @@ impl ScreeningHealth {
         let mut health = self.lock();
         match &screening.verdict {
             Err(error) => {
-                health.last_failure = Some(Failure {
+                let failure = Failure {
                     at,
                     subject,
                     error: error.to_string(),
-                });
+                };
+                self.failures.record(failure.clone());
+                health.last_failure = Some(failure);
             }
             Ok(_) if !screening.calls.is_empty() => health.last_success = Some(at),
             Ok(_) => {}
@@ -153,9 +159,14 @@ impl ScreeningHealth {
         self.lock().clone()
     }
 
+    /// The failed calls kept for the owner's daily email.
+    pub fn failures(&self) -> &crate::event_log::EventLog<Failure> {
+        &self.failures
+    }
+
     fn lock(&self) -> std::sync::MutexGuard<'_, Health> {
         // A panic while noting leaves nothing half-written worth refusing.
-        self.0
+        self.health
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }

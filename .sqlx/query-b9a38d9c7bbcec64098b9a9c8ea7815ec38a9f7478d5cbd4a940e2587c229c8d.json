@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id FROM entries\n               WHERE status = 'public' AND published_at > ?1 AND published_at <= ?2\n               ORDER BY published_at, seq",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "b9a38d9c7bbcec64098b9a9c8ea7815ec38a9f7478d5cbd4a940e2587c229c8d"
+}
