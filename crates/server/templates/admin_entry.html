@@ -1,10 +1,19 @@
 {% extends "base.html" %}
-{% block title %}Review {{ entry.id }}{% endblock %}
+{% block title %}Entry {{ entry.id }}{% endblock %}
 {% block wide %} wide{% endblock %}
 {% block content %}
 <p><a href="/admin">Review queue</a></p>
 <h1>{{ title }}</h1>
 <p><code>{{ entry.id }}</code>, {{ entry.status }}, from {{ entry.display_name.as_deref().unwrap_or("account deleted") }} <code>{{ entry.account_id }}</code>, submitted {{ entry.submitted_at }}{% if let Some(batch) = entry.batch_id %}, in batch <code>{{ batch }}</code>, which publishes as one{% endif %}.</p>
+{% match standing %}
+{% when Standing::Restorable with { to } %}
+<p>You removed it, so the site serves it nowhere and its author's token reads only that it was removed. Restoring puts it back as {{ to }}.</p>
+<form method="post" action="/admin/e/{{ entry.id }}/restore"><button type="submit">Restore</button></form>
+{% when Standing::Refused with (refusal) %}
+<p>You removed it, so the site serves it nowhere and its author's token reads only that it was removed.</p>
+<p class="restore-refused">It can't be restored: {{ refusal.text(entry.id) }}.</p>
+{% when Standing::Removable with { is_final } %}
+{% if entry.status == "review" || entry.status == "held" || entry.status == "frozen" %}
 <p>Why it's here: {{ entry.review_reason.as_deref().unwrap_or("not kept; it went to review before reasons were stored") }}.</p>
 {% if batch_failed && entry.status != "frozen" %}
 <p class="error batch-failed">Its batch has already failed: another member was rejected, so publishing it sends it back with its batch. Rejecting or holding it puts its account under the review guard.</p>
@@ -31,6 +40,23 @@
 {% if entry.status != "frozen" %}
 <form method="post" action="/admin/e/{{ entry.id }}/reject-chain"><button type="submit">Reject it and those versions</button></form>
 {% endif %}
+{% endif %}
+{% endif %}
+<form method="post" action="/admin/e/{{ entry.id }}/remove"><button type="submit">Remove</button></form>
+{% if is_final %}
+<p class="error removal-final">Removing it can't be undone. Its batch isn't decided yet, and goes on without it: the members that passed may publish at the next run of the queue. Check the batch's other members first.</p>
+{% else %}
+<p>Removing stops the site serving it, with no public notice; it stays in the database, and you can restore it.</p>
+{% endif %}
+<p>Its other versions stay as they are: a removed version's predecessor is current again.</p>
+{% endmatch %}
+{% if !versions.is_empty() %}
+<h2>Other versions of its chain</h2>
+<ul>
+{% for version in versions %}
+<li><a href="/admin/e/{{ version.id }}"><code>{{ version.id }}</code></a>, {{ version.status }}</li>
+{% endfor %}
+</ul>
 {% endif %}
 <h2>Card</h2>
 <pre>{{ card }}</pre>

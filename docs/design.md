@@ -861,6 +861,11 @@ Reason: entries and feedback can carry instructions, such as "create an invite c
   Both stop the site serving the data, with no public notice, and keep it in the database for follow-up analysis and evals.
   The owner can restore a removed entry.
   Reason: spam is cheap to remove this way, and the removed data is useful.
+  - `/admin/e/<id>` removes any entry, and a restore puts back the status it had (#43, the owner's decisions, 2026-11-09).
+    The page lists the chain's other versions, and the owner removes each, since removing the current version makes its predecessor current again.
+    A restore is refused when its account is deleted, when another version has replaced the one it replaced, which would fork the chain, and for a member of a batch removed before the batch was decided, which went on without it.
+    Reason: a batch is decided as one.
+    The author's token reads `status: removed` and the contact address, but not the text; the public gets a 404.
 - For an erasure request, the owner purges instead.
   A purge deletes the data from the database: the named entries with all their versions and search rows, or an account's email, login, display name, linked GitHub and ORCID handles, private feedback and its triage-inbox summaries.
   It deletes attached files that no other entry uses.

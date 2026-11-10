@@ -23,7 +23,8 @@ use crate::pages::{
     Drawer, EntryPage, FileView, SearchPage, SeriesBlock, Stamp, fields_above, page,
 };
 use crate::respond::{
-    DELIMITER, Format, Reading, author_name, card_and_warnings, echoed, one_line, wants_page,
+    CONTACT, DELIMITER, Format, Reading, author_name, card_and_warnings, echoed, one_line,
+    wants_page,
 };
 use crate::series;
 use crate::{AppState, allowance, attachments, deletion, time, warnings};
@@ -314,9 +315,21 @@ async fn shown_series(state: &AppState, seq: i64) -> Result<Option<CitedSeries>,
     Ok(Some(CitedSeries { cite, shown }))
 }
 
+/// What an entry's author reads once the archive's owner removed it: that it was
+/// removed, and where to write, but not its text, which the site no longer serves.
+fn removed_reply(id: &str, format: Format) -> Response {
+    let note = format!(
+        "the archive's owner removed this entry, so the site serves it nowhere; write to {CONTACT} about it"
+    );
+    let text = format!("id: {id}\nstatus: removed\nnote: {note}\n");
+    let json = json!({"id": id, "status": "removed", "note": note});
+    format.reply(StatusCode::OK, text, json)
+}
+
 /// An entry that isn't public, for its author's token only: a pending entry with the
-/// time it publishes and its warnings, or an embargoed one with its release date.
-/// Anyone else gets the same 404 as for an entry that doesn't exist.
+/// time it publishes and its warnings, an embargoed one with its release date, or a
+/// removed one with only that it was removed. Anyone else gets the same 404 as for an
+/// entry that doesn't exist.
 async fn own_entry(
     state: &AppState,
     id: &str,
@@ -328,20 +341,13 @@ async fn own_entry(
     };
     let entry = entries::own_entry(&state.pool, id, &account.id)
         .await?
-        .filter(|entry| {
-            matches!(
-                entry.status.as_str(),
-                "pending"
-                    | "screening"
-                    | "review"
-                    | "held"
-                    | "frozen"
-                    | "rejected"
-                    | "embargoed"
-                    | "waiting_on_series"
-            )
-        })
         .ok_or(AppError::NotFound)?;
+    match entry.status.as_str() {
+        "removed" => return Ok(removed_reply(&entry.id, format)),
+        "pending" | "screening" | "review" | "held" | "frozen" | "rejected" | "embargoed"
+        | "waiting_on_series" => {}
+        _ => return Err(AppError::NotFound),
+    }
     let analysis = analyze(&entry.source);
     let notes: Vec<String> = match &analysis.results {
         Results::Read(table) => table.rows.iter().map(row_note).collect(),

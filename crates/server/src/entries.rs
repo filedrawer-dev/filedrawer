@@ -1706,8 +1706,9 @@ pub async fn mark_doubt_seen(pool: &SqlitePool, id: &str) -> Result<bool, sqlx::
     Ok(done.rows_affected() == 1)
 }
 
-/// An entry waiting on the owner, in `review`, `held` or `frozen`.
-pub struct Undecided {
+/// An entry as the owner's pages show it: one waiting on the owner, in `review`,
+/// `held` or `frozen`, or, on its own admin page, any entry.
+pub struct OwnerEntry {
     pub seq: i64,
     pub id: String,
     pub status: String,
@@ -1721,18 +1722,61 @@ pub struct Undecided {
     pub review_reason: Option<String>,
 }
 
-/// Every entry in `review`, `held` or `frozen`, oldest submission first, or only
-/// entry `id`.
-pub async fn undecided(pool: &SqlitePool, id: Option<&str>) -> Result<Vec<Undecided>, sqlx::Error> {
+/// Every entry in `review`, `held` or `frozen`, oldest submission first.
+pub async fn undecided(pool: &SqlitePool) -> Result<Vec<OwnerEntry>, sqlx::Error> {
+    owner_entries(pool, None).await
+}
+
+/// Entry `id`, whatever its status, for its admin page.
+pub async fn for_owner(pool: &SqlitePool, id: &str) -> Result<Option<OwnerEntry>, sqlx::Error> {
+    Ok(owner_entries(pool, Some(id)).await?.pop())
+}
+
+/// Entry `id`, or with `None` every entry in `review`, `held` or `frozen`, in the
+/// queue's order.
+async fn owner_entries(
+    pool: &SqlitePool,
+    id: Option<&str>,
+) -> Result<Vec<OwnerEntry>, sqlx::Error> {
     sqlx::query_as!(
-        Undecided,
+        OwnerEntry,
         r#"SELECT e.seq AS "seq!: i64", e.id, e.status, e.source, e.account_id,
                   a.display_name, e.submitted_at, b.id AS "batch_id?", e.review_reason
            FROM entries e JOIN authors a ON a.id = e.account_id
            LEFT JOIN batches b ON b.seq = e.batch_seq
-           WHERE e.status IN ('review', 'held', 'frozen') AND (?1 IS NULL OR e.id = ?1)
+           WHERE (?1 IS NULL AND e.status IN ('review', 'held', 'frozen')) OR e.id = ?1
            ORDER BY e.queue_position, e.submitted_at, e.seq"#,
         id
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// Another version of an entry's chain, as its admin page lists it.
+pub struct ChainVersion {
+    pub id: String,
+    pub status: String,
+}
+
+/// Every other version of entry `seq`'s chain, oldest first: those it descends from,
+/// and every version descending from the chain's first, forks included, of any
+/// status.
+pub async fn other_versions(pool: &SqlitePool, seq: i64) -> Result<Vec<ChainVersion>, sqlx::Error> {
+    sqlx::query_as!(
+        ChainVersion,
+        r#"WITH RECURSIVE
+             up(seq, previous_seq) AS (
+               SELECT seq, previous_seq FROM entries WHERE seq = ?1
+               UNION ALL
+               SELECT e.seq, e.previous_seq FROM entries e JOIN up ON e.seq = up.previous_seq),
+             down(seq) AS (
+               SELECT seq FROM up WHERE previous_seq IS NULL
+               UNION
+               SELECT e.seq FROM entries e JOIN down ON e.previous_seq = down.seq)
+           SELECT id, status FROM entries
+           WHERE seq IN (SELECT seq FROM down) AND seq != ?1
+           ORDER BY seq"#,
+        seq
     )
     .fetch_all(pool)
     .await

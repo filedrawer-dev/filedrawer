@@ -1,0 +1,81 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT e.seq AS \"seq!: i64\", e.status, e.removed_from, e.previous_seq, e.batch_seq,\n                  a.deleted_at IS NOT NULL AS \"account_deleted!: bool\"\n           FROM entries e JOIN accounts a ON a.id = e.account_id\n           WHERE e.id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "seq!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "status",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "status"
+          }
+        }
+      },
+      {
+        "name": "removed_from",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "removed_from"
+          }
+        }
+      },
+      {
+        "name": "previous_seq",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "previous_seq"
+          }
+        }
+      },
+      {
+        "name": "batch_seq",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "batch_seq"
+          }
+        }
+      },
+      {
+        "name": "account_deleted!: bool",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "cc6fe3e8177a3d56e130c9bae33016a1915b229a7817e616b6b627eefa134547"
+}

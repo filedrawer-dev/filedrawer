@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id FROM entries\n             WHERE previous_seq = ? AND seq != ?\n               AND status NOT IN ('rejected', 'withdrawn', 'removed')",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "5b77449f180c6680082b6e133ec24c2d6e004b2622c046ee81186cd85e1c1195"
+}

@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT EXISTS (\n               SELECT 1 FROM entries\n               WHERE batch_seq = ? AND seq != ? AND status NOT IN ('withdrawn', 'removed')\n           ) AS \"others!: bool\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "others!: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "d2ccd2aeb1cdce03d1cb29c6c5cd7c8be5abc8745d09dbdd572ed878d3083ef1"
+}

@@ -62,6 +62,7 @@ const SINGLE_KEYS: &[&str] = &[
     "publish_at",
     "screen_from",
     "release",
+    "note",
     "url",
     "embargo_until",
     "publish",

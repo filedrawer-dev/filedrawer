@@ -8,7 +8,8 @@ use axum::response::{Html, IntoResponse, Response};
 use analyzer::{Choice, Outcome};
 
 use crate::accounts::{Guarded, TokenView};
-use crate::entries::{Doubted, EarlierVersion, PublicEntry, Undecided};
+use crate::entries::{ChainVersion, Doubted, EarlierVersion, OwnerEntry, PublicEntry};
+use crate::removed_entries::Standing;
 use crate::removed_files::{FileState, FileUse, OwnersFile};
 use crate::series::{Owned, Refused};
 use crate::withdraw::{Listed, MadePublic, Member, WithOwner};
@@ -325,7 +326,7 @@ pub struct WithdrawPage<'a> {
 
 /// An entry on the admin queue page, with the title read from its text.
 pub struct QueueRow<'a> {
-    pub entry: &'a Undecided,
+    pub entry: &'a OwnerEntry,
     pub title: String,
 }
 
@@ -357,7 +358,7 @@ pub struct AdminInvitesPage<'a> {
 #[template(path = "admin_entry.html")]
 pub struct AdminEntryPage<'a> {
     pub title: &'a str,
-    pub entry: &'a Undecided,
+    pub entry: &'a OwnerEntry,
     pub card: &'a str,
     /// The ID and declaration of each run it uses.
     pub runs: &'a [(String, String)],
@@ -367,6 +368,10 @@ pub struct AdminEntryPage<'a> {
     pub files: &'a [ShownFile],
     /// The earlier versions of its chain that wait on its verdict.
     pub held_back: &'a [EarlierVersion],
+    /// Every other version of its chain, which the owner removes one by one.
+    pub versions: &'a [ChainVersion],
+    /// Whether the owner may remove or restore it.
+    pub standing: &'a Standing,
 }
 
 /// An attached file as the owner's review page shows it.

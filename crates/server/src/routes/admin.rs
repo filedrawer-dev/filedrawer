@@ -13,6 +13,7 @@ use crate::link_checks::{self, LinkFlags};
 use crate::pages::{
     AdminEntryPage, AdminFilePage, AdminInvitesPage, AdminQueuePage, QueueRow, ShownFile, page,
 };
+use crate::removed_entries::{self, Removed, Restored};
 use crate::removed_files::{self, Removal};
 use crate::review::{self, Decided, Decision};
 use crate::routes::account::SessionAccount;
@@ -47,7 +48,7 @@ fn title_of(source: &str) -> String {
 
 /// The entries in review and held, and the accounts under the review guard.
 pub async fn queue(_: AdminSession, State(state): State<AppState>) -> Result<Response, AppError> {
-    let undecided = entries::undecided(&state.pool, None).await?;
+    let undecided = entries::undecided(&state.pool).await?;
     let rows: Vec<QueueRow> = undecided
         .iter()
         .map(|entry| QueueRow {
@@ -83,15 +84,20 @@ pub async fn queue(_: AdminSession, State(state): State<AppState>) -> Result<Res
     ))
 }
 
-/// One entry in review, held or frozen: its card, its text, and the owner's choices.
+/// One entry of any status: its card, its text, the other versions of its chain, and
+/// the owner's choices, which for an entry in review, held or frozen include deciding
+/// it.
 pub async fn entry(
     _: AdminSession,
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Response, AppError> {
-    let entry = entries::undecided(&state.pool, Some(&id))
+    let entry = entries::for_owner(&state.pool, &id)
         .await?
-        .pop()
+        .ok_or(AppError::NotFound)?;
+    let versions = entries::other_versions(&state.pool, entry.seq).await?;
+    let standing = removed_entries::standing(&state.pool, &id)
+        .await?
         .ok_or(AppError::NotFound)?;
     let analysis = analyze(&entry.source);
     let links = link_checks::stored(&state.pool, entry.seq).await?;
@@ -127,6 +133,8 @@ pub async fn entry(
             batch_failed,
             files: &files,
             held_back: &held_back,
+            versions: &versions,
+            standing: &standing,
         },
     ))
 }
@@ -302,6 +310,37 @@ pub async fn clear_guard(
         return Err(AppError::NotFound);
     }
     Ok(Redirect::to("/admin").into_response())
+}
+
+/// Removes an entry: the site stops serving it, with no public notice.
+pub async fn remove_entry(
+    _: AdminSession,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Response, AppError> {
+    match removed_entries::remove(&state.pool, &id).await? {
+        Removed::Done => Ok(Redirect::to(&format!("/admin/e/{id}")).into_response()),
+        Removed::NoEntry => Err(AppError::NotFound),
+        Removed::Already => Err(AppError::Conflict(format!(
+            "entry {id} is already removed; reload its page"
+        ))),
+    }
+}
+
+/// Restores a removed entry to the status it had.
+pub async fn restore_entry(
+    _: AdminSession,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Response, AppError> {
+    match removed_entries::restore(&state.pool, &id).await? {
+        Restored::Done(_) => Ok(Redirect::to(&format!("/admin/e/{id}")).into_response()),
+        Restored::NoEntry => Err(AppError::NotFound),
+        Restored::NotRemoved => Err(AppError::Conflict(format!(
+            "entry {id} isn't removed; reload its page"
+        ))),
+        Restored::Refused(refusal) => Err(AppError::Conflict(refusal.text(&id))),
+    }
 }
 
 /// One attached file, by its SHA-256 (design.md, Attached code): its text, where it is

@@ -388,7 +388,8 @@ async fn doomed(
     }
 }
 
-/// Every member of batch `batch_seq`, in order.
+/// Every member of batch `batch_seq`, in order, but those the archive's owner removed:
+/// they stay for analysis, and don't stop their author deleting the rest.
 async fn batch_rows(
     connection: &mut SqliteConnection,
     batch_seq: i64,
@@ -397,7 +398,9 @@ async fn batch_rows(
         batch_seq: Some(batch_seq),
         ..Rows::default()
     };
-    rows(connection, filter).await
+    let mut rows = rows(connection, filter).await?;
+    rows.retain(|row| !matches!(row.status, Status::Removed));
+    Ok(rows)
 }
 
 /// Deletes what `target` names if its rules allow it, records the deletion for the

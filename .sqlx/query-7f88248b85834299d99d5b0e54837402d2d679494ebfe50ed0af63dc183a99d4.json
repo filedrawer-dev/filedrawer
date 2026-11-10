@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH RECURSIVE\n             up(seq, previous_seq) AS (\n               SELECT seq, previous_seq FROM entries WHERE seq = ?1\n               UNION ALL\n               SELECT e.seq, e.previous_seq FROM entries e JOIN up ON e.seq = up.previous_seq),\n             down(seq) AS (\n               SELECT seq FROM up WHERE previous_seq IS NULL\n               UNION\n               SELECT e.seq FROM entries e JOIN down ON e.previous_seq = down.seq)\n           SELECT id, status FROM entries\n           WHERE seq IN (SELECT seq FROM down) AND seq != ?1\n           ORDER BY seq",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "status",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "status"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "7f88248b85834299d99d5b0e54837402d2d679494ebfe50ed0af63dc183a99d4"
+}

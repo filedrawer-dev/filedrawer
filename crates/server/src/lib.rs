@@ -24,6 +24,7 @@ mod markdown;
 mod pages;
 mod passwords;
 mod queue;
+mod removed_entries;
 mod removed_files;
 mod respond;
 mod review;
@@ -202,6 +203,8 @@ fn build(state: AppState) -> Routes<Router> {
         .route("/admin/e/{id}/reject", post(admin::reject))
         .route("/admin/e/{id}/reject-chain", post(admin::reject_chain))
         .route("/admin/e/{id}/doubt-seen", post(admin::doubt_seen))
+        .route("/admin/e/{id}/remove", post(admin::remove_entry))
+        .route("/admin/e/{id}/restore", post(admin::restore_entry))
         .route(
             "/admin/series-refusals/{id}/confirm",
             post(admin::confirm_refusal),
