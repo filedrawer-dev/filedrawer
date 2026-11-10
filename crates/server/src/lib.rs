@@ -29,6 +29,7 @@ mod queue;
 mod removed_entries;
 mod removed_files;
 mod removed_series;
+pub mod request_log;
 mod respond;
 mod review;
 mod routes;
@@ -103,6 +104,8 @@ pub struct AppState {
     /// When the server started, since the events the daily email counts are kept in
     /// memory.
     pub started_at: ::time::OffsetDateTime,
+    /// Staging's record of the headers requests sent (`request_log`); none elsewhere.
+    pub request_log: Option<std::sync::Arc<request_log::RequestLog>>,
 }
 
 /// The free disk an upload must leave (design.md, Attached code: 5 GB).
@@ -275,6 +278,11 @@ fn build(state: AppState) -> Routes<Router> {
             "/staging/status",
             get(routes::status::status),
         )
+        .route_if(
+            state.environment != config::Environment::Production,
+            request_log::READ_ROUTE,
+            get(routes::headers::headers),
+        )
         .route("/series", post(routes::series::create))
         .route("/series/{id}", get(routes::series::read))
         .route("/series/{id}/join", post(routes::series::join))
@@ -296,7 +304,9 @@ fn build(state: AppState) -> Routes<Router> {
             let files_host =
                 axum::middleware::from_fn_with_state(state.clone(), routes::files::files_host);
             let per_ip = axum::middleware::from_fn_with_state(state.clone(), limits::per_ip);
+            let record = axum::middleware::from_fn_with_state(state.clone(), request_log::record);
             router
+                .route_layer(record)
                 .fallback(not_found)
                 .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
                 .layer(axum::middleware::from_fn(respond::negotiate))

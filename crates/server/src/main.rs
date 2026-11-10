@@ -7,6 +7,7 @@ use filedrawer_server::config::Config;
 use filedrawer_server::daily_email::HttpPinger;
 use filedrawer_server::file_store::FileStore;
 use filedrawer_server::link_checks::LinkChecker;
+use filedrawer_server::request_log::RequestLog;
 use std::sync::Arc;
 
 use filedrawer_server::mail::{LogMailer, Mailer, SmtpMailer};
@@ -268,6 +269,8 @@ async fn serve() -> ExitCode {
         }),
         backups_dir: config.backups_dir.clone(),
         started_at: time::OffsetDateTime::now_utc(),
+        request_log: RequestLog::for_environment(config.environment, &config.database)
+            .map(Arc::new),
     };
     tokio::spawn(filedrawer_server::jobs::run_publisher(
         state.clone(),

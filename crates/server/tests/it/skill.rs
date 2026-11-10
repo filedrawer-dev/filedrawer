@@ -55,6 +55,7 @@ const NOT_FOR_AGENTS: &[&str] = &[
     "/admin/f/{sha256}/remove-hazard",
     "/entry-format.md",
     "/staging/status",
+    "/staging/headers",
     // Its plain text only points an agent without the skills to /skill.md, so the
     // skills needn't name it (CODING_STANDARDS.md, Untrusted text).
     "/",

@@ -33,6 +33,7 @@ mod pages;
 mod read;
 mod reader_warnings;
 mod removed_files;
+mod request_log;
 mod review;
 mod screening;
 mod series;

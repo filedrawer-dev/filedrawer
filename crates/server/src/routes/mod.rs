@@ -10,6 +10,7 @@ pub mod delete;
 pub mod docs;
 pub mod feedback;
 pub mod files;
+pub mod headers;
 pub mod home;
 pub mod legal;
 pub mod mine;

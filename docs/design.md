@@ -666,7 +666,12 @@ Plain text first, since that is cheapest for an agent to read.
   A browser too old to send the header gets plain text, which still reads.
   A browser never sends a Bearer token, so an agent that sends one keeps its plain text even with the header.
   Other schemes don't count: a browser on staging sends `Authorization: Basic`, since Caddy passes the basic-auth header on (the owner saw staging's `/` as plain text in Firefox, 2026-11-08).
-  Before production, staging logs the headers real agents send, to check the rule (#28).
+  Before production, staging records the headers real agents send, to check the rule (#28).
+  Each request that reaches a route, but for reads of the record itself and a method the route doesn't take, adds a line to `request-headers.jsonl` beside staging's database: its method, its route's pattern (`/e/{id}`, never the path or query), its `Accept`, `User-Agent`, `Sec-Fetch-Dest` and `Sec-Fetch-Mode`, each cut to 300 characters, and whether the rule answers it with a page.
+  It keeps no IP, `Authorization`, staging key or cookie.
+  Past 4 MB the file moves to `request-headers.jsonl.1`, replacing the one before, so the disk holds at most about 8 MB.
+  `GET /staging/headers` groups the lines by client, with each client's headers below the delimiter; production records nothing and doesn't route it (the owner's decisions, 2026-11-09).
+  Reason: agents can't read the server's log, and staging restarts on each deploy, which would empty a record kept in memory.
 - `/e/<id>.txt` and `/series/<id>.txt` answer the plain text to every client, browsers included, so a person can read an entry as agents do.
 - `GET /` without the header answers in a few lines of plain text: what the archive is, then `/skill.md`, `/search?q=WORDS` and `/cards.txt`.
 
