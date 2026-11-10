@@ -146,7 +146,11 @@ def main(argv: list[str] | None = None) -> int:
             "build there by hand, or remove it with `git worktree remove`"
         )
     pid = started.stdout.strip().splitlines()[-1]
-    print(f"warm build: PID {pid}, log {log}; `waitone --pid {pid}` waits for it")
+    print(
+        f"warm build: PID {pid}, log {log}; `waitone --pid {pid}` waits for it, "
+        "as the first `heavy --quick` test run should: otherwise that run builds first and "
+        "overruns --quick's 60 s"
+    )
     return 0
 
 
