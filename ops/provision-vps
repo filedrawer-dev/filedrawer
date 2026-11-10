@@ -590,7 +590,7 @@ pause
 stage "Service user and directories"
 say "A 'filedrawer' system user with no shell, /srv/filedrawer/staging, and"
 say "/etc/filedrawer for settings."
-remote service-user.sh
+remote service-user.sh ENVIRONMENT=staging
 pause
 
 stage "The staging service"
@@ -675,6 +675,8 @@ JSON
 gh api -X POST "repos/{owner}/{repo}/environments/staging/deployment-branch-policies" \
   -f name=main -f type=branch > /dev/null 2>&1 || true   # already there on a rerun
 if (( ONLY_NEW )) && staging_has_secret DEPLOY_SSH_KEY; then
+  # The rest of deploy-user.sh still runs, so a newer sudo rule reaches the server.
+  remote deploy-user.sh "DEPLOY_PUBLIC_KEY="
   say "DEPLOY_SSH_KEY is set already; --only-new keeps the key. ✓"
 else
   key_dir=$(mktemp -d)

@@ -454,6 +454,9 @@ def test_only_new_reruns_every_stage_without_asking_for_anything_saved(rerun):
     assert "ssh-keygen" not in log
     assert "gh secret set DEPLOY_SSH_KEY" not in log
     assert script("filedrawer-receive") in sent
+    # deploy-user.sh still runs, with no key, so a newer sudo rule reaches the server.
+    assert "ssh env DEPLOY_PUBLIC_KEY= bash -s" in log
+    assert script("deploy-user.sh") in sent
     # The admin account is granted again, and the smoke token kept.
     assert "ADMIN_ACCOUNT=a-owner1 bash -s" in log
     assert "gh secret set SMOKE_TEST_TOKEN" not in log

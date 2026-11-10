@@ -1,13 +1,15 @@
 """Tests for the deploy scripts that run on the VPS: ops/remote/filedrawer-receive (the
 deploy key's forced command) and ops/remote/filedrawer-install (run as root through
-sudo). They run as processes against a temp root, with fake sudo, runuser, systemctl
-and curl first on PATH. bin/agent-pre-commit runs them with pytest.
+sudo). They run as processes against a temp root, with fake sudo, runuser, systemctl,
+systemd-run and curl first on PATH. bin/agent-pre-commit runs them with pytest.
 """
 
 import fcntl
+import fnmatch
 import hashlib
 import os
 import re
+import shutil
 import stat
 import subprocess
 from pathlib import Path
@@ -34,6 +36,7 @@ def box(tmp_path):
     bin_dir = root / "srv/filedrawer/staging/bin"
     state.mkdir(parents=True)
     bin_dir.mkdir(parents=True)
+    (root / "srv/filedrawer/production/bin").mkdir(parents=True)
     fakes = tmp_path / "fakes"
     fakes.mkdir()
     log = tmp_path / "log"
@@ -49,6 +52,12 @@ def box(tmp_path):
         f'#!/bin/sh\necho "runuser $*" >> {log}\nshift 3\nexec "$@"\n',
     )
     executable(fakes / "systemctl", f'#!/bin/sh\necho "systemctl $*" >> {log}\n')
+    # systemd-run records its arguments, then runs the command after `--`.
+    executable(
+        fakes / "systemd-run",
+        f'#!/bin/sh\necho "systemd-run $*" >> {log}\n'
+        'while [ "$1" != -- ]; do shift; done\nshift\nexec "$@"\n',
+    )
     # curl succeeds unless the file `unhealthy` exists.
     executable(
         fakes / "curl",
@@ -142,9 +151,47 @@ def test_install_swaps_in_the_new_binary_and_keeps_the_old_one(box):
     assert b"v2" in (box.bin / "filedrawer").read_bytes()
     assert b"v1" in (box.bin / "filedrawer.previous").read_bytes()
     log = box.log.read_text()
-    assert "runuser -u filedrawer -- timeout 10 " in log
+    assert "-p User=filedrawer " in log
     assert "systemctl restart filedrawer-staging" in log
     assert "http://127.0.0.1:8081/tags" in log
+
+
+def test_install_to_production_checks_as_productions_user_on_its_port(box):
+    prod = box.root / "srv/filedrawer/production/bin"
+    executable(prod / "filedrawer", binary("v1").decode())
+    data = binary("v2")
+    result = install(box, "production", sha(data), data=data)
+    assert result.returncode == 0, result.stderr
+    assert b"v2" in (prod / "filedrawer").read_bytes()
+    assert not (box.bin / "filedrawer").exists(), "staging is left alone"
+    log = box.log.read_text()
+    assert "-p User=filedrawer-prod " in log
+    assert "systemctl restart filedrawer-production" in log
+    assert "http://127.0.0.1:8080/tags" in log
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_the_run_check_can_bind_no_socket_and_dies_with_its_unit(box, environment):
+    """The check runs the uploaded code as the environment's user, so it runs in a
+    transient unit that may bind no socket (it can't take the other environment's
+    port) and whose children die with it, and can't see the environment's data."""
+    data = binary("v2")
+    result = install(box, environment, sha(data), data=data)
+    assert result.returncode == 0, result.stderr
+    [check] = [
+        line for line in box.log.read_text().splitlines() if "systemd-run" in line
+    ]
+    for setting in (
+        f"--unit=filedrawer-check-{environment}",
+        "--wait",
+        "-p SocketBindDeny=any",
+        "-p PrivateNetwork=yes",
+        "-p RuntimeMaxSec=10",
+        "-p ProtectSystem=strict",
+        f"-p InaccessiblePaths=-/srv/filedrawer/{environment}/data",
+    ):
+        assert setting in check, (setting, check)
+    assert "runuser" not in box.log.read_text()
 
 
 def test_install_refuses_a_hash_mismatch_and_changes_nothing(box):
@@ -182,6 +229,7 @@ def test_install_never_installs_a_binary_that_doesnt_run(box):
     result = install(box, "staging", sha(data), data=data)
     assert result.returncode != 0
     assert b"doesn't run" in result.stderr
+    assert b"journalctl -u filedrawer-check-staging" in result.stderr
     assert b"v1" in (box.bin / "filedrawer").read_bytes()
     assert "systemctl" not in box.log.read_text()
 
@@ -189,8 +237,9 @@ def test_install_never_installs_a_binary_that_doesnt_run(box):
 @pytest.mark.parametrize(
     "args",
     [
-        ["production", "0" * 64],
+        ["prod", "0" * 64],
         ["../staging", "0" * 64],
+        ["staging x", "0" * 64],
         ["staging", "not-a-hash"],
         ["staging"],
         ["staging", "0" * 64, "extra"],
@@ -201,6 +250,60 @@ def test_install_refuses_other_arguments(box, args):
     assert result.returncode != 0
     assert b"refused" in result.stderr
     assert not (box.bin / "filedrawer").exists()
+
+
+def sudo_rule() -> str:
+    """The command the deploy user's one sudo rule allows, as deploy-user.sh writes it."""
+    script = (REPO / "ops/remote/deploy-user.sh").read_text()
+    [rule] = re.findall(r"^deploy ALL=\(root\) NOPASSWD: (.+)$", script, re.M)
+    return rule
+
+
+def sudo_allows(command: str) -> bool:
+    """Whether the rule allows `command`, matched as sudo matches a rule's arguments
+    (sudoers(5), Wildcards): a rule's arguments that start with ^ and end with $ are a
+    regular expression over the arguments joined by spaces; otherwise a shell-style
+    wildcard, where `*` matches spaces too."""
+    allowed_path, allowed_args = sudo_rule().split(" ", 1)
+    path, args = command.split(" ", 1)
+    if path != allowed_path:
+        return False
+    if allowed_args.startswith("^") and allowed_args.endswith("$"):
+        return re.fullmatch(allowed_args[1:-1], args) is not None
+    return fnmatch.fnmatchcase(args, allowed_args)
+
+
+def test_the_deploy_key_can_reach_only_stagings_install():
+    install_staging = f"/usr/local/sbin/filedrawer-install staging {'0' * 64}"
+    assert sudo_allows(install_staging)
+    for command in (
+        f"/usr/local/sbin/filedrawer-install production {'0' * 64}",
+        f"/usr/local/sbin/filedrawer-install  production {'0' * 64}",
+        f"/usr/local/bin/filedrawer-install production {'0' * 64}",
+        f"/usr/local/sbin/filedrawer-install staging {'0' * 64} production",
+        f"/usr/local/sbin/filedrawer-install staging {'0' * 63}",
+    ):
+        assert not sudo_allows(command), command
+
+
+@pytest.mark.skipif(shutil.which("visudo") is None, reason="no visudo")
+def test_visudo_accepts_the_deploy_rule(tmp_path):
+    rule = tmp_path / "rule"
+    rule.write_text(f"deploy ALL=(root) NOPASSWD: {sudo_rule()}\n")
+    result = subprocess.run(
+        ["visudo", "-cf", rule], capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_install_refuses_a_third_argument_too(box):
+    """The sudo rule refuses `staging <sha> production`; the install script's own
+    argument check refuses it as well, for a rule written by an older deploy-user.sh."""
+    data = binary("v2")
+    result = install(box, "staging", sha(data), "production", data=data)
+    assert result.returncode != 0
+    assert b"refused" in result.stderr
+    assert box.log.read_text() == ""
 
 
 # The workflow and the wizard
@@ -355,3 +458,79 @@ def test_the_files_host_has_a_caddy_site_behind_the_staging_gate_and_a_dns_recor
     wizard = (REPO / "ops/provision-vps").read_text()
     dns = re.search(r"for name in (.*?); do", wizard).group(1)
     assert '"files.staging.filedrawer.dev"' in dns
+
+
+# deploy-user.sh
+
+DEPLOY_USER = REPO / "ops/remote/deploy-user.sh"
+PUBLIC_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIabc filedrawer-deploy@github-actions"
+
+
+@pytest.fixture
+def deploy_box(tmp_path):
+    root = tmp_path / "root"
+    (root / "etc/sudoers.d").mkdir(parents=True)
+    (root / "home/deploy").mkdir(parents=True)
+    fakes = tmp_path / "fakes"
+    fakes.mkdir()
+    log = tmp_path / "log"
+    log.touch()
+    for tool in ("useradd", "passwd", "chown", "visudo"):
+        executable(fakes / tool, f'#!/bin/sh\necho "{tool} $*" >> {log}\n')
+    executable(fakes / "id", "#!/bin/sh\nexit 0\n")
+    env = {"PATH": f"{fakes}:{os.environ['PATH']}", "FILEDRAWER_ROOT": str(root)}
+
+    def run(key: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["bash", DEPLOY_USER],
+            env={**env, "DEPLOY_PUBLIC_KEY": key},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    return SimpleNamespace(root=root, log=log, run=run)
+
+
+def test_deploy_user_writes_the_key_and_the_sudo_rule(deploy_box):
+    result = deploy_box.run(PUBLIC_KEY)
+    assert result.returncode == 0, result.stderr
+    keys = (deploy_box.root / "home/deploy/.ssh/authorized_keys").read_text()
+    assert (
+        keys == f'restrict,command="/usr/local/bin/filedrawer-receive" {PUBLIC_KEY}\n'
+    )
+    rule = (deploy_box.root / "etc/sudoers.d/filedrawer-deploy").read_text()
+    assert rule == f"deploy ALL=(root) NOPASSWD: {sudo_rule()}\n"
+    assert "visudo -cf" in deploy_box.log.read_text()
+
+
+def test_deploy_user_with_no_key_keeps_the_key_and_rewrites_the_sudo_rule(deploy_box):
+    """The wizard keeps the deploy key on a rerun, but a newer sudo rule must still
+    reach the server."""
+    assert deploy_box.run(PUBLIC_KEY).returncode == 0
+    rule_file = deploy_box.root / "etc/sudoers.d/filedrawer-deploy"
+    rule_file.chmod(0o640)
+    rule_file.write_text(
+        "deploy ALL=(root) NOPASSWD: /usr/local/sbin/filedrawer-install staging *\n"
+    )
+    result = deploy_box.run("")
+    assert result.returncode == 0, result.stderr
+    keys = (deploy_box.root / "home/deploy/.ssh/authorized_keys").read_text()
+    assert PUBLIC_KEY in keys
+    assert rule_file.read_text() == f"deploy ALL=(root) NOPASSWD: {sudo_rule()}\n"
+
+
+def test_deploy_user_with_no_key_and_none_on_the_server_fails(deploy_box):
+    result = deploy_box.run("")
+    assert result.returncode != 0
+    assert "no deploy key" in result.stderr
+    assert not (deploy_box.root / "etc/sudoers.d/filedrawer-deploy").exists()
+
+
+@pytest.mark.parametrize(
+    "key", ["ssh-rsa AAAA", 'ssh-ed25519 AAAA x"y', "x\nssh-ed25519 AAAA"]
+)
+def test_deploy_user_refuses_what_isnt_one_ed25519_key(deploy_box, key):
+    result = deploy_box.run(key)
+    assert result.returncode != 0
+    assert not (deploy_box.root / "home/deploy/.ssh/authorized_keys").exists()
