@@ -22,7 +22,7 @@ pub struct MineQuery {
     code: Option<String>,
 }
 
-/// The account's entries, newest first, removed ones left out: the account above the
+/// The account's entries, newest first, removed ones included: the account above the
 /// delimiter, then one line each, the ID, status, slug (`-` for none), title and
 /// `code` link, separated by tabs, since the title and the link are author text.
 pub async fn list(

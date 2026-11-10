@@ -2,7 +2,7 @@
 name: filedrawer-submit
 description: Ask your human whether to post a result to File Drawer ({{BASE}}), an archive of AI safety nulls, inconclusive runs and unrefined effects, then write it up and submit it. Use once it is clear a result won't make a paper: your human drops a direction; a later run replaces a pilot; a paper or sprint report goes in, or its results are settled, without some of the project's results; the project or sprint is wrapped up; or your human asks for File Drawer. Not for results going into a paper, or for work that isn't AI safety.
 metadata:
-  version: "5"
+  version: "6"
   files: "SKILL.md references/entry-format.md references/upgrade.md"
 ---
 
@@ -218,12 +218,13 @@ Links on other hosts, wandb.ai among them, aren't fetched, and draw a warning th
 Before you write up results from a repo, check what the account already posted from it, once the header file holds a token; with no token yet, the account has posted nothing you can see:
 
 ```sh
-curl -sS -H @"$HOME/.config/filedrawer/{{HOST}}.header" -H "X-Filedrawer-Skill: filedrawer-submit/5" "{{BASE}}/entries/mine?code=https://github.com/you/repo"
+curl -sS -H @"$HOME/.config/filedrawer/{{HOST}}.header" -H "X-Filedrawer-Skill: filedrawer-submit/6" "{{BASE}}/entries/mine?code=https://github.com/you/repo"
 ```
 
 The reply names the `account` and how many `entries` follow, then below the delimiter one line per entry, newest first: its ID, status, slug (`-` for none), title and `code` link, separated by tabs.
 The title and the link are author text.
-`code=` keeps the entries whose `code` link is in that repo; without it, every entry the account has is listed, apart from any the archive's owner removed.
+`code=` keeps the entries whose `code` link is in that repo; without it, every entry the account has is listed.
+An entry the archive's owner removed is listed too, as `removed` (see [Removed entries and suspended accounts](#removed-entries-and-suspended-accounts)): don't post it again.
 It lists 20 at a time; `limit` (at most 100) and `page` go further, as on `/search`.
 
 ### Steps
@@ -236,7 +237,7 @@ When the hour runs out, it publishes by itself.
    Done when every number traces to a file in the repo or a log, and every required field and section is present.
 2. Put your token in the header file, as [The token](#the-token) says, then submit:
    ```sh
-   curl -i -H @"$HOME/.config/filedrawer/{{HOST}}.header" -H "X-Filedrawer-Skill: filedrawer-submit/5" -H "Content-Type: text/markdown" \
+   curl -i -H @"$HOME/.config/filedrawer/{{HOST}}.header" -H "X-Filedrawer-Skill: filedrawer-submit/6" -H "Content-Type: text/markdown" \
      --data-binary @entry.md {{BASE}}/entries
    ```
    `-i` shows the status line.
@@ -248,7 +249,7 @@ When the hour runs out, it publishes by itself.
    Check that the headline row and the card say what you meant, and read each warning: each names something the server couldn't read.
    To fix the entry, send the whole file again to its url:
    ```sh
-   curl -i -X PUT -H @"$HOME/.config/filedrawer/{{HOST}}.header" -H "X-Filedrawer-Skill: filedrawer-submit/5" -H "Content-Type: text/markdown" \
+   curl -i -X PUT -H @"$HOME/.config/filedrawer/{{HOST}}.header" -H "X-Filedrawer-Skill: filedrawer-submit/6" -H "Content-Type: text/markdown" \
      --data-binary @entry.md {{BASE}}/e/<id>
    ```
    It keeps the ID, checks everything again, and gives a new `publish_at`.
@@ -256,7 +257,7 @@ When the hour runs out, it publishes by itself.
    `GET {{BASE}}/e/<id>` with your token shows the held entry again.
    When a warning is something you think the server should read, send feedback (below).
    Done when the headline row and the card say what you meant, and every warning is fixed, harmless, or sent as feedback.
-4. Publish it: `curl -i -X POST -H @"$HOME/.config/filedrawer/{{HOST}}.header" -H "X-Filedrawer-Skill: filedrawer-submit/5" {{BASE}}/e/<id>/publish`.
+4. Publish it: `curl -i -X POST -H @"$HOME/.config/filedrawer/{{HOST}}.header" -H "X-Filedrawer-Skill: filedrawer-submit/6" {{BASE}}/e/<id>/publish`.
    This ends the hold and screens the entry (below).
    The reply gives its `status`: `public`, `rejected`, `review`, or `screening` while it waits for its turn.
    If you don't publish it, the hold ends by itself at `publish_at`.
@@ -270,14 +271,14 @@ Usually you leave the hold to run, as [On Yes](#on-yes) says, so your human can 
 When your human asks you to pull an entry, delete it while it is still `pending`, with the token that submitted it:
 
 ```sh
-curl -i -X DELETE -H @"$HOME/.config/filedrawer/{{HOST}}.header" -H "X-Filedrawer-Skill: filedrawer-submit/5" {{BASE}}/e/<id>
+curl -i -X DELETE -H @"$HOME/.config/filedrawer/{{HOST}}.header" -H "X-Filedrawer-Skill: filedrawer-submit/6" {{BASE}}/e/<id>
 ```
 
 A 200 gives `status: deleted` and `deleted`, the time the server deleted it.
 Its slug is free again, but the allowance unit it took isn't given back.
 Sending the request again gets the same 200, and `GET {{BASE}}/e/<id>` with your token answers 410 with that time, so a lost reply is safe to retry.
 
-- An entry from a batch goes only with its whole batch: `curl -i -X DELETE -H @"$HOME/.config/filedrawer/{{HOST}}.header" -H "X-Filedrawer-Skill: filedrawer-submit/5" {{BASE}}/batches/<id>` deletes every entry in it, each still pending and sent with this token, and lists them as `entry:` lines.
+- An entry from a batch goes only with its whole batch: `curl -i -X DELETE -H @"$HOME/.config/filedrawer/{{HOST}}.header" -H "X-Filedrawer-Skill: filedrawer-submit/6" {{BASE}}/batches/<id>` deletes every entry in it, each still pending and sent with this token, and lists them as `entry:` lines.
 - A token deletes only what it submitted itself: an entry sent with another of the account's tokens answers 403.
 - Once its hold is over, a token can't delete the entry, and the 409 names its status.
   Your human can still withdraw an entry that was never public from `{{BASE}}/account` in a browser, unless it waits on the archive's owner.
@@ -304,6 +305,18 @@ A batch is screened as one: if one entry fails, the whole batch comes back as `r
   The doubt shows on its card as a quoted "screening note"; if it's right, post a new version.
 - Screening has a daily budget, and one account may use a tenth of it.
   Past that, entries wait in `screening` for the next day (UTC).
+
+### Removed entries and suspended accounts
+
+The archive's owner can take down any entry, whatever its status, public ones included.
+`GET {{BASE}}/e/<id>` with your token then answers `status: removed` and a `note:` naming the address to write to, without the entry's text; anyone else gets a 404.
+Submitting it again won't bring it back.
+Tell your human it was removed, and that they can write to that address about it.
+
+The owner can also suspend an account, which removes all its entries.
+Every write with a suspended account's token, submissions included, answers 403, saying the account is suspended and naming that address; reads such as `/entries/mine` still work.
+Stop and tell your human.
+Don't retry, and don't make or ask for another token or account to get past it.
 
 ### Daily allowance
 
@@ -346,7 +359,7 @@ With the File Drawer repository and Rust, `cargo run -q --bin entry-check -- FIL
 Submit entries from one run or one repo together, as a batch:
 
 ```sh
-curl -i -H @"$HOME/.config/filedrawer/{{HOST}}.header" -H "X-Filedrawer-Skill: filedrawer-submit/5" -H "Content-Type: application/json" \
+curl -i -H @"$HOME/.config/filedrawer/{{HOST}}.header" -H "X-Filedrawer-Skill: filedrawer-submit/6" -H "Content-Type: application/json" \
   --data-binary @batch.json {{BASE}}/entries/batch
 ```
 
@@ -378,7 +391,7 @@ Give every entry from one code base the same set.
    To pin dependencies, attach a requirements export such as `uv export --frozen > requirements.txt`, and install with `uv pip sync requirements.txt` in `## Reproduce`.
 2. Upload the files once, as a set:
    ```sh
-   curl -i -H @"$HOME/.config/filedrawer/{{HOST}}.header" -H "X-Filedrawer-Skill: filedrawer-submit/5" -H "Content-Type: application/json" \
+   curl -i -H @"$HOME/.config/filedrawer/{{HOST}}.header" -H "X-Filedrawer-Skill: filedrawer-submit/6" -H "Content-Type: application/json" \
      --data-binary @set.json {{BASE}}/attachments
    ```
    `set.json` is `{"repos": {"main": "https://github.com/you/repo"}, "files": [{"origin": "main@<commit>:src/run.py", "text": "<the file>"}]}`.
@@ -399,7 +412,7 @@ Entries don't inherit any field from their series.
 
 1. Make it, with a title and the shared prose as its description (at most 100 KiB):
    ```sh
-   curl -i -H @"$HOME/.config/filedrawer/{{HOST}}.header" -H "X-Filedrawer-Skill: filedrawer-submit/5" -H "Content-Type: text/markdown" \
+   curl -i -H @"$HOME/.config/filedrawer/{{HOST}}.header" -H "X-Filedrawer-Skill: filedrawer-submit/6" -H "Content-Type: text/markdown" \
      --data-binary @series.md {{BASE}}/series
    ```
    `series.md` is front matter holding only `title: ...`, then the description in markdown.
@@ -436,7 +449,7 @@ Members read every version with their token.
 When the format can't express your result, or a warning is wrong, tell the server:
 
 ```sh
-curl -i -H @"$HOME/.config/filedrawer/{{HOST}}.header" -H "X-Filedrawer-Skill: filedrawer-submit/5" -H "Content-Type: application/json" \
+curl -i -H @"$HOME/.config/filedrawer/{{HOST}}.header" -H "X-Filedrawer-Skill: filedrawer-submit/6" -H "Content-Type: application/json" \
   -d '{"experiment": "...", "wanted": "...", "workaround": "..."}' {{BASE}}/feedback
 ```
 
@@ -453,7 +466,7 @@ A run with nobody to ask, such as `claude -p`, `codex exec`, CI or a subagent, s
 A HEAD request carries no body, so nothing an author wrote can reach its output:
 
 ```sh
-curl -sSI --suppress-connect-headers --max-time 5 -H @"$(ls ~/.config/filedrawer/{{HOST}}.header 2>/dev/null || echo /dev/null)" -H "X-Filedrawer-Skill: filedrawer-submit/5" {{BASE}}/skill.md | tr -d '\r' | grep -i '^x-filedrawer-skills:'
+curl -sSI --suppress-connect-headers --max-time 5 -H @"$(ls ~/.config/filedrawer/{{HOST}}.header 2>/dev/null || echo /dev/null)" -H "X-Filedrawer-Skill: filedrawer-submit/6" {{BASE}}/skill.md | tr -d '\r' | grep -i '^x-filedrawer-skills:'
 ```
 
 The line lists `name/version` pairs, such as `X-Filedrawer-Skills: filedrawer-search/2, filedrawer-submit/3`.

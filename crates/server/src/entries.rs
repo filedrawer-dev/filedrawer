@@ -1843,7 +1843,7 @@ fn in_repo(code: &str, repo: &str) -> bool {
         .is_some_and(|rest| rest.is_empty() || rest.starts_with(['/', '?', '#']))
 }
 
-/// `account_id`'s entries, newest first, leaving out those the owner removed, at
+/// `account_id`'s entries, newest first, those the owner removed included, at
 /// `offset` and at most `limit` of them; with `repo`, only those whose `code` link
 /// lies in that repo. The link is read from each entry's text, so a repo filter
 /// reads every entry whose text holds the repo's URL, and pages after.
@@ -1863,7 +1863,7 @@ pub async fn mine(
     let needle = repo.map(str::to_lowercase);
     let rows = sqlx::query!(
         r#"SELECT seq AS "seq!: i64", id, status, source FROM entries
-           WHERE account_id = ?1 AND status != 'removed'
+           WHERE account_id = ?1
              AND (?2 IS NULL OR instr(lower(source), ?2) > 0)
            ORDER BY seq DESC LIMIT ?3 OFFSET ?4"#,
         account_id,

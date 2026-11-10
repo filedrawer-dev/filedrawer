@@ -257,12 +257,6 @@ Add a new entry at the end of the topic it belongs to, or start a topic when non
 - Chosen: leave it out, since embargoes are paused (#33) and no new entry is embargoed.
 - Against: removing a later version embargoed further ahead, say to take down personal data in it, lets an earlier embargoed version release on its own sooner date, against its author's later choice.
 
-#### A removed entry's author doesn't find it in `/entries/mine`
-
-- Options: list removed entries there with `status: removed`, as `GET /e/<id>` now answers their author (the owner's choice, 2026-11-09); or leave them out, as here for now.
-- Chosen: leave them out until the skills release under way lands, since `skills/filedrawer-submit/SKILL.md` says the list leaves them out and the change needs a new skill version (#58).
-- Against: an author who lists their entries sees one vanish, and may submit it again.
-
 ### Series
 
 #### Series: what a section anchor is

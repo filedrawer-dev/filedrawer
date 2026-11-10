@@ -37,7 +37,12 @@ async fn a_token_lists_its_accounts_entries_newest_first() {
         ))
         .await;
     let second = app.submit_held(&entry("Second result", "")).await;
-    let removed = app.submit_held(&entry("Removed one", "")).await;
+    let removed = app
+        .submit_held(&entry(
+            "Removed one",
+            &format!("slug: removed-one\ncode: {}\n", code("steering")),
+        ))
+        .await;
     // Only the archive's owner removes an entry.
     sqlx::query("UPDATE entries SET status = 'removed' WHERE id = ?")
         .bind(&removed)
@@ -61,7 +66,26 @@ async fn a_token_lists_its_accounts_entries_newest_first() {
     assert_eq!(
         listed(&app, "/entries/mine").await,
         vec![
+            format!(
+                "{removed}\tremoved\tremoved-one\tRemoved one\t{}",
+                code("steering")
+            ),
             format!("{second}\tpending\t-\tSecond result"),
+            format!("{first}\tpublic\tfirst\tFirst result\t{}", code("steering")),
+        ]
+    );
+    // A removed entry is still the account's result, so a repo's check finds it.
+    assert_eq!(
+        listed(
+            &app,
+            "/entries/mine?code=https%3A%2F%2Fgithub.com%2Fexample%2Fsteering"
+        )
+        .await,
+        vec![
+            format!(
+                "{removed}\tremoved\tremoved-one\tRemoved one\t{}",
+                code("steering")
+            ),
             format!("{first}\tpublic\tfirst\tFirst result\t{}", code("steering")),
         ]
     );
@@ -84,6 +108,7 @@ async fn a_token_lists_its_accounts_entries_newest_first() {
     assert_eq!(
         body["entries"],
         json!([
+            {"id": removed, "status": "removed", "slug": "removed-one", "title": "Removed one", "code": code("steering")},
             {"id": second, "status": "pending", "slug": null, "title": "Second result", "code": null},
             {"id": first, "status": "public", "slug": "first", "title": "First result", "code": code("steering")},
         ])

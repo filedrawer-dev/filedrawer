@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT seq AS \"seq!: i64\", id, status, source FROM entries\n           WHERE account_id = ?1 AND status != 'removed'\n             AND (?2 IS NULL OR instr(lower(source), ?2) > 0)\n           ORDER BY seq DESC LIMIT ?3 OFFSET ?4",
+  "query": "SELECT seq AS \"seq!: i64\", id, status, source FROM entries\n           WHERE account_id = ?1\n             AND (?2 IS NULL OR instr(lower(source), ?2) > 0)\n           ORDER BY seq DESC LIMIT ?3 OFFSET ?4",
   "describe": {
     "columns": [
       {
@@ -58,5 +58,5 @@
       false
     ]
   },
-  "hash": "215e34484a0aebe40c57a879f1db5f24197da8cd0eb9492bf18dbc28ef0bf486"
+  "hash": "4897e9ad51ff41a056ac2ea924d53c47a6a008a308a723fc15bd28210be41131"
 }
