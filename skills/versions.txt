@@ -2,5 +2,5 @@
 # `cd skills/NAME && find . -type f | LC_ALL=C sort | xargs sha256sum | sha256sum`
 # prints it. `bin/skills sync` writes this file;
 # crates/server/tests/it/skill_folders.rs checks it.
-filedrawer-search 4 858debe5f553dee31c563cabeae20b528dca57b086cafdae8af6d3f6d053fee7
-filedrawer-submit 7 3117c9863e1a4bf27f3894dbe2f04542d1f45cfba37f2e498ce106ed144a5f02
+filedrawer-search 5 f36cb8326253f9d53c47fe0acc8206638368e62bd8132206254e293363305ea1
+filedrawer-submit 8 3a4f0084e767064cc5d138e7ee79e604e4673c2c13888e623fcb04d60fe316e0

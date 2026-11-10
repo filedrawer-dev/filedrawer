@@ -194,7 +194,9 @@ check() {
 }
 
 # The secrets go to curl in a config read from a pipe, never on its command line.
+# The User-Agent tells this script's entries and searches from agents' (#45).
 headers() {
+  printf 'user-agent = "ops/smoke-staging"\n'
   printf 'header = "X-Staging-Key: %s"\n' "$FILEDRAWER_STAGING_KEY"
   [[ "${1:-}" == token ]] && printf 'header = "Authorization: Bearer %s"\n' "$FILEDRAWER_STAGING_API_KEY"
 }

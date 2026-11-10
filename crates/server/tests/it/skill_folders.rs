@@ -32,6 +32,29 @@ fn skill_md(name: &str) -> String {
     raw(name, "SKILL.md")
 }
 
+/// The User-Agent each request to the site sends, placeholders and all, for the
+/// agent to fill (design.md, Skills).
+const AGENT_NAME: &str = "-A 'filedrawer-skill (<harness>; <model>; <env>)'";
+
+/// The skill's "Your agent's name" section, up to the next heading.
+fn agent_name_section(name: &str) -> String {
+    let text = skill_md(name);
+    let start = text
+        .find("### Your agent's name\n")
+        .unwrap_or_else(|| panic!("{name} has no Your agent's name section"));
+    let rest = &text[start + 1..];
+    let end = rest.find("\n#").map_or(text.len(), |i| start + 1 + i);
+    text[start..end].to_string()
+}
+
+/// The one shell command in the skill's "Your agent's name" section.
+fn sniff_command(name: &str) -> String {
+    let section = agent_name_section(name);
+    let start = section.find("```sh\n").expect("a sh block") + "```sh\n".len();
+    let end = start + section[start..].find("```").expect("the block's end");
+    section[start..end].trim().to_string()
+}
+
 fn hex(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()
@@ -206,6 +229,15 @@ fn every_request_to_the_site_sends_the_header_file_and_names_the_skill() {
             };
             assert!(command.contains(header), "{name}: {command}");
             assert!(command.contains(&skill_header), "{name}: {command}");
+            assert!(command.contains(AGENT_NAME), "{name}: {command}");
+        }
+        for command in curls(&text) {
+            if !command.contains("{{BASE}}") {
+                assert!(
+                    !command.contains(" -A") && !command.contains("--user-agent"),
+                    "{name}: a request to GitHub names no agent: {command}"
+                );
+            }
         }
         for (at, _) in text.match_indices("X-Filedrawer-Skill: ") {
             let named = &text[at..];
@@ -251,6 +283,51 @@ fn the_skills_send_the_agent_to_no_instructions_on_the_site() {
             );
         }
     }
+}
+
+#[test]
+fn both_skills_name_the_agent_the_same_way() {
+    assert_eq!(
+        agent_name_section("filedrawer-search"),
+        agent_name_section("filedrawer-submit")
+    );
+}
+
+/// The command prints the names of the harness variables that are set, and of
+/// their values only `AI_AGENT`'s, stripped to characters safe in single quotes, so
+/// nothing in the environment reaches the site but what names the harness.
+#[test]
+fn the_name_command_prints_variable_names_and_a_safe_ai_agent() {
+    let run = |vars: &[(&str, &str)]| {
+        let output = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(sniff_command("filedrawer-search"))
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .envs(vars.iter().copied())
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        String::from_utf8(output.stdout).unwrap()
+    };
+    assert_eq!(run(&[]), "AI_AGENT=\n");
+    assert_eq!(
+        run(&[
+            ("CODEX_THREAD_ID", "thread-of-jane-at-acme"),
+            ("CODEX_SANDBOX", "seatbelt"),
+            ("GEMINI_CLI", ""),
+            ("HOME", "/home/jane"),
+            ("AI_AGENT", "x'; rm $(y) `z` \"q\""),
+        ]),
+        "CODEX_THREAD_ID CODEX_SANDBOX AI_AGENT=xrmyzq\n"
+    );
+    assert_eq!(
+        run(&[
+            ("CLAUDECODE", "1"),
+            ("AI_AGENT", "claude-code_2-1-322_agent")
+        ]),
+        "CLAUDECODE AI_AGENT=claude-code_2-1-322_agent\n"
+    );
 }
 
 #[test]
