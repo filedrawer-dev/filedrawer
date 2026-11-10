@@ -11,6 +11,7 @@ pub mod docs;
 pub mod feedback;
 pub mod files;
 pub mod home;
+pub mod legal;
 pub mod mine;
 pub mod read;
 pub mod series;

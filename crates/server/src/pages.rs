@@ -154,6 +154,14 @@ pub struct BetaPage<'a> {
     pub public_url: &'a str,
 }
 
+/// A page of the server's own markdown, `/terms` or `/privacy`, rendered.
+#[derive(Template)]
+#[template(path = "legal.html")]
+pub struct LegalPage<'a> {
+    pub title: &'a str,
+    pub html: &'a str,
+}
+
 #[derive(Template)]
 #[template(path = "search.html")]
 pub struct SearchPage<'a> {

@@ -794,3 +794,63 @@ async fn the_beta_page_says_what_the_beta_means_to_a_browser_and_to_an_agent() {
     );
     assert!(!text.body.contains('<'), "{}", text.body);
 }
+
+const TERMS: &str = include_str!("../../legal/terms.md");
+const PRIVACY: &str = include_str!("../../legal/privacy.md");
+
+#[tokio::test]
+async fn the_terms_and_privacy_pages_render_their_markdown_for_a_browser_and_serve_it_to_an_agent()
+{
+    let app = test_app().await;
+    for (path, markdown, title) in [
+        ("/terms", TERMS, "<h1>Terms</h1>"),
+        ("/privacy", PRIVACY, "<h1>Privacy</h1>"),
+    ] {
+        let page = app.send(opened(path)).await;
+        assert_eq!(page.status, StatusCode::OK, "{path}");
+        assert!(content_type(&page).starts_with("text/html"), "{page:?}");
+        assert!(page.body.contains(title), "{path}: {}", page.body);
+        assert!(
+            page.body
+                .contains(r#"<a href="mailto:contact@filedrawer.dev">"#),
+            "{path}: {}",
+            page.body
+        );
+
+        let text = app.send(fetched(path)).await;
+        assert_eq!(text.status, StatusCode::OK, "{path}");
+        assert!(content_type(&text).starts_with("text/plain"), "{text:?}");
+        assert_eq!(text.body, markdown, "{path}");
+    }
+}
+
+#[tokio::test]
+async fn every_page_footer_links_the_terms_and_privacy_pages() {
+    let app = test_app().await;
+    for path in ["/", "/search", "/signup", "/no-such-page"] {
+        let page = app.send(opened(path)).await;
+        let foot = page
+            .body
+            .split(r#"<p class="foot">"#)
+            .nth(1)
+            .unwrap_or_else(|| panic!("{path}: no footer: {}", page.body));
+        for link in [r#"<a href="/terms">"#, r#"<a href="/privacy">"#] {
+            assert!(foot.contains(link), "{path}: {link}: {foot}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn the_signup_form_says_beside_its_button_that_signing_up_accepts_the_terms() {
+    let app = test_app().await;
+    let page = app.send(opened("/signup")).await;
+    let form = page.body.split("</form>").next().unwrap();
+    let notice = form
+        .split(r#"<p id="accept">"#)
+        .nth(1)
+        .unwrap_or_else(|| panic!("no notice in the form: {form}"));
+    let (notice, after) = notice.split_once("</p>").unwrap();
+    assert!(notice.contains(r#"<a href="/terms">"#), "{notice}");
+    // Beside the button: the notice is the last thing before it.
+    assert!(after.trim_start().starts_with("<button"), "{after}");
+}

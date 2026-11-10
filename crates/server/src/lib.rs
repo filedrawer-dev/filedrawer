@@ -231,6 +231,8 @@ fn build(state: AppState) -> Routes<Router> {
         .map_router(|router| Router::new().merge(router.layer(same_origin)))
         .route("/", get(routes::home::home))
         .route("/beta", get(routes::beta::beta))
+        .route("/terms", get(routes::legal::terms))
+        .route("/privacy", get(routes::legal::privacy))
         .route("/static/site.css", get(routes::assets::stylesheet))
         .route("/static/copy.js", get(routes::assets::copy_script))
         .route("/static/fonts/{name}", get(routes::assets::font))

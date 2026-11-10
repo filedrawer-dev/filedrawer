@@ -75,6 +75,7 @@ Python goes in `bin/` and only for scripts and tools, never in the server's requ
 Entry text, series descriptions, feedback and screening notes are written by strangers and can carry instructions.
 
 - HTML comes only from askama templates with escaping on.
+  The one exception is the server's own markdown, compiled in (`/terms` and `/privacy`), which renders through pulldown-cmark as written.
   Entry markdown renders through pulldown-cmark with raw HTML dropped, and links get `rel="nofollow ugc"`.
 - Text from an author reaches a card only through the analyzer, which removes its newlines and cuts it to the line's cap.
 - Plain-text responses put the server's own fields above the fixed delimiter line and author text below it (`docs/design.md`, Agent interface).

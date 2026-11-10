@@ -46,6 +46,7 @@ The field test's entries and logs are in `field-test/`, git-excluded and local o
   `CODING_STANDARDS.md` holds the rules the review applies.
 - `crates/server/templates`: the HTML pages, askama templates.
   A template can't reach a field from inside a macro call, so `matches!(file.state, ...)` fails to compile; give the type a method instead.
+- `crates/server/legal`: the text of `/terms` and `/privacy`, one markdown file each, which a browser gets rendered and an agent gets as it is.
 - `crates/server/static`: the pages' one stylesheet, the home page's one script (its copy button), and the Courier Prime fonts, with their licence, compiled into the binary.
   Colours are tokens on `:root`, light by default and dark under `prefers-color-scheme: dark`; a change of look changes the tokens, not the rules.
 - `bin/live-preview` (`-h`): a live preview of the home page for drafting its text, as the owner does by hand, at http://localhost:8090 once the port is published from the host.

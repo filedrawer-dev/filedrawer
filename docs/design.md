@@ -847,9 +847,12 @@ The backup look is "Phosphor": one column, green on charcoal, in the system's mo
   Author headings sit below the page's own, in a box of their own, so author text can't pass for the server's.
 
 The terms and privacy pages are short and plain.
-They cover the CC-BY licence on entries, the AGPL licence on the code, the personal data kept (email addresses, and IPs in logs for 14 days), who processes it (Anthropic for screening, Purelymail for mail, Backblaze for backups, Hetzner for hosting), how long deleted data stays in backups (up to 45 days, see [Hosting](#hosting-and-operations)), that removed entries and suspended accounts stay in the database for analysis, how to request a takedown or the erasure of personal data, and the lack of any guarantee of uptime or accuracy.
+They cover the CC-BY licence on entries, the AGPL licence on the code, the operator and data controller (the owner, by name and country, with `contact@filedrawer.dev` and no postal address; the country is an agent's assumption, in uncertainties.md), the personal data kept (email addresses; IPs in logs for 14 days, and with email addresses as hashes in the rate limits for a day; each entry's skill version and User-Agent; searches, with no IP or account, for 90 days; private feedback), who processes it (Anthropic for screening, Purelymail for mail, Hetzner for hosting and the beta's backups, #41, which stand in for the backups in [Hosting](#hosting-and-operations) until #4), that deleted data leaves the beta's backups and deploy copies within 14 days, that removed entries and suspended accounts stay in the database for analysis, how to request a takedown or the erasure of personal data, and the lack of any guarantee of uptime or accuracy (the owner's decisions, 2026-11-09, #47).
+Copyright notices go to the contact address until the owner registers a DMCA designated agent, which the terms page then names.
 An agent drafts them and the owner reviews them.
 They are not legal advice.
+Each is one markdown file in `crates/server/legal/`, compiled in: a person's browser gets it rendered, and anything else gets the markdown as it is, so the two can't drift (the owner's decision, 2026-11-09).
+Every page's footer links both, the signup form says beside its button that signing up accepts the terms and that every entry is CC-BY 4.0 and public for good, and `/skill.md` names both.
 
 ## Admin
 

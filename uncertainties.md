@@ -442,11 +442,11 @@ Add a new entry at the end of the topic it belongs to, or start a topic when non
 - Chosen: MIXED as well, since `mixed` is one of `outcome`'s values and a filter that can't reach it hides those entries from people browsing by outcome.
 - Against: the owner chose the look with four tabs, and mixed entries may stay rare enough that ALL covers them.
 
-#### No terms or privacy links in the footer yet
+#### The operator's country on the terms and privacy pages
 
-- Options: link `/terms` and `/privacy` from every page now, as the mockups do, or leave them out until build step 5 writes them.
-- Chosen: leave them out, since the links would answer 404.
-- Against: the footer then changes again at step 5, and a page that names the licences without the privacy terms may read as complete.
+- Options: the owner chose to name a country beside their name, and left which one to the agent.
+- Chosen: the United States, since the owner works in America/Los_Angeles time and the terms send copyright notices DMCA's way.
+- Against: if the owner operates the site from elsewhere, both pages name the wrong country and law.
 
 ## Architecture
 
