@@ -12,6 +12,7 @@ The owner and an agent settled the design on 2026-11-03 and 2026-11-04, and the 
 Plans and open work are GitHub issues on `filedrawer-dev/filedrawer`, not these docs: `issue-todo open --repo filedrawer-dev/filedrawer` lists every open item, and each build step's plan is an issue of its own (#16 for step 4).
 Read them before you plan work, and file new work there.
 To check whether an issue already covers something, `issue-todo open --titles` lists the open issues one a line, by number and title.
+`issue-todo show N` prints one issue's items, from its body and comments together, ticked or not.
 When a commit finishes an issue, end its message with `Closes #N`, so the owner's push closes it; when a slice of a plan lands, tick it with `issue-todo tick N MATCH --note <sha>`.
 `uncertainties.md` holds the choices made while building that the owner hasn't settled yet.
 
