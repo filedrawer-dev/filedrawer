@@ -10,6 +10,7 @@ The owner's global standards (`~/.agents/skills/coding/standards.md`) apply as w
 - `docs/entry-format.md` says what an entry is, what the analyzer reads, and what a card shows.
   The analyzer, submission, cards and the skills follow it word for word.
 
+`docs/design.md` attributes to the owner only what the owner said; a choice an agent made goes in `uncertainties.md` until the owner settles it.
 When the code and a doc disagree, the doc wins.
 Fix the code, or ask the owner to change the doc.
 A choice the docs leave open that has meaningful impact goes in `uncertainties.md` at the repo root until the owner settles it, and then into the doc.

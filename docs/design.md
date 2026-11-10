@@ -55,7 +55,8 @@ The owner expects most contributors to be independent researchers, newcomers to 
 - GitHub sign-in ships right after launch, ORCID later.
   Both are options, never requirements.
 - Display names are pseudonymous and need not be unique, since different researchers share names.
-  A display name is at most 50 characters, and screening checks it like entry text.
+  A display name is at most 50 characters.
+  Screening doesn't check it, for now (the owner's decision, 2026-11-09).
   Each account has a random ID, and cards show it beside the display name.
   Once an account links GitHub or ORCID, cards show that handle too, which is how readers tell researchers apart.
   The site never shows email addresses.
