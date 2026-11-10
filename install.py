@@ -7,7 +7,8 @@ runs it after a sandbox recreate, after rustup is in place.
     python3 install.py -h     this text
 
 The hooks: .githooks holds a link to a script in bin/ for each hook git runs
-(pre-commit; post-merge, post-checkout and post-rewrite, which rebuild target/dev.db
+(pre-commit; post-commit, which warns an agent when a fixup!, amend! or squash! commit
+touches files its target didn't; post-merge, post-checkout and post-rewrite, which rebuild target/dev.db
 when the migrations change; and pre-push, which refuses a skill version origin's tags
 already hold with other contents) and each check llm-toolbox's
 agent-commit-gate runs from beside pre-commit (agent-pre-commit, agent-quick-check,

@@ -13,6 +13,7 @@ REPO = Path(__file__).resolve().parents[2]
 # What git runs, and what llm-toolbox's agent-commit-gate looks for beside pre-commit.
 HOOK_NAMES = (
     "pre-commit",
+    "post-commit",
     "post-merge",
     "post-checkout",
     "post-rewrite",
