@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM search_log WHERE day < ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "2797ca5949452b690b47987e9f1d053349424ec51dd7d955fcbc7cd6bad2c01b"
+}

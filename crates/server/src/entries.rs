@@ -988,6 +988,13 @@ pub struct Filters {
     pub cites: Option<String>,
 }
 
+/// A page of search results, and how many public entries match in all.
+pub struct Found {
+    pub entries: Vec<PublicEntry>,
+    /// Every match, across pages; 0 when the page is past the last.
+    pub total: i64,
+}
+
 /// Public entries matching `filters`: best match first when there are search words
 /// (bm25, with the title weighted most), otherwise newest first.
 pub async fn search(
@@ -995,13 +1002,12 @@ pub async fn search(
     filters: &Filters,
     limit: i64,
     offset: i64,
-) -> Result<Vec<PublicEntry>, sqlx::Error> {
+) -> Result<Found, sqlx::Error> {
     let outcome = filters.outcome.map(Outcome::name);
     let kind = filters.kind.map(Kind::name);
     let stage = filters.stage.map(Stage::name);
     let row_claim = filters.row_claim.map(Claim::name);
-    sqlx::query_as!(
-        PublicEntry,
+    let rows = sqlx::query!(
         r#"WITH RECURSIVE
              -- `cites` names a public entry: the public versions of its chain, and
              -- its slug if a public version registered it, stand for it too. A
@@ -1034,7 +1040,9 @@ pub async fn search(
                   e.attachment_set_seq IS NOT NULL AS "code_attached!: bool",
                   IFNULL(f.code_link_dead, 0) AS "code_link_dead!: bool",
                   IFNULL(f.logs_link_dead, 0) AS "logs_link_dead!: bool",
-                  f.pin_flag AS "pin_flag?: String"
+                  f.pin_flag AS "pin_flag?: String",
+                  -- Every match, before LIMIT: the sort visits them all anyway.
+                  COUNT(*) OVER () AS "total!: i64"
            FROM entries e JOIN authors a ON a.id = e.account_id
            LEFT JOIN link_flags f ON f.entry_seq = e.seq
            WHERE e.status = 'public'
@@ -1075,7 +1083,28 @@ pub async fn search(
         filters.cites
     )
     .fetch_all(pool)
-    .await
+    .await?;
+    let total = rows.first().map_or(0, |row| row.total);
+    let entries = rows
+        .into_iter()
+        .map(|row| PublicEntry {
+            seq: row.seq,
+            id: row.id,
+            source: row.source,
+            account_id: row.account_id,
+            display_name: row.display_name,
+            submitted_at: row.submitted_at,
+            published_at: row.published_at,
+            previous_id: row.previous_id,
+            superseded_by: row.superseded_by,
+            screening_note: row.screening_note,
+            code_attached: row.code_attached,
+            code_link_dead: row.code_link_dead,
+            logs_link_dead: row.logs_link_dead,
+            pin_flag: row.pin_flag,
+        })
+        .collect();
+    Ok(Found { entries, total })
 }
 
 /// Every public entry, oldest first, for `/cards.txt`.

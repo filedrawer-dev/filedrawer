@@ -35,6 +35,7 @@ mod respond;
 mod review;
 mod routes;
 pub mod screening;
+pub mod search_log;
 mod series;
 mod skills;
 mod suspension;

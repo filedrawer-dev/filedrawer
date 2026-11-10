@@ -108,6 +108,12 @@ Add a new entry at the end of the topic it belongs to, or start a topic when non
 - Chosen: every entry, newest first, so `/search?outcome=effect` works alone.
 - Against: `/cards.txt` already returns everything, so an empty search may be a mistake worth naming.
 
+#### What the search log's row holds beyond the owner's rules
+
+- Options: the UTC day or a timestamp; logging refused searches (400 for an unknown filter value) or only searches that ran; failing the search when the log write fails, or answering anyway.
+- Chosen: the UTC day, so a row can't be lined up with the server's access logs by time; only searches that ran; a failed write is logged and the search still answers (#45).
+- Against: a refused search shows what agents try that the server doesn't read, which may matter more to the skills than the searches that worked.
+
 #### Which request's skill and User-Agent an entry keeps
 
 - Options: the request that wrote its current text, so a PUT overwrites the submission's; or the first submission's for good; or every request's, in a table of its own.

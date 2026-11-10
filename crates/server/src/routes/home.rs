@@ -22,7 +22,9 @@ pub async fn home(State(state): State<AppState>, headers: HeaderMap) -> Result<R
         )
             .into_response());
     }
-    let latest = entries::search(&state.pool, &Filters::default(), LATEST, 0).await?;
+    let latest = entries::search(&state.pool, &Filters::default(), LATEST, 0)
+        .await?
+        .entries;
     let mut response = page(
         StatusCode::OK,
         &HomePage {

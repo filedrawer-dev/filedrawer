@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO search_log (day, query, hits, client)\n         SELECT ?1, ?2, ?3, ?4 WHERE (SELECT COUNT(*) FROM search_log WHERE day = ?1) < ?5",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "278e1d52ddef25d6ce499f6fd43abddffeedd343ebafd9ee7f55ff50edf3ec00"
+}

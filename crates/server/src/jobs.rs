@@ -132,8 +132,9 @@ pub async fn tidy_files(state: &AppState, now: OffsetDateTime) -> Result<(), Sto
     expired.map_err(StoreError::from).and(swept)
 }
 
-/// Runs `tidy_files`, and deletes the rate limits' expired counts, every hour, for
-/// `filedrawer serve`. An error is logged and the loop goes on.
+/// Runs `tidy_files`, and deletes the rate limits' expired counts and the search
+/// log's old rows, every hour, for `filedrawer serve`. An error is logged and the
+/// loop goes on.
 pub async fn run_tidier(state: AppState) {
     let mut ticks = tokio::time::interval(std::time::Duration::from_secs(60 * 60));
     loop {
@@ -143,6 +144,9 @@ pub async fn run_tidier(state: AppState) {
         }
         if let Err(error) = crate::limits::tidy(&state.pool, OffsetDateTime::now_utc()).await {
             tracing::error!(%error, "tidying rate-limit counts failed");
+        }
+        if let Err(error) = crate::search_log::tidy(&state.pool, OffsetDateTime::now_utc()).await {
+            tracing::error!(%error, "tidying the search log failed");
         }
     }
 }

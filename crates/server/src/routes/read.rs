@@ -26,8 +26,8 @@ use crate::respond::{
     CONTACT, DELIMITER, Format, Reading, author_name, card_and_warnings, echoed, one_line,
     wants_page,
 };
-use crate::series;
 use crate::{AppState, allowance, attachments, deletion, time, warnings};
+use crate::{search_log, series};
 use analyzer::slug_references;
 use url::Url;
 
@@ -504,9 +504,23 @@ pub async fn search(
     let page_number = query.page.unwrap_or(1).max(1);
     let offset = (page_number - 1).saturating_mul(limit);
     // One more than a page, to know whether another page follows.
-    let mut results = entries::search(&state.pool, &filters, limit + 1, offset).await?;
-    let more = i64::try_from(results.len()).is_ok_and(|found| found > limit);
+    let found = entries::search(&state.pool, &filters, limit + 1, offset).await?;
+    let mut results = found.entries;
+    let more = i64::try_from(results.len()).is_ok_and(|fetched| fetched > limit);
     results.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
+    // Later pages continue the same search (#45).
+    if page_number == 1
+        && let Err(error) = search_log::record(
+            &state.pool,
+            &query.logged_query(),
+            found.total,
+            search_log::client(&headers).as_deref(),
+            time::now_utc(),
+        )
+        .await
+    {
+        tracing::error!(%error, "logging a search failed");
+    }
     if wants_page(&headers) {
         let outcome = query.outcome.as_deref().unwrap_or("");
         let words = query.q.as_deref().unwrap_or("");
@@ -536,8 +550,22 @@ pub async fn search(
 }
 
 impl SearchQuery {
+    /// `q` and every filter given, form-encoded in a fixed order, without the paging.
+    fn logged_query(&self) -> String {
+        self.encoded().finish()
+    }
+
     /// The URL of page `number` of these results, with every filter kept.
     fn page_href(&self, number: i64) -> String {
+        let mut query = self.encoded();
+        if let Some(limit) = self.limit {
+            query.append_pair("limit", &limit.to_string());
+        }
+        query.append_pair("page", &number.to_string());
+        format!("/search?{}", query.finish())
+    }
+
+    fn encoded(&self) -> url::form_urlencoded::Serializer<'static, String> {
         let mut query = url::form_urlencoded::Serializer::new(String::new());
         for (name, value) in [
             ("q", &self.q),
@@ -554,11 +582,7 @@ impl SearchQuery {
                 query.append_pair(name, value);
             }
         }
-        if let Some(limit) = self.limit {
-            query.append_pair("limit", &limit.to_string());
-        }
-        query.append_pair("page", &number.to_string());
-        format!("/search?{}", query.finish())
+        query
     }
 }
 

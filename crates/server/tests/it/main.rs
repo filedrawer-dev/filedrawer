@@ -37,6 +37,7 @@ mod removed_files;
 mod request_log;
 mod review;
 mod screening;
+mod search_log;
 mod series;
 mod skill;
 mod skill_folders;

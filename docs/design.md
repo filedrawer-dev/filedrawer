@@ -601,6 +601,11 @@ Plain text first, since that is cheapest for an agent to read.
   Reason: widening through a held or embargoed version would confirm a hidden ID, or tie a pending version to its chain.
   A value in no form the analyzer reads, or a slug, is a bad request rather than no results, which would read as "nobody followed it up".
   The keys are stored per entry and rebuilt at startup when the analyzer's key format changes.
+- The server logs each search's query, the number of public entries it matched and the day, with no IP, account or token, for 90 days, to learn what people look for and whether the archive held it (#45, the owner's decisions, 2026-11-09).
+  It logs searches as plain text, JSON and the page alike, cuts a query to 500 characters, and takes no more rows on a day past 10,000, so a flood of searches can't fill the disk.
+  The query is `q` and every filter, form-encoded in a fixed order, without `limit` and `page`; only a search's first page is logged, since later pages continue it; and the count is every match, not the page's, counted in the search's own query (the owner, 2026-11-10).
+  A row also keeps the request's User-Agent, cut to 200 characters, when it starts with `filedrawer-skill`, as the skills' does (see [Skills](#skills)), and nothing for any other client, so a browser's identifying string never sits beside a query (the owner, 2026-11-10).
+  Only the owner reads the log, through SQL.
 - `replicates` and `reanalyzes` take a list, not only one item, since one audit can check five papers; and a plain URL, for work with no arXiv ID or DOI (the owner's decisions, 2026-11-08).
   There is no "reproduction" outcome: `outcome` says what an entry found, and a reproduction can find the effect or not.
 - `GET /e/<id>` returns the full entry as markdown.
