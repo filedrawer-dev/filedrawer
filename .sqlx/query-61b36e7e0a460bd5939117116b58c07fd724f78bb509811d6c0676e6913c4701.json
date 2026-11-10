@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT EXISTS (\n               SELECT 1 FROM entries m JOIN series s ON s.seq = m.series_seq\n               WHERE s.public_at IS NULL AND s.removed_at IS NULL\n                 AND m.series_removed_at IS NULL\n                 AND m.status NOT IN ('rejected', 'withdrawn', 'removed')\n                 AND (m.seq = ?1 OR m.batch_seq = (SELECT batch_seq FROM entries WHERE seq = ?1))\n           ) AS \"waits!: bool\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "waits!: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "61b36e7e0a460bd5939117116b58c07fd724f78bb509811d6c0676e6913c4701"
+}

@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT seq AS \"seq!: i64\" FROM series WHERE account_id = ? AND public_at IS NULL",
+  "query": "UPDATE series SET public_at = COALESCE(public_at, ?)\n           WHERE id = ? AND account_id = ? AND removed_at IS NULL\n           RETURNING seq AS \"seq!: i64\"",
   "describe": {
     "columns": [
       {
@@ -16,11 +16,11 @@
       }
     ],
     "parameters": {
-      "Right": 1
+      "Right": 3
     },
     "nullable": [
       false
     ]
   },
-  "hash": "761441b7d45e754d7dd21b590031a83186228fdf3136e468f6deee72e8ff00ad"
+  "hash": "aa2c1ccbad47e00609252d3fcf8afc6cf2fa7764f281fa3dda11a1144e6b960d"
 }

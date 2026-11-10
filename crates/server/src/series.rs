@@ -113,14 +113,15 @@ pub async fn add_version(
     Ok(version)
 }
 
-/// The series `id`.
+/// The series `id`, unless the owner removed it: every route and cite check finds a
+/// removed series missing (`removed_series`).
 pub async fn find(pool: &SqlitePool, id: &str) -> Result<Option<Series>, sqlx::Error> {
     sqlx::query_as!(
         Series,
         r#"SELECT s.seq AS "seq!: i64", s.id, s.account_id AS creator,
                   s.public_at IS NOT NULL AS "public!: bool",
                   (SELECT MAX(version) FROM series_versions v WHERE v.series_seq = s.seq) AS "latest!: i64"
-           FROM series s WHERE s.id = ?"#,
+           FROM series s WHERE s.id = ? AND s.removed_at IS NULL"#,
         id
     )
     .fetch_optional(pool)
@@ -149,7 +150,8 @@ pub async fn join(
 ) -> Result<bool, sqlx::Error> {
     let hash = ids::token_hash(key);
     let Some(seq) = sqlx::query_scalar!(
-        r#"SELECT seq AS "seq!: i64" FROM series WHERE id = ? AND key_hash = ?"#,
+        r#"SELECT seq AS "seq!: i64" FROM series
+           WHERE id = ? AND key_hash = ? AND removed_at IS NULL"#,
         id,
         hash
     )
@@ -205,14 +207,17 @@ pub async fn latest_readable(pool: &SqlitePool, seq: i64) -> Result<Option<Versi
 /// Makes readable, for good, every version whose series is public, that a public
 /// entry cites, and that no entry still on its way to public cites (design.md,
 /// Series: a new version "stays unreadable ... until every entry citing it is
-/// public"). An entry taken out of the series counts neither way. Run whenever an
-/// entry becomes public, leaves a series, or a series becomes public.
+/// public"). An entry taken out of the series counts neither way, and a removed
+/// series' versions stay as they are. Run whenever an entry becomes public, leaves a
+/// series, or a series becomes public or is restored.
 pub async fn mark_readable(connection: &mut sqlx::SqliteConnection) -> Result<(), sqlx::Error> {
     let readable_at = now();
     sqlx::query!(
         "UPDATE series_versions SET readable_at = ?
          WHERE readable_at IS NULL
-           AND (SELECT public_at FROM series s WHERE s.seq = series_versions.series_seq) IS NOT NULL
+           AND EXISTS (
+               SELECT 1 FROM series s WHERE s.seq = series_versions.series_seq
+                 AND s.public_at IS NOT NULL AND s.removed_at IS NULL)
            AND EXISTS (
                SELECT 1 FROM entries x
                WHERE x.series_seq = series_versions.series_seq
@@ -301,6 +306,8 @@ pub struct EntryCite {
     pub series_seq: i64,
     pub version: i64,
     pub section: Option<String>,
+    /// The owner removed the series, so its text shows on no entry.
+    pub series_removed: bool,
 }
 
 impl EntryCite {
@@ -318,7 +325,8 @@ pub async fn entry_cite(pool: &SqlitePool, seq: i64) -> Result<Option<EntryCite>
     sqlx::query_as!(
         EntryCite,
         r#"SELECT s.id AS series_id, s.seq AS "series_seq!: i64",
-                  e.series_version AS "version!: i64", e.series_section AS section
+                  e.series_version AS "version!: i64", e.series_section AS section,
+                  s.removed_at IS NOT NULL AS "series_removed!: bool"
            FROM entries e JOIN series s ON s.seq = e.series_seq
            WHERE e.seq = ? AND e.series_version IS NOT NULL"#,
         seq
@@ -328,12 +336,13 @@ pub async fn entry_cite(pool: &SqlitePool, seq: i64) -> Result<Option<EntryCite>
 }
 
 /// Whether entry `seq` must wait for a series: its own, or one that another live
-/// member of its batch cites, is still hidden.
+/// member of its batch cites, is still hidden. A removed series holds nothing back.
 pub async fn waits(pool: &SqlitePool, seq: i64) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar!(
         r#"SELECT EXISTS (
                SELECT 1 FROM entries m JOIN series s ON s.seq = m.series_seq
-               WHERE s.public_at IS NULL AND m.series_removed_at IS NULL
+               WHERE s.public_at IS NULL AND s.removed_at IS NULL
+                 AND m.series_removed_at IS NULL
                  AND m.status NOT IN ('rejected', 'withdrawn', 'removed')
                  AND (m.seq = ?1 OR m.batch_seq = (SELECT batch_seq FROM entries WHERE seq = ?1))
            ) AS "waits!: bool""#,
@@ -418,13 +427,16 @@ pub struct Owned {
     pub id: String,
     pub title: String,
     pub public: bool,
+    /// The owner removed it.
+    pub removed: bool,
 }
 
 /// The series `account_id` made, newest first, each with its latest title.
 pub async fn created_by(pool: &SqlitePool, account_id: &str) -> Result<Vec<Owned>, sqlx::Error> {
     sqlx::query_as!(
         Owned,
-        r#"SELECT s.id, v.title, s.public_at IS NOT NULL AS "public!: bool"
+        r#"SELECT s.id, v.title, s.public_at IS NOT NULL AS "public!: bool",
+                  s.removed_at IS NOT NULL AS "removed!: bool"
            FROM series s JOIN series_versions v ON v.series_seq = s.seq
            WHERE s.account_id = ?
              AND v.version = (SELECT MAX(version) FROM series_versions WHERE series_seq = s.seq)
@@ -446,7 +458,8 @@ pub async fn make_public(
     let mut transaction = crate::db::write_tx(pool).await?;
     let found = sqlx::query_scalar!(
         r#"UPDATE series SET public_at = COALESCE(public_at, ?)
-           WHERE id = ? AND account_id = ? RETURNING seq AS "seq!: i64""#,
+           WHERE id = ? AND account_id = ? AND removed_at IS NULL
+           RETURNING seq AS "seq!: i64""#,
         public_at,
         id,
         account_id

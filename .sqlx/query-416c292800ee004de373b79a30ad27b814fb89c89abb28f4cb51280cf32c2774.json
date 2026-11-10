@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT version AS \"version!: i64\", title, description FROM series_versions\n           WHERE series_seq = ? ORDER BY version",
+  "describe": {
+    "columns": [
+      {
+        "name": "version!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "series_versions",
+            "name": "version"
+          }
+        }
+      },
+      {
+        "name": "title",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "series_versions",
+            "name": "title"
+          }
+        }
+      },
+      {
+        "name": "description",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "series_versions",
+            "name": "description"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "416c292800ee004de373b79a30ad27b814fb89c89abb28f4cb51280cf32c2774"
+}

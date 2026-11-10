@@ -302,16 +302,19 @@ async fn shown_series(state: &AppState, seq: i64) -> Result<Option<CitedSeries>,
         return Ok(None);
     };
     let version = series::version(&state.pool, cite.series_seq, cite.version).await?;
-    let shown = version.filter(|version| version.readable).map(|version| {
-        // Submission checked the section, and versions never change; should it be
-        // missing anyway, the whole description is shown rather than nothing.
-        let section = cite
-            .section
-            .as_deref()
-            .and_then(|section| analyzer::description_section(&version.description, section));
-        let description = section.map_or_else(|| version.description.clone(), str::to_string);
-        (version.title, description)
-    });
+    // A removed series reads as a version nobody may read yet: no public notice.
+    let shown = version
+        .filter(|version| version.readable && !cite.series_removed)
+        .map(|version| {
+            // Submission checked the section, and versions never change; should it be
+            // missing anyway, the whole description is shown rather than nothing.
+            let section = cite
+                .section
+                .as_deref()
+                .and_then(|section| analyzer::description_section(&version.description, section));
+            let description = section.map_or_else(|| version.description.clone(), str::to_string);
+            (version.title, description)
+        });
     Ok(Some(CitedSeries { cite, shown }))
 }
 

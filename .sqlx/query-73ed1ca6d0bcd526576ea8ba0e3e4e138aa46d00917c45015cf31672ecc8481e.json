@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT s.id AS series_id, s.seq AS \"series_seq!: i64\",\n                  e.series_version AS \"version!: i64\", e.series_section AS section\n           FROM entries e JOIN series s ON s.seq = e.series_seq\n           WHERE e.seq = ? AND e.series_version IS NOT NULL",
+  "query": "SELECT s.id AS series_id, s.seq AS \"series_seq!: i64\",\n                  e.series_version AS \"version!: i64\", e.series_section AS section,\n                  s.removed_at IS NOT NULL AS \"series_removed!: bool\"\n           FROM entries e JOIN series s ON s.seq = e.series_seq\n           WHERE e.seq = ? AND e.series_version IS NOT NULL",
   "describe": {
     "columns": [
       {
@@ -46,6 +46,12 @@
             "name": "series_section"
           }
         }
+      },
+      {
+        "name": "series_removed!: bool",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": "Expression"
       }
     ],
     "parameters": {
@@ -55,8 +61,9 @@
       false,
       false,
       true,
-      true
+      true,
+      false
     ]
   },
-  "hash": "f32bed1bc57cc6638979f655723fe84cb5fde5120c5ef123944a6c96a3708e58"
+  "hash": "73ed1ca6d0bcd526576ea8ba0e3e4e138aa46d00917c45015cf31672ecc8481e"
 }

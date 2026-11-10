@@ -59,7 +59,7 @@ async fn blocking(
 ) -> Result<Vec<String>, sqlx::Error> {
     sqlx::query_scalar!(
         "SELECT s.id FROM series s
-         WHERE s.account_id = ?1 AND s.public_at IS NULL
+         WHERE s.account_id = ?1 AND s.public_at IS NULL AND s.removed_at IS NULL
            AND EXISTS (
                SELECT 1 FROM entries e
                WHERE e.series_seq = s.seq AND e.account_id != ?1
@@ -190,13 +190,14 @@ async fn delete_unused(
 
 /// Deletes the hidden series the account made, which no other account's live entry
 /// cites by now. An entry that still names one (taken out of it, or rejected) loses
-/// the cite.
+/// the cite. A series the owner removed stays, as removed data does.
 async fn delete_hidden_series(
     transaction: &mut SqliteConnection,
     account_id: &str,
 ) -> Result<(), sqlx::Error> {
     let hidden = sqlx::query_scalar!(
-        r#"SELECT seq AS "seq!: i64" FROM series WHERE account_id = ? AND public_at IS NULL"#,
+        r#"SELECT seq AS "seq!: i64" FROM series
+           WHERE account_id = ? AND public_at IS NULL AND removed_at IS NULL"#,
         account_id
     )
     .fetch_all(&mut *transaction)

@@ -11,6 +11,7 @@ use crate::accounts::{Guarded, TokenView};
 use crate::entries::{ChainVersion, Doubted, EarlierVersion, OwnerEntry, PublicEntry};
 use crate::removed_entries::Standing;
 use crate::removed_files::{FileState, FileUse, OwnersFile};
+use crate::removed_series::SeriesStanding;
 use crate::series::{Owned, Refused};
 use crate::suspension::{OwnersAccount, OwnersEntry};
 use crate::withdraw::{Listed, MadePublic, Member, WithOwner};
@@ -364,6 +365,14 @@ pub struct AdminQueuePage<'a> {
 pub struct AdminAccountPage<'a> {
     pub account: &'a OwnersAccount,
     pub entries: &'a [OwnersEntry],
+    /// The series it made.
+    pub series: &'a [Owned],
+}
+
+#[derive(Template)]
+#[template(path = "admin_series.html")]
+pub struct AdminSeriesPage<'a> {
+    pub view: &'a crate::removed_series::OwnersView,
 }
 
 #[derive(Template)]

@@ -1,0 +1,76 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT s.seq AS \"seq!: i64\", s.id, s.account_id, s.removed_at,\n                  s.public_at IS NOT NULL AS \"public!: bool\",\n                  a.suspended_at IS NOT NULL AS \"suspended!: bool\"\n           FROM series s JOIN accounts a ON a.id = s.account_id\n           WHERE s.id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "seq!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "series",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "id",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "series",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "account_id",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "series",
+            "name": "account_id"
+          }
+        }
+      },
+      {
+        "name": "removed_at",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "series",
+            "name": "removed_at"
+          }
+        }
+      },
+      {
+        "name": "public!: bool",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "suspended!: bool",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "9baaa4a640c93d9dbe759ec336d840a418364c174ecf1dc502507f2bbe58e4e2"
+}

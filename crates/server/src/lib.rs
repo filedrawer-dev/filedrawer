@@ -26,6 +26,7 @@ mod passwords;
 mod queue;
 mod removed_entries;
 mod removed_files;
+mod removed_series;
 mod respond;
 mod review;
 mod routes;
@@ -216,6 +217,9 @@ fn build(state: AppState) -> Routes<Router> {
             "/admin/series-refusals/{id}/dismiss",
             post(admin::dismiss_refusal),
         )
+        .route("/admin/series/{id}", get(admin::series))
+        .route("/admin/series/{id}/remove", post(admin::remove_series))
+        .route("/admin/series/{id}/restore", post(admin::restore_series))
         .route("/admin/accounts/{id}/clear-guard", post(admin::clear_guard))
         .route("/admin/accounts/{id}", get(admin::account))
         .route("/admin/accounts/{id}/suspend", post(admin::suspend))

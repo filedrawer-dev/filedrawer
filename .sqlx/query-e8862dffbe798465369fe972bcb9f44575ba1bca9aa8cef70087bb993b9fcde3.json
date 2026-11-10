@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT s.seq AS \"seq!: i64\", s.id, s.account_id AS creator,\n                  s.public_at IS NOT NULL AS \"public!: bool\",\n                  (SELECT MAX(version) FROM series_versions v WHERE v.series_seq = s.seq) AS \"latest!: i64\"\n           FROM series s WHERE s.id = ?",
+  "query": "SELECT s.seq AS \"seq!: i64\", s.id, s.account_id AS creator,\n                  s.public_at IS NOT NULL AS \"public!: bool\",\n                  (SELECT MAX(version) FROM series_versions v WHERE v.series_seq = s.seq) AS \"latest!: i64\"\n           FROM series s WHERE s.id = ? AND s.removed_at IS NULL",
   "describe": {
     "columns": [
       {
@@ -60,5 +60,5 @@
       true
     ]
   },
-  "hash": "a63cf93527f4f0f9bcdb03c2d9fff00acfd30619efd6cb141c45bc7ac4b5d632"
+  "hash": "e8862dffbe798465369fe972bcb9f44575ba1bca9aa8cef70087bb993b9fcde3"
 }

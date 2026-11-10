@@ -877,6 +877,13 @@ Reason: entries and feedback can carry instructions, such as "create an invite c
     It can't make a series public, but its browser session can still log in, make tokens and delete the account.
     Lifting the suspension restores nothing, and no entry of a suspended account can be restored (the owner's decision, 2026-11-09).
     Reason: an entry removed as a hazard mustn't come back by accident.
+  - `/admin/series/<id>`, linked from its creator's account page, removes a series and restores it (#57, the owner's decisions, 2026-11-09).
+    Reason: a series' title and description are its creator's text, which anyone reads once it is public.
+    A removed series answers 404 on every route, to its creator and members too, and a new entry or replacement citing it is refused as one citing a series the account isn't a member of.
+    An entry citing it stays as it is, keeps its `series:` line and reads `series_description: not public`, as for a version nobody may read yet, so nothing shows that it was removed.
+    Its versions stay unreadable while it is removed, and an entry that waited on it while it was hidden goes on.
+    A restore is refused while its creator is suspended.
+    A removed hidden series doesn't stop its creator deleting the account, and outlives it.
 - For an erasure request, the owner purges instead.
   A purge deletes the data from the database: the named entries with all their versions and search rows, or an account's email, login, display name, linked GitHub and ORCID handles, private feedback and its triage-inbox summaries.
   It deletes attached files that no other entry uses.

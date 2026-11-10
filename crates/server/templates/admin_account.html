@@ -12,6 +12,16 @@
 <form method="post" action="/admin/accounts/{{ account.id }}/suspend"><button type="submit">Suspend</button></form>
 <p>Suspending stops it submitting, and removes every entry of it, with no public notice. Its token can still read, and its author can still log in and delete the account.</p>
 {% endif %}
+<h2>Series it made</h2>
+{% if series.is_empty() %}
+<p>None.</p>
+{% else %}
+<ul>
+{% for one in series %}
+<li><a href="/admin/series/{{ one.id }}"><code>{{ one.id }}</code></a>, {{ one.title }}{% if one.removed %}, removed{% else if one.public %}, public{% else %}, hidden{% endif %}</li>
+{% endfor %}
+</ul>
+{% endif %}
 <h2>Entries</h2>
 {% if entries.is_empty() %}
 <p>None.</p>

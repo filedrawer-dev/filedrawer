@@ -49,7 +49,7 @@
 <table>
 <tr><th>Series</th><th>Title</th><th></th></tr>
 {% for one in series %}
-<tr><td><code>{{ one.id }}</code></td><td>{{ one.title }}</td><td>{% if one.public %}public{% else %}<form method="post" action="/account/series/{{ one.id }}/publish"><button type="submit">Make public</button></form>{% endif %}</td></tr>
+<tr><td><code>{{ one.id }}</code></td><td>{{ one.title }}</td><td>{% if one.removed %}<span class="series-removed">The archive's owner removed it, so the site serves it nowhere and shows its text on no entry; write to {{ crate::respond::CONTACT }} about it.</span>{% else if one.public %}public{% else %}<form method="post" action="/account/series/{{ one.id }}/publish"><button type="submit">Make public</button></form>{% endif %}</td></tr>
 {% endfor %}
 </table>
 {% endif %}

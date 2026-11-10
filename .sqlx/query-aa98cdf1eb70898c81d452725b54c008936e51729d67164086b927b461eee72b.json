@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id, status FROM entries WHERE series_seq = ? ORDER BY seq",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "status",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "status"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "aa98cdf1eb70898c81d452725b54c008936e51729d67164086b927b461eee72b"
+}

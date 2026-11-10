@@ -11,17 +11,18 @@ use axum::response::{IntoResponse, Redirect, Response};
 use crate::error::AppError;
 use crate::link_checks::{self, LinkFlags};
 use crate::pages::{
-    AdminAccountPage, AdminEntryPage, AdminFilePage, AdminInvitesPage, AdminQueuePage, QueueRow,
-    ShownFile, page,
+    AdminAccountPage, AdminEntryPage, AdminFilePage, AdminInvitesPage, AdminQueuePage,
+    AdminSeriesPage, QueueRow, ShownFile, page,
 };
 use crate::removed_entries::{self, Removed, Restored};
 use crate::removed_files::{self, Removal};
+use crate::removed_series::{self, Changed as SeriesChanged};
 use crate::review::{self, Decided, Decision};
 use crate::routes::account::SessionAccount;
 use crate::series::RefusalCall;
 use crate::suspension::{self, Changed};
 use crate::time::now_utc;
-use crate::{AppState, accounts, attachments, entries, invites, series};
+use crate::{AppState, accounts, attachments, entries, invites, jobs, series};
 use axum::Form;
 use serde::Deserialize;
 
@@ -345,8 +346,8 @@ pub async fn restore_entry(
     }
 }
 
-/// One account: whether it is suspended, its entries, and the form that suspends it or
-/// lifts its suspension.
+/// One account: whether it is suspended, its entries, the series it made, and the form
+/// that suspends it or lifts its suspension.
 pub async fn account(
     _: AdminSession,
     State(state): State<AppState>,
@@ -355,11 +356,13 @@ pub async fn account(
     let (account, entries) = suspension::owners_account(&state.pool, &id)
         .await?
         .ok_or(AppError::NotFound)?;
+    let series = series::created_by(&state.pool, &id).await?;
     Ok(page(
         StatusCode::OK,
         &AdminAccountPage {
             account: &account,
             entries: &entries,
+            series: &series,
         },
     ))
 }
@@ -394,6 +397,58 @@ pub async fn lift(
 ) -> Result<Response, AppError> {
     let done = suspension::lift(&state.pool, &id).await?;
     account_reply(&id, done, "not suspended")
+}
+
+/// One series: every version's text, its entries, and the form that removes or
+/// restores it.
+pub async fn series(
+    _: AdminSession,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Response, AppError> {
+    let view = removed_series::owners_view(&state.pool, &id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    Ok(page(StatusCode::OK, &AdminSeriesPage { view: &view }))
+}
+
+/// The reply to removing or restoring series `id`: its page again, or why not, where
+/// `already` is how the series already stood.
+fn series_reply(id: &str, outcome: SeriesChanged, already: &str) -> Result<Response, AppError> {
+    match outcome {
+        SeriesChanged::Done => Ok(Redirect::to(&format!("/admin/series/{id}")).into_response()),
+        SeriesChanged::NoSeries => Err(AppError::NotFound),
+        SeriesChanged::Already => Err(AppError::Conflict(format!(
+            "series {id} is {already}; reload its page"
+        ))),
+        SeriesChanged::CreatorSuspended => Err(AppError::Conflict(format!(
+            "series {id}'s creator is suspended; lift the suspension first"
+        ))),
+    }
+}
+
+/// Removes a series: the site stops serving it, with no public notice, and entries
+/// that waited on it while it was hidden go on.
+pub async fn remove_series(
+    _: AdminSession,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Response, AppError> {
+    let done = removed_series::remove(&state.pool, &id).await?;
+    if done == SeriesChanged::Done {
+        jobs::place_waiting(&state).await?;
+    }
+    series_reply(&id, done, "already removed")
+}
+
+/// Restores a removed series, unless its creator is suspended.
+pub async fn restore_series(
+    _: AdminSession,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Response, AppError> {
+    let done = removed_series::restore(&state.pool, &id).await?;
+    series_reply(&id, done, "not removed")
 }
 
 /// One attached file, by its SHA-256 (design.md, Attached code): its text, where it is

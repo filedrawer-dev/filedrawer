@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE series SET removed_at = ? WHERE seq = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "a13f4869b05d0fb3d149ece5de53739815669a561293ed6d0492dd513fd4c0c0"
+}

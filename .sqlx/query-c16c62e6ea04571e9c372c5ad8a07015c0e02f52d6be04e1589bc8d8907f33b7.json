@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT seq AS \"seq!: i64\" FROM series WHERE id = ? AND key_hash = ?",
+  "query": "SELECT seq AS \"seq!: i64\" FROM series\n           WHERE id = ? AND key_hash = ? AND removed_at IS NULL",
   "describe": {
     "columns": [
       {
@@ -22,5 +22,5 @@
       false
     ]
   },
-  "hash": "f005960f674e3e6e3c8a321de498c1e012671b87abf102c7498fb030403f088b"
+  "hash": "c16c62e6ea04571e9c372c5ad8a07015c0e02f52d6be04e1589bc8d8907f33b7"
 }
