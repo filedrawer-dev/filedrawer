@@ -1,0 +1,252 @@
+#!/usr/bin/env bash
+# Promotes the binary staging runs to production (#42; design.md, Hosting and
+# operations). The owner runs it from their own checkout, over their own SSH as root:
+# GitHub holds no production deploy key.
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+usage: ops/deploy-production [COMMIT]
+
+Deploys to production the binary CI built for COMMIT, by default the commit staging
+runs now. COMMIT is 4 to 40 lowercase hex characters of one commit on origin/main;
+another commit than staging's, such as an older one to roll back to, is asked about
+first.
+
+Before it changes anything it:
+  - fetches origin and refuses unless this checkout is at origin/main;
+  - takes the binary only from a push run of .github/workflows/ci.yml on main for
+    that commit whose deploy-staging and smoke-staging jobs passed, and refuses one
+    that doesn't name its commit;
+  - reads the server's Caddy version, production's schema version and binary in one
+    ssh round (ops/remote/deploy-facts.sh), and refuses when Caddy isn't the version
+    bin/caddy pins on origin/main, except on a rollback, where it asks;
+  - refuses to roll back across a migration crates/server/migration-rollback.txt
+    says breaks a rollback, and lists any other migrations a rollback crosses.
+Then it replaces the server's filedrawer-install and filedrawer-backup when they
+differ from origin/main's, pipes the binary to `filedrawer-install production`,
+which copies the database first and puts it back if the new binary doesn't answer,
+and runs `ops/smoke-staging read` against https://filedrawer.dev.
+
+Needs gh logged in, jq, and VPS_HOST in ops/.vps.env, as ops/provision-vps writes
+it. Staging's key is FILEDRAWER_STAGING_KEY, else STAGING_KEY in ops/.vps.env.
+EOF
+}
+
+case "${1:-}" in
+  -h | --help) usage; exit 0 ;;
+esac
+(( $# <= 1 )) || { usage >&2; exit 2; }
+
+GH_REPO=filedrawer-dev/filedrawer
+API="repos/$GH_REPO"
+STAGING=https://staging.filedrawer.dev
+PRODUCTION=https://filedrawer.dev
+# The overrides are for tests.
+ops_dir="${FILEDRAWER_OPS_DIR:-$(dirname "$0")}"
+remote_dir="$(dirname "$0")/remote"
+smoke="${FILEDRAWER_SMOKE_STAGING:-$(dirname "$0")/smoke-staging}"
+repo="${FILEDRAWER_REPO:-$(git -C "$(dirname "$0")" rev-parse --show-toplevel)}"
+
+die() {
+  echo "deploy-production: $*" >&2
+  exit 1
+}
+say() { echo "$*"; }
+# ask QUESTION: y/N on stdin.
+ask() {
+  local reply=""
+  printf '%s [y/N] ' "$1"
+  read -r reply || true
+  [[ "$reply" =~ ^[Yy] ]]
+}
+setting() {
+  [[ -r "$ops_dir/.vps.env" ]] && sed -n "s/^$1='\(.*\)'\$/\1/p" "$ops_dir/.vps.env" | head -n 1
+}
+in_repo() { git -C "$repo" "$@"; }
+
+command -v jq >/dev/null || die "needs jq: sudo apt install jq"
+gh auth status >/dev/null 2>&1 || die "gh isn't logged in: run gh auth login"
+vps_host=$(setting VPS_HOST)
+[[ -n "$vps_host" ]] || die "no VPS_HOST in $ops_dir/.vps.env; ops/provision-vps writes it"
+staging_key="${FILEDRAWER_STAGING_KEY:-$(setting STAGING_KEY)}"
+[[ -n "$staging_key" ]] || die "no staging key: set FILEDRAWER_STAGING_KEY, or STAGING_KEY in $ops_dir/.vps.env"
+
+in_repo fetch -q origin || die "git fetch origin failed"
+main=$(in_repo rev-parse origin/main)
+[[ "$(in_repo rev-parse HEAD)" == "$main" ]] ||
+  die "this checkout isn't at origin/main ($main); pull first, so its checks and pins are main's"
+
+# The commit staging runs, from its X-Filedrawer-Commit, or why it's unknown. The key
+# reaches curl in a config on stdin, never on a command line.
+staging_commit() {
+  local heads status
+  heads=$(printf 'header = "X-Staging-Key: %s"\n' "$staging_key" |
+    curl -sSI --max-time 15 -K - "$STAGING/skill.md" | tr -d '\r') || heads=""
+  status=$(head -n 1 <<< "$heads" | awk '{print $2}')
+  staging=$(sed -n 's/^[Xx]-[Ff]iledrawer-[Cc]ommit: //p' <<< "$heads" | head -n 1)
+  if [[ "$status" != 200 ]]; then
+    staging_unknown="staging answered ${status:-nothing} for /skill.md"
+  elif [[ ! "$staging" =~ ^[0-9a-f]{40}$ ]]; then
+    staging_unknown="staging names no commit (it says '${staging:-nothing}')"
+  elif ! in_repo merge-base --is-ancestor "$staging" origin/main 2>/dev/null; then
+    staging_unknown="staging runs $staging, which isn't on origin/main (a force-push?)"
+  else
+    return 0
+  fi
+  staging=""
+}
+staging=""
+staging_unknown=""
+staging_commit
+# What the one question before any change names, when there's anything to ask.
+warnings=()
+
+if (( $# == 0 )); then
+  [[ -n "$staging" ]] || die "$staging_unknown, so there's no commit to promote; name a COMMIT"
+  target=$staging
+  say "Promoting $target, the commit staging runs."
+else
+  prefix=$1
+  [[ "$prefix" =~ ^[0-9a-f]{4,40}$ ]] ||
+    die "'$prefix' isn't a commit: give 4 to 40 lowercase hex characters of a commit on origin/main"
+  mapfile -t matches < <(in_repo rev-list origin/main | grep "^$prefix" || true)
+  (( ${#matches[@]} > 0 )) || die "no commit on origin/main starts with $prefix"
+  (( ${#matches[@]} == 1 )) || die "$prefix names ${#matches[@]} commits on origin/main; give more of it"
+  target=${matches[0]}
+  if [[ "$target" == "$staging" ]]; then
+    say "Promoting $target, the commit staging runs."
+  elif [[ -n "$staging" ]]; then
+    warnings+=("$target is not the one staging runs ($staging).")
+  else
+    warnings+=("$staging_unknown, so $target may not be what staging runs.")
+  fi
+fi
+
+# The run that built it: a push run of ci.yml on main, for this commit, whose deploy
+# and smoke jobs passed. A pull_request run uses the PR's own workflow file, which
+# could upload an artifact under the same name.
+runs=$(gh api "$API/actions/runs?head_sha=$target&per_page=100") || die "gh api (the runs for $target) failed"
+mapfile -t candidates < <(jq -r --arg sha "$target" '.workflow_runs[]
+  | select(.event == "push" and .head_branch == "main" and .head_sha == $sha
+           and .path == ".github/workflows/ci.yml")
+  | .id' <<< "$runs")
+(( ${#candidates[@]} > 0 )) ||
+  die "no push run of ci.yml on main built $target (a commit inside a push of several gets none); promote the push's last commit"
+run=""
+reasons=()
+for id in "${candidates[@]}"; do
+  jobs=$(gh api "$API/actions/runs/$id/jobs?per_page=100") || die "gh api (the jobs of run $id) failed"
+  verdict=$(jq -r '[.jobs[] | select(.name == "deploy-staging" or .name == "smoke-staging")
+    | "\(.name) \(.conclusion)"] | sort | join(", ")' <<< "$jobs")
+  if [[ "$verdict" == "deploy-staging success, smoke-staging success" ]]; then
+    run=$id
+    break
+  fi
+  reasons+=("run $id: ${verdict:-no deploy-staging or smoke-staging job}")
+done
+[[ -n "$run" ]] || die "no run for $target passed deploy-staging and smoke-staging ($(IFS=';'; echo "${reasons[*]}"))"
+
+artifacts=$(gh api "$API/actions/runs/$run/artifacts") || die "gh api (the artifacts of run $run) failed"
+artifact=$(jq -c '[.artifacts[] | select(.name == "filedrawer")][0] // empty' <<< "$artifacts")
+[[ -n "$artifact" ]] || die "run $run has no filedrawer artifact"
+if [[ "$(jq -r .expired <<< "$artifact")" == true ]]; then
+  die "run $run's binary expired on $(jq -r '.expires_at[:10]' <<< "$artifact"); push a new commit to main to build one (a re-run would deploy $target to staging again)"
+fi
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+gh run download "$run" --repo "$GH_REPO" --name filedrawer --dir "$work" >/dev/null ||
+  die "gh run download $run failed"
+binary="$work/filedrawer"
+grep -aqF "filedrawer-commit $target" "$binary" ||
+  die "run $run's binary doesn't name $target as its commit; nothing changed"
+
+# The server, in one round.
+facts=$(ssh -o BatchMode=yes "root@$vps_host" "bash -s" < "$remote_dir/deploy-facts.sh") ||
+  die "ssh root@$vps_host failed"
+fact() { sed -n "s/^$1 //p" <<< "$facts" | head -n 1; }
+production=$(fact binary | sed -n 's/^filedrawer-commit //p')
+schema=$(fact schema)
+rollback=0
+if [[ -n "$production" ]] && in_repo merge-base --is-ancestor "$target" "$production" 2>/dev/null; then
+  rollback=1
+fi
+
+# Caddy: the version the real-Caddy tests ran is the one bin/caddy pins on main.
+caddy_line=$(fact caddy)
+pinned=$(in_repo show origin/main:bin/caddy | sed -n 's/^VERSION = "\(.*\)"$/\1/p')
+[[ "$caddy_line" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)( |$) ]] ||
+  die "can't read the server's Caddy version from '$caddy_line'"
+caddy=${BASH_REMATCH[1]}
+if [[ "$caddy" != "$pinned" ]]; then
+  how="Bump bin/caddy to $caddy (its docstring says how) and land that, or put the server back on $pinned: apt-get install caddy=$pinned, then apt-mark hold caddy"
+  if (( rollback )); then
+    warnings+=("The server runs Caddy $caddy, but bin/caddy pins $pinned, which the tests ran. Afterwards: $how.")
+  else
+    die "the server runs Caddy $caddy, but bin/caddy on origin/main pins $pinned, which the tests ran. $how."
+  fi
+fi
+
+# A rollback across a migration: the older binary runs on the newer schema, unless
+# migration-rollback.txt says a migration breaks that.
+case "$schema" in
+  none) ;;
+  '' | error) die "production's schema version couldn't be read ('${schema:-nothing}'); nothing changed" ;;
+  *)
+    newest=$(in_repo ls-tree --name-only "$target" crates/server/migrations/ |
+      sed -n 's#.*/\([0-9]\{1,\}\)_[^/]*\.sql$#\1#p' | sort -n | tail -n 1)
+    newest=$((10#${newest:-0}))
+    if (( schema > newest )); then
+      sidecar=$(in_repo show origin/main:crates/server/migration-rollback.txt 2>/dev/null || true)
+      crossed=()
+      breaking=()
+      while read -r path; do
+        name=${path##*/}
+        version=$((10#${name%%_*}))
+        (( version > newest && version <= schema )) || continue
+        crossed+=("$name")
+        why=$(sed -n "s/^0*${version}[[:space:]]\{1,\}breaks[[:space:]]\{1,\}//p" <<< "$sidecar")
+        [[ -n "$why" ]] && breaking+=("$name: $why")
+      done < <(in_repo ls-tree --name-only origin/main crates/server/migrations/ | grep '\.sql$')
+      if (( ${#breaking[@]} > 0 )); then
+        die "$target is older than migrations that break a rollback: $(IFS=';'; echo "${breaking[*]}"). Fix forward with a new commit instead"
+      fi
+      warnings+=("$target is older than production's schema ($schema); its binary will ignore what these added: ${crossed[*]}")
+    fi
+    ;;
+esac
+
+if (( ${#warnings[@]} > 0 )); then
+  for warning in "${warnings[@]}"; do
+    say "$warning"
+  done
+  ask "Deploy $target anyway?" || die "nothing changed"
+fi
+
+# The server's install and backup scripts, as main has them: the install's lock and
+# copy, and the nightly copy that shares that lock.
+for name in install backup; do
+  file="filedrawer-$name"
+  want=$(in_repo show "origin/main:ops/remote/$file" | sha256sum | cut -d' ' -f1)
+  if [[ "$(fact "$name")" != "$want" ]]; then
+    say "Updating the server's $file to origin/main's."
+    in_repo show "origin/main:ops/remote/$file" |
+      ssh -o BatchMode=yes "root@$vps_host" "install -o root -g root -m 0755 /dev/stdin /usr/local/sbin/$file" ||
+      die "couldn't update the server's $file; production's binary and database are as they were"
+  fi
+done
+
+hash=$(sha256sum "$binary" | cut -d' ' -f1)
+say "Installing $target on production..."
+ssh -o BatchMode=yes "root@$vps_host" \
+  "/usr/local/sbin/filedrawer-install production $hash --expect-schema $schema" < "$binary" ||
+  die "filedrawer-install production failed; what it said is above"
+
+if ! "$smoke" read --wait 120 --commit "$target" "$PRODUCTION"; then
+  die "deployed $target, but the post-deploy check failed (above); production runs it still. To go back, run this script with the commit before"
+fi
+say "deployed $target to production."
+if [[ -z "$production" ]]; then
+  say "Production had no binary before: set up its admin account and uptime check next,"
+  say "after pulling that checkout:  ops/provision-vps production account"
+fi

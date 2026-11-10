@@ -567,3 +567,44 @@ The owner settled the email's sections and the rules in design.md's Admin sectio
   A day's changes make a few mutants, one shard's worth, and 4 shards beside a full run's 16 stay within the org's 20 concurrent jobs.
 - Against: the first daily run, with no covered run before it, tests the lines changed since the workflow was added, close to a full run: about 2300 mutants on 4 shards, some 2.5 hours, under the shard job's 330 minutes but longer than a full run takes.
   A full run started by hand on main first makes that daily run small.
+
+### Production deploys
+
+#### Production's commit is public
+
+- Options: `X-Filedrawer-Commit` on `/skill.md` for anyone, as #42 asked; or behind a key, with `ops/deploy-production` reading it over ssh instead.
+- Chosen: public; the repo is public anyway.
+- Against: it shows when production lags behind a public security fix.
+
+#### Holding Caddy back to the pinned version
+
+- Options: when the server's Caddy differs from `bin/caddy`'s pin, bump the pin; or `apt-get install caddy=<pin>` with `apt-mark hold caddy`, which `ops/deploy-production`'s refusal offers too.
+- Chosen: offer both.
+- Against: a hold also holds back Caddy's security fixes until someone bumps the pin, and nothing reminds anyone.
+
+#### CI's smoke test doesn't check which commit it ran against
+
+- Options: pass `--commit` to CI's smoke run; or leave it out.
+- Chosen: leave it out.
+  `deploy-staging` and `smoke-staging` are in separate concurrency groups, so after two close pushes the older run's smoke can run against the newer binary, and `--commit` would fail it as a false alarm.
+- Against: such a smoke run certifies a commit it didn't test, and `ops/deploy-production` takes that run's pass for the older commit; one concurrency group for both jobs would fix it.
+
+#### A rollback the migration lint can't see
+
+- Options: lint the migrations only; or also make the code tolerate enum values it doesn't know.
+- Chosen: the lint, with CODING_STANDARDS.md asking a change that writes a new value into an unchecked TEXT column to add a `SELECT 1;` migration marked `breaks`.
+- Against: it depends on the author noticing; an older binary that can't decode a row fails on it, for as long as the rollback lasts.
+  Rows an older binary writes also keep a new column's default after the next deploy, which the standard asks to be right for them.
+
+#### Re-running an old CI run moves staging back
+
+- Options: say so in `ops/deploy-production`; or check that staging's commit is `origin/main`'s newest that passed.
+- Chosen: neither: the script no longer advises re-runs, and asks before any commit but staging's.
+- Against: a re-run now succeeds on staging even across a migration, and the script's default then promotes that older commit without asking.
+
+#### `ops/deploy-production` updates the server's install and backup scripts
+
+- Options: replace `filedrawer-install` and `filedrawer-backup` on the server when they differ from `origin/main`'s; or refuse and ask the owner to rerun `ops/provision-vps --only-new production`.
+- Chosen: replace them, saying so, from `origin/main`'s text (the checkout must be at `origin/main`).
+  The install's lock and copy and the nightly copy's matching lock must be on the server for the deploy to keep its promises.
+- Against: the deploy then changes more than the binary, through a path the wizard also owns.

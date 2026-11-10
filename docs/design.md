@@ -1005,7 +1005,16 @@ Python is fine for scripts and internal tools.
   Staging has no backups, the owner wipes it at will, and purges and erasure requests skip it.
   Reason: it holds real pre-launch results, possibly the owner's teammates' too, and keeping it private means nobody else's data is there to erase.
 - GitHub Actions builds the binary.
-  A push to `main` deploys to staging, and a tagged release deploys to production.
+  A push to `main` deploys to staging, and the owner promotes to production the binary staging ran, from their own machine with `ops/deploy-production [COMMIT]` (the owner's decisions, 2026-11-09 and 2026-11-10, #42).
+  Reason: no production deploy key exists in GitHub, so a compromised GitHub account or workflow can't deploy to production; this settles #2 without build attestation, which would only vouch that a push to `main` built the binary, which the script already requires.
+  The script takes the commit staging runs (its `X-Filedrawer-Commit`) unless given one, asks first about any other, takes the binary only from a push run of `ci.yml` on `main` whose `deploy-staging` and `smoke-staging` jobs passed, and refuses one that doesn't name its commit.
+  CI keeps that artifact 90 days.
+  Before it changes anything it reads the server's Caddy version, production's schema and binary in one ssh round (`ops/remote/deploy-facts.sh`).
+  It refuses when the server's Caddy differs from the version `bin/caddy` pins on `origin/main`, which the real-Caddy tests ran, except on a rollback, where it warns and asks (the owner's decisions, 2026-11-10); a rollback is to production's commit or an older one (the brief review's bound, #42).
+  Reason: `ops/remote/caddy.sh` installs whatever Caddy's apt repository offers that day, and `apt upgrade` moves it later, so a config the tests passed could fail on the server's Caddy; unattended-upgrades, which covers only Debian's security origins, doesn't move it.
+  Everything it would warn of, another commit than staging's, that Caddy, the migrations a rollback crosses, goes in one question before anything on the server changes.
+  It pipes the binary to `filedrawer-install production`, then runs `ops/smoke-staging read` against production, which posts nothing.
+  First it replaces the server's `filedrawer-install` and `filedrawer-backup` when they differ from `origin/main`'s, an agent's choice that `uncertainties.md` holds.
   Before the staging deploy, CI's `release-skills` job tags each new skill version over SSH, with a deploy key kept as a secret of the `skill-tags` environment, which only `main` may use (see [Skills](#skills)).
   Actions logs in over SSH as a restricted deploy user.
   After each staging deploy, CI runs a smoke test that follows the submit skill as a smoke-test account; its entries stay on staging.
@@ -1054,6 +1063,9 @@ Python is fine for scripts and internal tools.
 - Production's install (`ops/remote/filedrawer-install production`) holds that lock, checks the schema is the one `ops/deploy-production` saw, stops the service, and writes a `VACUUM INTO` copy to `backups/deploy-<UTC time>.db` before it starts the new binary (#42).
   When the new binary fails its health check, the install puts that copy back with the previous binary, so its migrations and writes go; no write is lost, since the service was stopped, except what the new binary accepted before the check gave up.
   It keeps the newest 3 deploy copies, none 13 days old.
+  Nothing restores a deploy copy after a deploy that passed its health check; #67 would script that.
+  By hand, when a migration damaged data: on the server as root, `systemctl stop filedrawer-production`; as `filedrawer-prod`, remove the database's `-wal` and `-shm` files and copy the deploy copy over `filedrawer.db`; then `ops/deploy-production` the commit production ran before.
+  That reverts every write since the copy: entries, accounts, removals, suspensions and file bans, and data deleted since comes back, so each deletion must be done again to keep the privacy page's promise; attached files uploaded since stay on disk with nothing naming them.
   Every file operation in production's data folder runs as production's user, never root (the brief review's choice, #42).
   Reason: a bad binary runs as that user and could plant a symlink there for root to follow, turning root's write into an overwrite or its read into a leak.
   The owner's daily email, just after midnight, reports the newest (see [Admin](#admin)), so a failed night shows up in it at once.

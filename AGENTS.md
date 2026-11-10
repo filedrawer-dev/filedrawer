@@ -31,7 +31,8 @@ The install script keeps its own root-owned copy, checks the size and hash, runs
 `ops/provision-vps` sets up the user and key, stores `DEPLOY_SSH_KEY` as a secret of the `staging` environment (main only), and writes the variables `VPS_HOST` and `VPS_KNOWN_HOSTS`; rerunning it replaces the key, and `--only-new` keeps it but still rewrites the sudo rule.
 A binary that answers `/tags` passes, and it runs as `filedrawer` with staging's data and settings.
 `ops/provision-vps production` sets up production beside staging, as `filedrawer-prod` on port 8080, and `ops/provision-vps production account` follows its first deploy (design.md, Hosting and operations); the deploy key can't reach production.
-Production deploys come with #42.
+The owner deploys production from their own machine with `ops/deploy-production [COMMIT]` (`-h`), which promotes the binary CI built for the commit staging runs, or for an older one to roll back to; the install copies production's database first and puts it back if the new binary doesn't answer.
+An older binary runs on a newer schema, so a migration adds only what it can ignore unless `crates/server/migration-rollback.txt` says otherwise (CODING_STANDARDS.md, SQL).
 
 The field test's entries and logs are in `field-test/`, git-excluded and local only; never commit or publish them without the owner's say.
 

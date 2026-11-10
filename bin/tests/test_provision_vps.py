@@ -850,6 +850,7 @@ FIELD_TEST_KEY = (
     "The owner runs it through ops/field-test-key, to open or close a field-test key."
 )
 STAGING_ONLY_NEW_EXEMPT = {
+    "deploy-facts.sh": "ops/deploy-production sends it, before each production deploy.",
     "ci-account.sh": "Sent when a CI account's ID or token is missing, or when a "
     "run without --only-new (ops/provision-vps or ops/provision-vps smoke) is asked "
     "for a new token.",
@@ -872,8 +873,9 @@ STAGING_ONLY_NEW_EXEMPT = {
 }
 PRODUCTION_ONLY_NEW_EXEMPT = {
     "base.sh": "Staging's wizard sends it; production shares staging's server.",
+    "deploy-facts.sh": "ops/deploy-production sends it, before each production deploy.",
     "deploy-user.sh": "Staging's wizard sends it, for staging's deploy key; "
-    "production's deploys come with #42.",
+    "production deploys run ops/deploy-production with the owner's own key.",
     "filedrawer-receive": "Staging's wizard installs it; only staging's deploy key "
     "runs it.",
     "ci-account.sh": "Staging's wizard sends it, as its own exemption says: CI's "
