@@ -14,7 +14,8 @@ In the Hetzner Cloud console, under Firewalls, create `filedrawer-drill`:
 
 - Inbound: TCP 22 from your own IP address only.
 - Outbound: one rule, ICMP to `192.0.2.1/32` (a documentation address that nothing answers).
-  A firewall with no outbound rule allows all outbound traffic; with one, it denies everything the rules don't name.
+  A firewall with no outbound rule allows all outbound traffic; with one, it denies everything the rules don't name ([Hetzner's firewall FAQ](https://docs.hetzner.com/cloud/firewalls/faq/)).
+  DNS to Hetzner's own resolvers still gets through, which reaches none of production's services.
 
 ## 2. A server from the newest backup
 

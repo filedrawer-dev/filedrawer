@@ -490,7 +490,8 @@ The owner settled the email's sections and the rules in design.md's Admin sectio
 
 - Options: create the drill server behind a Hetzner firewall whose one outbound rule denies everything else, or boot it in rescue mode and remove production's unit links before its first boot.
 - Chosen: the firewall (#41's brief review): a few console clicks, and nothing on the restored disk changes before the drill reads it.
-- Against: it rests on Hetzner's rule that one outbound rule denies all other outbound traffic, which nobody has checked against their docs here; and at boot the timer's catch-up run still makes a copy and prunes the oldest on the drill's disk.
+- Against: at boot the timer's catch-up run still makes a copy and prunes the oldest on the drill's disk, and Hetzner always lets DNS to its own resolvers through, which rescue mode wouldn't need to trust.
+  Hetzner's firewall FAQ (https://docs.hetzner.com/cloud/firewalls/faq/, checked 2026-11-10) confirms that with one or more outbound rules, traffic no rule matches is dropped.
 
 ### API
 
