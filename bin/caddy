@@ -1,0 +1,164 @@
+#!/usr/bin/env python3
+"""Run Caddy 2.10.2, pinned by SHA-512, for the tests that need a real Caddy.
+
+    bin/caddy ARGS...    run caddy with ARGS
+
+The first run on a machine downloads Caddy's release archive for this platform from
+GitHub, checks it against the SHA-512 in PINS, and caches the binary under
+$XDG_CACHE_HOME/filedrawer/caddy/ (~/.cache by default). Later runs use the cache and
+need no network. When the download fails or its hash doesn't match, nothing is
+cached, and it exits with a reason on stderr: status 69 when Caddy can't be had on
+this machine now (no network, a refusal or a server error, no curl, or no release for
+the platform), which the real-Caddy tests in bin/tests take as a reason to skip
+outside CI; status 1 for a hash mismatch, a 404 or 410, or an archive without caddy,
+which mean a wrong pin and fail them.
+
+To move to another Caddy release, change VERSION and every hash in PINS. Each release
+has a caddy_<version>_checksums.txt listing every asset's SHA-512, and GitHub's API
+lists each asset's SHA-256 digest. Download each archive, check that its sha512sum
+matches the checksums file and its sha256sum the API's digest, then copy the SHA-512
+here. Production's Caddy comes from Caddy's apt repository (ops/remote/caddy.sh), so
+pin the version it runs.
+
+Tests serve a fake archive by setting FILEDRAWER_CADDY_URL and FILEDRAWER_CADDY_SHA512.
+An overridden URL alone is still checked against the pinned hash.
+
+It downloads with curl rather than urllib, because some macOS Pythons have no CA
+certificates.
+"""
+
+import hashlib
+import os
+import platform
+import subprocess
+import sys
+import tarfile
+import tempfile
+from pathlib import Path
+
+VERSION = "2.10.2"
+BASE_URL = f"https://github.com/caddyserver/caddy/releases/download/v{VERSION}"
+# Each archive's SHA-512, from caddy_2.10.2_checksums.txt, which matched the archives
+# downloaded on 2026-11-10, whose SHA-256 matched GitHub's API digests.
+PINS = {
+    "linux_amd64": "747df7ee74de188485157a383633a1a963fd9233b71fbb4a69ddcbcc589ce4e2cc82dacf5dbbe136cb51d17e14c59daeb5d9bc92487610b0f3b93680b2646546",
+    "linux_arm64": "6ce061a690312ab38367df3c5d5f89a2e4a263e7300d300d87356211bb81e79b15933e6d6203e03fbf26f15cc0311f264805f336147dbdd24938d84b57a4421c",
+    "mac_amd64": "d6077f7a35663b1b0436a45341e96828bb8025221b777417c781c30c56931e45209b0e5468cd6eb8ec881728c20f142a4333a878c82a10b49913384cffaf541d",
+    "mac_arm64": "3b8a4b24054bddd96cae8da5c34e48c19105be29859d6f09e37344b7e188881cfd6b0a91af3f3e8f1d10987153e6bad70d1752c967e1360cc0041fc7736076ec",
+}
+# (platform.system(), platform.machine()) to release target. The machine names are the
+# ones each kernel reports: aarch64 on Linux, arm64 on macOS.
+TARGETS = {
+    ("Linux", "x86_64"): "linux_amd64",
+    ("Linux", "aarch64"): "linux_arm64",
+    ("Darwin", "arm64"): "mac_arm64",
+    ("Darwin", "x86_64"): "mac_amd64",
+}
+# EX_UNAVAILABLE: Caddy can't be had here, as against a wrong pin.
+UNAVAILABLE = 69
+# HTTP statuses that say the URL is wrong, so the pin is, rather than that the network
+# or GitHub is failing now.
+NOT_THERE = ("404", "410")
+
+
+class InstallError(Exception):
+    """A wrong pin or a broken release: the tests fail."""
+
+
+class Unavailable(Exception):
+    """No Caddy for this machine now: the tests may skip."""
+
+
+def target(system: str, machine: str) -> str | None:
+    """The release target for this platform, or None when Caddy has no build for it."""
+    return TARGETS.get((system, machine))
+
+
+def cache_dir() -> Path:
+    root = os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache"
+    return Path(root) / "filedrawer" / "caddy"
+
+
+def download(url: str, dest: Path) -> None:
+    command = [
+        "curl", "--fail", "--silent", "--show-error", "--location",
+        # Give up when connecting takes 15 s, or the transfer stalls below 1 KB/s for
+        # 30 s, so a bad network ends the run instead of hanging it.
+        "--connect-timeout", "15", "--speed-limit", "1024", "--speed-time", "30",
+        # http is for the tests' fake server on 127.0.0.1 and file:// for their fake
+        # archives; the hash check guards every source.
+        "--proto", "=https,http,file", "--proto-redir", "=https",
+        "--output", str(dest), "--write-out", "%{http_code}", url,
+    ]  # fmt: skip
+    try:
+        subprocess.run(command, check=True, capture_output=True, text=True)
+    except FileNotFoundError:
+        raise Unavailable("downloading caddy needs curl, which isn't on PATH")
+    except subprocess.CalledProcessError as error:
+        why = f"couldn't download {url}: {error.stderr.strip()}"
+        if error.stdout.strip() in NOT_THERE:
+            raise InstallError(why)
+        raise Unavailable(why)
+
+
+def install(url: str, sha512: str, binary: Path) -> None:
+    """Download the archive at url, check its hash, and put its caddy at binary.
+
+    Nothing touches the cache until the hash has matched, so a refusal leaves no trace.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        archive = Path(tmp) / "caddy.tar.gz"
+        download(url, archive)
+        actual = hashlib.sha512(archive.read_bytes()).hexdigest()
+        if actual != sha512:
+            raise InstallError(
+                f"SHA-512 mismatch for {url}: expected {sha512}, got {actual}"
+            )
+        with tarfile.open(archive) as tar:
+            try:
+                source = tar.extractfile("caddy")
+            except KeyError:
+                source = None
+            if source is None:
+                raise InstallError(f"{url} has no file caddy")
+            contents = source.read()
+    binary.parent.mkdir(parents=True, exist_ok=True)
+    # Written beside the binary and renamed, so a run alongside never sees half a file.
+    staged = binary.with_name(f".caddy-{os.getpid()}")
+    staged.write_bytes(contents)
+    staged.chmod(0o755)
+    os.replace(staged, binary)
+
+
+def fail(why: str, status: int) -> int:
+    print(f"bin/caddy: {why}", file=sys.stderr)
+    return status
+
+
+def main(argv: list[str]) -> int:
+    release_target = target(platform.system(), platform.machine())
+    if release_target is None:
+        return fail(
+            f"Caddy {VERSION} has no release for {platform.system()} "
+            f"{platform.machine()}",
+            UNAVAILABLE,
+        )
+    url = os.environ.get(
+        "FILEDRAWER_CADDY_URL",
+        f"{BASE_URL}/caddy_{VERSION}_{release_target}.tar.gz",
+    )
+    sha512 = os.environ.get("FILEDRAWER_CADDY_SHA512", PINS[release_target])
+    # Keyed by hash, so a new pin never runs a binary cached under an old one.
+    binary = cache_dir() / sha512 / "caddy"
+    if not binary.is_file():
+        try:
+            install(url, sha512, binary)
+        except Unavailable as error:
+            return fail(str(error), UNAVAILABLE)
+        except InstallError as error:
+            return fail(str(error), 1)
+    os.execv(binary, [str(binary), *argv])
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

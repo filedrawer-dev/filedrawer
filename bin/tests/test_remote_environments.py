@@ -6,7 +6,6 @@ against a temp root, with fakes of the tools that need root first on PATH.
 
 import os
 import re
-import shutil
 import socket
 import time
 import stat
@@ -606,20 +605,15 @@ def test_caddy_refuses_another_environment(box, caddy, environment):
     assert list(caddy.dir.iterdir()) == []
 
 
-def real_caddy() -> str | None:
-    return os.environ.get("FILEDRAWER_TEST_CADDY") or shutil.which("caddy")
-
-
 def free_port() -> int:
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         return probe.getsockname()[1]
 
 
-@pytest.mark.skipif(
-    real_caddy() is None, reason="no caddy on PATH or in FILEDRAWER_TEST_CADDY"
-)
-def test_a_real_caddy_takes_both_environments_site_files_together(box, caddy, tmp_path):
+def test_a_real_caddy_takes_both_environments_site_files_together(
+    box, caddy, tmp_path, real_caddy
+):
     assert caddy.run("production").returncode == 0
     assert caddy.run("staging").returncode == 0
     here = str(caddy.dir)
@@ -629,7 +623,7 @@ def test_a_real_caddy_takes_both_environments_site_files_together(box, caddy, tm
     config = tmp_path / "Caddyfile"
     config.write_text((caddy.dir / "Caddyfile").read_text().replace("/etc/caddy", here))
     result = subprocess.run(
-        [real_caddy(), "validate", "--config", str(config), "--adapter", "caddyfile"],
+        [real_caddy, "validate", "--config", str(config), "--adapter", "caddyfile"],
         capture_output=True,
         text=True,
         check=False,
@@ -637,11 +631,8 @@ def test_a_real_caddy_takes_both_environments_site_files_together(box, caddy, tm
     assert result.returncode == 0, result.stderr[-2000:]
 
 
-@pytest.mark.skipif(
-    real_caddy() is None, reason="no caddy on PATH or in FILEDRAWER_TEST_CADDY"
-)
 def test_a_real_caddy_answers_503_while_production_is_down_and_redirects_www(
-    box, caddy, tmp_path
+    box, caddy, tmp_path, real_caddy
 ):
     assert caddy.run("production").returncode == 0
     text = (caddy.dir / "sites/production.caddy").read_text()
@@ -655,7 +646,7 @@ def test_a_real_caddy_answers_503_while_production_is_down_and_redirects_www(
         .replace("files.filedrawer.dev {", "(files_unused) {")
     )
     server = subprocess.Popen(
-        [real_caddy(), "run", "--config", str(config), "--adapter", "caddyfile"],
+        [real_caddy, "run", "--config", str(config), "--adapter", "caddyfile"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )

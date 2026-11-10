@@ -155,6 +155,10 @@ The version and hashes live only there, and its docstring says how to move to a 
 The first commit on a machine without network access is refused; `SKIP=lychee git commit` skips only that check.
 So is a commit there that stages a shell script while uv's cache lacks the pinned shellcheck; `SKIP=shellcheck git commit` skips only that one, and CI still runs it.
 
+`bin/caddy` does the same for Caddy, pinned by SHA-512, and runs it with the given arguments.
+The tests in `bin/tests` that run a real Caddy against `ops/remote/caddy.sh`'s and `ops/remote/field-test-key.sh`'s config get it through conftest's `real_caddy` fixture, or from `$FILEDRAWER_TEST_CADDY` when that is set.
+Without network access they skip and say why, except in CI, where they fail.
+
 shellcheck refuses errors, warnings and infos, not style.
 To keep a finding that's intended, put `# shellcheck disable=SCnnnn  # why` on the line before it, as `ops/smoke-staging` does; a directive right after the shebang covers the file, as its SC2016 one does, since its `check` calls single-quote their conditions on purpose.
 

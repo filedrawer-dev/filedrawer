@@ -72,7 +72,8 @@ def no_network_tools(tmp_path_factory, monkeypatch):
     fixture's red run called the real `gh secret set` from inside the repo. Each is a
     refusal first on PATH, exit 97, except that curl of only `file://` and loopback
     URLs runs the real curl, as tests that serve a fake site on 127.0.0.1 need.
-    fake_host's fakes go ahead of these."""
+    fake_host's fakes go ahead of these. The one exception is the session-scoped
+    real_caddy, set up before these, whose bin/caddy fetches the pinned Caddy."""
     fakes = tmp_path_factory.mktemp("no-network")
     for tool in NETWORK_TOOLS:
         fake = fakes / tool
@@ -92,6 +93,37 @@ def no_shared_sccache(monkeypatch):
     sources /etc/sandbox-persistent.sh, which sets an unset one again; cargo takes an
     empty one as none."""
     monkeypatch.setenv("RUSTC_WRAPPER", "")
+
+
+CADDY_SCRIPT = Path(__file__).resolve().parents[1] / "caddy"
+# bin/caddy's exit status when Caddy can't be had on this machine (no network).
+CADDY_UNAVAILABLE = 69
+
+
+def installed_caddy(script: Path = CADDY_SCRIPT) -> str:
+    """The Caddy the real-Caddy tests run: $FILEDRAWER_TEST_CADDY, else bin/caddy,
+    which `version` here downloads and caches on its first run on a machine.
+
+    Without a network the test skips, saying why, except in CI, which always has one,
+    so there the tests can't quietly stop running. A wrong pin fails it."""
+    override = os.environ.get("FILEDRAWER_TEST_CADDY")
+    if override:
+        return override
+    done = subprocess.run(
+        [str(script), "version"], capture_output=True, text=True, check=False
+    )
+    if done.returncode == CADDY_UNAVAILABLE and not os.environ.get("CI"):
+        pytest.skip(f"no Caddy on this machine: {done.stderr.strip()}")
+    assert done.returncode == 0, done.stderr
+    return str(script)
+
+
+@pytest.fixture(scope="session")
+def real_caddy() -> str:
+    """installed_caddy's Caddy. Session-scoped, so it runs before no_network_tools
+    puts its curl first on PATH: this is the one place a test run may reach the
+    network, to fetch the pinned Caddy from GitHub once per machine."""
+    return installed_caddy()
 
 
 def opened_urls() -> Path:

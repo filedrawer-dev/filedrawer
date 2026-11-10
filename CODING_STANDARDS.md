@@ -104,6 +104,7 @@ Entry text, series descriptions, feedback and screening notes are written by str
 - Tests live in `bin/tests` and run under `bin/pytest bin/tests`, the pinned pytest with its plugins, as `bin/agent-pre-commit` does; `bin/tests/pytest.ini` sets the workers and the timeout, so name a path under `bin/tests` for pytest to find it, and add `-n0` to run one file without starting workers.
   The tests run in parallel, so they share no files, ports or settings: each works in its own `tmp_path`, and a server binds port 0.
   Each script has tests, and they don't touch the network: they serve fakes over `file://` or set an override variable, as `bin/tests/test_lychee.py` does.
+  The one exception is conftest's `real_caddy` fixture, whose `bin/caddy` fetches the pinned Caddy once per machine for the tests that run a real one.
 - A test that starts a process stops it and waits for it to exit, even when the test fails: `bin/tests/leftover_processes.py`, whose fixtures `bin/tests/conftest.py` gives every test and module, kills what a test or a module's fixtures leave running and fails it, naming each process.
 - A test sets no wall-clock limit of its own: no `timeout=` in a call and no `pytest.mark.timeout` (`bin/tests/test_no_wall_clock_limits.py`).
   pytest.ini's timeout is the one hang guard, set far above any loaded run, since a slow machine may let a bug pass but must never fail a test.

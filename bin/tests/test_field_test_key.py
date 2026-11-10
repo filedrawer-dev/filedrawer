@@ -10,7 +10,6 @@ test serves the real snippet and gate with a real Caddy, when there is one.
 import json
 import os
 import re
-import shutil
 import socket
 import stat
 import subprocess
@@ -517,11 +516,7 @@ def test_help_names_both_commands(owner):
     assert "open" in result.stdout and "close" in result.stdout
 
 
-# A real Caddy, when there is one
-
-
-def real_caddy() -> str | None:
-    return os.environ.get("FILEDRAWER_TEST_CADDY") or shutil.which("caddy")
+# A real Caddy: bin/caddy's, through conftest's real_caddy
 
 
 def free_port() -> int:
@@ -530,10 +525,9 @@ def free_port() -> int:
         return probe.getsockname()[1]
 
 
-@pytest.mark.skipif(
-    real_caddy() is None, reason="no caddy on PATH or in FILEDRAWER_TEST_CADDY"
-)
-def test_a_real_caddy_serves_the_gate_and_snippet_as_meant(box, caddy_sh, tmp_path):
+def test_a_real_caddy_serves_the_gate_and_snippet_as_meant(
+    box, caddy_sh, tmp_path, real_caddy
+):
     caddy_sh()
     remote(box, f"open {KEY} 1")
     gate = (box.root / "etc/caddy/sites/staging.caddy").read_text()
@@ -549,7 +543,7 @@ def test_a_real_caddy_serves_the_gate_and_snippet_as_meant(box, caddy_sh, tmp_pa
         gate.index("(staging_gate) {") : gate.index("\nstaging.filedrawer.dev {")
     ]
     hashed = subprocess.run(
-        [real_caddy(), "hash-password", "--plaintext", "pw"],
+        [real_caddy, "hash-password", "--plaintext", "pw"],
         capture_output=True,
         text=True,
         check=True,
@@ -566,7 +560,7 @@ def test_a_real_caddy_serves_the_gate_and_snippet_as_meant(box, caddy_sh, tmp_pa
     for path in (box.snippet, expired):
         path.write_text(path.read_text().replace("127.0.0.1:8081", f"127.0.0.1:{back}"))
     server = subprocess.Popen(
-        [real_caddy(), "run", "--config", str(config), "--adapter", "caddyfile"],
+        [real_caddy, "run", "--config", str(config), "--adapter", "caddyfile"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
