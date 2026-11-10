@@ -42,9 +42,9 @@
 # file with no `mod` line in tests/it/main.rs compiles nowhere and clippy passes it;
 # only the full check's nextest would fail. --caddy, which the commit check passes
 # too, runs the bin tests marked real_caddy when ops/remote/caddy.sh,
-# ops/remote/field-test-key.sh, bin/caddy or a file holding those tests changed
-# (bin/checks-needed's `caddy`); they run Caddy, so they wait in heavy's queue. Both
-# modes first
+# ops/remote/field-test-key.sh, bin/caddy, a file holding those tests or conftest.py
+# changed (bin/checks-needed's `caddy`); they run Caddy, so they wait in heavy's
+# queue. Both modes first
 # run the skills check, bin/skills sync --check, which needs no build and runs outside
 # heavy's queue. It is the one check that reaches the repo: it fetches origin's main
 # and skill tags into it, writing only those refs.

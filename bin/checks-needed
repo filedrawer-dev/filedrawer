@@ -69,8 +69,9 @@ A path needs py-rules when it lies in bin/tests/.
 A path needs test-mods when it lies in a crate's tests/it/, or is bin/test-modules.
 
 A path needs caddy when it is ops/remote/caddy.sh, ops/remote/field-test-key.sh,
-bin/caddy, or a bin test file that holds a real-Caddy test:
-bin/tests/test_remote_environments.py or bin/tests/test_field_test_key.py.
+bin/caddy, a bin test file that holds a real-Caddy test
+(bin/tests/test_remote_environments.py or bin/tests/test_field_test_key.py), or
+bin/tests/conftest.py, which holds their fixture and marks them.
 
 The rules miss a path a crate builds without a `..` step, and a Python path not
 derived from __file__. CI runs every check, so it catches what they miss.
@@ -124,6 +125,7 @@ CADDY_TESTS = (
     "bin/tests/test_remote_environments.py",
     "bin/tests/test_field_test_key.py",
 )
+CADDY_FIXTURE = "bin/tests/conftest.py"
 CRATE_SOURCES = (".rs", ".toml", ".html")
 # Not walked: git's own folder, and cargo's output in a working tree.
 SKIP_DIRS = {".git", "target"}
@@ -540,7 +542,12 @@ def main(argv: list[str]) -> int:
         "caddy": Inputs(
             tree,
             {ref: Step(f"{ref}: the real-Caddy tests run it") for ref in CADDY_RUNS}
-            | {ref: Step(f"{ref}: it holds real-Caddy tests") for ref in CADDY_TESTS},
+            | {ref: Step(f"{ref}: it holds real-Caddy tests") for ref in CADDY_TESTS}
+            | {
+                CADDY_FIXTURE: Step(
+                    f"{CADDY_FIXTURE}: it holds the real_caddy fixture and marker"
+                )
+            },
             # Only these paths: the test files' joins onto the repo reach far more.
             follow=False,
         ),

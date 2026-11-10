@@ -8,8 +8,9 @@ GitHub, checks it against the SHA-512 in PINS, and caches the binary under
 $XDG_CACHE_HOME/filedrawer/caddy/ (~/.cache by default). Later runs use the cache and
 need no network. When the download fails or its hash doesn't match, nothing is
 cached, and it exits with a reason on stderr: status 69 when Caddy can't be had on
-this machine now (no network, a refusal or a server error, no curl, or no release for
-the platform), which the real-Caddy tests in bin/tests take as a reason to skip
+this machine now (no network, a refusal or a server error, a download still unfinished
+after MAX_TIME seconds, no curl, or no release for the platform), which the real-Caddy
+tests in bin/tests take as a reason to skip
 outside CI; status 1 for a hash mismatch, a 404 or 410, or an archive without caddy,
 which mean a wrong pin and fail them.
 
@@ -20,8 +21,9 @@ matches the checksums file and its sha256sum the API's digest, then copy the SHA
 here. Production's Caddy comes from Caddy's apt repository (ops/remote/caddy.sh), so
 pin the version it runs.
 
-Tests serve a fake archive by setting FILEDRAWER_CADDY_URL and FILEDRAWER_CADDY_SHA512.
-An overridden URL alone is still checked against the pinned hash.
+Tests serve a fake archive by setting FILEDRAWER_CADDY_URL and FILEDRAWER_CADDY_SHA512,
+and shorten the time limit with FILEDRAWER_CADDY_MAX_TIME. An overridden URL alone is
+still checked against the pinned hash.
 
 It downloads with curl rather than urllib, because some macOS Pythons have no CA
 certificates.
@@ -59,6 +61,11 @@ UNAVAILABLE = 69
 # HTTP statuses that say the URL is wrong, so the pin is, rather than that the network
 # or GitHub is failing now.
 NOT_THERE = ("404", "410")
+# Seconds the whole download may take: the archive is about 15 MB, which a slow but
+# working link of 100 KB/s fetches in under three minutes. A commit's check waits in
+# heavy's queue behind it, so a link slower than that ends it rather than holding the
+# queue. curl's own message says which of its limits ended a download.
+MAX_TIME = 300
 
 
 class InstallError(Exception):
@@ -80,11 +87,14 @@ def cache_dir() -> Path:
 
 
 def download(url: str, dest: Path) -> None:
+    max_time = os.environ.get("FILEDRAWER_CADDY_MAX_TIME") or str(MAX_TIME)
     command = [
         "curl", "--fail", "--silent", "--show-error", "--location",
-        # Give up when connecting takes 15 s, or the transfer stalls below 1 KB/s for
-        # 30 s, so a bad network ends the run instead of hanging it.
+        # Give up when connecting takes 15 s, the transfer stalls below 1 KB/s for
+        # 30 s, or the whole of it takes max_time, so a bad network ends the run
+        # instead of hanging it.
         "--connect-timeout", "15", "--speed-limit", "1024", "--speed-time", "30",
+        "--max-time", max_time,
         # http is for the tests' fake server on 127.0.0.1 and file:// for their fake
         # archives; the hash check guards every source.
         "--proto", "=https,http,file", "--proto-redir", "=https",

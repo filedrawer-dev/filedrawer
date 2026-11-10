@@ -282,7 +282,6 @@ def test_renaming_an_embedded_file_runs_the_cargo_checks(repo):
         ("bin/skills", {"skills", "bin-tests"}),
         # The rule tests read every file in bin/tests.
         ("bin/tests/test_tool.py", {"bin-tests", "py-rules"}),
-        ("bin/tests/conftest.py", {"bin-tests", "py-rules"}),
         # The module check reads every crate's tests/it, and its own script.
         ("crates/app/tests/it/one.rs", {"rust", "bin-tests", "test-mods"}),
         ("crates/app/tests/it/main.rs", {"rust", "bin-tests", "test-mods"}),
@@ -294,6 +293,8 @@ def test_renaming_an_embedded_file_runs_the_cargo_checks(repo):
         ("bin/caddy", {"bin-tests", "caddy"}),
         ("bin/tests/test_remote_environments.py", {"bin-tests", "py-rules", "caddy"}),
         ("bin/tests/test_field_test_key.py", {"bin-tests", "py-rules", "caddy"}),
+        # It holds the real_caddy fixture and the hook that marks its tests.
+        ("bin/tests/conftest.py", {"bin-tests", "py-rules", "caddy"}),
         ("ops/remote/other.sh", {"bin-tests"}),
     ],
 )

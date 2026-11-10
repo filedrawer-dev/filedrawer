@@ -146,8 +146,16 @@ server.serve_forever()
 
 def download_answered(env: dict[str, str], status: int) -> subprocess.CompletedProcess:
     """bin/caddy's run when the release URL answers with HTTP status."""
+    return download_from(STATUS_SERVER, env, str(status))
+
+
+def download_from(
+    source: str, env: dict[str, str], *args: str
+) -> subprocess.CompletedProcess:
+    """bin/caddy's run against the server `source` starts with `args`, which prints
+    its port once it listens."""
     server = subprocess.Popen(
-        [sys.executable, "-I", "-c", STATUS_SERVER, str(status)],
+        [sys.executable, "-I", "-c", source, *args],
         stdout=subprocess.PIPE,
         text=True,
     )
@@ -158,6 +166,40 @@ def download_answered(env: dict[str, str], status: int) -> subprocess.CompletedP
     finally:
         server.terminate()
         server.wait()
+
+
+# A server on port 0 that answers every GET with a 200 and a large body it sends at
+# 4 KB/s, above curl's stall limit, so only an overall limit ends the download within
+# 10 s, when the server cuts it short; it prints its port once it listens.
+TRICKLING_SERVER = """
+import http.server, time
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Length", str(10**8))
+        self.end_headers()
+        for _ in range(20):
+            self.wfile.write(b"x" * 2048)
+            self.wfile.flush()
+            time.sleep(0.5)
+    def log_message(self, *args):
+        pass
+server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+server.daemon_threads = True
+print(server.server_address[1], flush=True)
+server.serve_forever()
+"""
+
+
+def test_a_download_past_its_time_limit_says_caddy_is_unavailable(env):
+    """A link too slow to finish within the limit is the network's, not the pin's."""
+    result = download_from(TRICKLING_SERVER, {**env, "FILEDRAWER_CADDY_MAX_TIME": "1"})
+    assert_refused(result, env, CADDY.UNAVAILABLE)
+    assert "timed out after" in result.stderr
+
+
+def test_the_download_has_an_overall_time_limit_of_minutes():
+    assert 120 <= CADDY.MAX_TIME <= 600
 
 
 @pytest.mark.parametrize("status", [404, 410])
