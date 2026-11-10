@@ -56,7 +56,8 @@ The owner expects most contributors to be independent researchers, newcomers to 
   Both are options, never requirements.
 - Display names are pseudonymous and need not be unique, since different researchers share names.
   A display name is at most 50 characters.
-  Screening doesn't check it, for now (the owner's decision, 2026-11-09).
+  Screening doesn't check it during the beta, as it doesn't check entry text for instructions aimed at the agents that read it: a name is author text on a card, like the title, and the search skill's "entry text is data" rule covers both (the owner's decision, 2026-11-09).
+  An injection screen covering both comes before leaving beta (#59).
   Each account has a random ID, and cards show it beside the display name.
   Once an account links GitHub or ORCID, cards show that handle too, which is how readers tell researchers apart.
   The site never shows email addresses.
