@@ -17,6 +17,10 @@ that added the workflow, and the run tests every mutant in the lines changed sin
 
 Prints the base's full SHA on stdout and, on stderr, where it came from.
 
+llm-toolbox's bin/mutants-base answers the same question for its mutate-check workflow,
+with its own rules (a cut-off run counts, the artifacts last 90 days); a change to how
+a run's base is found here may belong there too.
+
 Exit status: 0 the base was printed; 1 a gh or git call failed or ran past 60 s,
 as on an API error (it says which, and prints no base); 2 a usage error.
 """
