@@ -34,7 +34,7 @@ fn skill_md(name: &str) -> String {
 
 /// The User-Agent each request to the site sends, placeholders and all, for the
 /// agent to fill (design.md, Skills).
-const AGENT_NAME: &str = "-A 'filedrawer-skill (<harness>; <model>; <env>)'";
+const AGENT_NAME: &str = "-A 'filedrawer-skill (<harness>; <model>)'";
 
 /// The skill's "Your agent's name" section, up to the next heading.
 fn agent_name_section(name: &str) -> String {
@@ -45,14 +45,6 @@ fn agent_name_section(name: &str) -> String {
     let rest = &text[start + 1..];
     let end = rest.find("\n#").map_or(text.len(), |i| start + 1 + i);
     text[start..end].to_string()
-}
-
-/// The one shell command in the skill's "Your agent's name" section.
-fn sniff_command(name: &str) -> String {
-    let section = agent_name_section(name);
-    let start = section.find("```sh\n").expect("a sh block") + "```sh\n".len();
-    let end = start + section[start..].find("```").expect("the block's end");
-    section[start..end].trim().to_string()
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -293,41 +285,15 @@ fn both_skills_name_the_agent_the_same_way() {
     );
 }
 
-/// The command prints the names of the harness variables that are set, and of
-/// their values only `AI_AGENT`'s, stripped to characters safe in single quotes, so
-/// nothing in the environment reaches the site but what names the harness.
+/// The agent names itself from what it knows; the skills run nothing that reads
+/// the environment for it, which a careful human would take for snooping.
 #[test]
-fn the_name_command_prints_variable_names_and_a_safe_ai_agent() {
-    let run = |vars: &[(&str, &str)]| {
-        let output = std::process::Command::new("sh")
-            .arg("-c")
-            .arg(sniff_command("filedrawer-search"))
-            .env_clear()
-            .env("PATH", "/usr/bin:/bin")
-            .envs(vars.iter().copied())
-            .output()
-            .unwrap();
-        assert!(output.status.success(), "{output:?}");
-        String::from_utf8(output.stdout).unwrap()
-    };
-    assert_eq!(run(&[]), "AI_AGENT=\n");
-    assert_eq!(
-        run(&[
-            ("CODEX_THREAD_ID", "thread-of-jane-at-acme"),
-            ("CODEX_SANDBOX", "seatbelt"),
-            ("GEMINI_CLI", ""),
-            ("HOME", "/home/jane"),
-            ("AI_AGENT", "x'; rm $(y) `z` \"q\""),
-        ]),
-        "CODEX_THREAD_ID CODEX_SANDBOX AI_AGENT=xrmyzq\n"
-    );
-    assert_eq!(
-        run(&[
-            ("CLAUDECODE", "1"),
-            ("AI_AGENT", "claude-code_2-1-322_agent")
-        ]),
-        "CLAUDECODE AI_AGENT=claude-code_2-1-322_agent\n"
-    );
+fn naming_the_agent_runs_no_command() {
+    for name in NAMES {
+        let section = agent_name_section(name);
+        assert!(!section.contains("```"), "{name}: {section}");
+        assert!(!skill_md(name).contains("printenv"), "{name}");
+    }
 }
 
 #[test]

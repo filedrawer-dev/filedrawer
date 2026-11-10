@@ -720,12 +720,13 @@ The `skill.md` at agents.stackoverflow.com is a working example of serving instr
 - Each request a skill sends names it in `X-Filedrawer-Skill: <name>/<N>`, so a later server can explain a refusal to an old version.
   Each entry stores that header and the request's `User-Agent`, cut to 200 characters, for judging whether a skill change improves entries; only the owner reads them, through SQL, and no page or reply shows them (#45, the owner's decisions, 2026-11-09).
   A header not shaped `name/N`, a name of 1 to 64 lowercase letters, digits and hyphens and a version of 1 to 9 digits, is stored as absent (the owner, 2026-11-10).
-- Each request a skill sends to the site names the agent in its User-Agent, `filedrawer-skill (<harness>; <model>; <env>)`, which entries and the search log keep (the owner, 2026-11-10).
-  The agent picks the harness from a closed list (`claude-code`, `codex`, `gemini-cli`, `cursor`, `copilot`, `opencode`, `other`) by its harness's own system prompt and environment, and the model only as those state it word for word, writing `unknown` for either it can't tell.
-  `<env>` is what one command, run once a session, prints: the names of the known harness variables that are set, and `AI_AGENT`'s value stripped to letters, digits, `.`, `_` and `-`, never another value.
+- Each request a skill sends to the site names the agent in its User-Agent, `filedrawer-skill (<harness>; <model>)`, which entries and the search log keep (the owner, 2026-11-10).
+  The agent picks the harness from a closed list (`claude-code`, `codex`, `gemini-cli`, `cursor`, `copilot`, `opencode`, `other`) by what it knows of its setup, and gives the model as its system prompt or environment states it, or else its own belief with a `?` after it, so stated and guessed models stay apart; `unknown` for either it can't tell.
+  An ID holding `:`, `/` or `@`, or a deployment's name, is `unknown`, since it can carry an account number or a person's or a company's name; requests to GitHub keep curl's own User-Agent.
   Reason: entries' `written_by` already names the harness and model, but only for entries, and only when the agent fills it; searches had no record of who searched.
-  `$AI_AGENT` alone wouldn't do: Claude Code, Copilot in VS Code, OpenCode, Crush, Pi and OpenHands set it, but Codex, Cursor and Gemini CLI set only variables of their own, and no harness names the model in one (checked 2026-11-10).
-  A fine-tuned or deployment-named model is `unknown`, since its name can carry a person's or a company's; requests to GitHub keep curl's own User-Agent.
+- The skills run no command that reads environment variables to fill the User-Agent (the owner, 2026-11-10); `written_by`'s hint at `$AI_AGENT` for Claude Code's version stays.
+  Reason: a command reading a dozen variables looks like credential snooping to the careful users the beta is for, and may stop at an approval prompt.
+  `$AI_AGENT` alone wouldn't have done either: Claude Code, Copilot in VS Code, OpenCode, Crush, Pi and OpenHands set it, but Codex, Cursor and Gemini CLI set only variables of their own, and no harness names the model in one (checked 2026-11-10).
 - Each request a skill sends that needs a token carries the per-host header file `~/.config/filedrawer/<host>.header`, which holds the token line, and on staging the staging key.
   `curl -H @<file>` reads it, so the token needn't show in a command or a transcript, and a staging token can't reach production.
   `$FILEDRAWER_TOKEN` fills the file only when it holds no token, as for a cloud agent with no lasting home folder.
