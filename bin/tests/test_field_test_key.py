@@ -285,6 +285,19 @@ def test_a_close_whose_old_key_still_gets_through_fails_without_reopening_it(box
     assert "still" in result.stderr
 
 
+def test_open_probes_with_the_key_in_stagings_site_file(box):
+    """Once caddy.sh writes a site file per environment, the Caddyfile only imports
+    them, and staging's key is in staging's site file."""
+    (box.root / "etc/caddy/sites").mkdir()
+    (box.root / "etc/caddy/sites/staging.caddy").write_text(
+        caddyfile_with_staging_key()
+    )
+    (box.root / "etc/caddy/Caddyfile").write_text("import /etc/caddy/sites/*.caddy\n")
+    result = remote(box, f"open {KEY} 1")
+    assert result.returncode == 0, result.stderr
+    assert f"X-Staging-Key: {STAGING_KEY}" in box.log.read_text()
+
+
 def test_open_fails_when_the_caddyfile_holds_no_staging_key_to_probe(box):
     (box.root / "etc/caddy/Caddyfile").write_text("(staging_gate) {\n}\n")
 
@@ -312,6 +325,7 @@ def caddy_sh(box):
             ["bash", str(CADDY_SH)],
             env={
                 **box.env,
+                "ENVIRONMENT": "staging",
                 "STAGING_USER": "ada",
                 "STAGING_SECRETS": f"pw\t{STAGING_KEY}",
             },
@@ -329,7 +343,7 @@ def test_the_gate_takes_the_staging_key_then_the_field_test_key_then_refuses_a_s
     result = caddy_sh()
 
     assert result.returncode == 0, result.stderr
-    gate = (box.root / "etc/caddy/Caddyfile").read_text()
+    gate = (box.root / "etc/caddy/sites/staging.caddy").read_text()
     order = [
         gate.index("handle /robots.txt"),
         gate.index("handle @agent"),
@@ -522,7 +536,7 @@ def free_port() -> int:
 def test_a_real_caddy_serves_the_gate_and_snippet_as_meant(box, caddy_sh, tmp_path):
     caddy_sh()
     remote(box, f"open {KEY} 1")
-    gate = (box.root / "etc/caddy/Caddyfile").read_text()
+    gate = (box.root / "etc/caddy/sites/staging.caddy").read_text()
     snippet = box.snippet.read_text()
     expired = tmp_path / "expired.caddy"
     expired.write_text(

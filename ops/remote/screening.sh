@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
-# Staging's screening settings (design.md, Submission and screening: staging has its
-# own API key and its own cap), in their own file so staging-service.sh never
-# overwrites them. The unit reads this file after staging.env, so its
-# FILEDRAWER_SCREENER replaces pass-all. Reads the API key as the first line of stdin,
-# into $API_KEY; DAILY_USD, the day's cap in dollars, comes as a variable. Runs as
-# root; safe to rerun, and a rerun replaces the settings.
+# ENVIRONMENT's screening settings, staging's or production's (design.md, Submission
+# and screening: each has its own API key and its own cap), in their own file so
+# service.sh never overwrites them. The unit reads this file after <env>.env, so its
+# FILEDRAWER_SCREENER replaces staging's pass-all. Reads the API key as the first line
+# of stdin, into $API_KEY; DAILY_USD, the day's cap in dollars, comes as a variable.
+# Runs as root; safe to rerun, and a rerun replaces the settings. Exits 2 for an
+# environment it doesn't know.
 set -euo pipefail
+case "${ENVIRONMENT-}" in
+  staging | production) ;;
+  *) echo "ENVIRONMENT is '${ENVIRONMENT-}'; it takes staging or production" >&2; exit 2 ;;
+esac
 
 # The override is for tests, which point it at a fake root.
 root="${FILEDRAWER_ROOT:-}"
@@ -25,17 +30,18 @@ if [[ ! "$DAILY_USD" =~ ^[0-9]+(\.[0-9]+)?$ ]] \
   exit 1
 fi
 
-file="$root/etc/filedrawer/staging-screening.env"
-umask 027
+file="$root/etc/filedrawer/$ENVIRONMENT-screening.env"
+mkdir -p "$root/etc/filedrawer"
+umask 077
 cat > "$file" <<CONF
 FILEDRAWER_SCREENER=anthropic
 FILEDRAWER_ANTHROPIC_API_KEY='${API_KEY}'
 FILEDRAWER_SCREENING_DAILY_USD=${DAILY_USD}
 CONF
 unset API_KEY
-chown root:filedrawer "$file"
-chmod 0640 "$file"
+chown root:root "$file"
+chmod 0600 "$file"
 systemctl daemon-reload
-systemctl try-restart filedrawer-staging.service
+systemctl try-restart "filedrawer-$ENVIRONMENT.service"
 
-echo "screening: done"
+echo "screening ($ENVIRONMENT): done"

@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # The GitHub token the link checks call GitHub's API with (design.md, Submission and
 # screening, step 2): 5,000 calls an hour instead of 60. One file for every service
-# on this server: staging's unit reads it now, and production's will at launch (the
-# owner's decision, 2026-11-07). Reads the token as the first line of stdin, into
-# $TOKEN. Runs as root; safe to rerun, and a rerun replaces the token.
+# on this server, staging's and production's (the owner's decision, 2026-11-07), and
+# each unit set up on the server is restarted to read it. Reads the token as the
+# first line of stdin, into $TOKEN. Runs as root; safe to rerun, and a rerun replaces
+# the token.
 set -euo pipefail
 
 # The override is for tests, which point it at a fake root.
@@ -18,12 +19,18 @@ if [[ ! "$TOKEN" =~ ^(github_pat_|ghp_) || "$TOKEN" == *"'"* || "$TOKEN" == *$'\
 fi
 
 file="$root/etc/filedrawer/github.env"
-umask 027
+mkdir -p "$root/etc/filedrawer"
+umask 077
 printf "FILEDRAWER_GITHUB_TOKEN='%s'\n" "$TOKEN" > "$file"
 unset TOKEN
-chown root:filedrawer "$file"
-chmod 0640 "$file"
+chown root:root "$file"
+chmod 0600 "$file"
 systemctl daemon-reload
-systemctl try-restart filedrawer-staging.service
+# try-restart fails on a unit that doesn't exist, so only the ones service.sh wrote.
+for environment in staging production; do
+  if [[ -e "$root/etc/systemd/system/filedrawer-$environment.service" ]]; then
+    systemctl try-restart "filedrawer-$environment.service"
+  fi
+done
 
 echo "github token: done"

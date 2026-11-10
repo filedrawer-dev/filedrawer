@@ -92,6 +92,7 @@ def test_caddy_sh_splits_the_password_from_the_staging_key(tmp_path):
         ["bash", "-c", probe],
         env={
             **os.environ,
+            "ENVIRONMENT": "staging",
             "STAGING_USER": "ada",
             "STAGING_SECRETS": f"50% off $ale\t{key}",
         },
@@ -188,7 +189,7 @@ def test_smoke_names_the_accounts_to_staging_so_their_entries_are_handled(smoke)
     assert sent == (REPO / "ops/remote/smoke-env.sh").read_text()
     # The unit first, so it reads the file smoke-env.sh writes.
     unit = smoke.host.sent(len(calls) - 1)
-    assert unit == (REPO / "ops/remote/staging-service.sh").read_text()
+    assert unit == (REPO / "ops/remote/service.sh").read_text()
 
 
 def test_a_rerun_passes_the_known_accounts_and_keeps_the_tokens_unless_asked(smoke):
@@ -292,7 +293,7 @@ def test_screening_sends_the_key_on_stdin_and_saves_only_the_cap(stage):
     result = stage.run("screening", f"0.25\n{API_KEY}\n{API_KEY}\n\n")
     assert result.returncode == 0, result.stdout + result.stderr
     # The unit first, so it reads the new file, then the settings.
-    assert stage.sent(1) == (REPO / "ops/remote/staging-service.sh").read_text()
+    assert stage.sent(1) == (REPO / "ops/remote/service.sh").read_text()
     assert (
         stage.sent(2) == f"{API_KEY}\n" + (REPO / "ops/remote/screening.sh").read_text()
     )
@@ -312,7 +313,7 @@ def test_github_sends_the_token_on_stdin_and_saves_nothing(stage):
     result = stage.run("github", f"{GITHUB_TOKEN}\n{GITHUB_TOKEN}\n\n")
     assert result.returncode == 0, result.stdout + result.stderr
     # The unit first, so it reads the new file, then the token.
-    assert stage.sent(1) == (REPO / "ops/remote/staging-service.sh").read_text()
+    assert stage.sent(1) == (REPO / "ops/remote/service.sh").read_text()
     assert (
         stage.sent(2)
         == f"{GITHUB_TOKEN}\n" + (REPO / "ops/remote/github-token.sh").read_text()
@@ -348,7 +349,7 @@ def test_admin_grants_the_account_named(stage):
     assert result.returncode == 0, result.stdout + result.stderr
     log = stage.log.read_text().splitlines()
     assert log[0] == "ssh test -x /srv/filedrawer/staging/bin/filedrawer"
-    assert log[1] == "ssh env ADMIN_ACCOUNT=a-abc123 bash -s"
+    assert log[1] == "ssh env ENVIRONMENT=staging ADMIN_ACCOUNT=a-abc123 bash -s"
     assert stage.sent(2) == (REPO / "ops/remote/admin-grant.sh").read_text()
 
 
@@ -441,7 +442,7 @@ def test_only_new_reruns_every_stage_without_asking_for_anything_saved(rerun):
     result = rerun.run()
     assert result.returncode == 0, result.stdout + result.stderr
     sent = rerun.sent()
-    assert script("staging-service.sh") in sent
+    assert script("service.sh") in sent
     assert script("base.sh") in sent
     # Caddy keeps the password hash on the server: no password, only the key.
     assert f"\t{STAGING_KEY}\n" + script("caddy.sh") in sent

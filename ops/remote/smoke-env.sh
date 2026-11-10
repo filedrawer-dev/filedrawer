@@ -21,7 +21,7 @@ for id in "$account" ${screen_test:+"$screen_test"} ${ci_screen:+"$ci_screen"}; 
 done
 
 file="$root/etc/filedrawer/staging-smoke.env"
-umask 027
+umask 077
 {
   printf 'FILEDRAWER_SMOKE_ACCOUNT=%s\n' "$account"
   # The account ops/smoke-staging eval submits as: not held to an account's share.
@@ -29,8 +29,8 @@ umask 027
   # The account CI's screen check submits as: no daily allowance.
   [[ -z "$ci_screen" ]] || printf 'FILEDRAWER_CI_SCREEN_ACCOUNT=%s\n' "$ci_screen"
 } > "$file"
-chown root:filedrawer "$file"
-chmod 0640 "$file"
+chown root:root "$file"
+chmod 0600 "$file"
 systemctl daemon-reload
 systemctl try-restart filedrawer-staging.service
 

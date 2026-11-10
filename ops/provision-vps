@@ -330,7 +330,7 @@ smoke_stage() {
   if [[ -n "$SMOKE_ACCOUNT" ]]; then
     # Staging doesn't screen the smoke test's entries, so the smoke test calls no
     # model. The unit first, so it reads the file smoke-env.sh writes.
-    remote staging-service.sh
+    remote service.sh ENVIRONMENT=staging
     # The screen-test account, if ops/.screen-test.env names one, isn't held to an
     # account's share of the day's screening cap (ops/smoke-staging eval).
     local screen_test
@@ -371,8 +371,8 @@ screening_stage() {
   write_env SCREENING_DAILY_USD "$SCREENING_DAILY_USD"
   ask_new_secret API_KEY "The API key (sk-ant-...):"
   # The unit first, so it reads the file screening.sh writes.
-  remote staging-service.sh
-  remote_with_secret screening.sh API_KEY "$API_KEY" "DAILY_USD=$SCREENING_DAILY_USD"
+  remote service.sh ENVIRONMENT=staging
+  remote_with_secret screening.sh API_KEY "$API_KEY" ENVIRONMENT=staging "DAILY_USD=$SCREENING_DAILY_USD"
   unset API_KEY
   note "The key is on the server only. To check it, submit an entry: it should come back"
   note "public, rejected or review, and journalctl -u filedrawer-staging logs each call."
@@ -398,7 +398,7 @@ github_stage() {
   step "Expiration: the longest offered. Put the date in your calendar to renew it."
   ask_new_secret TOKEN "The token (github_pat_...):"
   # The unit first, so it reads the file github-token.sh writes.
-  remote staging-service.sh
+  remote service.sh ENVIRONMENT=staging
   remote_with_secret github-token.sh TOKEN "$TOKEN"
   unset TOKEN
   note "The token is on the server only. Until it is there, journalctl -u"
@@ -438,7 +438,7 @@ admin_stage() {
   fi
   write_env ADMIN_ACCOUNT "$ADMIN_ACCOUNT"
   local status=0
-  remote admin-grant.sh "ADMIN_ACCOUNT=$ADMIN_ACCOUNT" || status=$?
+  remote admin-grant.sh ENVIRONMENT=staging "ADMIN_ACCOUNT=$ADMIN_ACCOUNT" || status=$?
   if (( status == 3 )); then
     not_deployed_yet admin "admin account"
   elif (( status != 0 )); then
@@ -596,7 +596,7 @@ pause
 stage "The staging service"
 say "filedrawer-staging.service, enabled. It waits until a deploy puts the binary"
 say "at /srv/filedrawer/staging/bin/filedrawer, then serves on 127.0.0.1:8081."
-remote staging-service.sh
+remote service.sh ENVIRONMENT=staging
 pause
 
 stage "Caddy and basic auth"
@@ -624,7 +624,7 @@ if [[ ! "$STAGING_KEY" =~ ^[0-9a-f]{64}$ ]]; then
 fi
 write_env STAGING_KEY "$STAGING_KEY"
 remote_with_secret caddy.sh STAGING_SECRETS "$STAGING_PASSWORD"$'\t'"$STAGING_KEY" \
-  "STAGING_USER=$STAGING_USER"
+  ENVIRONMENT=staging "STAGING_USER=$STAGING_USER"
 unset STAGING_PASSWORD
 note "The staging key is in $ENV_FILE. Give it to agents with their API token."
 pause
@@ -647,7 +647,8 @@ write_env SMTP_USER "$SMTP_USER"
 ask MAIL_FROM "The From line, such as File Drawer <noreply@filedrawer.dev>:"
 write_env MAIL_FROM "$MAIL_FROM"
 ask_new_secret SMTP_PASSWORD "The sending user's password:"
-remote_with_secret mail.sh SMTP_PASSWORD "$SMTP_PASSWORD" "SMTP_USER=$SMTP_USER" "MAIL_FROM=$MAIL_FROM"
+remote_with_secret mail.sh SMTP_PASSWORD "$SMTP_PASSWORD" ENVIRONMENT=staging \
+  "SMTP_USER=$SMTP_USER" "MAIL_FROM=$MAIL_FROM"
 unset SMTP_PASSWORD
 note "To test it later: sign up at https://staging.filedrawer.dev/signup and watch"
 note "for the verification email."

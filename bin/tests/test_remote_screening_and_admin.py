@@ -43,6 +43,7 @@ def box(tmp_path):
     env = {
         "PATH": f"{fakes}:{os.environ['PATH']}",
         "FILEDRAWER_ROOT": str(root),
+        "ENVIRONMENT": "staging",
     }
     return SimpleNamespace(root=root, log=log, env=env, tmp=tmp_path)
 
@@ -79,9 +80,9 @@ def test_screening_writes_the_settings_the_server_reads_and_restarts_staging(box
         "FILEDRAWER_SCREENING_DAILY_USD": "0.50",
     }
     env_file = box.root / "etc/filedrawer/staging-screening.env"
-    assert stat.S_IMODE(env_file.stat().st_mode) == 0o640
+    assert stat.S_IMODE(env_file.stat().st_mode) == 0o600
     log = box.log.read_text()
-    assert f"chown root:filedrawer {env_file}" in log
+    assert f"chown root:root {env_file}" in log
     assert "systemctl try-restart filedrawer-staging.service" in log
     assert KEY not in result.stdout + result.stderr
 
@@ -90,13 +91,15 @@ TOKEN = "github_pat_" + "t" * 70
 
 
 def test_github_token_writes_the_shared_file_and_restarts_staging(box):
+    (box.root / "etc/systemd/system").mkdir(parents=True)
+    (box.root / "etc/systemd/system/filedrawer-staging.service").write_text("")
     result = run(box, GITHUB_TOKEN, TOKEN=TOKEN)
     assert result.returncode == 0, result.stderr
     env_file = box.root / "etc/filedrawer/github.env"
     assert env_file.read_text() == f"FILEDRAWER_GITHUB_TOKEN='{TOKEN}'\n"
-    assert stat.S_IMODE(env_file.stat().st_mode) == 0o640
+    assert stat.S_IMODE(env_file.stat().st_mode) == 0o600
     log = box.log.read_text()
-    assert f"chown root:filedrawer {env_file}" in log
+    assert f"chown root:root {env_file}" in log
     assert "systemctl try-restart filedrawer-staging.service" in log
     assert TOKEN not in result.stdout + result.stderr
 
@@ -139,15 +142,6 @@ def test_screening_refuses_a_bad_key_or_cap_and_writes_nothing(box, key, daily):
     assert "systemctl" not in box.log.read_text()
 
 
-def test_the_staging_unit_reads_the_screening_settings_after_its_own():
-    unit = (REPO / "ops/remote/staging-service.sh").read_text()
-    own = unit.index("EnvironmentFile=/etc/filedrawer/staging.env")
-    screening_file = unit.index(
-        "EnvironmentFile=-/etc/filedrawer/staging-screening.env"
-    )
-    assert own < screening_file
-
-
 # admin-grant.sh
 
 FAKE_FILEDRAWER = """#!/bin/bash
@@ -174,6 +168,31 @@ def test_admin_grant_runs_grant_as_the_service_user_on_stagings_database(staged)
     assert "runuser -u filedrawer --" in log
     database = staged.root / "srv/filedrawer/staging/data/filedrawer.db"
     assert f"filedrawer admin grant --account a-known db={database}" in log
+
+
+def test_admin_grant_on_production_runs_as_its_user_on_its_database(staged):
+    bin_dir = staged.root / "srv/filedrawer/production/bin"
+    bin_dir.mkdir(parents=True)
+    executable(bin_dir / "filedrawer", FAKE_FILEDRAWER)
+    result = run(staged, ADMIN_GRANT, ENVIRONMENT="production", ADMIN_ACCOUNT="a-known")
+    assert result.returncode == 0, result.stderr
+    log = staged.log.read_text()
+    assert "runuser -u filedrawer-prod --" in log
+    database = staged.root / "srv/filedrawer/production/data/filedrawer.db"
+    assert f"filedrawer admin grant --account a-known db={database}" in log
+
+
+def test_admin_grant_on_production_exits_3_before_its_first_deploy(staged):
+    result = run(staged, ADMIN_GRANT, ENVIRONMENT="production", ADMIN_ACCOUNT="a-known")
+    assert result.returncode == 3
+    assert "production has no binary" in result.stderr
+
+
+@pytest.mark.parametrize("environment", ["", "dev"])
+def test_admin_grant_refuses_another_environment(staged, environment):
+    result = run(staged, ADMIN_GRANT, ENVIRONMENT=environment, ADMIN_ACCOUNT="a-known")
+    assert result.returncode == 2
+    assert "filedrawer admin" not in staged.log.read_text()
 
 
 def test_admin_grant_passes_on_the_servers_refusal(staged):
@@ -206,9 +225,9 @@ def test_smoke_env_names_the_smoke_account_for_staging_and_restarts_it(box):
     assert result.returncode == 0, result.stderr
     env_file = box.root / "etc/filedrawer/staging-smoke.env"
     assert env_file.read_text() == "FILEDRAWER_SMOKE_ACCOUNT=a-smoke1\n"
-    assert stat.S_IMODE(env_file.stat().st_mode) == 0o640
+    assert stat.S_IMODE(env_file.stat().st_mode) == 0o600
     log = box.log.read_text()
-    assert f"chown root:filedrawer {env_file}" in log
+    assert f"chown root:root {env_file}" in log
     assert "systemctl try-restart filedrawer-staging.service" in log
 
 
@@ -217,11 +236,6 @@ def test_smoke_env_refuses_an_id_that_isnt_one(box, account):
     result = run(box, SMOKE_ENV, SMOKE_ACCOUNT=account)
     assert result.returncode == 2
     assert not (box.root / "etc/filedrawer/staging-smoke.env").exists()
-
-
-def test_the_staging_unit_reads_the_smoke_account_setting():
-    unit = (REPO / "ops/remote/staging-service.sh").read_text()
-    assert "EnvironmentFile=-/etc/filedrawer/staging-smoke.env" in unit
 
 
 # caddy.sh
@@ -244,7 +258,8 @@ def caddy_box(box):
 
 
 def caddyfile(box) -> str:
-    return (box.root / "etc/caddy/Caddyfile").read_text()
+    """Staging's site file, which caddy.sh writes beside the Caddyfile that imports it."""
+    return (box.root / "etc/caddy/sites/staging.caddy").read_text()
 
 
 def test_caddy_without_a_password_keeps_the_hash_already_on_the_server(caddy_box):
@@ -274,7 +289,8 @@ def test_caddy_keeps_a_hash_only_for_the_same_user(caddy_box):
         STAGING_SECRETS=f"\t{STAGING_KEY}",
     )
     assert result.returncode != 0
-    assert "someone" in caddyfile(caddy_box), "the old file is left as it was"
+    old = (caddy_box.root / "etc/caddy/Caddyfile").read_text()
+    assert "someone" in old, "the old file is left as it was"
 
 
 def test_caddy_with_a_password_hashes_it_anew(caddy_box):

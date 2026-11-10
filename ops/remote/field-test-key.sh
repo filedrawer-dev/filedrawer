@@ -14,7 +14,9 @@
 #
 # Writes /etc/caddy/field-test.caddy, which caddy.sh's gate imports for staging and
 # its files host, validates the Caddyfile as the caddy user, reloads Caddy, then
-# probes it locally. For open and replace, a failed validate, reload or probe puts
+# probes it locally, with the staging key read from staging's site file
+# (/etc/caddy/sites/staging.caddy), or from the Caddyfile on a server set up before
+# the site files. For open and replace, a failed validate, reload or probe puts
 # the previous snippet back (exit 1). For close, only a failed validate or reload
 # does, since putting it back would reopen the key: a probe that finds the old key
 # still let through exits 1, and one that finds staging down only warns. Prints
@@ -119,12 +121,17 @@ probe_failed() {
     fail "$1"
   fi
 }
-staging_key=$(sed -n 's/.*@agent header X-Staging-Key "\([0-9a-f]\{64\}\)"$/\1/p' "$caddyfile")
+staging_key=""
+for gate in "$dir/sites/staging.caddy" "$caddyfile"; do
+  [[ -f "$gate" ]] || continue
+  staging_key=$(sed -n 's/.*@agent header X-Staging-Key "\([0-9a-f]\{64\}\)"$/\1/p' "$gate")
+  [[ -z "$staging_key" ]] || break
+done
 
 got=$(status "")
 [[ $got == 401 ]] || probe_failed "a request with no key got $got, not 401"
 if [[ -z "$staging_key" ]]; then
-  probe_failed "the Caddyfile holds no staging key to probe with"
+  probe_failed "neither staging's site file nor the Caddyfile holds a staging key to probe with"
 else
   got=$(status "" "X-Staging-Key: $staging_key")
   [[ $got == 200 || $got == 502 ]] || probe_failed "the staging key got $got"

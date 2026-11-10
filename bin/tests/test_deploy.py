@@ -332,9 +332,9 @@ def test_every_secret_and_variable_the_workflow_reads_is_one_the_ops_scripts_set
 
 def test_the_settings_the_vps_scripts_write_are_the_ones_the_server_reads():
     written = set()
-    for script in ("staging-service.sh", "mail.sh", "screening.sh", "smoke-env.sh"):
+    for script in ("service.sh", "mail.sh", "screening.sh", "smoke-env.sh", "ping.sh"):
         text = (REPO / "ops/remote" / script).read_text()
-        written |= set(re.findall(r"^(FILEDRAWER_\w+)=", text, re.MULTILINE))
+        written |= set(re.findall(r"^\s*(?:printf ')?(FILEDRAWER_\w+)=", text, re.M))
     config = (REPO / "crates/server/src/config.rs").read_text()
     read = set(re.findall(r'"(FILEDRAWER_\w+)"', config))
     assert written <= read, written - read
@@ -344,6 +344,8 @@ def test_the_settings_the_vps_scripts_write_are_the_ones_the_server_reads():
         "FILEDRAWER_ENVIRONMENT",
         "FILEDRAWER_SCREENER",
         "FILEDRAWER_PUBLIC_URL",
+        "FILEDRAWER_FILES_URL",
+        "FILEDRAWER_DAILY_EMAIL_PING",
     }
     assert required <= written, required - written
 
@@ -453,8 +455,7 @@ def test_the_files_host_has_a_caddy_site_behind_the_staging_gate_and_a_dns_recor
         assert (
             "reverse_proxy 127.0.0.1:8081" in block or "import staging_gate" in block
         ), name
-    service = (REPO / "ops/remote/staging-service.sh").read_text()
-    assert "FILEDRAWER_FILES_URL=https://files.staging.filedrawer.dev" in service
+    # service.sh's FILEDRAWER_FILES_URL for each environment: test_remote_environments.
     wizard = (REPO / "ops/provision-vps").read_text()
     dns = re.search(r"for name in (.*?); do", wizard).group(1)
     assert '"files.staging.filedrawer.dev"' in dns
