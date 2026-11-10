@@ -46,8 +46,8 @@ fn exempt(state: &AppState, account_id: &str) -> bool {
 struct Start {
     /// The UTC day it was made.
     created: Date,
-    /// Whether it signed up with an invite code that isn't revoked, which skips the
-    /// new-account limit (design.md, Limits and abuse).
+    /// Whether it signed up with an invite code that isn't revoked, or is the admin,
+    /// which skips the new-account limit (design.md, Limits and abuse).
     invited: bool,
 }
 
@@ -69,12 +69,16 @@ async fn start_of(
     account_id: &str,
     today: Date,
 ) -> Result<Start, sqlx::Error> {
-    let created_at =
-        sqlx::query_scalar!("SELECT created_at FROM accounts WHERE id = ?", account_id)
-            .fetch_one(&mut *conn)
-            .await?;
-    let created = OffsetDateTime::parse(&created_at, &Rfc3339).map_or(today, |at| at.date());
-    let invited = invites::invited(conn, account_id).await?;
+    let account = sqlx::query!(
+        r#"SELECT created_at, is_admin AS "is_admin: bool" FROM accounts WHERE id = ?"#,
+        account_id
+    )
+    .fetch_one(&mut *conn)
+    .await?;
+    let created =
+        OffsetDateTime::parse(&account.created_at, &Rfc3339).map_or(today, |at| at.date());
+    // The owner's decision, 2026-11-09.
+    let invited = account.is_admin || invites::invited(conn, account_id).await?;
     Ok(Start { created, invited })
 }
 

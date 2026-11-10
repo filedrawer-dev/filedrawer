@@ -128,6 +128,8 @@ The owner expects little abuse and prefers limits to login friction.
 - Invite codes: the admin creates a code with a maximum number of uses and an expiry date, for example "Apart sprint, 120 uses, valid 2 weeks".
   An account that signs up with a code skips the per-IP signup limit and the new-account limit, and keeps the 50-a-day cap.
   Reason: an in-person sprint puts many real users behind a few IPs, and each of them may want to post more than 20 a day.
+- The admin account counts as invited for the allowance: 50 a day from its first day (the owner's decision, 2026-11-09).
+  Reason: the owner's production account is new at launch, and its first batches would wait days at 20 a day.
 - An account linked to a GitHub account at least 90 days old also skips the new-account limit.
   Linking ORCID doesn't, since anyone can create an ORCID iD in a minute.
 - The owner makes codes on `/admin/invites`, with a label, a number of uses (up to 10,000) and the days it is valid (up to 365); the page lists each code with its signup link, `/signup?invite=<code>`, its uses taken and its expiry.

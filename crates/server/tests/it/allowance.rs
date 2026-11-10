@@ -107,6 +107,32 @@ async fn an_account_past_its_first_7_days_gets_50_a_day() {
 }
 
 #[tokio::test]
+async fn the_admin_gets_50_a_day_from_its_first_day() {
+    // As if invited (the owner's decision, 2026-11-09): no new-account limit, but
+    // the cap holds.
+    let app = test_app().await;
+    let cookie = owner(&app).await;
+    let token = common::new_token(&app, &cookie).await;
+    for n in 0..51 {
+        let reply = app
+            .post_as(
+                "/entries",
+                Some(&token),
+                entry(&format!("Steering {n}"), ""),
+            )
+            .await;
+        assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
+        let expected = (n == 50).then(|| date_in(1));
+        assert_eq!(
+            field(&reply.body, "screen_from"),
+            expected.as_deref(),
+            "entry {n}: {}",
+            reply.body
+        );
+    }
+}
+
+#[tokio::test]
 async fn a_new_account_may_have_10_days_allowance_waiting_and_no_more() {
     // 7 days at 20, then 3 at 50: 290 units from today through today + 9.
     let app = test_app().await;

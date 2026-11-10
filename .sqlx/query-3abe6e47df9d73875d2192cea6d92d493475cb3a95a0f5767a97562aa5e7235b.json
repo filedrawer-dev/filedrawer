@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT created_at, is_admin AS \"is_admin: bool\" FROM accounts WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "created_at",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "accounts",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "name": "is_admin: bool",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "accounts",
+            "name": "is_admin"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "3abe6e47df9d73875d2192cea6d92d493475cb3a95a0f5767a97562aa5e7235b"
+}
