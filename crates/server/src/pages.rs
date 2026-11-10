@@ -149,6 +149,12 @@ pub struct HomePage<'a> {
 }
 
 #[derive(Template)]
+#[template(path = "beta.html")]
+pub struct BetaPage<'a> {
+    pub public_url: &'a str,
+}
+
+#[derive(Template)]
 #[template(path = "search.html")]
 pub struct SearchPage<'a> {
     /// The words searched for as the tab's title shows them: in part, as

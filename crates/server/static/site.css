@@ -59,8 +59,11 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
 .col { max-width: 62rem; margin: 0 auto; }
 .narrow { max-width: 46rem; margin-left: auto; margin-right: auto; }
 
-/* The brass label holder with the site's name. */
-.plate { display: block; border: 4px solid var(--brass); border-radius: 3px; padding: 6px; max-width: 34rem; margin: 0 auto 1.4rem;
+/* The brass label holder with the site's name, and the beta stamp struck across its
+   top right corner. */
+.masthead { position: relative; max-width: 34rem; margin: 0 auto 1.4rem; }
+.masthead .beta { position: absolute; top: -.6rem; right: .8rem; background: var(--card); text-decoration: none; }
+.plate { display: block; border: 4px solid var(--brass); border-radius: 3px; padding: 6px;
   background: var(--plate); box-shadow: inset 0 0 0 1px var(--platehi); text-decoration: none; color: var(--ink); }
 .plate span { display: block; background: var(--card); padding: .6rem 1rem; text-align: center; letter-spacing: .12em; font-weight: 700; text-transform: uppercase; }
 .plate small { display: block; letter-spacing: .04em; font-weight: 400; text-transform: none; color: var(--dim); }

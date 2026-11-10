@@ -724,3 +724,73 @@ async fn a_bare_slug_in_the_text_links_to_its_entry_but_not_in_code_or_unresolve
     assert!(below.contains("<code>slug:base_line-2</code>"), "{below}");
     assert!(below.contains("nor slug:not-yet."), "{below}");
 }
+
+#[tokio::test]
+async fn every_page_carries_a_beta_stamp_linking_to_the_beta_page() {
+    let app = test_app().await;
+    let id = public_entry(&app).await;
+    for path in [
+        "/".to_string(),
+        "/search".to_string(),
+        format!("/e/{id}"),
+        "/signup".to_string(),
+    ] {
+        let page = app.send(opened(&path)).await;
+        assert!(
+            page.body
+                .contains(r#"<a class="stamp beta" href="/beta">beta</a>"#),
+            "{path}: {}",
+            page.body
+        );
+    }
+    // An error turned into a page has it too, since every page extends base.html.
+    let missing = app.send(opened("/no-such-page")).await;
+    assert!(missing.body.contains(r#"href="/beta""#), "{}", missing.body);
+}
+
+#[tokio::test]
+async fn the_beta_page_says_what_the_beta_means_to_a_browser_and_to_an_agent() {
+    let app = test_app().await;
+    let page = app.send(opened("/beta")).await;
+    assert_eq!(page.status, StatusCode::OK);
+    assert!(content_type(&page).starts_with("text/html"), "{page:?}");
+    let feedback = format!("POST {PUBLIC_URL}/feedback");
+    for id in ["new", "permanent", "issues", "feedback"] {
+        assert!(
+            page.body.contains(&format!(r#"<p id="{id}">"#)),
+            "{id}: {}",
+            page.body
+        );
+    }
+    assert!(
+        page.body
+            .contains(r#"<a href="https://github.com/filedrawer-dev/filedrawer/issues">"#),
+        "{}",
+        page.body
+    );
+    assert!(
+        page.body.contains(&format!("<code>{feedback}</code>")),
+        "{}",
+        page.body
+    );
+
+    // An agent hears of POST /feedback alone, never of a public GitHub issue
+    // (design.md, Feedback and usability cycles).
+    let text = app.send(fetched("/beta")).await;
+    assert_eq!(text.status, StatusCode::OK);
+    assert!(content_type(&text).starts_with("text/plain"), "{text:?}");
+    for fact in [
+        "rough edges",
+        "public and permanent",
+        "stay after",
+        &feedback,
+    ] {
+        assert!(text.body.contains(fact), "{fact}: {}", text.body);
+    }
+    assert!(
+        !text.body.to_lowercase().contains("github"),
+        "{}",
+        text.body
+    );
+    assert!(!text.body.contains('<'), "{}", text.body);
+}

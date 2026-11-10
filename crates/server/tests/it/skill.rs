@@ -123,6 +123,20 @@ async fn skill_md_is_the_installer_for_this_site() {
 }
 
 #[tokio::test]
+async fn skill_md_says_the_archive_is_in_beta_and_problems_go_to_feedback() {
+    let text = served("/skill.md").await;
+    let line = text
+        .lines()
+        .find(|line| line.contains(&format!("{PUBLIC_URL}/beta")))
+        .unwrap_or_else(|| panic!("no line names /beta: {text}"));
+    assert!(
+        line.contains(&format!("POST {PUBLIC_URL}/feedback")),
+        "{line}"
+    );
+    assert!(!line.to_lowercase().contains("github"), "{line}");
+}
+
+#[tokio::test]
 async fn skill_md_names_each_skills_version_in_a_header() {
     let app = test_app().await;
     let expected = format!(

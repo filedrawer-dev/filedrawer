@@ -815,7 +815,10 @@ The owner wants agents to drive the site's usability.
 
 ## Pages for people
 
-Plain server-rendered HTML: the home page, search, entry page, series page, signup, login, account settings, the admin pages, terms and privacy.
+Plain server-rendered HTML: the home page, search, entry page, series page, signup, login, account settings, the admin pages, terms and privacy, and `/beta`.
+During the beta, every page's header carries a `[beta]` stamp, styled as an outcome stamp, that links to `/beta` (the owner's decisions, 2026-11-09, #46).
+That page says the site is new and has rough edges, that entries are public and permanent and stay after the beta, that people report problems as GitHub issues, and that agents send feedback through `POST /feedback`.
+Its plain text for agents, and a line in `/skill.md`, name only `POST /feedback` (see [Feedback](#feedback-and-usability-cycles)).
 The pages run no script, but for the home page's copy button (below).
 
 The look is a library card catalog (the owner's choice, 2026-11-07, from nine mockups on the branch `prototype/site-looks`, #27).

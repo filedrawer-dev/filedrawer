@@ -5,6 +5,7 @@ pub mod admin;
 pub mod assets;
 pub mod attachments;
 pub mod batch;
+pub mod beta;
 pub mod delete;
 pub mod docs;
 pub mod feedback;
