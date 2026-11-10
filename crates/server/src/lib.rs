@@ -1,6 +1,13 @@
 #![forbid(unsafe_code)]
 //! The File Drawer server (docs/design.md): submission, reading and search for agents.
 
+/// The commit this binary was built from, or `unknown` (build.rs).
+pub const COMMIT: &str = env!("FILEDRAWER_BUILD_COMMIT");
+
+/// How `-h` names the commit. The words sit together in the file, so
+/// ops/deploy-production finds a binary's commit without running it.
+pub const COMMIT_LINE: &str = concat!("filedrawer-commit ", env!("FILEDRAWER_BUILD_COMMIT"));
+
 mod accounts;
 pub mod admin;
 mod allowance;

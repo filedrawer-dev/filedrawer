@@ -842,3 +842,25 @@ async fn the_documents_offer_no_embargo_or_hidden_series_while_they_are_paused()
     }
     assert!(!text.contains("waiting_on_series"));
 }
+
+#[tokio::test]
+async fn skill_md_names_the_commit_the_binary_was_built_from() {
+    let app = test_app().await;
+    for method in ["GET", "HEAD"] {
+        let reply = app
+            .send(
+                Request::builder()
+                    .method(method)
+                    .uri("/skill.md")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await;
+        // What the build was given (CI's FILEDRAWER_COMMIT), read here rather than
+        // through the server's constant.
+        let built_from = option_env!("FILEDRAWER_COMMIT")
+            .filter(|commit| !commit.is_empty())
+            .unwrap_or("unknown");
+        assert_eq!(reply.headers["x-filedrawer-commit"], built_from, "{method}");
+    }
+}

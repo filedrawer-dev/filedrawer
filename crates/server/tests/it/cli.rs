@@ -325,3 +325,25 @@ fn help_names_every_setting_serve_reads() {
         "`filedrawer -h` doesn't name {missing:?}, which config.rs reads"
     );
 }
+
+#[test]
+fn help_names_the_commit_the_binary_was_built_from() {
+    let output = Command::new(env!("CARGO_BIN_EXE_filedrawer"))
+        .arg("-h")
+        .env_clear()
+        .output()
+        .unwrap();
+    let help = printed(&output);
+    // ops/deploy-production finds a binary's commit in this form, in the file itself.
+    // What the build was given (CI's FILEDRAWER_COMMIT), read here rather than
+    // through the binary's constant.
+    let built_from = option_env!("FILEDRAWER_COMMIT")
+        .filter(|commit| !commit.is_empty())
+        .unwrap_or("unknown");
+    let line = format!("filedrawer-commit {built_from}");
+    assert!(
+        help.lines()
+            .any(|l| l.trim_end_matches('.').ends_with(&line)),
+        "-h doesn't end a line with {line:?}:\n{help}"
+    );
+}

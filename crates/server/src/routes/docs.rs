@@ -16,7 +16,8 @@ const MARKDOWN: &str = "text/markdown; charset=utf-8";
 
 /// `/skill.md`: the installer, rendered for this site, with each skill's version in
 /// `X-Filedrawer-Skills`, which the installed skills read from a HEAD of this route
-/// alone.
+/// alone, and the commit the server was built from in `X-Filedrawer-Commit`, which
+/// ops/deploy-production reads.
 pub async fn skill(State(state): State<AppState>) -> impl IntoResponse {
     let text = skills::render(INSTALL, &state.public_url)
         .replace("{{SKILLS}}", &skills::versions(" "))
@@ -27,6 +28,10 @@ pub async fn skill(State(state): State<AppState>) -> impl IntoResponse {
             (
                 header::HeaderName::from_static(skills::VERSIONS_HEADER),
                 skills::versions(", "),
+            ),
+            (
+                header::HeaderName::from_static("x-filedrawer-commit"),
+                crate::COMMIT.to_string(),
             ),
         ],
         text,

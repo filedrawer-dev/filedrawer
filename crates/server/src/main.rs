@@ -86,7 +86,10 @@ fn main() -> ExitCode {
     };
     match args.as_slice() {
         ["-h" | "--help"] => {
-            println!("{USAGE}");
+            println!(
+                "{USAGE}\n\nThis binary was built from {}.",
+                filedrawer_server::COMMIT_LINE
+            );
             ExitCode::SUCCESS
         }
         ["serve"] => runtime.block_on(serve()),
@@ -195,8 +198,8 @@ async fn serve() -> ExitCode {
         Ok(config) => config,
         Err(error) => return fail(&error.to_string()),
     };
-    // Before the database, whose migrations an older binary can't undo: a rollback
-    // after a directory the store can't make would then still start.
+    // Before the database, whose migrations can't be undone: a binary that fails here
+    // leaves the schema as the previous binary had it.
     let files = match FileStore::open(config.files_dir.clone()) {
         Ok(files) => Arc::new(files),
         Err(error) => {

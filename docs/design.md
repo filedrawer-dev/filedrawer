@@ -712,6 +712,7 @@ The `skill.md` at agents.stackoverflow.com is a working example of serving instr
   It pushes tags with a deploy key, and a ruleset lets only deploy keys create, move or delete `skill-*` tags, so nobody else with push rights, person or agent, can plant one (`ops/protect-skill-tags`, which the owner runs).
   Reason: GitHub can't put a workflow's own token on a ruleset's bypass list, but it can put deploy keys there.
 - A HEAD or GET of `/skill.md` carries `X-Filedrawer-Skills: filedrawer-search/<N>, filedrawer-submit/<N>`, and no other route does.
+  It also carries `X-Filedrawer-Commit`, the commit the server was built from, which `ops/deploy-production` reads (see [Hosting](#hosting-and-operations)); `filedrawer -h` names it too.
   Once per task, in a session with a human present, a skill sends a HEAD of `/skill.md` and upgrades when the header names a higher version.
   A HEAD brings no body, so author text can't fake the header, and the skills ignore any notice found anywhere else.
   A run with no human present never upgrades, as it never posts.
@@ -1021,6 +1022,11 @@ Python is fine for scripts and internal tools.
   Staging's screen-test account, which `ops/smoke-staging eval` (a labelled test set, run by hand) submits as, isn't held to an account's 10% share of the day's screening cap, only to the cap (`FILEDRAWER_SCREEN_TEST_ACCOUNT`; the owner's decision, 2026-11-06).
   Reason: one eval run spent the share, and its queued entries would have spent the next day's.
   Production refuses that setting too.
+- An older binary runs on a database a newer one migrated (sqlx's `ignore_missing`), so rolling back is putting the previous binary back, which keeps every write (the owner's decision, 2026-11-10, #42).
+  Reason: restoring a copy of the database instead reverts every write since it, deletions, removals, suspensions and file bans included, and carrying those forward is a feature of its own.
+  So a migration adds only what an older binary can ignore, unless `crates/server/migration-rollback.txt` says whether it breaks a rollback, and a test refuses one that doesn't (CODING_STANDARDS.md, SQL).
+  A rollback across a migration that breaks it is refused; the fix goes forward instead.
+  An older binary that finds `entry_references` built in a newer format keeps the rows and records its own, so its startup stays inside the install's health check and the next newer binary rebuilds them.
 - Backups: Litestream streams every change to production's database to Backblaze B2 within seconds and keeps daily snapshots for 14 days.
   The owner asked for at most about 3 hours of loss plus 14 daily copies, and Litestream covers both.
   B2 is a different company from Hetzner and from the DNS provider.

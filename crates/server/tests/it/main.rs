@@ -28,6 +28,7 @@ mod http_fetcher;
 mod invites;
 mod limits;
 mod link_checks;
+mod migration_rollback;
 mod migrations;
 mod pages;
 mod provenance;

@@ -257,3 +257,44 @@ async fn the_older_link_keeps_the_cites_filter() {
         page.body
     );
 }
+
+#[tokio::test]
+async fn an_older_binary_leaves_a_newer_reference_format_as_it_is() {
+    // A rollback starts the older binary on what the newer one built. Rebuilding every
+    // entry's references at startup could outlast the install's health check, so it
+    // keeps the rows and records its own format, since the rows it adds are in that
+    // one; the next newer binary then rebuilds them all.
+    let app = test_app().await;
+    app.submit(&entry("Re-run", "replicates: arXiv:2603.20281\n"))
+        .await;
+    // Rows in a format this binary can't read, which a rebuild would replace.
+    sqlx::query("DELETE FROM entry_references")
+        .execute(&app.pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE derived_versions SET version = version + 1 WHERE name = 'entry_references'",
+    )
+    .execute(&app.pool)
+    .await
+    .unwrap();
+    let newer: i64 =
+        sqlx::query_scalar("SELECT version FROM derived_versions WHERE name = 'entry_references'")
+            .fetch_one(&app.pool)
+            .await
+            .unwrap();
+    filedrawer_server::db::refresh_derived(&app.pool)
+        .await
+        .unwrap();
+    let after: i64 =
+        sqlx::query_scalar("SELECT version FROM derived_versions WHERE name = 'entry_references'")
+            .fetch_one(&app.pool)
+            .await
+            .unwrap();
+    assert_eq!(after, newer - 1);
+    assert_eq!(
+        cites(&app, "arXiv:2603.20281").await,
+        Vec::<String>::new(),
+        "rebuilt the newer binary's rows"
+    );
+}

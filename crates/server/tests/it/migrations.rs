@@ -425,3 +425,61 @@ async fn migration_23_marks_each_unit_with_no_entry_as_a_series_unit() {
         .unwrap();
     assert_eq!(token, (None,), "an older entry has no token to delete it");
 }
+
+/// A file database opened by `db::open`, then closed, for a test to change behind its
+/// back and open again.
+async fn opened_once(name: &str) -> String {
+    let dir = std::env::temp_dir().join(format!(
+        "filedrawer-migrations-{}-{name}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("filedrawer.db").display().to_string();
+    filedrawer_server::db::open(&path)
+        .await
+        .unwrap()
+        .close()
+        .await;
+    path
+}
+
+async fn execute_behind(path: &str, statement: &'static str) {
+    let pool = SqlitePoolOptions::new()
+        .connect_with(SqliteConnectOptions::from_str(&format!("sqlite:{path}")).unwrap())
+        .await
+        .unwrap();
+    sqlx::query(statement).execute(&pool).await.unwrap();
+    pool.close().await;
+}
+
+#[tokio::test]
+async fn a_binary_opens_a_database_a_newer_binary_migrated() {
+    // A rollback runs the older binary on the newer schema (design.md, Hosting and
+    // operations), whose migrations it doesn't know.
+    let path = opened_once("newer").await;
+    execute_behind(
+        &path,
+        "INSERT INTO _sqlx_migrations (version, description, installed_on, success, checksum, execution_time)
+         VALUES (99999, 'from a newer binary', CURRENT_TIMESTAMP, 1, x'00', 0)",
+    )
+    .await;
+    let pool = filedrawer_server::db::open(&path).await.unwrap();
+    let accounts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM accounts")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(accounts, 0);
+}
+
+#[tokio::test]
+async fn a_known_migration_whose_text_changed_is_refused() {
+    let path = opened_once("changed").await;
+    execute_behind(
+        &path,
+        "UPDATE _sqlx_migrations SET checksum = x'00' WHERE version = 1",
+    )
+    .await;
+    let error = filedrawer_server::db::open(&path).await.unwrap_err();
+    assert!(error.to_string().contains("modified"), "{error}");
+}

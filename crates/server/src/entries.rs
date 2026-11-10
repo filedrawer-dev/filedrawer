@@ -489,9 +489,9 @@ async fn write_references(
 }
 
 /// Rebuilds `entry_references` from every entry's text when the keys it holds are of
-/// another format than the analyzer's, or the table was never filled: entries stored
+/// an older format than the analyzer's, or the table was never filled: entries stored
 /// before it existed get theirs. In seq order, so a version that carries its
-/// predecessor's keys finds them.
+/// predecessor's keys finds them. Keys of a newer format, after a rollback, stay.
 pub async fn rebuild_stale_references(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     let current = i64::from(REFERENCE_KEYS_VERSION);
     let mut transaction = crate::db::write_tx(pool).await?;
@@ -501,6 +501,19 @@ pub async fn rebuild_stale_references(pool: &SqlitePool) -> Result<(), sqlx::Err
             .await?;
     if stored == Some(current) {
         return Ok(());
+    }
+    if stored.is_some_and(|stored| stored > current) {
+        // A newer binary built these, and this one runs after a rollback: rebuilding
+        // every entry at startup could outlast the install's health check. It keeps
+        // the rows and records its own format, the one it writes from now on, so the
+        // next newer binary rebuilds them all.
+        sqlx::query!(
+            "UPDATE derived_versions SET version = ? WHERE name = 'entry_references'",
+            current
+        )
+        .execute(&mut *transaction)
+        .await?;
+        return transaction.commit().await;
     }
     sqlx::query!("DELETE FROM entry_references")
         .execute(&mut *transaction)

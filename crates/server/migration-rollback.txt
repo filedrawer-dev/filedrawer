@@ -1,0 +1,6 @@
+# Migrations an older binary can't simply ignore, and whether each breaks a rollback
+# (CODING_STANDARDS.md, SQL). One line each: <version> safe|breaks <why>.
+# tests/it/migration_rollback.rs refuses a migration after 0031 that adds anything
+# but tables, non-unique indexes and nullable or defaulted columns without one, and
+# ops/deploy-production refuses to roll production back across a `breaks` line.
+# A migration's own text is sqlx's checksum, so its line goes here, never in the file.

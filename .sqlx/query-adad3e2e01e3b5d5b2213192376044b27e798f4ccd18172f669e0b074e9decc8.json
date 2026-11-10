@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE derived_versions SET version = ? WHERE name = 'entry_references'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "adad3e2e01e3b5d5b2213192376044b27e798f4ccd18172f669e0b074e9decc8"
+}

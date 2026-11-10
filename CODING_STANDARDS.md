@@ -52,6 +52,11 @@ Python goes in `bin/` and only for scripts and tools, never in the server's requ
   A query with optional filters, such as search's, writes each filter as `(? IS NULL OR column = ?)` or builds with `QueryBuilder` and binds every value.
 - The schema changes only through numbered files in `migrations/`, run with `sqlx::migrate!` at startup.
   A migration never changes after it reaches `main`.
+- A migration only adds what an older binary can ignore, since a rollback runs the older binary on the newer schema: tables, non-unique indexes, and columns that are nullable or have a default, with each reference to an existing table saying `ON DELETE CASCADE`.
+  A migration that does more gets a line in `crates/server/migration-rollback.txt`, `<version> safe <why>` or `<version> breaks <why>`, and `tests/it/migration_rollback.rs` refuses one without; the line goes there because a migration's text is its checksum.
+  It `breaks` when the older binary would fail or write wrongly: a widened CHECK or any new value of an enum the code decodes, a column whose type changes, a view or FTS table whose columns change, a trigger or unique index that can refuse the older binary's writes, a rewrite of existing data, or a default that is wrong for rows older code writes, which keep it after the next deploy.
+  A new value written into an unchecked TEXT column breaks a rollback with no migration at all, and no test sees it, so such a change adds a migration of its own anyway, `SELECT 1;` under a comment naming the value, with a `breaks` line.
+  `ops/deploy-production` refuses to roll production back across a `breaks` line.
 - Writes that must happen together share a transaction.
 
 ### Tests

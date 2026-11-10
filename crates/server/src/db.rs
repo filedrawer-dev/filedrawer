@@ -33,7 +33,12 @@ pub async fn open(path: &str) -> Result<SqlitePool, sqlx::Error> {
         .max_connections(if in_memory { 1 } else { 8 })
         .connect_with(options)
         .await?;
-    sqlx::migrate!("./migrations").run(&pool).await?;
+    // A rollback runs an older binary on the schema a newer one migrated, so the
+    // migrations it doesn't know don't stop it; a known one whose text changed still
+    // does (design.md, Hosting and operations).
+    let mut migrator = sqlx::migrate!("./migrations");
+    migrator.set_ignore_missing(true);
+    migrator.run(&pool).await?;
     refresh_derived(&pool).await?;
     Ok(pool)
 }

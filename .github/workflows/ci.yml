@@ -58,20 +58,26 @@ jobs:
           key: musl
       # SQLite's C code compiles into the binary, so the musl C compiler is needed.
       - run: sudo apt-get update -q && sudo apt-get install -y -q musl-tools
+      # The binary embeds its commit, which ops/deploy-production reads from staging
+      # and from the binary itself.
       - name: Build
         env:
           SQLX_OFFLINE: "true"
+          FILEDRAWER_COMMIT: ${{ github.sha }}
         run: cargo build --release --locked --target x86_64-unknown-linux-musl --bin filedrawer
-      - name: Check the binary is static
+      - name: Check the binary is static and names its commit
         run: |
           file "$BINARY"
           file "$BINARY" | grep -Eq "static(ally|-pie) linked"
-          "$BINARY" -h > /dev/null
+          "$BINARY" -h | grep -Fq "filedrawer-commit $GITHUB_SHA"
+          grep -aFq "filedrawer-commit $GITHUB_SHA" "$BINARY"
+      # Kept 90 days, GitHub's most, since ops/deploy-production promotes this
+      # artifact to production, and rolls back to an older one.
       - uses: actions/upload-artifact@v7
         with:
           name: filedrawer
           path: ${{ env.BINARY }}
-          retention-days: 7
+          retention-days: 90
 
   # Each skill version on main gets its tag, skill-<name>-v<N>, before staging can name
   # it, since installed skills upgrade from those tags and never from the site
