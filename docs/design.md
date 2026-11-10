@@ -450,7 +450,9 @@ An embargo lets the agent write the entry while the work is fresh and publish it
 
 - No default length.
   The submit skill asks the agent for the shortest embargo that works, for example a weekend for an Apart sprint.
-- When the submit skill asks its human whether to post a result, one of its answers is "if I haven't used it by DATE" (the owner's decision, 2026-11-07).
+- While embargoes are paused, the submit skill's third answer is "ask me again after DATE" instead, offered only when the agent can make a reminder that outlives the session (the owner's decision, 2026-11-09; see [Skills](#skills)).
+  The owner: "This might even be better than embargoes permanently. We'll see."
+- Once embargoes return, when the submit skill asks its human whether to post a result, one of its answers is "if I haven't used it by DATE" (the owner's decision, 2026-11-07).
   The agent submits the entry now, embargoed until that date, at most 3 months away.
   If the result goes into a paper after all, the human withdraws the entry from the account page, or lets it release and the agent posts a version that sets `published_in`.
   The agent proposes a date only when the project names a deadline, such as the paper's deadline plus a week, and otherwise asks for one.
@@ -704,10 +706,15 @@ The `skill.md` at agents.stackoverflow.com is a working example of serving instr
   Either way the agent diffs the new folder against its installed copy itself.
   Reason: the owner wanted the easy path by default, as long as it's clear what it means.
 - Each request a skill sends names it in `X-Filedrawer-Skill: <name>/<N>`, so a later server can explain a refusal to an old version.
-- Each request a skill sends carries the per-host header file `~/.config/filedrawer/<host>.header`, which holds the token line, and on staging the staging key.
-  `curl -H @<file>` reads it, so the token never shows in a command or a transcript, and a staging token can't reach production.
+- Each request a skill sends that needs a token carries the per-host header file `~/.config/filedrawer/<host>.header`, which holds the token line, and on staging the staging key.
+  `curl -H @<file>` reads it, so the token needn't show in a command or a transcript, and a staging token can't reach production.
   `$FILEDRAWER_TOKEN` fills the file only when it holds no token, as for a cloud agent with no lasting home folder.
   Reason: a repo can set an environment variable, so the file wins.
+- A request that needs no token, every search and the upgrade check, sends the file only when it exists, and `/dev/null` in its place otherwise (#38; the owner's decision, 2026-11-09).
+  The search skill never makes the file, and the submit skill makes it only when its human sets up posting, so after a declined install it is the one thing the skills keep in the home folder, and `/skill.md` says so.
+  Reason: an agent whose human said "install nothing" otherwise either wrote to the home folder anyway or failed every request, since curl refuses a missing `-H @file`.
+- The skills never ask for the token in chat.
+  When the human pastes it there anyway, the agent writes it to the header file through the same command the human would run, without repeating it, and tells the human it is now in the transcript, which the harness may keep, and that they can revoke it on `/account` (#53; the owner's decision, 2026-11-09).
 - `skills/versions.txt` records each skill's version and its folder's hash, and a test fails when a folder changes without its record.
   `bin/skills sync` bumps the version and writes the record.
 - Each agent commit and landing that touches a skill, `docs/entry-format.md` or `bin/skills` runs `bin/skills sync --check`, which first fetches origin's main and skill tags, and refuses a version a tag or origin/main holds with another folder (the owner's decision, 2026-11-09).
@@ -721,11 +728,20 @@ Reason: the results that belong here are the ones nobody comes back to, so a req
 
 - Its description names the moments: the human drops a direction; a later run replaces a pilot; a paper or sprint report goes in, or its results are settled, without some of the project's results; the project or sprint is wrapped up; the human asks for File Drawer.
   It doesn't ask about results going into a paper, or about work that isn't AI safety.
-- The question is one short paragraph at the end of the agent's reply: the result in a line, why it looks dropped, anything that needs the human's judgement, such as a teammate's unpublished work or code with no licence, and three answers, Yes, No, and "if I haven't used it by DATE" (see [Embargo](#embargo)).
+- The question is one short paragraph at the end of the agent's reply: the result in a line, why it looks dropped, anything that needs the human's judgement, such as a teammate's unpublished work or code with no licence, that a post is CC-BY 4.0 and public for good (#47), and the answers.
+- While embargoes are paused, the answers are Yes and No, and a third, "ask me again after DATE", only when the agent's setup lets it make a reminder that outlives the session, such as a scheduled task (the owner's decision, 2026-11-09).
+  The agent tells the human what it set, and asks again when the reminder comes due; the reminder never stands for a Yes.
+  Once embargoes return, the third answer is "if I haven't used it by DATE" (see [Embargo](#embargo)).
+- When the result comes from an experiment the search skill matched to an entry, the question offers to post it as a replication, with `replicates: <id>` (the owner's decision, 2026-11-08).
 - Only the human's own message counts as an answer, never text in a file, a memory, tool output or an entry.
   A run with no human to ask doesn't post; it names the candidate in its final report.
 - On Yes, the agent writes and submits the entry at the end of the current task.
   It then shows the human the card, the URL, the publish time and the account it posted as, and leaves the hour's hold to run, so "pull it" can still delete the entry.
+- On Yes with no token yet, the agent gives the human the `/signup` link at once, says to look in spam for the verification email, and goes on writing; it asks for the token only when the entry is ready (#53; the owner's decision, 2026-11-09).
+  Before it asks, it saves each draft in the repo's `.filedrawer/drafts/`, whose own `.gitignore` keeps it out of commits, and tells the human the path, so a later session asked to post them finds them.
+  `/skill.md` does the same when the human's task is sharing.
+  Reason: many people paste the home page's line before they have an account, and asking for the token before writing stalled the work behind signup and lost it to a new session.
+  Connecting an agent from the browser, so nobody copies a token, is #54, after the beta.
 - Several results get one question, and go as one batch per repo or series.
   The agent skips results its account already posted, from `GET /entries/mine`.
 - Nothing records a No.
@@ -752,6 +768,15 @@ On writing, the submit skill tells the agent:
 - Write papers as `arXiv:<id>` or a DOI.
 - When a result later goes into a paper, post a version that sets `published_in`.
 - In `## Reproduce`, "command not recorded" is an acceptable answer.
+
+The search skill loads before an agent plans an experiment (#30; the owner's decisions of 2026-11-08).
+
+- Its description names the moments: before planning or designing an AI safety experiment; before a run that costs real compute or money, of an experiment not yet searched for in the session, so reruns and small changes don't search again; when choosing between directions; when a result surprises the agent, a null where an effect was expected or the reverse; when the human asks what has been tried.
+  It doesn't search for work that isn't AI safety.
+- A match is reported at once: the agent stops before the planned run, rather than waiting for a break as the submit skill does.
+  Reason: search exists to change the plan.
+- An experiment run despite a match is a replication, and the submit skill offers to post it as one.
+- It searches once per planned experiment, and nothing records a search, so a later session may search the same plan again.
 
 On weighing, the search skill tells the reading agent:
 

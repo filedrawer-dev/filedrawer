@@ -321,11 +321,7 @@ fn command(text: &str, heading: &str, n: usize) -> String {
 /// `stdin` as its input.
 fn run_with(script: &str, home: &Path, mirror: &Path, env: &[(&str, &str)], stdin: &str) -> Output {
     let script = script.replace(RAW_GITHUB, &format!("file://{}", mirror.display()));
-    let mut child = Command::new("sh")
-        .arg("-c")
-        .arg(script)
-        .env("HOME", home)
-        .env_remove("FILEDRAWER_TOKEN")
+    let mut child = shell(&script, home)
         .envs(env.iter().copied())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -334,6 +330,17 @@ fn run_with(script: &str, home: &Path, mirror: &Path, env: &[(&str, &str)], stdi
         .unwrap();
     std::io::Write::write_all(child.stdin.as_mut().unwrap(), stdin.as_bytes()).unwrap();
     child.wait_with_output().unwrap()
+}
+
+/// `sh -c script` with `home` as HOME and no token in the environment.
+fn shell(script: &str, home: &Path) -> Command {
+    let mut command = Command::new("sh");
+    command
+        .arg("-c")
+        .arg(script)
+        .env("HOME", home)
+        .env_remove("FILEDRAWER_TOKEN");
+    command
 }
 
 fn run(script: &str, home: &Path, mirror: &Path) -> Output {
@@ -688,6 +695,96 @@ async fn the_humans_command_refuses_what_isnt_a_token() {
         assert!(!output.status.success(), "{typed:?}: {}", text(&output));
         assert_eq!(std::fs::read_to_string(&file).unwrap(), old, "{typed:?}");
     }
+}
+
+#[tokio::test]
+async fn a_token_pasted_into_chat_goes_through_the_humans_command() {
+    let root = tempfile::tempdir().unwrap();
+    let (home, file) = home_with_header(root.path(), "X-Staging-Key: k\n");
+    let skill = submit_skill().await;
+    let pasted = command(&skill, "### The token", 2);
+    let by_hand = command(&skill, "### The token", 1);
+    assert!(pasted.ends_with(&format!("| {by_hand}")), "{pasted}");
+    let pasted = pasted.replace("'TOKEN'", "'fdt_pasted'");
+    let output = run_with(&pasted, &home, root.path(), &[], "");
+    assert!(output.status.success(), "{}", text(&output));
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "X-Staging-Key: k\nAuthorization: Bearer fdt_pasted\n"
+    );
+    assert!(
+        !text(&output).contains("fdt_pasted"),
+        "the token was printed"
+    );
+}
+
+/// Runs `script` in `dir` with `home` as HOME.
+fn run_in(script: &str, dir: &Path, home: &Path) -> Output {
+    shell(script, home).current_dir(dir).output().unwrap()
+}
+
+#[tokio::test]
+async fn drafts_stay_out_of_the_repo_and_the_home_folder() {
+    let root = tempfile::tempdir().unwrap();
+    let (repo, home) = (root.path().join("repo"), root.path().join("home"));
+    std::fs::create_dir_all(repo.join("src")).unwrap();
+    std::fs::create_dir_all(&home).unwrap();
+    let git = |args: &[&str]| {
+        let output = run_in(&format!("git {}", args.join(" ")), &repo, &home);
+        assert!(output.status.success(), "{}", text(&output));
+        String::from_utf8(output.stdout).unwrap()
+    };
+    git(&["init", "-q"]);
+    let drafts = command(&submit_skill().await, "### Drafts", 0);
+    let output = run_in(&drafts, &repo.join("src"), &home);
+    assert!(output.status.success(), "{}", text(&output));
+    let folder = PathBuf::from(String::from_utf8(output.stdout).unwrap().trim());
+    assert_eq!(folder, repo.join(".filedrawer/drafts"));
+    std::fs::write(folder.join("entry.md"), "a draft").unwrap();
+    assert_eq!(git(&["status", "--porcelain", "--ignored=no"]), "");
+    assert_eq!(std::fs::read_dir(&home).unwrap().count(), 0);
+}
+
+async fn search_skill() -> String {
+    served("/skills/filedrawer-search/SKILL.md").await
+}
+
+/// The search skill's example search, sent to a file that stands in for the site.
+async fn search_a_file(root: &Path) -> String {
+    let site = root.join("site");
+    std::fs::create_dir_all(&site).unwrap();
+    std::fs::write(site.join("search"), "cards\n").unwrap();
+    let skill = search_skill().await;
+    let search = skill
+        .lines()
+        .find(|line| line.starts_with("curl ") && line.contains("/search?q="))
+        .expect("an example search");
+    search.replace(PUBLIC_URL, &format!("file://{}", site.display()))
+}
+
+#[tokio::test]
+async fn searching_needs_no_header_file() {
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let output = run(&search_a_file(root.path()).await, &home, root.path());
+    assert!(output.status.success(), "{}", text(&output));
+    assert_eq!(text(&output), "cards\n");
+    assert_eq!(std::fs::read_dir(&home).unwrap().count(), 0);
+}
+
+#[tokio::test]
+async fn searching_sends_the_header_file_when_there_is_one() {
+    // curl refuses a header file it can't read, so a refusal shows it read this one; a
+    // folder in its place can't be read even as root.
+    let root = tempfile::tempdir().unwrap();
+    let (home, file) = home_with_header(root.path(), "X-Staging-Key: k\n");
+    let search = search_a_file(root.path()).await;
+    assert!(run(&search, &home, root.path()).status.success());
+    std::fs::remove_file(&file).unwrap();
+    std::fs::create_dir(&file).unwrap();
+    let output = run(&search, &home, root.path());
+    assert!(!output.status.success(), "{}", text(&output));
 }
 
 #[tokio::test]

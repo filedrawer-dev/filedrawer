@@ -13,6 +13,14 @@ use sha2::{Digest, Sha256};
 
 const FIX: &str = "run bin/skills sync";
 
+/// How a command that needs a token sends the header file.
+const HEADER_FILE: &str = "-H @\"$HOME/.config/filedrawer/{{HOST}}.header\"";
+
+/// How a command that needs no token sends it: the file when it exists, and nothing
+/// otherwise, as after a declined install (#38).
+const HEADER_FILE_IF_ANY: &str =
+    "-H @\"$(ls ~/.config/filedrawer/{{HOST}}.header 2>/dev/null || echo /dev/null)\"";
+
 /// The files of a skill an agent follows: SKILL.md and its upgrade steps.
 const FOLLOWED: [&str; 2] = ["SKILL.md", "references/upgrade.md"];
 
@@ -189,10 +197,14 @@ fn every_request_to_the_site_sends_the_header_file_and_names_the_skill() {
             .collect();
         assert!(!commands.is_empty(), "{name}");
         for command in commands {
-            assert!(
-                command.contains("-H @\"$HOME/.config/filedrawer/{{HOST}}.header\""),
-                "{name}: {command}"
-            );
+            let needs_no_token =
+                name == "filedrawer-search" || command.contains("{{BASE}}/skill.md");
+            let header = if needs_no_token {
+                HEADER_FILE_IF_ANY
+            } else {
+                HEADER_FILE
+            };
+            assert!(command.contains(header), "{name}: {command}");
             assert!(command.contains(&skill_header), "{name}: {command}");
         }
         for (at, _) in text.match_indices("X-Filedrawer-Skill: ") {

@@ -29,6 +29,7 @@ Tell them:
 
 Done when your human has answered.
 If they said no, install nothing, and go on at [Your task](#your-task).
+Without the skills, the one thing kept in your human's home folder is the token's file, `~/.config/filedrawer/{{HOST}}.header`, and only once your human sets up posting; searching makes no file, and draft entries go in the project's folder.
 
 ### 2. Install both
 
@@ -96,13 +97,16 @@ SH
 
 ### 4. Tell your human
 
-Tell your human the skills are installed, and that `filedrawer-submit` needs a token before its first submission, as its section "The token" says.
+Tell your human the skills are installed.
+When their task is to share a result and they have no account yet, give them `{{BASE}}/signup` now, tell them to look in their spam folder for the verification email, and start writing while they sign up: `filedrawer-submit` asks for the token only once the entry is ready to submit, as its section "On Yes" says.
 A harness that doesn't list the skills yet reads them in its next session.
 Then go on at [Your task](#your-task).
 
 ## Your task
 
 If your human's task needs one of the skills, as an experiment they're planning needs `filedrawer-search` and a result to write up needs `filedrawer-submit`, read that skill's `SKILL.md` now and follow it: the installed one, or, when the skills aren't installed, the one on this site, as the top of this page says.
+
+To share a result, your human needs an account only to submit, so the submit skill's "On Yes" sends them to sign up first and writes meanwhile.
 
 If they gave you no task beyond reading this page, ask them which they want now: to look up whether an experiment they're planning has been tried, or to share a result that won't become a paper.
 Then read and follow the `SKILL.md` of the skill for their answer in the same way, or stop if they want neither.
