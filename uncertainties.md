@@ -525,3 +525,11 @@ The owner settled the email's sections and the rules in design.md's Admin sectio
 - Chosen: drop it.
   The gate already records each pass, and a base it offers is by construction a tree that passed this same check, which is what the record guarded; one record can't drift from another.
 - Against: an agent committing on the owner's host, which has no `agent-commit-gate`, now runs every check, as CI does, where since 68c462b it ran only what its staged paths needed.
+
+#### The daily mutants run's shards
+
+- Options: a shard per 40 mutants, at most 4 (`bin/mutants-shards`); more shards, up to the full run's 16 at once; or one shard.
+- Chosen: 40 a shard, at most 4.
+  A day's changes make a few mutants, one shard's worth, and 4 shards beside a full run's 16 stay within the org's 20 concurrent jobs.
+- Against: the first daily run, with no covered run before it, tests the lines changed since the workflow was added, close to a full run: about 2300 mutants on 4 shards, some 2.5 hours, under the shard job's 330 minutes but longer than a full run takes.
+  A full run started by hand on main first makes that daily run small.

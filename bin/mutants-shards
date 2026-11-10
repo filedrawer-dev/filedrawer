@@ -1,0 +1,52 @@
+#!/usr/bin/env python3
+"""Print the shard list for .github/workflows/mutants.yml's matrix, as JSON.
+
+    bin/mutants-shards MUTANTS [--daily]
+
+MUTANTS is the setup job's `cargo mutants --list`, one mutant a line. A full run
+takes 32 shards, about 70 mutants each. A daily run takes a shard per 40 mutants, at
+most 4, so it never holds more than 4 of the org's 20 concurrent jobs, even beside a
+full run's 16; with no mutants it takes none, and the workflow skips the shard job.
+
+Exit status: 0 printed; 2 a usage error; 3 MUTANTS can't be read.
+"""
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+FULL_SHARDS = 32
+DAILY_PER_SHARD = 40
+DAILY_MAX_SHARDS = 4
+
+
+def count(mutants: int, daily: bool) -> int:
+    if not daily:
+        return FULL_SHARDS
+    return min(DAILY_MAX_SHARDS, -(-mutants // DAILY_PER_SHARD))
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument("mutants", type=Path, help="`cargo mutants --list` output")
+    parser.add_argument(
+        "--daily", action="store_true", help="size the shards to the mutants"
+    )
+    args = parser.parse_args()
+    try:
+        mutants = len(args.mutants.read_text().splitlines())
+    except OSError as error:
+        print(
+            f"mutants-shards: can't read {error.filename}: {error.strerror}",
+            file=sys.stderr,
+        )
+        return 3
+    print(json.dumps(list(range(count(mutants, args.daily)))))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

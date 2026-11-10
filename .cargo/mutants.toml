@@ -1,5 +1,5 @@
-# cargo-mutants' settings, for .github/workflows/mutants.yml, which runs it only by
-# hand (a local `cargo mutants` reads them too).
+# cargo-mutants' settings, for .github/workflows/mutants.yml, which runs it daily over
+# the lines changed and in full by hand (a local `cargo mutants` reads them too).
 # The tests run under nextest, as in bin/agent-pre-commit, and stop at the first
 # failure: one failing test is enough to catch a mutant.
 test_tool = "nextest"

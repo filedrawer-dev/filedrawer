@@ -1,16 +1,23 @@
 #!/usr/bin/env python3
 """Merge the shards' results of a cargo-mutants run and summarise them.
 
-    bin/mutants-summary SHARDS OUT ALL_MUTANTS
+    bin/mutants-summary SHARDS OUT ALL_MUTANTS [--head SHA [--base SHA]]
+                        [--in-diff PATCH]
 
 .github/workflows/mutants.yml runs this after its shards. SHARDS is where
 actions/download-artifact put the shards' mutants.out folders: each in a folder of
 its own, or, when only one shard uploaded, unpacked into SHARDS itself. It may not
-exist at all. ALL_MUTANTS is `cargo mutants --list` for the same commit.
+exist at all. ALL_MUTANTS is `cargo mutants --list` for the same commit, with the
+same --in-diff as the shards.
 
 Writes the missed, caught, timeout and unviable lists into OUT, each merged across
 the shards and sorted by file, then line, then column. Writes OUT/summary.md, the
-counts and the missed mutants as markdown, and prints it too.
+counts and the missed mutants as markdown, and prints it too. Copies a daily run's
+PATCH, the lines it covered, to OUT/in-diff.patch.
+
+With --head, when every mutant was tested, also writes OUT/covered: the run's base
+(a daily run's; a full run has none) and head, a line each. bin/mutants-base takes
+the head of the newest run with it as the next daily run's base.
 
 Exit status: 0 when the shards' lists hold every mutant in ALL_MUTANTS; 1 when some
 went untested, because a shard failed, was cancelled or ran out of time (OUT and the
@@ -20,6 +27,7 @@ or written.
 
 import argparse
 import re
+import shutil
 import sys
 from pathlib import Path
 
@@ -74,6 +82,11 @@ def main() -> int:
         "out", type=Path, help="the folder to write the merged lists to"
     )
     parser.add_argument("all_mutants", type=Path, help="`cargo mutants --list` output")
+    parser.add_argument("--head", help="the run's commit, to write OUT/covered")
+    parser.add_argument("--base", help="a daily run's base, for OUT/covered")
+    parser.add_argument(
+        "--in-diff", type=Path, help="a daily run's diff, copied into OUT"
+    )
     args = parser.parse_args()
 
     try:
@@ -90,6 +103,11 @@ def main() -> int:
                 "".join(f"{line}\n" for line in found)
             )
         (args.out / "summary.md").write_text(text)
+        if args.in_diff:
+            shutil.copyfile(args.in_diff, args.out / "in-diff.patch")
+        if args.head and tested >= total:
+            base = f"base {args.base}\n" if args.base else ""
+            (args.out / "covered").write_text(f"{base}head {args.head}\n")
     except OSError as error:
         return file_error("write", error)
     print(text, end="")

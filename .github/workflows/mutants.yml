@@ -1,33 +1,143 @@
-# Mutation testing, started by hand: cargo-mutants breaks the code in small ways (a
-# function returns a default, `==` becomes `!=`) and runs the tests against each
-# change. A missed mutant is one the tests still pass, which marks code no test
-# checks. The settings are in .cargo/mutants.toml. A full run is about 2300 mutants,
-# 40 minutes and 10 runner-hours, so it never runs on push: start it from the Actions tab
-# or with `gh workflow run mutants.yml`. The summary job merges the shards' lists into
-# the `mutants` artifact (`gh run download RUN_ID -n mutants`) and writes the counts
-# and the missed mutants to the run's summary page. Each shard's whole mutants.out,
-# with every mutant's diff and log, is the artifact `mutants-shard-N`.
+# Mutation testing: cargo-mutants breaks the code in small ways (a function returns a
+# default, `==` becomes `!=`) and runs the tests against each change. A missed mutant
+# is one the tests still pass, which marks code no test checks. The settings are in
+# .cargo/mutants.toml.
+#
+# A daily run, on a schedule, tests only the mutants in the lines changed since the
+# newest run that tested every mutant in its range (bin/mutants-base says how it finds
+# that run), and skips when nothing changed. A full run is about 2300 mutants, 40
+# minutes and 10 runner-hours, so it never runs on a schedule or a push: start it from
+# the Actions tab or with `gh workflow run mutants.yml`. `-f full=false` starts a daily
+# run by hand.
+#
+# Where the results land: the summary job merges the shards' lists into the `mutants`
+# artifact (`gh run download RUN_ID -n mutants`) and writes the counts and the missed
+# mutants to the run's summary page. The artifact also holds a daily run's
+# `in-diff.patch`, the lines it covered, and `covered` (the run's base and head) when
+# every mutant was tested; `covered` is also the artifact `mutants-covered`, which
+# bin/mutants-base looks for. A daily run with no mutants in its lines uploads only
+# `mutants-covered`. Each shard's whole mutants.out, with every mutant's diff and log,
+# is the artifact `mutants-shard-N`.
+# The mutants-triage skill (.claude/skills/mutants-triage) turns a run into the few
+# issues worth a test, and comments on the tracking issue naming the run it triaged.
+# Tracking issue: #19
 name: Mutants
 
 on:
+  schedule:
+    # Daily at 11:23 UTC, early morning in California, off the hour's busy minute.
+    - cron: "23 11 * * *"
   workflow_dispatch:
+    inputs:
+      full:
+        description: Test every mutant, not only those in the lines changed since the last covered run
+        type: boolean
+        default: true
 
 permissions:
   contents: read
 
-# A second dispatch waits for the first, so a run never takes more than its 16 jobs.
+# A second run of a kind waits for the first, so a full run never takes more than its
+# 16 jobs at once, and a daily run finds the base the one before it left. A daily and a
+# full run have groups of their own: a full run's 10 runner-hours don't hold up the
+# daily one, whose at most 4 shards (bin/mutants-shards) fit beside it.
 concurrency:
-  group: mutants
+  group: ${{ (github.event_name == 'schedule' || !inputs.full) && 'mutants-daily' || 'mutants' }}
   cancel-in-progress: false
 
 defaults:
   run:
     shell: bash
 
+env:
+  DAILY: ${{ github.event_name == 'schedule' || !inputs.full }}
+
 jobs:
-  shard:
+  setup:
     runs-on: ubuntu-latest
-    # About 63 mutants a shard. GitHub stops any job at 6 hours.
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      # bin/mutants-base reads the earlier runs and their artifacts.
+      actions: read
+    outputs:
+      base: ${{ steps.base.outputs.base }}
+      mutants: ${{ steps.list.outputs.mutants }}
+      shards: ${{ steps.list.outputs.shards }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          # The whole history: bin/mutants-base checks that HEAD holds a run's head,
+          # and falls back to the commit that added this workflow.
+          fetch-depth: 0
+      # An API error fails the job rather than falling back to a wider range.
+      - name: Find the base
+        id: base
+        if: env.DAILY == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          base=$(bin/mutants-base "$GITHUB_REPOSITORY")
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@stable
+      # cargo-mutants is pinned: its config keys and its mutants.out files change
+      # between releases.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants@27.1.0
+      # The list is every mutant the shards test, which the summary job counts the
+      # shards' lists against. cargo-mutants lists none for a diff that is empty or
+      # changes no mutant's lines, and exits 0.
+      - name: List the mutants
+        id: list
+        env:
+          BASE: ${{ steps.base.outputs.base }}
+        run: |
+          mkdir list
+          in_diff=()
+          daily=()
+          if [ "$DAILY" = true ]; then
+            daily=(--daily)
+            # Without rename detection, a moved file's lines all count as changed:
+            # cargo-mutants reads only a diff's added lines.
+            git diff --no-renames --no-ext-diff "$BASE" HEAD > list/in-diff.patch
+            in_diff=(--in-diff list/in-diff.patch)
+          fi
+          cargo mutants --list "${in_diff[@]}" > list/all-mutants.txt
+          mutants=$(wc -l < list/all-mutants.txt)
+          if [ "$DAILY" = true ]; then
+            echo "$mutants mutants in the lines changed since $BASE." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "mutants=$mutants" >> "$GITHUB_OUTPUT"
+          shards=$(bin/mutants-shards list/all-mutants.txt "${daily[@]}")
+          echo "shards=$shards" >> "$GITHUB_OUTPUT"
+      - if: steps.list.outputs.mutants != '0'
+        uses: actions/upload-artifact@v7
+        with:
+          name: mutants-list
+          path: list
+          retention-days: 30
+      # A daily run with no mutants in its lines covered them all: the next one starts
+      # from here, so a month of changes that make no mutants doesn't send the base
+      # back past the artifacts' 30 days.
+      - name: Mark the lines covered
+        if: env.DAILY == 'true' && steps.list.outputs.mutants == '0'
+        env:
+          BASE: ${{ steps.base.outputs.base }}
+        run: bin/mutants-summary no-shards covered list/all-mutants.txt --head "$GITHUB_SHA" --base "$BASE" > /dev/null
+      - if: env.DAILY == 'true' && steps.list.outputs.mutants == '0'
+        uses: actions/upload-artifact@v7
+        with:
+          name: mutants-covered
+          path: covered/covered
+          retention-days: 30
+
+  shard:
+    needs: setup
+    if: needs.setup.outputs.mutants != '0'
+    runs-on: ubuntu-latest
+    # GitHub stops any job at 6 hours.
     timeout-minutes: 330
     strategy:
       fail-fast: false
@@ -35,8 +145,7 @@ jobs:
       # CI. The matrix's length is the number of shards.
       max-parallel: 16
       matrix:
-        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
-                16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
+        shard: ${{ fromJSON(needs.setup.outputs.shards) }}
     env:
       # Each mutant is an incremental build. rust-toolchain turns incremental
       # compilation off unless it's set.
@@ -45,21 +154,27 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: mutants-list
+          path: ${{ runner.temp }}/list
       - uses: dtolnay/rust-toolchain@stable
-      # cargo-mutants is pinned: its config keys and its mutants.out files change
-      # between releases.
       - uses: taiki-e/install-action@v2
         with:
           tool: nextest,cargo-mutants@27.1.0
+      # The smoke tests run ops/smoke-staging through uv, as CI's checks do.
+      - uses: astral-sh/setup-uv@v10.3.3
       - name: Test the shard's mutants
         env:
           SHARD: ${{ strategy.job-index }}
           SHARDS: ${{ strategy.job-total }}
           SQLX_OFFLINE: "true"
+          LIST: ${{ runner.temp }}/list
         # Round-robin gives each shard a mix of analyzer and server mutants, rather
-        # than a run of consecutive files. Exit status 2 (some mutants missed) and 3
-        # (some timed out) are results; any other failure, such as 4 (the tests fail
-        # before any mutation), fails the shard.
+        # than a run of consecutive files. A daily run's --in-diff picks the same
+        # mutants the setup job listed, before they are shared out. Exit status 2
+        # (some mutants missed) and 3 (some timed out) are results; any other
+        # failure, such as 4 (the tests fail before any mutation), fails the shard.
         #
         # Each process gets at most 3 GiB of data. Some mutants make a loop grow a
         # buffer without end (`i += 1` to `i *= 1` in encoded.rs's decode_url), which
@@ -69,8 +184,12 @@ jobs:
         # at once still leave the runner 4 GB.
         run: |
           ulimit -d 3145728
+          in_diff=()
+          if [ "$DAILY" = true ]; then
+            in_diff=(--in-diff "$LIST/in-diff.patch")
+          fi
           status=0
-          cargo mutants --shard "$SHARD/$SHARDS" --sharding round-robin || status=$?
+          cargo mutants --shard "$SHARD/$SHARDS" --sharding round-robin "${in_diff[@]}" || status=$?
           case "$status" in
             0|2|3) exit 0 ;;
             *) exit "$status" ;;
@@ -83,37 +202,48 @@ jobs:
           retention-days: 30
 
   summary:
-    needs: shard
+    needs: [setup, shard]
     # Also after a failed or cancelled shard, to keep the other shards' results.
-    if: always()
+    if: always() && needs.setup.result == 'success' && needs.setup.outputs.mutants != '0'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      # The checkout and cargo-mutants list every mutant, to count the ones no shard
-      # reported.
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: taiki-e/install-action@v2
+      - uses: actions/download-artifact@v8
         with:
-          tool: cargo-mutants@27.1.0
+          name: mutants-list
+          path: list
       - uses: actions/download-artifact@v8
         with:
           pattern: mutants-shard-*
           path: shards
-      # bin/mutants-summary fails the step when fewer mutants were tested than
-      # cargo-mutants lists, as when a shard failed, was cancelled or ran out of time.
-      # It writes the lists and the summary all the same.
+      # bin/mutants-summary fails the step when fewer mutants were tested than the
+      # setup job listed, as when a shard failed, was cancelled or ran out of time.
+      # It writes the lists and the summary all the same, and `covered` only when
+      # every mutant was tested.
       - name: Merge the shards' lists
+        env:
+          BASE: ${{ needs.setup.outputs.base }}
         run: |
-          cargo mutants --list > all-mutants.txt
-          bin/mutants-summary shards mutants all-mutants.txt >> "$GITHUB_STEP_SUMMARY"
+          range=(--head "$GITHUB_SHA")
+          if [ "$DAILY" = true ]; then
+            range+=(--base "$BASE" --in-diff list/in-diff.patch)
+          fi
+          bin/mutants-summary shards mutants list/all-mutants.txt "${range[@]}" >> "$GITHUB_STEP_SUMMARY"
       - if: always()
         uses: actions/upload-artifact@v7
         with:
           name: mutants
           path: mutants
+          retention-days: 30
+      - if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mutants-covered
+          path: mutants/covered
+          if-no-files-found: ignore
           retention-days: 30
       - name: Fail when a shard failed
         if: always() && needs.shard.result != 'success'

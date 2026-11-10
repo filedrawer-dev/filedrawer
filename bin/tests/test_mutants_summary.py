@@ -19,7 +19,7 @@ crates/b/src/x.rs:7:3: replace + with - in k
 """
 
 
-def run(tmp_path: Path, shards: dict[str, dict[str, str]] | None = None):
+def run(tmp_path: Path, shards: dict[str, dict[str, str]] | None = None, *args: str):
     """Lay out each shard in a folder of its own under shards/, then run the script."""
     for name, lists in (shards or {}).items():
         folder = tmp_path / "shards" / name
@@ -28,7 +28,7 @@ def run(tmp_path: Path, shards: dict[str, dict[str, str]] | None = None):
             (folder / f"{list_name}.txt").write_text(text)
     (tmp_path / "all.txt").write_text(ALL)
     return subprocess.run(
-        [SCRIPT, "shards", "out", "all.txt"],
+        [SCRIPT, "shards", "out", "all.txt", *args],
         cwd=tmp_path,
         capture_output=True,
         text=True,
@@ -96,6 +96,41 @@ def test_every_mutant_tested_merges_the_lists_and_passes(tmp_path):
         "crates/b/src/x.rs:7:3: replace + with - in k\n"
     )
     assert (out / "unviable.txt").read_text() == ""
+
+
+def test_every_mutant_tested_writes_covered_with_the_range(tmp_path):
+    result = run(tmp_path, two_shards(), "--head", "h" * 40, "--base", "b" * 40)
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "out/covered").read_text() == (
+        f"base {'b' * 40}\nhead {'h' * 40}\n"
+    )
+
+
+def test_a_full_run_that_tested_every_mutant_writes_covered_with_its_head(tmp_path):
+    result = run(tmp_path, two_shards(), "--head", "h" * 40)
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "out/covered").read_text() == f"head {'h' * 40}\n"
+
+
+def test_a_run_that_left_mutants_untested_writes_no_covered(tmp_path):
+    shards = two_shards()
+    del shards["mutants-shard-1"]
+    result = run(tmp_path, shards, "--head", "h" * 40)
+    assert result.returncode == 1
+    assert not (tmp_path / "out/covered").exists()
+
+
+def test_without_a_head_it_writes_no_covered(tmp_path):
+    result = run(tmp_path, two_shards())
+    assert result.returncode == 0, result.stderr
+    assert not (tmp_path / "out/covered").exists()
+
+
+def test_the_in_diff_patch_goes_into_the_lists(tmp_path):
+    (tmp_path / "in.patch").write_text("diff --git a/x b/x\n")
+    result = run(tmp_path, two_shards(), "--in-diff", "in.patch")
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "out/in-diff.patch").read_text() == "diff --git a/x b/x\n"
 
 
 def test_a_missing_shard_fails_but_still_writes_the_summary(tmp_path):

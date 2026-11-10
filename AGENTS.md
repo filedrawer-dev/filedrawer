@@ -143,8 +143,10 @@ A `mutate-check` rebuilds for each mutant, so it goes through plain `heavy` the 
 Give a foreground `heavy --quick` call a Bash timeout of 600000 ms, since it may wait behind a running job; llm-toolbox's heavy-gate refuses one without it.
 Install nextest once per machine: `cargo install cargo-nextest --locked`, or the prebuilt binary from https://get.nexte.st/latest/linux.
 
-Mutation testing (cargo-mutants, set in `.cargo/mutants.toml`) runs in CI, only when started by hand, since a full run takes about 10 runner-hours: `gh workflow run mutants.yml`.
-The workflow's header says where the results land, and the `mutants-triage` skill turns a run into the few issues worth a test.
+Mutation testing (cargo-mutants, set in `.cargo/mutants.toml`) runs in CI, in `.github/workflows/mutants.yml`.
+Each day it tests the mutants in the lines changed since the last run that tested all of its own, and skips when nothing changed.
+A full run takes about 10 runner-hours, so it runs only when started by hand: `gh workflow run mutants.yml`.
+The workflow's header says where the results land, and the `mutants-triage` skill turns a run into the few issues worth a test, then marks the run triaged in a comment on #19.
 To check that a new test catches a mutant the run missed, write the change its line in `missed.txt` names as an apply-edits block and run it through `mutate-check` (`-h`), which takes seconds.
 
 `bin/lychee` downloads lychee once per machine and checks it against the SHA-256 pinned in the script.

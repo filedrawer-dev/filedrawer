@@ -1030,6 +1030,13 @@ Python is fine for scripts and internal tools.
 - No test in `bin/tests` sets a wall-clock limit of its own; pytest.ini's 600 s per test is the only one, a guard against a hang (2026-11-09, #37).
   Reason: beside another session's check, a wizard test that takes 2 s alone ran past its 60 s limit and refused a commit (2026-11-08).
   A slow machine may let a bug pass, but must never fail a test.
+- Mutation testing runs daily in CI over the mutants in the lines changed since the newest run that tested every mutant in its range, and in full only by hand (`.github/workflows/mutants.yml`; 2026-11-10).
+  Reason: a full run takes about 10 runner-hours, too much for each push, and a run started only by hand leaves new code untested until someone starts it; a day's changes make a few mutants.
+  The base is asked of GitHub (`bin/mutants-base`): a run whose shards left mutants untested doesn't move it, so those lines come up again the next day, and the run fails, as a full one does.
+  A full run that tested every mutant moves it too, and so does a daily run that found no mutants in its lines.
+  A daily run takes at most 4 shards (`bin/mutants-shards`), so with a full run's 16 it stays within the org's 20 concurrent jobs.
+  With no such run in the artifacts' 30 days, the base is the commit that added the workflow, so the first daily run is close to a full one.
+  Each triage comments on #19 with a `Triaged run:` line, which marks the runs before it as addressed; llm-toolbox's `/upskill` lists the runs after it.
 
 ## Licences
 
