@@ -565,8 +565,11 @@ def test_production_sends_each_script_for_production_in_order(production):
         at("screening.sh", "ENVIRONMENT=production"),
         at("github-token.sh"),
         at("ping.sh"),
+        at("backup.sh"),
     ]
     assert order == sorted(order), order
+    # The timer starts with backup.sh, so the program it runs is there first.
+    assert sent.index(script("filedrawer-backup")) < at("backup.sh")
     # loopback.sh names staging's user, so it must exist first.
     assert at("service-user.sh", "ENVIRONMENT=staging") < at("loopback.sh")
     # The install script that knows production goes to the server.
@@ -802,6 +805,20 @@ def test_production_opens_the_workspaces_page_before_the_keys(production):
     ) < opened.index("https://console.anthropic.com/settings/keys")
 
 
+def test_production_asks_the_owner_to_turn_on_hetzners_backups(production):
+    result = production.run(answers=FULL_RUN)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "https://console.hetzner.cloud/" in production.opened.read_text()
+    assert "Enable backups" in result.stdout
+
+
+def test_production_only_new_leaves_hetzners_backups_to_the_first_run(production):
+    result = rerun_production(production)
+    assert result.returncode == 0, result.stdout + result.stderr
+    opened = production.opened.read_text() if production.opened.exists() else ""
+    assert "hetzner" not in opened
+
+
 def test_production_refuses_a_stage_it_doesnt_have(production):
     result = production.run("nonsense", answers="")
     assert result.returncode != 0
@@ -825,6 +842,7 @@ def remote_scripts() -> list[Path]:
 INSTALLED = {
     "filedrawer-receive": "/usr/local/bin",
     "filedrawer-install": "/usr/local/sbin",
+    "filedrawer-backup": "/usr/local/sbin",
 }
 
 # Each reason says when the script does reach the server.
@@ -846,6 +864,10 @@ STAGING_ONLY_NEW_EXEMPT = {
     "staging off production's port.",
     "ping.sh": "Production's wizard sends it, without --only-new or when "
     "production-ping.env is missing.",
+    "backup.sh": "Production's wizard sends it on every run: only production has "
+    "backups.",
+    "filedrawer-backup": "Production's wizard installs it on every run, for "
+    "backup.sh's timer.",
     "field-test-key.sh": FIELD_TEST_KEY,
 }
 PRODUCTION_ONLY_NEW_EXEMPT = {

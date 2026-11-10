@@ -1039,8 +1039,16 @@ Python is fine for scripts and internal tools.
   Reason (2026-11-06, #12): a file stored by its hash is written once, so Object Lock's 30 days would protect it only in its first month.
   A key that can't delete protects every file for as long as it is live, and purged files still leave the backups within 45 days.
   Check at build time that B2 lets such a key hide files (#4).
-- During the beta, #41's timer writes production's nightly copies into `backups/` beside the database file, as `filedrawer-YYYY-MM-DD.db`, writing each as a `.tmp` file and renaming it once whole; the owner's daily email reports the newest (see [Admin](#admin)).
-  #41's restore drill runs the binary with `FILEDRAWER_ENVIRONMENT=staging` and no ping or SMTP settings, so it neither mails nor pings (the owner's decision, 2026-11-09).
+- During the beta, until #4 lands, production's backups are a nightly copy of its database and Hetzner's daily server backups, 7 kept (the owner's decisions, 2026-11-09, #41).
+  The beta accepts up to a day's loss, and backups at the host's own company, so losing the Hetzner account loses both.
+  Reason: Hetzner snapshots a running disk, which may catch the live database mid-transaction; the nightly copy is always whole, and Hetzner's backups carry it with the attached files and the config.
+- A timer (`ops/remote/backup.sh`) runs `ops/remote/filedrawer-backup` at 23:30 UTC as production's user, which writes `VACUUM INTO` a `.tmp` file in `backups/` beside the database file, checks it with `PRAGMA quick_check`, renames it to `filedrawer-YYYY-MM-DD.db` (the UTC date), keeps the newest 2, and pings healthchecks.io with the copy's size, or `/fail` with why (the owner's decisions, 2026-11-10).
+  The owner's daily email, just after midnight, reports the newest (see [Admin](#admin)), so a failed night shows up in it at once.
+  A shell script with the sqlite3 CLI, not a command of the server's binary.
+  Reason: a deploy that breaks the binary mustn't stop the copies too.
+  It runs as the server's user, not root.
+  Reason: sqlite3 run as root while the server is down can leave root's `-wal` and `-shm` files beside the database, which the server then can't open; a bad binary could delete the 2 local copies, but not Hetzner's.
+- `ops/restore-drill.md` restores a Hetzner backup to a new server once by hand and opens the newest nightly copy with the production binary, run with `FILEDRAWER_ENVIRONMENT=staging` and no ping or SMTP settings, so it neither mails nor pings (the owner's decision, 2026-11-09).
 - Monitoring: a free external uptime checker, UptimeRobot, checks `https://filedrawer.dev/tags` and emails the owner when the site is down (the owner's decision, 2026-11-10).
   Litestream, the restore test, the memory timer and the daily email ping healthchecks.io, which emails the owner when one goes quiet or reports a failure.
   The daily email's ping URL is in `/etc/filedrawer/production-ping.env`, and the nightly copy's, for #41's timer, in `production-backup.env` as `BACKUP_PING`.

@@ -734,8 +734,8 @@ production_pings_stage() {
     return 0
   fi
   say "healthchecks.io emails you when a job stops reporting. Production refuses to"
-  say "start without the daily email's ping URL. The nightly copy's (#41) waits for"
-  say "its timer."
+  say "start without the daily email's ping URL. The nightly copy's (#41) goes to the"
+  say "timer the next stage installs."
   open_url "https://healthchecks.io/"
   step "Sign up (free), then add two checks. Name them 'filedrawer daily email' and"
   step "'filedrawer nightly copy', and change each one's schedule to:"
@@ -753,6 +753,25 @@ production_pings_stage() {
   done
   remote_with_secret ping.sh PINGS "$DAILY_PING"$'\t'"$BACKUP_PING"
   unset DAILY_PING BACKUP_PING
+  pause
+}
+
+production_backup_stage() {
+  stage "Backups: the nightly copy and Hetzner's"
+  say "A timer copies production's database each night at 23:30 UTC into backups/"
+  say "beside it, keeps the newest 2, and pings the nightly copy's check (#41). Until"
+  say "the first deploy there's no database, so it skips and the check stays 'new'."
+  # The program first: enabling the timer can start a missed run at once.
+  install_on_server filedrawer-backup /usr/local/sbin
+  remote backup.sh
+  if (( ONLY_NEW )); then
+    note "--only-new doesn't ask about Hetzner's backups: the first run did."
+  else
+    say "Hetzner's own backups hold the copies, the attached files and the config:"
+    say "daily, 7 kept, for about 20% of the server's price."
+    open_url "https://console.hetzner.cloud/"
+    step "Open the server, then Backups, then Enable backups."
+  fi
   pause
 }
 
@@ -849,7 +868,7 @@ production_account_stage() {
 production() {
   case "${1:-}" in
     "")
-      TOTAL_STAGES=9
+      TOTAL_STAGES=10
       banner "File Drawer VPS: production setup"
       production_preflight_stage
       production_dns_stage
@@ -859,6 +878,7 @@ production() {
       production_screening_stage
       production_github_stage
       production_pings_stage
+      production_backup_stage
       production_check_stage
       ;;
     account)

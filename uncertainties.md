@@ -473,6 +473,25 @@ The owner settled the email's sections and the rules in design.md's Admin sectio
 - Against: if a deploy rolls back to a binary from before `entry_references`, the entries it stores get no keys, and the next binary, finding the version current, doesn't fill them, so `cites=` misses them until each gets a new version.
   A rebuild at every startup would cost a read of every entry, still small before launch.
 
+#### The nightly copy before the first deploy
+
+- Options: the timer skips while production has no database (`ConditionPathExists`), or it runs and pings `/fail` each night until the first deploy (#41).
+- Chosen: it skips, so healthchecks.io raises no alarm before production has anything to copy.
+- Against: a database path that drifts from the unit's condition skips every night silently; healthchecks.io notices only once the check has had a first ping, and the daily email's missing-copy line is the only other sign.
+
+#### The nightly copy refuses a copy dated after today
+
+- Options: fail the run, keeping every copy, when the newest copy is dated after today (UTC); or copy and prune as usual.
+- Chosen: fail (#41's brief review).
+  A clock that ran ahead leaves a copy that pruning by name keeps for good and the daily email takes for fresh, hiding every later failure.
+- Against: after a clock that ran ahead is fixed, every night fails until someone removes the future-dated copy by hand.
+
+#### The restore drill's firewall
+
+- Options: create the drill server behind a Hetzner firewall whose one outbound rule denies everything else, or boot it in rescue mode and remove production's unit links before its first boot.
+- Chosen: the firewall (#41's brief review): a few console clicks, and nothing on the restored disk changes before the drill reads it.
+- Against: it rests on Hetzner's rule that one outbound rule denies all other outbound traffic, which nobody has checked against their docs here; and at boot the timer's catch-up run still makes a copy and prunes the oldest on the drill's disk.
+
 ### API
 
 #### JSON on every route

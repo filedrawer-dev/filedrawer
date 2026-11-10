@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# Production's nightly copy of its database, during the beta (#41; design.md, Hosting
+# and operations). filedrawer-backup.timer runs it at 23:30 UTC as filedrawer-prod,
+# with production.env's FILEDRAWER_DATABASE and production-backup.env's BACKUP_PING;
+# ops/remote/backup.sh installs both units.
+#
+# It writes `VACUUM INTO` a .tmp file in backups/ beside the database, checks it with
+# PRAGMA quick_check, renames it to filedrawer-YYYY-MM-DD.db (the UTC date), which
+# the daily email reports, keeps the newest 2 copies, and pings healthchecks.io with
+# the copy's size. Any failure pings BACKUP_PING/fail and exits 1. A failure before
+# the rename leaves no file under the copy's name; one after it keeps the copy.
+#
+# Anyone holding the ping URL can report the job healthy, so it reaches curl on stdin
+# and no message prints it.
+set -euo pipefail
+
+: "${FILEDRAWER_DATABASE?the database to copy, as the server reads it}"
+ping_url="${BACKUP_PING-}"
+if [[ ! "$ping_url" =~ ^https://hc-ping\.com/[A-Za-z0-9_./-]+$ ]]; then
+  # With no ping there's nobody to tell, so it copies nothing.
+  echo "BACKUP_PING isn't a healthchecks.io ping URL; ops/remote/ping.sh writes it" >&2
+  exit 1
+fi
+database="$FILEDRAWER_DATABASE"
+backups="$(dirname "$database")/backups"
+today=$(date -u +%F)
+copy="$backups/filedrawer-$today.db"
+# The copies the daily email reads, and the only files this prunes.
+copy_name='^filedrawer-[0-9]{4}-[0-9]{2}-[0-9]{2}\.db$'
+
+# ping SUFFIX [BODY]: tells healthchecks.io, retrying for about a minute.
+ping() {
+  printf 'url = "%s%s"\n' "$ping_url" "$1" |
+    curl -fsS -m 10 --retry 5 --retry-all-errors --data-raw "${2-}" -K - >/dev/null
+}
+
+tmp=""
+reason=""
+renamed=0
+# fail MESSAGE: says why, and exits; the exit trap pings /fail.
+fail() {
+  reason="$1"
+  echo "nightly copy: $1" >&2
+  exit 1
+}
+finish() {
+  local status=$?
+  [[ -n "$tmp" ]] && rm -f "$tmp"
+  if (( status != 0 )); then
+    [[ -n "$reason" ]] || reason="exited with status $status"
+    (( renamed )) && reason="$reason (the copy $copy was kept)"
+    ping /fail "$reason" || echo "nightly copy: the /fail ping failed too" >&2
+  fi
+}
+trap finish EXIT
+
+umask 077
+mkdir -p "$backups"
+exec 9>"$backups/.lock"
+flock -n 9 || fail "another copy is running"
+
+[[ -f "$database" ]] || fail "no database at $database"
+
+# list_copies [EXCEPT]: the copies in $existing, oldest first (they sort by the date
+# in their names), leaving out EXCEPT.
+list_copies() {
+  existing=()
+  local path
+  for path in "$backups"/filedrawer-*.db; do
+    [[ "$(basename "$path")" =~ $copy_name && "$path" != "${1-}" ]] && existing+=("$path")
+  done
+  return 0
+}
+
+list_copies
+if (( ${#existing[@]} > 0 )); then
+  newest=$(basename "${existing[-1]}")
+  # A copy dated after today means the clock was ahead then or is behind now; the
+  # email would take it for fresh, and pruning by name would keep it for good.
+  if [[ "$newest" > "filedrawer-$today.db" ]]; then
+    fail "the newest copy, $newest, is dated after today ($today); check the clock"
+  fi
+fi
+
+size=$(stat -c %s "$database")
+[[ -f "$database-wal" ]] && size=$(( size + $(stat -c %s "$database-wal") ))
+need=$(( size + size / 10 + 64 * 1024 * 1024 ))
+free=$(df -B1 --output=avail "$backups" | tail -n 1)
+if (( free < need )); then
+  fail "too little free space in $backups: $free bytes, and the copy needs about $need"
+fi
+
+# A run that died mid-copy leaves its .tmp; one younger than a day may still be
+# another run's.
+find "$backups" -maxdepth 1 -name 'filedrawer-*.tmp' -mmin +1440 -delete
+
+tmp=$(mktemp --suffix=.tmp "$backups/filedrawer-$today.XXXXXX")
+# VACUUM INTO writes only to an empty file; mktemp's is. Read-only by URI, so a
+# missing database is an error rather than a new empty one.
+quoted_tmp="${tmp//\'/\'\'}"
+if ! sqlite3 -bail "file:$database?mode=ro" \
+  ".timeout 60000" \
+  "SELECT 1 FROM entries LIMIT 0;" \
+  "VACUUM INTO '$quoted_tmp';"; then
+  fail "sqlite3 couldn't copy $database"
+fi
+# quick_check lists what it finds and still exits 0.
+check=$(sqlite3 "$tmp" "PRAGMA quick_check;") || fail "sqlite3 couldn't check the copy"
+[[ "$check" == ok ]] || fail "the copy failed PRAGMA quick_check: ${check:0:200}"
+sync "$tmp"
+mv -f "$tmp" "$copy"
+tmp=""
+renamed=1
+sync "$backups"
+
+# Keep the newest 2, never the copy just written.
+list_copies "$copy"
+for (( i = 0; i + 1 < ${#existing[@]}; i++ )); do
+  rm -f "${existing[i]}"
+done
+
+copied=$(stat -c %s "$copy")
+ping "" "filedrawer-$today.db, $copied bytes" || fail "the ping to healthchecks.io failed"
+echo "nightly copy: filedrawer-$today.db, $copied bytes"
