@@ -4,7 +4,7 @@
 {% block content %}
 <p><a href="/admin">Review queue</a></p>
 <h1>{{ title }}</h1>
-<p><code>{{ entry.id }}</code>, {{ entry.status }}, from {{ entry.display_name.as_deref().unwrap_or("account deleted") }} <code>{{ entry.account_id }}</code>, submitted {{ entry.submitted_at }}{% if let Some(batch) = entry.batch_id %}, in batch <code>{{ batch }}</code>, which publishes as one{% endif %}.</p>
+<p><code>{{ entry.id }}</code>, {{ entry.status }}, from {{ entry.display_name.as_deref().unwrap_or("account deleted") }} <a href="/admin/accounts/{{ entry.account_id }}"><code>{{ entry.account_id }}</code></a>, submitted {{ entry.submitted_at }}{% if let Some(batch) = entry.batch_id %}, in batch <code>{{ batch }}</code>, which publishes as one{% endif %}.</p>
 {% match standing %}
 {% when Standing::Restorable with { to } %}
 <p>You removed it, so the site serves it nowhere and its author's token reads only that it was removed. Restoring puts it back as {{ to }}.</p>

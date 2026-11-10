@@ -5,6 +5,7 @@
 
 mod accounts;
 mod admin_removal;
+mod admin_suspension;
 mod allowance;
 mod attachments;
 mod batches;

@@ -20,7 +20,7 @@ use crate::pages::{
     VerifyPage, page,
 };
 use crate::time::now_utc;
-use crate::{AppState, admin, deletion, invites, jobs, passwords, series, withdraw};
+use crate::{AppState, admin, deletion, invites, jobs, passwords, series, suspension, withdraw};
 
 const COOKIE: &str = "fd_session";
 
@@ -530,6 +530,8 @@ pub async fn publish_series(
     session: SessionAccount,
     Path(id): Path<String>,
 ) -> Result<Response, AppError> {
+    // Making a series public serves its author text.
+    suspension::refuse_if_suspended(&state.pool, &session.id).await?;
     if !series::make_public(&state.pool, &id, &session.id).await? {
         return Err(AppError::NotFound);
     }

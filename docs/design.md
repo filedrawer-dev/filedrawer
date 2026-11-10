@@ -866,6 +866,11 @@ Reason: entries and feedback can carry instructions, such as "create an invite c
     A restore is refused when its account is deleted, when another version has replaced the one it replaced, which would fork the chain, and for a member of a batch removed before the batch was decided, which went on without it.
     Reason: a batch is decided as one.
     The author's token reads `status: removed` and the contact address, but not the text; the public gets a 404.
+  - `/admin/accounts/<id>` suspends an account, and removes each of its entries, each keeping its status for a restore.
+    The account's token can read, but every write gets a 403 that names the contact address, before its rate counts; a trigger refuses an entry insert from a suspended account, for a write that passed the token check as the suspension committed.
+    It can't make a series public, but its browser session can still log in, make tokens and delete the account.
+    Lifting the suspension restores nothing, and no entry of a suspended account can be restored (the owner's decision, 2026-11-09).
+    Reason: an entry removed as a hazard mustn't come back by accident.
 - For an erasure request, the owner purges instead.
   A purge deletes the data from the database: the named entries with all their versions and search rows, or an account's email, login, display name, linked GitHub and ORCID handles, private feedback and its triage-inbox summaries.
   It deletes attached files that no other entry uses.

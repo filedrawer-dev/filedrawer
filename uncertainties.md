@@ -251,6 +251,18 @@ Add a new entry at the end of the topic it belongs to, or start a topic when non
 - Chosen: one, since the batch publishes as one once its last member passes.
 - Against: an agent reading the text can't tell which members are screened today.
 
+#### Removing a version moves its chain's release date
+
+- Options: a removed version leaves the chain's release date, as here, since `entries::chain_embargo` counts only live versions; keep removed versions in the date; or refuse to remove a version while an earlier one is embargoed.
+- Chosen: leave it out, since embargoes are paused (#33) and no new entry is embargoed.
+- Against: removing a later version embargoed further ahead, say to take down personal data in it, lets an earlier embargoed version release on its own sooner date, against its author's later choice.
+
+#### A removed entry's author doesn't find it in `/entries/mine`
+
+- Options: list removed entries there with `status: removed`, as `GET /e/<id>` now answers their author (the owner's choice, 2026-11-09); or leave them out, as here for now.
+- Chosen: leave them out until the skills release under way lands, since `skills/filedrawer-submit/SKILL.md` says the list leaves them out and the change needs a new skill version (#58).
+- Against: an author who lists their entries sees one vanish, and may submit it again.
+
 ### Series
 
 #### Series: what a section anchor is
@@ -280,6 +292,17 @@ Add a new entry at the end of the topic it belongs to, or start a topic when non
 - Chosen: rotate.
   One rule, no new table, and a removed member who kept the key can't rejoin.
 - Against: the creator must hand the new key to every teammate who hasn't joined yet.
+
+#### Series of a suspended account
+
+- Options: keep serving a suspended account's series, as here; or hide its series pages, and the series block on other members' entries, while it is suspended.
+- Chosen: keep serving them for now (the owner's decision, 2026-11-09, #43); an admin takedown of a series comes before production (#57).
+- Against: design.md says suspending stops the site serving the account's data, and a series' title and description are its author's text.
+  The join key limits who adds entries to a series, not who reads it, so a public series with a spam or hazardous description stays up for anyone, and until #57 only a hand edit of the database takes it down.
+  Three gaps follow, each rarer while hidden series are paused (#33):
+  `series::mark_readable` can still make a suspended creator's unreadable versions readable, once other members' entries publish;
+  the creator can't make a hidden series public, so members' `waiting_on_series` entries wait until the suspension is lifted or the entries leave the series;
+  and only the creator's token takes an entry out of the series.
 
 ### Screening and review
 

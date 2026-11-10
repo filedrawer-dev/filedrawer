@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT suspended_at IS NOT NULL AS \"suspended!: bool\" FROM accounts\n           WHERE id = ? AND deleted_at IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "suspended!: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "21144e8dbb447ad9f89dbe38f7c08316a040a3de3f8961525f247b74c676e1c4"
+}

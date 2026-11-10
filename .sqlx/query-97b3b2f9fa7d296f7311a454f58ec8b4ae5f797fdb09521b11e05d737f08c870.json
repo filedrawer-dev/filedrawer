@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT e.seq AS \"seq!: i64\", e.status, e.removed_from, e.previous_seq, e.batch_seq,\n                  a.deleted_at IS NOT NULL AS \"account_deleted!: bool\"\n           FROM entries e JOIN accounts a ON a.id = e.account_id\n           WHERE e.id = ?",
+  "query": "SELECT e.seq AS \"seq!: i64\", e.status, e.removed_from, e.previous_seq, e.batch_seq,\n                  a.deleted_at IS NOT NULL AS \"account_deleted!: bool\",\n                  a.suspended_at IS NOT NULL AS \"account_suspended!: bool\"\n           FROM entries e JOIN accounts a ON a.id = e.account_id\n           WHERE e.id = ?",
   "describe": {
     "columns": [
       {
@@ -63,6 +63,12 @@
         "ordinal": 5,
         "type_info": "Integer",
         "origin": "Expression"
+      },
+      {
+        "name": "account_suspended!: bool",
+        "ordinal": 6,
+        "type_info": "Integer",
+        "origin": "Expression"
       }
     ],
     "parameters": {
@@ -74,8 +80,9 @@
       true,
       true,
       true,
+      false,
       false
     ]
   },
-  "hash": "cc6fe3e8177a3d56e130c9bae33016a1915b229a7817e616b6b627eefa134547"
+  "hash": "97b3b2f9fa7d296f7311a454f58ec8b4ae5f797fdb09521b11e05d737f08c870"
 }

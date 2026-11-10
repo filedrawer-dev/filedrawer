@@ -32,6 +32,7 @@ mod routes;
 pub mod screening;
 mod series;
 mod skills;
+mod suspension;
 mod time;
 pub mod unpack;
 mod warnings;
@@ -214,6 +215,9 @@ fn build(state: AppState) -> Routes<Router> {
             post(admin::dismiss_refusal),
         )
         .route("/admin/accounts/{id}/clear-guard", post(admin::clear_guard))
+        .route("/admin/accounts/{id}", get(admin::account))
+        .route("/admin/accounts/{id}/suspend", post(admin::suspend))
+        .route("/admin/accounts/{id}/lift", post(admin::lift))
         .route("/admin/f/{sha256}", get(admin::file))
         .route("/admin/f/{sha256}/remove", post(admin::remove_file))
         .route(

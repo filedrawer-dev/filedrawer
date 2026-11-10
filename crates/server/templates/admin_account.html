@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Account {{ account.id }}{% endblock %}
+{% block wide %} wide{% endblock %}
+{% block content %}
+<p><a href="/admin">Review queue</a></p>
+<h1>{{ account.display_name }}</h1>
+<p><code>{{ account.id }}</code>, {{ account.email.as_deref().unwrap_or("no email") }}.</p>
+{% if let Some(at) = account.suspended_at %}
+<p class="suspended">Suspended since {{ at }}: it can't submit, and its entries were removed. Lifting the suspension lets it write again and restores none of them; restore each from its own page.</p>
+<form method="post" action="/admin/accounts/{{ account.id }}/lift"><button type="submit">Lift the suspension</button></form>
+{% else %}
+<form method="post" action="/admin/accounts/{{ account.id }}/suspend"><button type="submit">Suspend</button></form>
+<p>Suspending stops it submitting, and removes every entry of it, with no public notice. Its token can still read, and its author can still log in and delete the account.</p>
+{% endif %}
+<h2>Entries</h2>
+{% if entries.is_empty() %}
+<p>None.</p>
+{% else %}
+<ul>
+{% for entry in entries %}
+<li><a href="/admin/e/{{ entry.id }}"><code>{{ entry.id }}</code></a>, {{ entry.status }}, submitted {{ entry.submitted_at }}</li>
+{% endfor %}
+</ul>
+{% endif %}
+{% endblock %}

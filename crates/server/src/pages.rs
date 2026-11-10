@@ -12,6 +12,7 @@ use crate::entries::{ChainVersion, Doubted, EarlierVersion, OwnerEntry, PublicEn
 use crate::removed_entries::Standing;
 use crate::removed_files::{FileState, FileUse, OwnersFile};
 use crate::series::{Owned, Refused};
+use crate::suspension::{OwnersAccount, OwnersEntry};
 use crate::withdraw::{Listed, MadePublic, Member, WithOwner};
 
 /// A rendered page with its status code.
@@ -342,6 +343,13 @@ pub struct AdminQueuePage<'a> {
     /// Series the screen refused as a likely hazard, waiting for the owner's call.
     pub refusals: &'a [Refused],
     pub guarded: &'a [Guarded],
+}
+
+#[derive(Template)]
+#[template(path = "admin_account.html")]
+pub struct AdminAccountPage<'a> {
+    pub account: &'a OwnersAccount,
+    pub entries: &'a [OwnersEntry],
 }
 
 #[derive(Template)]

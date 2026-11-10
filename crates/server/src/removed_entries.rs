@@ -44,6 +44,24 @@ pub async fn remove(pool: &SqlitePool, id: &str) -> Result<Removed, sqlx::Error>
     Ok(Removed::Done)
 }
 
+/// Removes every entry of `account_id` not already removed, in the caller's
+/// transaction, each keeping its own status for a restore, as a suspension does.
+pub async fn remove_all_of(
+    connection: &mut SqliteConnection,
+    account_id: &str,
+) -> Result<(), sqlx::Error> {
+    let at = now();
+    sqlx::query!(
+        "UPDATE entries SET removed_from = status, removed_at = ?, status = 'removed'
+         WHERE account_id = ? AND status != 'removed'",
+        at,
+        account_id
+    )
+    .execute(&mut *connection)
+    .await?;
+    series::mark_readable(connection).await
+}
+
 /// What restoring an entry did.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Restored {
@@ -59,6 +77,8 @@ pub enum Restored {
 pub enum Refusal {
     /// Its account is deleted, and removed entries outlive it only for analysis.
     AccountDeleted,
+    /// Its account is suspended; lifting the suspension restores nothing by itself.
+    AccountSuspended,
     /// Version `by` has replaced the version this one replaced, so restoring it would
     /// give that version two current successors.
     Replaced { by: String },
@@ -72,6 +92,9 @@ impl Refusal {
         match self {
             Refusal::AccountDeleted => {
                 format!("entry {id}'s account is deleted, so it stays removed")
+            }
+            Refusal::AccountSuspended => {
+                format!("entry {id}'s account is suspended; lift the suspension first")
             }
             Refusal::Replaced { by } => format!(
                 "entry {by} has replaced the version {id} replaced, so restoring {id} would give that version two current successors"
@@ -115,13 +138,15 @@ struct Row {
     previous_seq: Option<i64>,
     batch_seq: Option<i64>,
     account_deleted: bool,
+    account_suspended: bool,
 }
 
 async fn row(connection: &mut SqliteConnection, id: &str) -> Result<Option<Row>, sqlx::Error> {
     sqlx::query_as!(
         Row,
         r#"SELECT e.seq AS "seq!: i64", e.status, e.removed_from, e.previous_seq, e.batch_seq,
-                  a.deleted_at IS NOT NULL AS "account_deleted!: bool"
+                  a.deleted_at IS NOT NULL AS "account_deleted!: bool",
+                  a.suspended_at IS NOT NULL AS "account_suspended!: bool"
            FROM entries e JOIN accounts a ON a.id = e.account_id
            WHERE e.id = ?"#,
         id
@@ -160,6 +185,9 @@ async fn refusal(
 ) -> Result<Option<Refusal>, sqlx::Error> {
     if row.account_deleted {
         return Ok(Some(Refusal::AccountDeleted));
+    }
+    if row.account_suspended {
+        return Ok(Some(Refusal::AccountSuspended));
     }
     // A rejected or withdrawn version is no successor, so it forks nothing.
     if let Some(previous) = row.previous_seq

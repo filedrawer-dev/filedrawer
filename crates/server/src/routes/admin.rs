@@ -11,13 +11,15 @@ use axum::response::{IntoResponse, Redirect, Response};
 use crate::error::AppError;
 use crate::link_checks::{self, LinkFlags};
 use crate::pages::{
-    AdminEntryPage, AdminFilePage, AdminInvitesPage, AdminQueuePage, QueueRow, ShownFile, page,
+    AdminAccountPage, AdminEntryPage, AdminFilePage, AdminInvitesPage, AdminQueuePage, QueueRow,
+    ShownFile, page,
 };
 use crate::removed_entries::{self, Removed, Restored};
 use crate::removed_files::{self, Removal};
 use crate::review::{self, Decided, Decision};
 use crate::routes::account::SessionAccount;
 use crate::series::RefusalCall;
+use crate::suspension::{self, Changed};
 use crate::time::now_utc;
 use crate::{AppState, accounts, attachments, entries, invites, series};
 use axum::Form;
@@ -341,6 +343,57 @@ pub async fn restore_entry(
         ))),
         Restored::Refused(refusal) => Err(AppError::Conflict(refusal.text(&id))),
     }
+}
+
+/// One account: whether it is suspended, its entries, and the form that suspends it or
+/// lifts its suspension.
+pub async fn account(
+    _: AdminSession,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Response, AppError> {
+    let (account, entries) = suspension::owners_account(&state.pool, &id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    Ok(page(
+        StatusCode::OK,
+        &AdminAccountPage {
+            account: &account,
+            entries: &entries,
+        },
+    ))
+}
+
+/// The reply to suspending or lifting account `id`: its page again, or why not, where
+/// `state` is how the account already stood.
+fn account_reply(id: &str, outcome: Changed, state: &str) -> Result<Response, AppError> {
+    match outcome {
+        Changed::Done => Ok(Redirect::to(&format!("/admin/accounts/{id}")).into_response()),
+        Changed::NoAccount => Err(AppError::NotFound),
+        Changed::Already => Err(AppError::Conflict(format!(
+            "account {id} is {state}; reload its page"
+        ))),
+    }
+}
+
+/// Suspends an account: it can't submit, and every entry of it is removed.
+pub async fn suspend(
+    _: AdminSession,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Response, AppError> {
+    let done = suspension::suspend(&state.pool, &id).await?;
+    account_reply(&id, done, "already suspended")
+}
+
+/// Lifts an account's suspension; its entries stay removed.
+pub async fn lift(
+    _: AdminSession,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Response, AppError> {
+    let done = suspension::lift(&state.pool, &id).await?;
+    account_reply(&id, done, "not suspended")
 }
 
 /// One attached file, by its SHA-256 (design.md, Attached code): its text, where it is

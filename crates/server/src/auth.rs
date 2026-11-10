@@ -6,7 +6,7 @@ use axum::http::{HeaderMap, Method, header};
 
 use crate::error::AppError;
 use crate::respond::one_line;
-use crate::{AppState, ids};
+use crate::{AppState, ids, suspension};
 
 /// The account a request's `Authorization: Bearer` token belongs to. Only an account
 /// with a verified email gets this far (design.md, Accounts: "An account can post
@@ -36,6 +36,7 @@ struct TokenRow {
     id: String,
     display_name: String,
     verified: bool,
+    suspended: bool,
     token_id: String,
 }
 
@@ -43,9 +44,14 @@ impl FromRequestParts<AppState> for TokenAccount {
     type Rejection = AppError;
 
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, AppError> {
-        let account = token_account(&parts.headers, state).await?;
-        // A write counts against the account's rate, refused or not (#14).
+        let (account, suspended) = lookup(&parts.headers, state).await?;
         if !matches!(parts.method, Method::GET | Method::HEAD) {
+            // A suspended account reads, and is told why it can't write before its
+            // rate counts, so the reason isn't hidden behind a 429.
+            if suspended {
+                return Err(suspension::refusal());
+            }
+            // A write counts against the account's rate, refused or not (#14).
             state.rate_limits.write_by(&account.id)?;
         }
         Ok(account)
@@ -78,12 +84,17 @@ pub fn bearer_token(headers: &HeaderMap) -> Option<&str> {
 }
 
 async fn token_account(headers: &HeaderMap, state: &AppState) -> Result<TokenAccount, AppError> {
+    Ok(lookup(headers, state).await?.0)
+}
+
+/// The account behind the request's token, and whether it is suspended.
+async fn lookup(headers: &HeaderMap, state: &AppState) -> Result<(TokenAccount, bool), AppError> {
     let token = bearer_token(headers).ok_or(AppError::Unauthorized)?;
     let hash = ids::token_hash(token.trim());
     let row = sqlx::query_as!(
         TokenRow,
         r#"SELECT a.id, a.display_name, a.email_verified_at IS NOT NULL AS "verified!: bool",
-                  t.id AS token_id
+                  a.suspended_at IS NOT NULL AS "suspended!: bool", t.id AS token_id
                FROM tokens t JOIN accounts a ON a.id = t.account_id
                WHERE t.hash = ? AND t.revoked_at IS NULL AND a.deleted_at IS NULL"#,
         hash
@@ -96,9 +107,10 @@ async fn token_account(headers: &HeaderMap, state: &AppState) -> Result<TokenAcc
                 "verify this account's email before submitting: open the link we emailed, or send another from your account page".into(),
             ));
     }
-    Ok(TokenAccount {
+    let account = TokenAccount {
         id: row.id,
         display_name: row.display_name,
         token_id: row.token_id,
-    })
+    };
+    Ok((account, row.suspended))
 }
