@@ -64,11 +64,16 @@ const NOT_FOR_AGENTS: &[&str] = &[
 ];
 
 /// Each URL on this site that `text` names, as a path without its query, with each
-/// `<name>` written as the router writes it, `{name}`.
+/// `<name>` written as the router writes it, `{name}`. A URL may follow other text in
+/// its word, as in `(URL)` or a Markdown link `[text](URL)`; angle brackets at its end
+/// are left alone, since a path's `<name>` uses them.
 fn named_paths(text: &str) -> Vec<String> {
     text.split(|c: char| c.is_whitespace() || c == '`' || c == '"')
-        .filter_map(|word| word.strip_prefix(PUBLIC_URL))
-        .map(|path| path.trim_end_matches(['.', ',', ')', ':', ';']))
+        .filter_map(|word| {
+            word.find(PUBLIC_URL)
+                .map(|at| &word[at + PUBLIC_URL.len()..])
+        })
+        .map(|path| path.trim_end_matches(['.', ',', ')', ']', ':', ';']))
         .map(|path| path.split(['?', '#']).next().unwrap_or(path))
         .filter(|path| !path.is_empty())
         .map(|path| path.replace('<', "{").replace('>', "}"))
@@ -95,6 +100,15 @@ async fn every_document() -> String {
         }
     }
     text
+}
+
+#[test]
+fn named_paths_reads_a_url_in_brackets_parentheses_or_a_markdown_link() {
+    let text = format!(
+        "one ({PUBLIC_URL}/beta), two [{PUBLIC_URL}/tags], [three]({PUBLIC_URL}/search). \
+         And {PUBLIC_URL}/e/<id>."
+    );
+    assert_eq!(named_paths(&text), ["/beta", "/tags", "/search", "/e/{id}"]);
 }
 
 #[tokio::test]
