@@ -457,7 +457,7 @@ def test_the_files_host_has_a_caddy_site_behind_the_staging_gate_and_a_dns_recor
         ), name
     # service.sh's FILEDRAWER_FILES_URL for each environment: test_remote_environments.
     wizard = (REPO / "ops/provision-vps").read_text()
-    dns = re.search(r"for name in (.*?); do", wizard).group(1)
+    dns = re.search(r"^records=\((.*?)\)$", wizard, re.M).group(1)
     assert '"files.staging.filedrawer.dev"' in dns
 
 

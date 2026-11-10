@@ -26,10 +26,11 @@ Anything done on the server is a tool the owner runs from their own machine, suc
 A push to `main` that passes CI deploys to staging (`build-staging` and `deploy-staging` in `.github/workflows/ci.yml`).
 The build job makes a static x86_64 musl binary; the deploy job, which runs no third-party action, pipes it over SSH as the `deploy` user.
 That user's key may only run `ops/remote/filedrawer-receive`, which allows one deploy at a time and passes the upload on stdin to `ops/remote/filedrawer-install` through one sudo rule.
-The install script keeps its own root-owned copy, checks the size and hash, runs the binary's `-h` as the service user with a timeout, keeps the previous binary, and rolls back if `/tags` doesn't answer within 30 s.
-`ops/provision-vps` sets up the user and key, stores `DEPLOY_SSH_KEY` as a secret of the `staging` environment (main only), and writes the variables `VPS_HOST` and `VPS_KNOWN_HOSTS`; rerunning it replaces the key.
+The install script keeps its own root-owned copy, checks the size and hash, runs the binary's `-h` as the environment's user in a transient unit with no network and a 10 s limit, keeps the previous binary, and rolls back if `/tags` doesn't answer within 30 s.
+`ops/provision-vps` sets up the user and key, stores `DEPLOY_SSH_KEY` as a secret of the `staging` environment (main only), and writes the variables `VPS_HOST` and `VPS_KNOWN_HOSTS`; rerunning it replaces the key, and `--only-new` keeps it but still rewrites the sudo rule.
 A binary that answers `/tags` passes, and it runs as `filedrawer` with staging's data and settings.
-Production deploys come at launch.
+`ops/provision-vps production` sets up production beside staging, as `filedrawer-prod` on port 8080, and `ops/provision-vps production account` follows its first deploy (design.md, Hosting and operations); the deploy key can't reach production.
+Production deploys come with #42.
 
 The field test's entries and logs are in `field-test/`, git-excluded and local only; never commit or publish them without the owner's say.
 

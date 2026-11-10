@@ -243,6 +243,10 @@ run_wizard() {
 # `ops/provision-vps admin` only making your staging account the admin. `ops/provision-vps --only-new` reruns every stage, for
 # new stages and new logic, without asking for anything ops/.vps.env, the server or
 # GitHub already holds: no passwords or keys again, and no pauses.
+# `ops/provision-vps production` sets up production beside staging, on a server the
+# staging wizard has set up (`--only-new production` reruns it the same way), and
+# `ops/provision-vps production account`, after the first production deploy (#42),
+# makes your production account the admin and sets up the uptime check.
 
 TOTAL_STAGES=13
 ENV_FILE="ops/.vps.env"
@@ -388,6 +392,14 @@ github_stage() {
   if keep_existing "The GitHub token" /etc/filedrawer/github.env; then
     return 0
   fi
+  # The unit first, so it reads the file github-token.sh writes.
+  remote service.sh ENVIRONMENT=staging
+  github_stage_body
+}
+
+# github_stage_body: asks for the GitHub token and sends it to the server, which
+# restarts every unit that reads it.
+github_stage_body() {
   say "Submissions ask GitHub whether a code link's commit is on one of the repository's"
   say "own branches or tags: its commit page first, then its API when the page lists"
   say "none or doesn't answer. Without a token the API allows 60 calls an hour; with"
@@ -397,12 +409,11 @@ github_stage() {
   step "Repository access: 'Public repositories'. Add no permissions: it only reads."
   step "Expiration: the longest offered. Put the date in your calendar to renew it."
   ask_new_secret TOKEN "The token (github_pat_...):"
-  # The unit first, so it reads the file github-token.sh writes.
-  remote service.sh ENVIRONMENT=staging
   remote_with_secret github-token.sh TOKEN "$TOKEN"
   unset TOKEN
-  note "The token is on the server only. Until it is there, journalctl -u"
-  note "filedrawer-staging logs 'no FILEDRAWER_GITHUB_TOKEN' at each start."
+  note "The token is on the server only, in one file staging and production both read."
+  note "Until it is there, staging logs 'no FILEDRAWER_GITHUB_TOKEN' at each start, and"
+  note "production won't start."
   pause
 }
 
@@ -498,7 +509,375 @@ keep_existing() {
   say "$1 is set up on the server already; --only-new keeps it. ✓"
 }
 
+# resolves NAME: whether NAME resolves to the server. getent's whole answer is read
+# first, and awk reads all of it, so no reader stops early on a live pipe (#39).
+resolves() {
+  local answer
+  answer=$(getent ahostsv4 "$1" || true)
+  awk -v host="$VPS_HOST" '$1 == host { found = 1 } END { exit !found }' <<<"$answer"
+}
+
+# wait_to_resolve NAME...: waits until each NAME resolves to the server, with a hint
+# when one resolves elsewhere, such as to a proxied Cloudflare record.
+wait_to_resolve() {
+  local name hinted elsewhere answer
+  for name in "$@"; do
+    step "Waiting for $name to resolve to $VPS_HOST (Ctrl-C to stop)..."
+    hinted=""
+    until resolves "$name"; do
+      answer=$(getent ahostsv4 "$name" || true)
+      elsewhere=$(awk 'NR == 1 {print $1}' <<<"$answer")
+      if [[ -n "$elsewhere" && -z "$hinted" ]]; then
+        printf '\n'
+        warn "$name resolves to $elsewhere, not $VPS_HOST. If that is a"
+        warn "Cloudflare address, the record is proxied: click its orange cloud to make it"
+        warn "grey ('DNS only'). Still waiting..."
+        hinted=yes
+      fi
+      sleep 15
+      printf '.'
+    done
+    printf '\n'
+  done
+}
+
+# Production (#40): `ops/provision-vps production` sets up filedrawer.dev beside
+# staging on the same server, each step a script in ops/remote/ run with
+# ENVIRONMENT=production; `ops/provision-vps production account` comes after the
+# first deploy (#42). Production's values are saved under PROD_ names in
+# ops/.vps.env, so staging's are never offered for it.
+PRODUCTION_NAMES=("filedrawer.dev" "www.filedrawer.dev" "files.filedrawer.dev")
+# The settings production refuses to start without, and the stage that writes each.
+PRODUCTION_NEEDS=(
+  "/etc/filedrawer/production-mail.env:mail"
+  "/etc/filedrawer/production-screening.env:screening"
+  "/etc/filedrawer/production-ping.env:healthchecks.io"
+  "/etc/filedrawer/github.env:GitHub token"
+)
+
+# reach_server: checks that root on $VPS_HOST takes your SSH key, and sets VPS_IPV6 to
+# the server's IPv6 address, if it has one. ssh forwards its stdin, so each call reads
+# /dev/null, not the answers to come.
+reach_server() {
+  step "Checking that 'ssh root@$VPS_HOST' works without a password..."
+  if ! ssh -o BatchMode=yes -o ConnectTimeout=10 "root@$VPS_HOST" \
+    'grep -E "^(ID|VERSION_ID)=" /etc/os-release' < /dev/null; then
+    warn "ssh root@$VPS_HOST failed. Log in once by hand to accept the host key, then rerun."
+    exit 1
+  fi
+  VPS_IPV6=$(ssh -o BatchMode=yes "root@$VPS_HOST" \
+    "ip -6 -o addr show scope global | awk '{print \$4}' | cut -d/ -f1 | awk 'NR == 1'" < /dev/null)
+  note "IPv6: ${VPS_IPV6:-none found}"
+}
+
+# install_on_server SCRIPT DIR: copies ops/remote/SCRIPT to DIR on the server, root's
+# and executable.
+install_on_server() {
+  ssh -o BatchMode=yes "root@$VPS_HOST" \
+    "install -o root -g root -m 0755 /dev/stdin $2/$1" < "$REMOTE/$1"
+}
+
+production_preflight_stage() {
+  stage "Preflight: reach the server"
+  VPS_HOST=$(_existing VPS_HOST || true)
+  if [[ -z "$VPS_HOST" ]]; then
+    warn "$ENV_FILE has no VPS_HOST. Production shares staging's server: run the"
+    warn "staging wizard (ops/provision-vps) first."
+    exit 1
+  fi
+  reach_server
+  pause
+}
+
+production_dns_stage() {
+  stage "DNS: point filedrawer.dev at the server"
+  local name waiting=() records=("${PRODUCTION_NAMES[@]}")
+  for name in "${PRODUCTION_NAMES[@]}"; do
+    resolves "$name" || waiting+=("$name")
+  done
+  # --only-new lists only the names that don't resolve yet.
+  (( ONLY_NEW )) && records=("${waiting[@]}")
+  if (( ${#records[@]} > 0 )); then
+    say "In Cloudflare's DNS for filedrawer.dev, add these records if they aren't there,"
+    say "each set to 'DNS only' (the grey cloud), not 'Proxied' (design.md, Hosting and"
+    say "operations):"
+    open_url "https://dash.cloudflare.com/"
+    for name in "${records[@]}"; do
+      step "$name  A     $VPS_HOST"
+      [[ -n "$VPS_IPV6" ]] && step "$name  AAAA  $VPS_IPV6"
+    done
+    pause "Press Enter once the records are saved"
+  fi
+  (( ${#waiting[@]} == 0 )) || wait_to_resolve "${waiting[@]}"
+  say "${PRODUCTION_NAMES[*]} resolve. ✓"
+  pause
+}
+
+production_service_stage() {
+  stage "Production's user, service and loopback rules"
+  say "A 'filedrawer-prod' system user, /srv/filedrawer/production with a data folder"
+  say "only it reads, and filedrawer-production.service on 127.0.0.1:8080, which waits"
+  say "for its first binary (#42). Staging's user can't connect to that port, and each"
+  say "service may bind only its own."
+  # Staging's user first: the loopback rules name it.
+  remote service-user.sh ENVIRONMENT=staging
+  remote service-user.sh ENVIRONMENT=production
+  remote loopback.sh
+  remote service.sh ENVIRONMENT=production
+  # The install script that knows production, for #42's deploys.
+  install_on_server filedrawer-install /usr/local/sbin
+  pause
+}
+
+production_caddy_stage() {
+  stage "Caddy: filedrawer.dev, files and www"
+  say "filedrawer.dev and files.filedrawer.dev, open to all, and www redirecting to"
+  say "filedrawer.dev. Until the first deploy they answer a short 503 that says to try"
+  say "again later. Staging's sites stay as they are."
+  remote caddy.sh ENVIRONMENT=production
+  pause
+}
+
+production_mail_stage() {
+  stage "Mail through Purelymail"
+  if keep_existing "Production's mail" /etc/filedrawer/production-mail.env; then
+    return 0
+  fi
+  local staging_sender
+  staging_sender=$(_existing SMTP_USER || true)
+  say "Production sends verification and password-reset email as a Purelymail user"
+  say "of its own, so staging's password can be revoked without touching it."
+  open_url "https://purelymail.com/manage/users"
+  local not_staging=""
+  [[ -z "$staging_sender" ]] || not_staging="; not staging's sending user, $staging_sender"
+  step "Add a user for production's mail, with a password of its own that holds no"
+  step "single quote$not_staging."
+  step "Then, on Purelymail's routing page, forward contact@filedrawer.dev, the address"
+  step "the terms and privacy pages name, to your own inbox."
+  ask PROD_SMTP_USER "Production's sending user (the SMTP login):"
+  if [[ -n "$staging_sender" && "$PROD_SMTP_USER" == "$staging_sender" ]]; then
+    warn "That is staging's sending user; production needs one of its own. Rerun to try again."
+    exit 1
+  fi
+  write_env PROD_SMTP_USER "$PROD_SMTP_USER"
+  ask PROD_MAIL_FROM "The From line, such as File Drawer <noreply@filedrawer.dev>:"
+  write_env PROD_MAIL_FROM "$PROD_MAIL_FROM"
+  ask_new_secret SMTP_PASSWORD "The sending user's password:"
+  remote_with_secret mail.sh SMTP_PASSWORD "$SMTP_PASSWORD" ENVIRONMENT=production \
+    "SMTP_USER=$PROD_SMTP_USER" "MAIL_FROM=$PROD_MAIL_FROM"
+  unset SMTP_PASSWORD
+  note "The sign-up check that this mail reaches an inbox comes after the first deploy:"
+  note "  ops/provision-vps production account"
+  pause
+}
+
+# anthropic_accepts KEY: whether Anthropic's API takes KEY, from a call that costs
+# nothing (listing models). The key goes to curl on stdin, never in a command line.
+anthropic_accepts() {
+  local status
+  status=$(printf 'header = "x-api-key: %s"\nheader = "anthropic-version: 2023-06-01"\n' "$1" \
+    | curl -K - -s -o /dev/null -w '%{http_code}' --max-time 20 \
+        https://api.anthropic.com/v1/models || true)
+  [[ "$status" == 200 ]]
+}
+
+production_screening_stage() {
+  stage "Screening with the Anthropic API"
+  if keep_existing "Production's screening" /etc/filedrawer/production-screening.env; then
+    return 0
+  fi
+  say "Production screens entries on an API key from a workspace of its own, within"
+  say "the server's daily cap, and refuses to start without one."
+  open_url "https://console.anthropic.com/settings/workspaces"
+  step "Make a workspace for production alone, and set its monthly spend limit to"
+  step "about \$40: above the most a \$1 daily cap can spend in a month, so the limit"
+  step "only catches a cap that failed."
+  pause "Press Enter once the workspace is made"
+  open_url "https://console.anthropic.com/settings/keys"
+  step "Make a key in that workspace, named such as 'filedrawer production'."
+  ask PROD_SCREENING_DAILY_USD "Production's screening cap, in dollars a day (Enter for 1):"
+  PROD_SCREENING_DAILY_USD="${PROD_SCREENING_DAILY_USD:-1}"
+  write_env PROD_SCREENING_DAILY_USD "$PROD_SCREENING_DAILY_USD"
+  ask_new_secret API_KEY "The API key (sk-ant-...):"
+  step "Checking the key with Anthropic..."
+  if ! anthropic_accepts "$API_KEY"; then
+    unset API_KEY
+    warn "Anthropic refused the key, or didn't answer. Check it in the console and rerun:"
+    warn "  ops/provision-vps production"
+    exit 1
+  fi
+  remote_with_secret screening.sh API_KEY "$API_KEY" ENVIRONMENT=production \
+    "DAILY_USD=$PROD_SCREENING_DAILY_USD"
+  unset API_KEY
+  pause
+}
+
+production_github_stage() {
+  stage "The GitHub token for the link checks"
+  if remote_has /etc/filedrawer/github.env; then
+    say "The server has the GitHub token already, shared with staging; production's"
+    say "unit reads the same file. ✓ To replace it: ops/provision-vps github"
+    pause
+    return 0
+  fi
+  github_stage_body
+}
+
+# ping_url URL: whether URL is a healthchecks.io ping URL, as the server checks it.
+ping_url() {
+  [[ "$1" =~ ^https://hc-ping\.com/[A-Za-z0-9_./-]+$ ]]
+}
+
+production_pings_stage() {
+  stage "healthchecks.io: the daily email and the nightly copy"
+  if keep_existing "The healthchecks.io URLs" /etc/filedrawer/production-ping.env; then
+    return 0
+  fi
+  say "healthchecks.io emails you when a job stops reporting. Production refuses to"
+  say "start without the daily email's ping URL. The nightly copy's (#41) waits for"
+  say "its timer."
+  open_url "https://healthchecks.io/"
+  step "Sign up (free), then add two checks. Name them 'filedrawer daily email' and"
+  step "'filedrawer nightly copy', and change each one's schedule to:"
+  step "  Period: 1 day. Grace: 2 hours."
+  step "Copy each one's ping URL (https://hc-ping.com/...)."
+  ask_secret DAILY_PING "The daily email's ping URL:"
+  ask_secret BACKUP_PING "The nightly copy's ping URL:"
+  local which
+  for which in DAILY_PING BACKUP_PING; do
+    if ! ping_url "${!which}"; then
+      warn "The ${which%_PING} one isn't a healthchecks.io ping URL (https://hc-ping.com/...)."
+      warn "Rerun to try again."
+      exit 1
+    fi
+  done
+  remote_with_secret ping.sh PINGS "$DAILY_PING"$'\t'"$BACKUP_PING"
+  unset DAILY_PING BACKUP_PING
+  pause
+}
+
+production_check_stage() {
+  stage "Check filedrawer.dev from outside"
+  local tags www
+  step "https://filedrawer.dev/tags should answer 503 until the first deploy, then 200..."
+  # curl waits out a 503's Retry-After (120 s) between retries; --retry-max-time
+  # keeps the whole check to about half a minute.
+  tags=$(curl -s -o /dev/null -w '%{http_code}' --retry 5 --retry-delay 5 --retry-all-errors \
+    --retry-max-time 30 https://filedrawer.dev/tags || true)
+  step "https://www.filedrawer.dev/ should redirect..."
+  www=$(curl -s -o /dev/null -w '%{http_code}' https://www.filedrawer.dev/ || true)
+  if [[ ( "$tags" == 503 || "$tags" == 200 ) && "$www" == 301 ]]; then
+    say "/tags $tags, www $www. ✓"
+  else
+    warn "Got /tags $tags and www $www (expected 503 or 200, and 301). On the server,"
+    warn "'journalctl -u caddy -n 50' shows why, often a certificate still being issued."
+    SKIPPED+=("production HTTPS check: /tags $tags, www $www")
+  fi
+  local need path missing=()
+  for need in "${PRODUCTION_NEEDS[@]}"; do
+    path="${need%%:*}"
+    remote_has "$path" || missing+=("$need")
+  done
+  if (( ${#missing[@]} > 0 )); then
+    warn "Production won't start without these, and the first deploy (#42) would have"
+    warn "no binary to roll back to. Rerun ops/provision-vps production for:"
+    for need in "${missing[@]}"; do
+      warn "  ${need%%:*}  (${need#*:})"
+      SKIPPED+=("production setting ${need%%:*}")
+    done
+  fi
+  note "After the first deploy (#42), run this straight away, since until an admin"
+  note "exists the daily email reports to healthchecks.io as failed each day:"
+  note "  ops/provision-vps production account"
+  pause
+}
+
+production_account_stage() {
+  stage "Your production account, its mail, and the uptime check"
+  VPS_HOST=$(_existing VPS_HOST || true)
+  [[ -n "$VPS_HOST" ]] || { warn "$ENV_FILE has no VPS_HOST. Run the whole wizard first."; exit 1; }
+  if ! ssh -o BatchMode=yes "root@$VPS_HOST" "test -x /srv/filedrawer/production/bin/filedrawer" < /dev/null; then
+    warn "Production has no server yet. Once the first deploy (#42) puts it there, run:"
+    warn "  ops/provision-vps production account"
+    SKIPPED+=("production account: run 'ops/provision-vps production account' after the first deploy")
+    pause
+    return 0
+  fi
+  say "Sign up on production with a Gmail address, so you see where a stranger's"
+  say "verification mail lands."
+  open_url "https://filedrawer.dev/signup"
+  step "Find the verification email, and click its verification link."
+  if ! confirm "Did the verification email reach Gmail's inbox, not spam?"; then
+    say "Mail that lands in spam needs filedrawer.dev's records in order:"
+    open_url "https://purelymail.com/manage/domains"
+    step "SPF: one TXT record on filedrawer.dev, v=spf1 include:_spf.purelymail.com ~all,"
+    step "and no second SPF record."
+    step "DKIM: the CNAME records Purelymail lists for filedrawer.dev, each 'DNS only'."
+    step "DMARC: the DMARC record Purelymail lists, and no other on _dmarc.filedrawer.dev."
+    step "Wait for Purelymail to show each as valid. Gmail's 'Show original' on the"
+    step "message says whether SPF, DKIM and DMARC passed."
+    warn "Then sign up again with another Gmail address and rerun:"
+    warn "  ops/provision-vps production account"
+    exit 1
+  fi
+  # Under --only-new a saved ID needs no page to copy it from.
+  if ! (( ONLY_NEW )) || [[ -z "$(_existing PROD_ADMIN_ACCOUNT || true)" ]]; then
+    open_url "https://filedrawer.dev/account"
+    step "Copy the account ID the page shows (a-...)."
+  fi
+  ask PROD_ADMIN_ACCOUNT "Your production account ID:"
+  if [[ ! "$PROD_ADMIN_ACCOUNT" =~ ^a-[0-9a-z]+$ ]]; then
+    warn "That isn't an account ID (a- then lowercase letters and digits). Rerun to try again."
+    exit 1
+  fi
+  write_env PROD_ADMIN_ACCOUNT "$PROD_ADMIN_ACCOUNT"
+  if ! remote admin-grant.sh ENVIRONMENT=production "ADMIN_ACCOUNT=$PROD_ADMIN_ACCOUNT"; then
+    warn "Granting failed; the server said why above. Rerun to try again."
+    exit 1
+  fi
+  say "Your account is production's admin. ✓"
+  say "Now an outside check that emails you when the site is down."
+  open_url "https://uptimerobot.com/"
+  step "Sign up (free), then add an HTTP(s) monitor of https://filedrawer.dev/tags,"
+  step "every 5 minutes, alerting your email."
+  step "A deploy restarts the server for a few seconds; if the monitor offers a delay"
+  step "before it alerts, a few minutes keeps a deploy from paging you."
+  pause
+}
+
+# production [account]: production's stages, or the one after the first deploy.
+production() {
+  case "${1:-}" in
+    "")
+      TOTAL_STAGES=9
+      banner "File Drawer VPS: production setup"
+      production_preflight_stage
+      production_dns_stage
+      production_service_stage
+      production_caddy_stage
+      production_mail_stage
+      production_screening_stage
+      production_github_stage
+      production_pings_stage
+      production_check_stage
+      ;;
+    account)
+      TOTAL_STAGES=1
+      production_account_stage
+      ;;
+    *)
+      warn "ops/provision-vps production takes no stage, or 'account': ops/provision-vps production account"
+      exit 2
+      ;;
+  esac
+  finish
+}
+
 case "${1:-}" in
+  production)
+    shift
+    production "$@"
+    return 0 ;;
   smoke | screening | admin | github)
     TOTAL_STAGES=1
     VPS_HOST=$(_existing VPS_HOST || true)
@@ -515,19 +894,10 @@ say "Your SSH key must already log you in as root (Hetzner adds the key you chos
 say "when you created the server). Nothing here asks for or stores a key."
 ask VPS_HOST "The server's IPv4 address:"
 write_env VPS_HOST "$VPS_HOST"
-step "Checking that 'ssh root@$VPS_HOST' works without a password..."
-if ! ssh -o BatchMode=yes -o ConnectTimeout=10 "root@$VPS_HOST" 'grep -E "^(ID|VERSION_ID)=" /etc/os-release'; then
-  warn "ssh root@$VPS_HOST failed. Log in once by hand to accept the host key, then rerun."
-  exit 1
-fi
-VPS_IPV6=$(ssh -o BatchMode=yes "root@$VPS_HOST" \
-  "ip -6 -o addr show scope global | awk '{print \$4}' | cut -d/ -f1 | head -n1")
-note "IPv6: ${VPS_IPV6:-none found}"
+reach_server
 pause
 
 stage "DNS: point the names at the server"
-# resolves NAME: whether NAME resolves to the server.
-resolves() { getent ahostsv4 "$1" | awk '{print $1}' | grep -qx "$VPS_HOST"; }
 records=("filedrawer.dev" "www.filedrawer.dev" "staging.filedrawer.dev" "files.filedrawer.dev" "files.staging.filedrawer.dev")
 if (( ONLY_NEW )); then
   # Only the served names that don't resolve yet; nothing to do when all do.
@@ -552,23 +922,7 @@ if (( ${#records[@]} > 0 )); then
   note "redirects to filedrawer.dev."
   pause "Press Enter once the records are saved"
 fi
-for name in "${waiting[@]}"; do
-  step "Waiting for $name to resolve to $VPS_HOST (Ctrl-C to stop)..."
-  hinted=""
-  until resolves "$name"; do
-    elsewhere=$(getent ahostsv4 "$name" | awk 'NR == 1 {print $1}')
-    if [[ -n "$elsewhere" && -z "$hinted" ]]; then
-      printf '\n'
-      warn "$name resolves to $elsewhere, not $VPS_HOST. If that is a"
-      warn "Cloudflare address, the record is proxied: click its orange cloud to make it"
-      warn "grey ('DNS only'). Still waiting..."
-      hinted=yes
-    fi
-    sleep 15
-    printf '.'
-  done
-  printf '\n'
-done
+wait_to_resolve "${waiting[@]}"
 if (( ${#waiting[@]} > 0 )); then
   say "${waiting[*]} resolve. ✓"
 else
@@ -661,12 +1015,8 @@ say "the server runs only filedrawer-receive for it, which checks the upload's h
 say "and installs it with a health check and rollback. The private half goes straight"
 say "into the repo's secrets through gh, and is deleted from this machine."
 need_gh
-ssh -o BatchMode=yes "root@$VPS_HOST" \
-  "install -o root -g root -m 0755 /dev/stdin /usr/local/bin/filedrawer-receive" \
-  < "$REMOTE/filedrawer-receive"
-ssh -o BatchMode=yes "root@$VPS_HOST" \
-  "install -o root -g root -m 0755 /dev/stdin /usr/local/sbin/filedrawer-install" \
-  < "$REMOTE/filedrawer-install"
+install_on_server filedrawer-receive /usr/local/bin
+install_on_server filedrawer-install /usr/local/sbin
 # The key is a secret of the `staging` environment, which only main may deploy to, so
 # a workflow edited on another branch can't read it.
 step "Creating the 'staging' environment, open to deployments from main only..."

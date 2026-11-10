@@ -475,3 +475,327 @@ def test_only_new_runs_a_stage_whose_settings_the_server_lacks(rerun):
     # Screening isn't set up yet, so it asks for the API key, and stdin is empty.
     assert result.returncode != 0
     assert "API key" in result.stdout
+
+
+# Production: ops/provision-vps production, and production account after #42's deploy
+
+PROD_KEY = "sk-ant-api03-" + "p" * 40
+DAILY_PING = "https://hc-ping.com/aaaaaaaa-0000-4000-8000-000000000001"
+BACKUP_PING = "https://hc-ping.com/aaaaaaaa-0000-4000-8000-000000000002"
+SMTP_PASSWORD = "prod-mail-pw"
+
+
+@pytest.fixture
+def production(tmp_path, fake_host):
+    """Runs `ops/provision-vps production [...]` in a folder whose ops/.vps.env holds
+    staging's saved values, against fake_host answering as a server staging's wizard
+    set up: every name resolves, the Anthropic key works, and production is down."""
+    ops = tmp_path / "ops"
+    ops.mkdir()
+    env_file = ops / ".vps.env"
+    env_file.write_text(
+        "VPS_HOST='203.0.113.7'\nSTAGING_USER='owner'\n"
+        f"STAGING_KEY='{STAGING_KEY}'\nSMTP_USER='staging@filedrawer.dev'\n"
+        "MAIL_FROM='File Drawer staging <staging@filedrawer.dev>'\n"
+        "SCREENING_DAILY_USD='5'\nADMIN_ACCOUNT='a-staging1'\n"
+    )
+    fake_host.answer("test -f *", status=1)
+    fake_host.answer("test -x *", status=1)
+    fake_host.answer("*os-release*", stdout="ID=debian\n")
+    fake_host.answer("*ip -6*", stdout="2001:db8::7\n")
+    fake_host.answer("*", stdout="203.0.113.7 STREAM x\n", tool="getent")
+    fake_host.answer("*", stdout="503\n", tool="curl")
+    fake_host.answer("*www.filedrawer.dev*", stdout="301\n", tool="curl")
+    fake_host.answer("*api.anthropic.com*", stdout="200\n", tool="curl")
+
+    def run(*args: str, answers: str = "") -> subprocess.CompletedProcess:
+        return run_wizard(
+            "production", *args, cwd=tmp_path, answers=answers, env=fake_host.env
+        )
+
+    def sent_scripts() -> list[str]:
+        return [fake_host.sent(n + 1) for n in range(len(fake_host.calls()))]
+
+    return SimpleNamespace(
+        run=run,
+        host=fake_host,
+        log=fake_host.log,
+        env_file=env_file,
+        sent=sent_scripts,
+        opened=opened_urls(),
+    )
+
+
+# Answers for a full production run on a server with no production settings, in
+# the order the wizard asks; extra blank lines pass any pause.
+FULL_RUN = (
+    "\n" * 6
+    + "prod@filedrawer.dev\nFile Drawer <noreply@filedrawer.dev>\n"
+    + f"{SMTP_PASSWORD}\n{SMTP_PASSWORD}\n\n"
+    + f"\n\n{PROD_KEY}\n{PROD_KEY}\n\n"
+    + f"{GITHUB_TOKEN}\n{GITHUB_TOKEN}\n\n"
+    + f"{DAILY_PING}\n{BACKUP_PING}\n"
+    + "\n" * 10
+)
+
+
+def ssh_calls(production) -> list[str]:
+    return production.host.calls()
+
+
+def test_production_sends_each_script_for_production_in_order(production):
+    result = production.run(answers=FULL_RUN)
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = ssh_calls(production)
+    sent = production.sent()
+
+    def at(name: str, setting: str = "") -> int:
+        for i, (call, text) in enumerate(zip(calls, sent)):
+            if text.endswith(script(name)) and setting in call:
+                return i
+        raise AssertionError(f"{name} {setting} not sent: {calls}")
+
+    order = [
+        at("service-user.sh", "ENVIRONMENT=production"),
+        at("loopback.sh"),
+        at("service.sh", "ENVIRONMENT=production"),
+        at("caddy.sh", "ENVIRONMENT=production"),
+        at("mail.sh", "ENVIRONMENT=production"),
+        at("screening.sh", "ENVIRONMENT=production"),
+        at("github-token.sh"),
+        at("ping.sh"),
+    ]
+    assert order == sorted(order), order
+    # loopback.sh names staging's user, so it must exist first.
+    assert at("service-user.sh", "ENVIRONMENT=staging") < at("loopback.sh")
+    # The install script that knows production goes to the server.
+    assert script("filedrawer-install") in sent
+    assert "ENVIRONMENT=staging" not in " ".join(
+        c for c, s in zip(calls, sent) if not s.endswith(script("service-user.sh"))
+    )
+
+
+def test_production_sends_each_secret_on_stdin_and_shows_or_saves_none(production):
+    result = production.run(answers=FULL_RUN)
+    assert result.returncode == 0, result.stdout + result.stderr
+    sent = production.sent()
+    assert f"{SMTP_PASSWORD}\n" + script("mail.sh") in sent
+    assert f"{PROD_KEY}\n" + script("screening.sh") in sent
+    assert f"{GITHUB_TOKEN}\n" + script("github-token.sh") in sent
+    assert f"{DAILY_PING}\t{BACKUP_PING}\n" + script("ping.sh") in sent
+    shown = (
+        production.log.read_text()
+        + production.env_file.read_text()
+        + result.stdout
+        + result.stderr
+    )
+    for secret in (SMTP_PASSWORD, PROD_KEY, GITHUB_TOKEN, DAILY_PING, BACKUP_PING):
+        assert secret not in shown, secret
+
+
+def test_production_saves_its_values_apart_from_stagings(production):
+    result = production.run(answers=FULL_RUN)
+    assert result.returncode == 0, result.stdout + result.stderr
+    saved = production.env_file.read_text()
+    assert "PROD_SMTP_USER='prod@filedrawer.dev'" in saved
+    assert "PROD_MAIL_FROM='File Drawer <noreply@filedrawer.dev>'" in saved
+    assert "PROD_SCREENING_DAILY_USD='1'" in saved
+    # Staging's stay as they were.
+    assert "SMTP_USER='staging@filedrawer.dev'" in saved
+    assert "SCREENING_DAILY_USD='5'" in saved
+    log = production.log.read_text()
+    assert "SMTP_USER=prod@filedrawer.dev" in log
+    assert "DAILY_USD=1 " in log
+
+
+def test_production_never_offers_stagings_saved_values(production):
+    """Staging's mail user and cap are in ops/.vps.env, but production's prompts
+    offer no saved value to keep."""
+    result = production.run(answers=FULL_RUN)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "[Enter keeps current]" not in result.stdout
+
+
+def test_production_lists_the_three_names_dns_needs(production):
+    result = production.run(answers=FULL_RUN)
+    assert result.returncode == 0, result.stdout + result.stderr
+    for name in ("filedrawer.dev", "www.filedrawer.dev", "files.filedrawer.dev"):
+        assert f"{name}  A     203.0.113.7" in result.stdout, name
+        assert f"{name}  AAAA  2001:db8::7" in result.stdout, name
+    assert "staging.filedrawer.dev  A" not in result.stdout
+
+
+def test_production_says_the_spend_limit_and_the_healthchecks_periods(production):
+    result = production.run(answers=FULL_RUN)
+    assert "$40" in result.stdout
+    assert "Period: 1 day" in result.stdout
+    assert (
+        "https://console.anthropic.com/settings/keys" in production.opened.read_text()
+    )
+    assert "https://healthchecks.io/" in production.opened.read_text()
+
+
+def test_a_key_anthropic_refuses_stops_before_it_reaches_the_server(production):
+    production.host.answer("*api.anthropic.com*", stdout="401\n", tool="curl")
+    result = production.run(answers=FULL_RUN)
+    assert result.returncode != 0
+    assert "refused the key" in result.stdout
+    assert not any(s.endswith(script("screening.sh")) for s in production.sent())
+    assert PROD_KEY not in production.log.read_text()
+
+
+def test_a_ping_url_that_isnt_one_stops_before_it_reaches_the_server(production):
+    answers = FULL_RUN.replace(BACKUP_PING, "https://example.com/x")
+    result = production.run(answers=answers)
+    assert result.returncode != 0
+    assert "isn't a healthchecks.io ping URL" in result.stdout
+    assert not any(s.endswith(script("ping.sh")) for s in production.sent())
+
+
+def test_production_keeps_the_shared_github_token_the_server_has(production):
+    production.host.answer("test -f /etc/filedrawer/github.env")
+    answers = FULL_RUN.replace(f"{GITHUB_TOKEN}\n{GITHUB_TOKEN}\n", "")
+    result = production.run(answers=answers)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not any(s.endswith(script("github-token.sh")) for s in production.sent())
+    assert "shared with staging" in result.stdout
+
+
+def test_production_ends_listing_the_settings_the_server_still_lacks(production):
+    result = production.run(answers=FULL_RUN)
+    assert result.returncode == 0, result.stdout + result.stderr
+    # fake_host says no file exists, so all of them are listed.
+    for path in (
+        "/etc/filedrawer/production-mail.env",
+        "/etc/filedrawer/production-screening.env",
+        "/etc/filedrawer/production-ping.env",
+        "/etc/filedrawer/github.env",
+    ):
+        assert path in result.stdout, path
+    assert "won't start" in result.stdout
+
+
+def test_production_says_to_run_the_account_stage_after_the_first_deploy(production):
+    result = production.run(answers=FULL_RUN)
+    assert "ops/provision-vps production account" in result.stdout
+
+
+def test_production_refuses_stagings_sending_user(production):
+    answers = FULL_RUN.replace("prod@filedrawer.dev\n", "staging@filedrawer.dev\n", 1)
+    result = production.run(answers=answers)
+    assert result.returncode != 0
+    assert "staging's sending user" in result.stdout
+    assert not any(s.endswith(script("mail.sh")) for s in production.sent())
+
+
+def test_production_checks_the_site_from_outside(production):
+    result = production.run(answers=FULL_RUN)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "503" in result.stdout and "✓" in result.stdout
+    curl = production.host.calls("curl")
+    [tags] = [c for c in curl if "https://filedrawer.dev/tags" in c]
+    # A 503's Retry-After (120 s) would otherwise stretch curl's retries to minutes.
+    assert "--retry-max-time 30" in tags
+    assert any("https://www.filedrawer.dev/" in c for c in curl)
+
+
+def test_production_only_new_asks_for_nothing_the_server_has(production):
+    for path in (
+        "production-mail.env",
+        "production-screening.env",
+        "production-ping.env",
+        "github.env",
+    ):
+        production.host.answer(f"test -f /etc/filedrawer/{path}")
+    production.env_file.write_text(
+        production.env_file.read_text()
+        + "PROD_SMTP_USER='prod@filedrawer.dev'\nPROD_SCREENING_DAILY_USD='1'\n"
+    )
+    result = run_wizard(
+        "--only-new",
+        "production",
+        cwd=production.env_file.parent.parent,
+        answers="",
+        env=production.host.env,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    sent = production.sent()
+    assert any(s.endswith(script("service.sh")) for s in sent)
+    assert any(s.endswith(script("caddy.sh")) for s in sent)
+    for kept in ("mail.sh", "screening.sh", "github-token.sh", "ping.sh"):
+        assert not any(s.endswith(script(kept)) for s in sent), kept
+    assert "won't start" not in result.stdout
+
+
+# production account
+
+
+ACCOUNT_RUN = "a-prod1\n" + "\n" * 6
+
+
+def test_account_before_the_first_deploy_asks_nothing_and_says_to_rerun(production):
+    result = production.run("account", answers="")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "ops/provision-vps production account" in result.stdout
+    assert "admin-grant" not in production.log.read_text()
+
+
+def test_account_grants_the_production_account_once_the_mail_arrived(production):
+    production.host.answer("test -x /srv/filedrawer/production/bin/filedrawer")
+    result = production.run("account", answers="y\n" + ACCOUNT_RUN)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "ssh env ENVIRONMENT=production ADMIN_ACCOUNT=a-prod1 bash -s" in (
+        production.log.read_text()
+    )
+    assert "PROD_ADMIN_ACCOUNT='a-prod1'" in production.env_file.read_text()
+    assert "ADMIN_ACCOUNT='a-staging1'" in production.env_file.read_text()
+    opened = production.opened.read_text()
+    assert "https://filedrawer.dev/signup" in opened
+    assert "verification link" in result.stdout
+    assert "https://uptimerobot.com/" in opened
+    assert "https://filedrawer.dev/tags" in result.stdout
+
+
+def test_account_walks_spf_dkim_and_dmarc_when_the_mail_went_to_spam(production):
+    production.host.answer("test -x /srv/filedrawer/production/bin/filedrawer")
+    result = production.run("account", answers="n\n" + "\n" * 10)
+    assert result.returncode != 0
+    for record in ("SPF", "DKIM", "DMARC"):
+        assert record in result.stdout, record
+    assert "the DMARC record Purelymail lists" in result.stdout
+    assert "admin-grant" not in production.log.read_text()
+    assert "ADMIN_ACCOUNT=" not in production.log.read_text()
+
+
+def test_account_under_only_new_takes_the_saved_id_and_opens_no_account_page(
+    production,
+):
+    production.host.answer("test -x /srv/filedrawer/production/bin/filedrawer")
+    production.env_file.write_text(
+        production.env_file.read_text() + "PROD_ADMIN_ACCOUNT='a-prod1'\n"
+    )
+    result = run_wizard(
+        "--only-new",
+        "production",
+        "account",
+        cwd=production.env_file.parent.parent,
+        answers="y\n",
+        env=production.host.env,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "ENVIRONMENT=production ADMIN_ACCOUNT=a-prod1" in production.log.read_text()
+    assert "https://filedrawer.dev/account" not in production.opened.read_text()
+
+
+def test_production_opens_the_workspaces_page_before_the_keys(production):
+    production.run(answers=FULL_RUN)
+    opened = production.opened.read_text().splitlines()
+    assert opened.index(
+        "https://console.anthropic.com/settings/workspaces"
+    ) < opened.index("https://console.anthropic.com/settings/keys")
+
+
+def test_production_refuses_a_stage_it_doesnt_have(production):
+    result = production.run("nonsense", answers="")
+    assert result.returncode != 0
+    assert "production account" in result.stdout + result.stderr

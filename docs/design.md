@@ -966,7 +966,15 @@ Python is fine for scripts and internal tools.
   People type it, though browsers don't add it.
 - Mail goes through Purelymail SMTP on the filedrawer.dev domain, since the owner already uses Purelymail.
   Switch to a transactional mail service if messages land in spam.
+  Staging and production send as Purelymail users of their own, so staging's password can be revoked alone (the owner's decision, 2026-11-10).
 - staging.filedrawer.dev and filedrawer.dev run on the same VPS, with separate databases and separate systemd units.
+  `ops/provision-vps production` sets production up beside staging, from each `ops/remote/` script run with `ENVIRONMENT=production`; `ops/provision-vps production account`, run straight after the first production deploy, has the owner sign up with a Gmail address to see where verification mail lands, makes that account the admin, and walks through the uptime check (the owner's decisions, 2026-11-09 and 2026-11-10).
+- Production runs as a Unix user of its own, `filedrawer-prod`, and staging as `filedrawer`; each data folder is its user's alone, and every settings file in `/etc/filedrawer` is root's alone, since systemd reads a unit's settings as root (#40; the owner's decisions, 2026-11-09 and 2026-11-10).
+  Reason: GitHub holds staging's deploy key, so a binary sent with it must reach none of production's data or secrets.
+  For the same reason each unit may bind only its own port (`SocketBindAllow`), an nftables table of its own rejects connections from staging's user to production's port, since production trusts `X-Forwarded-For` from loopback, and the install script runs a new binary's `-h` check in a transient unit with no network, no socket binds and no view of the data.
+  The deploy user's sudo rule is a regular expression that admits only `staging <sha256>`.
+- Caddy's config imports one site file per environment, `/etc/caddy/sites/<env>.caddy`, so provisioning one never rewrites the other's sites; a file Caddy refuses is put back as it was.
+  While production's server doesn't answer, before its first deploy or during a restart, filedrawer.dev answers a plain 503 with `Retry-After` instead of a bare 502 (the owner's decision, 2026-11-10).
 - Staging is the owner's alone.
   Caddy puts basic auth on every staging request, reads included, and staging's `robots.txt` disallows all crawling.
   For agents' fetch tools, which can't send the staging key's header, the owner opens a second key, the field-test key, with `ops/field-test-key open`: `?key=<key>` in a URL lets a `GET` or `HEAD` through, on staging and its files host, except to `/staging*` and `/admin*`, and Caddy strips it before the server sees the request (the owner's decisions, 2026-11-09).
@@ -1017,8 +1025,10 @@ Python is fine for scripts and internal tools.
   Check at build time that B2 lets such a key hide files (#4).
 - During the beta, #41's timer writes production's nightly copies into `backups/` beside the database file, as `filedrawer-YYYY-MM-DD.db`, writing each as a `.tmp` file and renaming it once whole; the owner's daily email reports the newest (see [Admin](#admin)).
   #41's restore drill runs the binary with `FILEDRAWER_ENVIRONMENT=staging` and no ping or SMTP settings, so it neither mails nor pings (the owner's decision, 2026-11-09).
-- Monitoring: a free external uptime checker emails the owner when the site is down.
+- Monitoring: a free external uptime checker, UptimeRobot, checks `https://filedrawer.dev/tags` and emails the owner when the site is down (the owner's decision, 2026-11-10).
   Litestream, the restore test, the memory timer and the daily email ping healthchecks.io, which emails the owner when one goes quiet or reports a failure.
+  The daily email's ping URL is in `/etc/filedrawer/production-ping.env`, and the nightly copy's, for #41's timer, in `production-backup.env` as `BACKUP_PING`.
+- Production's screening key comes from an Anthropic workspace of its own, whose monthly spend limit is about $40, above the most the $1 daily cap can spend in a month (the owner's decision, 2026-11-10).
 
 ## Checks
 
