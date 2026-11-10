@@ -112,6 +112,7 @@ def test_nothing_staged_needs_every_check():
         "routes",
         "py-rules",
         "test-mods",
+        "caddy",
     }
 
 

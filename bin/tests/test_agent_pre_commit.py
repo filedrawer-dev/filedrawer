@@ -285,6 +285,13 @@ def test_renaming_an_embedded_file_runs_the_cargo_checks(repo):
         ("crates/app/tests/it/main.rs", {"rust", "bin-tests", "test-mods"}),
         ("crates/app/tests/it/fixtures/entry.md", {"rust", "bin-tests", "test-mods"}),
         ("bin/test-modules", {"bin-tests", "test-mods"}),
+        # The real-Caddy tests, their scripts and the files they live in.
+        ("ops/remote/caddy.sh", {"bin-tests", "caddy"}),
+        ("ops/remote/field-test-key.sh", {"bin-tests", "caddy"}),
+        ("bin/caddy", {"bin-tests", "caddy"}),
+        ("bin/tests/test_remote_environments.py", {"bin-tests", "py-rules", "caddy"}),
+        ("bin/tests/test_field_test_key.py", {"bin-tests", "py-rules", "caddy"}),
+        ("ops/remote/other.sh", {"bin-tests"}),
     ],
 )
 def test_the_checks_a_change_to_each_reference_needs(template, path, checks):
@@ -396,6 +403,76 @@ def test_the_module_check_runs_only_at_a_commit(repo):
     change(repo, "crates/app/tests/it/two.rs", "")
     hook(repo, "--quick", env=QUEUE_EXIT, code=75)
     hook(repo, "--quick", env=QUEUE_EXIT, script="agent-quick-check", code=75)
+
+
+CADDY_RUN = "-n0 -m real_caddy bin/tests"
+
+
+def test_the_commit_check_runs_the_real_caddy_tests_for_a_caddy_change(repo):
+    change(repo, "ops/remote/caddy.sh")
+
+    hook(repo, script="agent-commit-check")
+
+    calls = uvx_calls(repo)
+    assert len(calls) == 1, calls
+    assert calls[0].endswith(CADDY_RUN), calls
+    assert "pytest@9.2.0" in calls[0]
+
+
+def test_outside_the_queue_the_real_caddy_tests_ask_for_it_first(repo):
+    change(repo, "bin/caddy")
+
+    _, done = hook(repo, env=QUEUE_EXIT, script="agent-commit-check", code=75)
+
+    assert uvx_calls(repo) == []
+    assert "agent-pre-commit: needs heavy's queue for caddy bin/caddy" in done.stderr
+
+
+@pytest.mark.parametrize(
+    "path, script",
+    [
+        ("ops/remote/other.sh", "agent-commit-check"),
+        ("ops/remote/caddy.sh", "agent-quick-check"),
+    ],
+    ids=["another ops script", "the quick check"],
+)
+def test_the_real_caddy_tests_run_only_with_caddy_and_for_a_caddy_change(
+    repo, path, script
+):
+    change(repo, path)
+    hook(repo, script=script)
+    assert not any(call.endswith(CADDY_RUN) for call in uvx_calls(repo))
+
+
+def test_a_failing_real_caddy_test_refuses_the_commit_with_its_output(repo):
+    change(repo, "ops/remote/field-test-key.sh")
+    failing_uvx = FAKE + 'echo "FAILED test_a_real_caddy_serves"\nexit 1\n'
+
+    _, done = hook(
+        repo, script="agent-commit-check", env={"FAKE_UVX": failing_uvx}, code=1
+    )
+
+    assert "FAILED test_a_real_caddy_serves" in done.stdout + done.stderr
+
+
+def test_the_real_caddy_marker_selects_every_test_using_the_fixture():
+    done = subprocess.run(
+        [str(REPO / "bin/pytest"), "-n0", "--collect-only", "-m", "real_caddy"],
+        cwd=REPO / "bin/tests",
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert done.returncode == 0, done.stdout + done.stderr
+    selected = {line for line in done.stdout.splitlines() if "::" in line}
+    assert selected == {
+        "test_field_test_key.py::"
+        "test_a_real_caddy_serves_the_gate_and_snippet_as_meant",
+        "test_remote_environments.py::"
+        "test_a_real_caddy_takes_both_environments_site_files_together",
+        "test_remote_environments.py::"
+        "test_a_real_caddy_answers_503_while_production_is_down_and_redirects_www",
+    }
 
 
 def test_bin_pytest_runs_the_pinned_pytest_with_its_plugins_on_its_arguments(repo):

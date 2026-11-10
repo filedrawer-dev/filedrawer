@@ -126,6 +126,21 @@ def real_caddy() -> str:
     return installed_caddy()
 
 
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "real_caddy: uses the real_caddy fixture; bin/agent-commit-check runs these"
+        " when a Caddy file changed",
+    )
+
+
+def pytest_collection_modifyitems(items):
+    """Mark each test that uses real_caddy, so `-m real_caddy` selects them all."""
+    for item in items:
+        if "real_caddy" in getattr(item, "fixturenames", ()):
+            item.add_marker("real_caddy")
+
+
 def opened_urls() -> Path:
     """Where the no_browser fakes note the URLs a test's subprocess opened."""
     return Path(os.environ["NO_BROWSER_DIR"]) / "opened"

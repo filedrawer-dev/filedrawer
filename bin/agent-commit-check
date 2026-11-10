@@ -9,6 +9,7 @@
 # failed it, the wall-clock rule of bin/tests when a file there changed, since a
 # review found a test with a timeout= that its commit let through, and bin/test-modules
 # when a crate's tests/it changed, since a `git add -A` twice swept an unregistered
-# test file into a commit that clippy passed. The other tests a change needs are the
-# agent's to run before it commits.
-exec "$(dirname "$0")/agent-pre-commit" --quick --routes --rules --mods
+# test file into a commit that clippy passed, and the real-Caddy tests when a Caddy
+# file or theirs changed, which take seconds once Caddy is cached. The other tests a
+# change needs are the agent's to run before it commits.
+exec "$(dirname "$0")/agent-pre-commit" --quick --routes --rules --mods --caddy

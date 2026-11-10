@@ -40,7 +40,11 @@
 # queue. So does --mods, which the commit check passes too: bin/test-modules, when a
 # path in a crate's tests/it changed (bin/checks-needed's `test-mods`), since a test
 # file with no `mod` line in tests/it/main.rs compiles nowhere and clippy passes it;
-# only the full check's nextest would fail. Both modes first
+# only the full check's nextest would fail. --caddy, which the commit check passes
+# too, runs the bin tests marked real_caddy when ops/remote/caddy.sh,
+# ops/remote/field-test-key.sh, bin/caddy or a file holding those tests changed
+# (bin/checks-needed's `caddy`); they run Caddy, so they wait in heavy's queue. Both
+# modes first
 # run the skills check, bin/skills sync --check, which needs no build and runs outside
 # heavy's queue. It is the one check that reaches the repo: it fetches origin's main
 # and skill tags into it, writing only those refs.
@@ -58,12 +62,14 @@ quick=
 routes=
 rules=
 mods=
+caddy=
 for arg in "$@"; do
   case "$arg" in
     --quick) quick=1 ;;
     --routes) routes=1 ;;
     --rules) rules=1 ;;
     --mods) mods=1 ;;
+    --caddy) caddy=1 ;;
   esac
 done
 repo=$(git rev-parse --show-toplevel)
@@ -73,7 +79,9 @@ trap 'rm -rf "$tree" "$logs"' EXIT
 trap 'exit 130' INT TERM HUP
 git -C "$repo" checkout-index -a --prefix="$tree/"
 need_every_check() {
-  printf 'rust %s\nbin-tests %s\nskills %s\nroutes %s\npy-rules %s\ntest-mods %s\n' "$1" "$1" "$1" "$1" "$1" "$1" >"$logs/needed"
+  for check in rust bin-tests skills routes py-rules test-mods caddy; do
+    echo "$check $1"
+  done >"$logs/needed"
 }
 # Before the git variables go, since `git commit PATHS` stages into its own index.
 if [ -z "${CHECK_BASE:-}" ]; then
@@ -129,6 +137,13 @@ fi
 # file anyway: a file with no `mod` line compiles nowhere.
 if [ -n "$mods" ] && needs test-mods && [ -x bin/test-modules ]; then
   bin/test-modules . || exit 1
+fi
+# At a commit, the bin tests that run a real Caddy (conftest.py marks them real_caddy),
+# when what they run changed. Without a network bin/caddy can't fetch Caddy, and they
+# skip, which passes; the full check's bin-tests run holds them.
+if [ -n "$caddy" ] && needs caddy && [ -x bin/pytest ]; then
+  queue_first caddy
+  bin/pytest -n0 -m real_caddy bin/tests >"$logs/caddy" 2>&1 || { cat "$logs/caddy"; failed=1; }
 fi
 if [ -z "$quick" ] && needs bin-tests; then
   queue_first bin-tests
