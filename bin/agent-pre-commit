@@ -7,9 +7,10 @@
 # The checks run on what's staged: a copy of the index in a temporary folder, so
 # unstaged changes can neither fail a commit nor rescue it. Each check's output shows
 # only when it fails. They run one after the other, since cargo locks target/ anyway.
-# bin/tests, the tests of the hook scripts, run through uvx with a pinned pytest and the
-# plugins bin/tests/pytest.ini uses, so the host needs no venv. Commits and wt-ship's
-# landing checks run the copy of this script in the tree they check, through the link
+# bin/tests, the tests of the hook scripts, run through bin/pytest, uvx with a
+# pinned pytest and the plugins bin/tests/pytest.ini uses, so the host needs no venv.
+# Commits and wt-ship's landing checks run the copy of this script in the tree they
+# check, through the link
 # .githooks/agent-pre-commit, so a commit that changes it, such as for a new plugin, is
 # checked by its own version. The Rust checks wait for Cargo.toml, and share the repo's
 # target/ so dependencies build once. The tests run under cargo-nextest, which prints
@@ -31,7 +32,12 @@
 # --quick --routes, for the second, also the routes test when the router or a document
 # naming routes changed (bin/checks-needed's `routes`), so a new route nobody named
 # for agents or listed in NOT_FOR_AGENTS fails at its commit; the
-# gate gives each a CHECK_BASE of its own (`agent-commit-gate -h`). Both modes first
+# gate gives each a CHECK_BASE of its own (`agent-commit-gate -h`). --rules, which the
+# commit check also passes, runs bin/tests/test_no_wall_clock_limits.py when a path
+# under bin/tests changed (bin/checks-needed's `py-rules`), since a test with a
+# wall-clock limit otherwise passes its commit and fails only the full check. It reads
+# the sources and takes seconds, so, like the skills check, it runs outside heavy's
+# queue. Both modes first
 # run the skills check, bin/skills sync --check, which needs no build and runs outside
 # heavy's queue. It is the one check that reaches the repo: it fetches origin's main
 # and skill tags into it, writing only those refs.
@@ -47,10 +53,12 @@
 set -e
 quick=
 routes=
+rules=
 for arg in "$@"; do
   case "$arg" in
     --quick) quick=1 ;;
     --routes) routes=1 ;;
+    --rules) rules=1 ;;
   esac
 done
 repo=$(git rev-parse --show-toplevel)
@@ -60,7 +68,7 @@ trap 'rm -rf "$tree" "$logs"' EXIT
 trap 'exit 130' INT TERM HUP
 git -C "$repo" checkout-index -a --prefix="$tree/"
 need_every_check() {
-  printf 'rust %s\nbin-tests %s\nskills %s\nroutes %s\n' "$1" "$1" "$1" "$1" >"$logs/needed"
+  printf 'rust %s\nbin-tests %s\nskills %s\nroutes %s\npy-rules %s\n' "$1" "$1" "$1" "$1" "$1" >"$logs/needed"
 }
 # Before the git variables go, since `git commit PATHS` stages into its own index.
 if [ -z "${CHECK_BASE:-}" ]; then
@@ -107,9 +115,13 @@ if needs skills && [ -x bin/skills ]; then
     echo "agent-pre-commit: couldn't check the skills (bin/skills exit $status), so that check was skipped" >&2
   fi
 fi
+# Outside the queue, as the skills check is: an ast read of bin/tests' sources.
+if [ -n "$rules" ] && needs py-rules && [ -x bin/pytest ] && [ -f bin/tests/test_no_wall_clock_limits.py ]; then
+  bin/pytest -n0 bin/tests/test_no_wall_clock_limits.py >"$logs/rules" 2>&1 || { cat "$logs/rules"; failed=1; }
+fi
 if [ -z "$quick" ] && needs bin-tests; then
   queue_first bin-tests
-  uvx --quiet --with pytest-timeout==2.4.0 --with pytest-xdist==3.8.0 pytest@9.2.0 -q -p no:cacheprovider bin/tests >"$logs/pytest" 2>&1 || { cat "$logs/pytest"; failed=1; }
+  bin/pytest bin/tests >"$logs/pytest" 2>&1 || { cat "$logs/pytest"; failed=1; }
 fi
 if [ -f Cargo.toml ] && needs rust; then
   queue_first rust

@@ -1,8 +1,8 @@
-"""bin/agent-pre-commit runs these tests in pytest-xdist's workers, as pytest.ini says,
-and with a timeout, so a test that hangs fails instead of hanging the run."""
+"""bin/pytest, which bin/agent-pre-commit runs these tests through, runs them in
+pytest-xdist's workers, as pytest.ini says, and with a timeout, so a test that hangs
+fails instead of hanging the run."""
 
 import re
-import shlex
 import subprocess
 from pathlib import Path
 
@@ -10,12 +10,7 @@ REPO = Path(__file__).resolve().parents[2]
 
 
 def test_the_hooks_pytest_runs_workers_and_fails_a_test_that_hangs(tmp_path):
-    hook = (REPO / "bin/agent-pre-commit").read_text()
-    line = next(
-        line for line in hook.splitlines() if re.match(r"\s*uvx .*pytest", line)
-    )
-    argv = shlex.split(line.split(">")[0])
-    assert argv[-1] == "bin/tests", argv
+    argv = [str(REPO / "bin/pytest"), "bin/tests"]
     tests = tmp_path / "bin/tests"
     tests.mkdir(parents=True)
     ini = (REPO / "bin/tests/pytest.ini").read_text()

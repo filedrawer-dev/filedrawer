@@ -1,0 +1,7 @@
+#!/bin/sh
+# The pinned pytest, with the plugins bin/tests/pytest.ini uses (pytest-timeout and
+# pytest-xdist), through uvx, so no venv is needed: `bin/pytest bin/tests` runs them
+# all, `bin/pytest -n0 bin/tests/test_x.py -k name` one file's, one process. The full
+# check (bin/agent-pre-commit) runs bin/tests through it, so the versions live here.
+# Every argument goes to pytest, -h included, which prints pytest's own help.
+exec uvx --quiet --with pytest-timeout==2.4.0 --with pytest-xdist==3.8.0 pytest@9.2.0 -q -p no:cacheprovider "$@"

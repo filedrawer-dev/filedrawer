@@ -6,5 +6,7 @@
 # runs, whose comment says how; it names $CHECK_QUEUE_EXIT too, since the gate reads
 # each check's own bytes for it. It adds one test, the routes test, when the router or
 # a document naming routes changed, since a review found a commit whose new routes
-# failed it. The other tests a change needs are the agent's to run before it commits.
-exec "$(dirname "$0")/agent-pre-commit" --quick --routes
+# failed it, and the wall-clock rule of bin/tests when a file there changed, since a
+# review found a test with a timeout= that its commit let through. The other tests a
+# change needs are the agent's to run before it commits.
+exec "$(dirname "$0")/agent-pre-commit" --quick --routes --rules

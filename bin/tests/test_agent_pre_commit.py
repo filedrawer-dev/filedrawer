@@ -107,8 +107,14 @@ def template(tmp_path_factory) -> Path:
         "agent-quick-check",
         "agent-commit-check",
         "checks-needed",
+        "pytest",
     ):
         shutil.copy(REPO / "bin" / script, root / "bin" / script)
+    # The rule test the commit check runs for a bin/tests change.
+    shutil.copy(
+        REPO / "bin/tests/test_no_wall_clock_limits.py",
+        root / "bin/tests/test_no_wall_clock_limits.py",
+    )
     git(root, "init", "-q")
     commit(root, "init")
     return root
@@ -127,6 +133,7 @@ def hook(
     env: dict | None = None,
     base: str | None = "HEAD",
     code: int = 0,
+    script: str = "agent-pre-commit",
 ) -> tuple[set[str], subprocess.CompletedProcess]:
     """Run the hook with fake cargo and uvx, and CHECK_BASE set to `base` as
     `git rev-parse` gives it (None: unset), and check it exits with `code`; return the
@@ -134,7 +141,8 @@ def hook(
     fakes = repo.parent / "fakes"
     fakes.mkdir(exist_ok=True)
     for tool in ("cargo", "uvx"):
-        (fakes / tool).write_text(FAKE)
+        # FAKE_UVX in `env` replaces the fake uvx's text.
+        (fakes / tool).write_text((env or {}).get(f"FAKE_{tool.upper()}", FAKE))
         (fakes / tool).chmod(0o755)
     log = repo.parent / "calls"
     log.write_text("")
@@ -148,7 +156,7 @@ def hook(
         hook_env["CHECK_BASE"] = git(repo, "rev-parse", base)
     hook_env |= {"FAKE_LOG": str(log), **(env or {})}
     done = subprocess.run(
-        [str(repo / "bin/agent-pre-commit"), *args],
+        [str(repo / "bin" / script), *args],
         cwd=repo,
         env=hook_env,
         capture_output=True,
@@ -262,10 +270,96 @@ def test_renaming_an_embedded_file_runs_the_cargo_checks(repo):
         ("skills/versions.txt", {"skills", "routes"}),
         ("docs/entry-format.md", {"skills"}),
         ("bin/skills", {"skills", "bin-tests"}),
+        # The rule tests read every file in bin/tests.
+        ("bin/tests/test_tool.py", {"bin-tests", "py-rules"}),
+        ("bin/tests/conftest.py", {"bin-tests", "py-rules"}),
     ],
 )
 def test_the_checks_a_change_to_each_reference_needs(template, path, checks):
     assert needed(template, path) == checks
+
+
+RULE_TEST = "bin/tests/test_no_wall_clock_limits.py"
+
+
+def uvx_calls(repo: Path) -> list[str]:
+    return [
+        call
+        for call in (repo.parent / "calls").read_text().splitlines()
+        if call.startswith("uvx ")
+    ]
+
+
+def test_the_commit_check_runs_the_wall_clock_rule_for_a_bin_tests_change(repo):
+    change(repo, "bin/tests/test_tool.py", "def test_tool():\n    pass\n")
+
+    hook(repo, env=QUEUE_EXIT, script="agent-commit-check")
+
+    calls = uvx_calls(repo)
+    assert len(calls) == 1, calls
+    assert calls[0].endswith(f"-n0 {RULE_TEST}"), calls
+    assert "pytest@9.2.0" in calls[0]
+
+
+def test_the_rule_runs_only_with_rules_and_only_for_a_bin_tests_change(repo):
+    change(repo, "bin/tests/test_tool.py", "def test_tool():\n    pass\n")
+    hook(repo, "--quick", "--routes")
+    assert uvx_calls(repo) == []
+    git(repo, "reset", "-q")
+    change(repo, "docs/notes.md")
+    hook(repo, "--quick", "--routes", "--rules")
+    assert uvx_calls(repo) == []
+
+
+def test_a_failing_rule_refuses_the_commit_with_its_output(repo):
+    change(repo, "bin/tests/test_tool.py", "def test_tool():\n    pass\n")
+    failing_uvx = FAKE + 'echo "a wall-clock limit at test_tool.py:2"\nexit 1\n'
+
+    _, done = hook(
+        repo,
+        "--quick",
+        "--routes",
+        "--rules",
+        env={"FAKE_UVX": failing_uvx},
+        code=1,
+    )
+
+    assert "a wall-clock limit at test_tool.py:2" in done.stdout + done.stderr
+
+
+def test_bin_pytest_runs_the_pinned_pytest_with_its_plugins_on_its_arguments(repo):
+    fakes = repo.parent / "fakes"
+    fakes.mkdir(exist_ok=True)
+    (fakes / "uvx").write_text(FAKE)
+    (fakes / "uvx").chmod(0o755)
+    log = repo.parent / "calls"
+    done = subprocess.run(
+        [str(repo / "bin/pytest"), "-n0", "bin/tests/test_tool.py", "-k", "tool"],
+        env={
+            **os.environ,
+            "PATH": f"{fakes}{os.pathsep}{os.environ['PATH']}",
+            "FAKE_LOG": str(log),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert done.returncode == 0, done.stderr
+    assert log.read_text() == (
+        "uvx --quiet --with pytest-timeout==2.4.0 --with pytest-xdist==3.8.0 pytest@9.2.0"
+        " -q -p no:cacheprovider -n0 bin/tests/test_tool.py -k tool\n"
+    )
+
+
+def test_the_full_check_runs_bin_tests_through_bin_pytest(repo):
+    (repo / "bin/pytest").write_text('#!/bin/sh\necho "bin/pytest $*" >> "$FAKE_LOG"\n')
+    commit(repo)
+    change(repo, "bin/other")
+
+    run(repo)
+
+    assert "bin/pytest bin/tests" in (repo.parent / "calls").read_text().splitlines()
 
 
 def test_names_a_python_script_builds_from_each_other_are_read_in_time(repo):

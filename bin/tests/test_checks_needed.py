@@ -99,7 +99,7 @@ def test_why_names_the_crate_source_that_embeds_a_doc():
 
 
 def test_nothing_staged_needs_every_check():
-    assert needed() == {"rust", "bin-tests", "skills", "routes"}
+    assert needed() == {"rust", "bin-tests", "skills", "routes", "py-rules"}
 
 
 def test_each_check_names_the_first_path_that_needs_it():

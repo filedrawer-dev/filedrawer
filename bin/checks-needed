@@ -15,6 +15,8 @@ name and the first path that needs it:
     skills     bin/skills sync --check, which needs no build
     routes     at a commit, the test that every route is named for agents or
                listed in NOT_FOR_AGENTS (the full check's nextest holds it)
+    py-rules   at a commit, bin/tests/test_no_wall_clock_limits.py, which needs no
+               build (the full check's bin-tests holds it)
 
 No paths needs every check: with nothing changed, nothing narrows them.
 
@@ -58,6 +60,8 @@ A path needs skills when it lies in skills/, or is docs/entry-format.md or bin/s
 A path needs routes when it is crates/server/src/lib.rs (the router),
 crates/server/install.md, crates/server/tests/it/skill.rs, or lies in skills/.
 
+A path needs py-rules when it lies in bin/tests/.
+
 The rules miss a path a crate builds without a `..` step, and a Python path not
 derived from __file__. CI runs every check, so it catches what they miss.
 """
@@ -100,6 +104,8 @@ ROUTES_PATHS = (
     "crates/server/tests/it/skill.rs",
     "skills",
 )
+# What bin/tests/test_no_wall_clock_limits.py reads: bin/tests' own sources.
+PY_RULES_PATHS = ("bin/tests",)
 CRATE_SOURCES = (".rs", ".toml", ".html")
 # Not walked: git's own folder, and cargo's output in a working tree.
 SKIP_DIRS = {".git", "target"}
@@ -343,20 +349,22 @@ class PythonPaths:
 
 
 class Inputs:
-    """A check's inputs: the paths it starts from, and every path the scripts among
-    them reach, in turn, each with the Step that made it one."""
+    """A check's inputs: the paths it starts from, and, unless `follow` is false,
+    every path the scripts among them reach, in turn, each with the Step that made it
+    one."""
 
     def __init__(
         self,
         tree: Tree,
         starts: dict[str, Step],
         by_name: dict[str, str] | None = None,
+        follow: bool = True,
     ):
         # The file names that are inputs wherever they lie, each with its rule's line.
         self.by_name = by_name or {}
         self.steps = dict(starts)
         # Breadth first, so each path's first Step lies on a shortest chain.
-        todo = deque(self.steps)
+        todo = deque(self.steps if follow else ())
         read = set()
         while todo:
             ref = todo.popleft()
@@ -485,6 +493,15 @@ def main(argv: list[str]) -> int:
         "routes": Inputs(
             tree,
             {ref: Step(f"{ref}: the routes test compares it") for ref in ROUTES_PATHS},
+        ),
+        "py-rules": Inputs(
+            tree,
+            {
+                ref: Step(f"{ref}: the wall-clock rule reads it")
+                for ref in PY_RULES_PATHS
+            },
+            # The rule reads bin/tests' own sources, not what they reach.
+            follow=False,
         ),
     }
     if why is not None:

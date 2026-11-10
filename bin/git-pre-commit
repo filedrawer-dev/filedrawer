@@ -10,7 +10,7 @@
 # agent left out.
 # Agents' commits ($AI_AGENT set) also run llm-toolbox's agent-commit-gate, told by
 # AGENT_CHECK_AT_COMMIT that it runs for a commit, so it runs bin/agent-commit-check
-# (clippy and the skills check) in place of agent-pre-commit; wt-ship runs
+# (its header lists what it runs) in place of agent-pre-commit; wt-ship runs
 # agent-pre-commit, the tests included, on each commit when it lands.
 # bin/pre-commit-run and bin/slop-lint are copies from llm-toolbox, so the hooks work
 # for anyone with Python 3 and uv, on the host and in the sandbox. Every refusal ends
