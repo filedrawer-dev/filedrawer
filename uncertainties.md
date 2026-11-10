@@ -287,17 +287,6 @@ Add a new entry at the end of the topic it belongs to, or start a topic when non
   One rule, no new table, and a removed member who kept the key can't rejoin.
 - Against: the creator must hand the new key to every teammate who hasn't joined yet.
 
-#### Series of a suspended account
-
-- Options: keep serving a suspended account's series, as here; or hide its series pages, and the series block on other members' entries, while it is suspended.
-- Chosen: keep serving them for now (the owner's decision, 2026-11-09, #43); an admin takedown of a series comes before production (#57).
-- Against: design.md says suspending stops the site serving the account's data, and a series' title and description are its author's text.
-  The join key limits who adds entries to a series, not who reads it, so a public series with a spam or hazardous description stays up for anyone, and until #57 only a hand edit of the database takes it down.
-  Three gaps follow, each rarer while hidden series are paused (#33):
-  `series::mark_readable` can still make a suspended creator's unreadable versions readable, once other members' entries publish;
-  the creator can't make a hidden series public, so members' `waiting_on_series` entries wait until the suspension is lifted or the entries leave the series;
-  and only the creator's token takes an entry out of the series.
-
 ### Screening and review
 
 #### Screening: publishing screens at once

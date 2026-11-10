@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE series SET removed_at = ? WHERE account_id = ? AND removed_at IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "dc8a01e71a4777e3f4201a6a72c42f80bbb24f6e6a47f34f33b90e7aa176200f"
+}

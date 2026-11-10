@@ -148,6 +148,24 @@ pub async fn remove(pool: &SqlitePool, id: &str) -> Result<Changed, sqlx::Error>
     Ok(Changed::Done)
 }
 
+/// Removes every series `account_id` made that isn't removed already, in the
+/// caller's transaction, as a suspension does. The caller places the entries that
+/// waited on them.
+pub async fn remove_all_of(
+    connection: &mut SqliteConnection,
+    account_id: &str,
+) -> Result<(), sqlx::Error> {
+    let at = now();
+    sqlx::query!(
+        "UPDATE series SET removed_at = ? WHERE account_id = ? AND removed_at IS NULL",
+        at,
+        account_id
+    )
+    .execute(connection)
+    .await?;
+    Ok(())
+}
+
 /// Restores removed series `id`, unless its creator is suspended. Versions that
 /// would have become readable while it was removed become readable now.
 pub async fn restore(pool: &SqlitePool, id: &str) -> Result<Changed, sqlx::Error> {

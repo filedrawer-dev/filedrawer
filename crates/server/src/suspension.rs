@@ -1,13 +1,13 @@
 //! The owner suspending an account (design.md, Admin; #43): it can't submit, and all
-//! its entries become removed. Lifting the suspension lets it write again and
-//! restores nothing; the owner restores each entry from its admin page (the owner's
-//! decision, 2026-11-09).
+//! its entries and the series it made become removed (#57). Lifting the suspension
+//! lets it write again and restores nothing; the owner restores each entry and series
+//! from its admin page (the owner's decisions, 2026-11-09).
 
 use sqlx::{SqliteConnection, SqlitePool};
 
 use crate::error::AppError;
 use crate::respond::CONTACT;
-use crate::{db, removed_entries, time::now};
+use crate::{db, removed_entries, removed_series, time::now};
 
 /// An account as its admin page shows it.
 pub struct OwnersAccount {
@@ -93,19 +93,21 @@ async fn suspended(
     .await
 }
 
-/// Suspends `account_id` and removes every entry of it.
+/// Suspends `account_id` and removes every entry of it and every series it made. The
+/// caller places the entries that waited on those series.
 pub async fn suspend(pool: &SqlitePool, account_id: &str) -> Result<Changed, sqlx::Error> {
     let mut transaction = db::write_tx(pool).await?;
     let at = now();
     let changed = set(&mut transaction, account_id, Some(&at)).await?;
     if changed == Changed::Done {
         removed_entries::remove_all_of(&mut transaction, account_id).await?;
+        removed_series::remove_all_of(&mut transaction, account_id).await?;
     }
     transaction.commit().await?;
     Ok(changed)
 }
 
-/// Lifts `account_id`'s suspension. Its entries stay removed.
+/// Lifts `account_id`'s suspension. Its entries and series stay removed.
 pub async fn lift(pool: &SqlitePool, account_id: &str) -> Result<Changed, sqlx::Error> {
     let mut transaction = db::write_tx(pool).await?;
     let changed = set(&mut transaction, account_id, None).await?;

@@ -312,3 +312,76 @@ async fn a_suspended_account_still_logs_in_and_makes_tokens_and_a_deleted_one_ha
         .await;
     assert_eq!(page.status, StatusCode::NOT_FOUND, "{}", page.body);
 }
+
+#[tokio::test]
+async fn suspending_removes_the_series_the_account_made_and_lifting_restores_none() {
+    let app = test_app().await;
+    let cookie = owner(&app).await;
+    let (author, token) = browser_account(&app, "grace@example.com").await;
+    let (series, key) = create(&app, &token).await;
+    make_public(&app, &author, &series).await;
+    // Another member's entry cites it, and stays up.
+    let member = app.other_token().await;
+    app.post_as(&format!("/series/{series}/join"), Some(&member), key)
+        .await;
+    let entry = common::series::submit_with(
+        &app,
+        &member,
+        &common::series::citing("Member's", &format!("{series}@1"), ""),
+    )
+    .await;
+    let account = common::account_id(&app, &author).await;
+
+    done(&suspend(&app, &cookie, &account).await, &account);
+    assert_eq!(
+        app.get(&format!("/series/{series}")).await.status,
+        StatusCode::NOT_FOUND
+    );
+    let read = app.get(&format!("/e/{entry}")).await;
+    assert_eq!(read.status, StatusCode::OK, "{}", read.body);
+    assert_eq!(field(&read.body, "series_description"), Some("not public"));
+    assert!(!read.body.contains("Layer sweep"), "{}", read.body);
+
+    done(&lift(&app, &cookie, &account).await, &account);
+    assert_eq!(
+        app.get(&format!("/series/{series}")).await.status,
+        StatusCode::NOT_FOUND
+    );
+    let restored = app
+        .form(
+            &format!("/admin/series/{series}/restore"),
+            &[],
+            Some(&cookie),
+        )
+        .await;
+    assert_eq!(restored.status, StatusCode::SEE_OTHER, "{}", restored.body);
+    assert_eq!(
+        app.get(&format!("/series/{series}")).await.status,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn an_entry_waiting_on_a_suspended_accounts_hidden_series_goes_on() {
+    let app = test_app().await;
+    let cookie = owner(&app).await;
+    let (author, token) = browser_account(&app, "grace@example.com").await;
+    let (series, key) = create(&app, &token).await;
+    let member = app.other_token().await;
+    app.post_as(&format!("/series/{series}/join"), Some(&member), key)
+        .await;
+    let entry = common::series::submit_with(
+        &app,
+        &member,
+        &common::series::citing("Member's", &format!("{series}@1"), ""),
+    )
+    .await;
+    assert_eq!(
+        app.get(&format!("/e/{entry}")).await.status,
+        StatusCode::NOT_FOUND
+    );
+    let account = common::account_id(&app, &author).await;
+
+    done(&suspend(&app, &cookie, &account).await, &account);
+    assert_eq!(app.get(&format!("/e/{entry}")).await.status, StatusCode::OK);
+}

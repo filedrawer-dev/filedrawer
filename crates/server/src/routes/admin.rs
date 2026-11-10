@@ -379,17 +379,21 @@ fn account_reply(id: &str, outcome: Changed, state: &str) -> Result<Response, Ap
     }
 }
 
-/// Suspends an account: it can't submit, and every entry of it is removed.
+/// Suspends an account: it can't submit, and every entry of it and every series it
+/// made is removed.
 pub async fn suspend(
     _: AdminSession,
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Response, AppError> {
     let done = suspension::suspend(&state.pool, &id).await?;
+    if done == Changed::Done {
+        jobs::place_waiting(&state).await?;
+    }
     account_reply(&id, done, "already suspended")
 }
 
-/// Lifts an account's suspension; its entries stay removed.
+/// Lifts an account's suspension; its entries and series stay removed.
 pub async fn lift(
     _: AdminSession,
     State(state): State<AppState>,

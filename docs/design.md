@@ -147,7 +147,7 @@ The owner expects little abuse and prefers limits to login friction.
   Reason: a leaked code yields many accounts, each submitting one rewording, and the per-account guard alone would never fire.
   This waits for a rule that fits a sprint (issue #17; the owner's decision, 2026-11-06): one code may cover a whole room of participants on one network, and spreading the guard would send all their work to review over one person's entry.
 - The admin can suspend an account.
-  A suspended account can't submit, and all its entries become `removed` (see [Admin](#admin)).
+  A suspended account can't submit, and all its entries and the series it made become `removed` (see [Admin](#admin)).
 - The server sits behind Caddy.
   It trusts `X-Forwarded-For` only on connections from Caddy over loopback, and otherwise uses the connection's own address.
   Limits on IPv6 addresses apply per /64, since one host usually holds a whole /64.
@@ -872,11 +872,11 @@ Reason: entries and feedback can carry instructions, such as "create an invite c
     A restore is refused when its account is deleted, when another version has replaced the one it replaced, which would fork the chain, and for a member of a batch removed before the batch was decided, which went on without it.
     Reason: a batch is decided as one.
     The author's token reads `status: removed` and the contact address, but not the text; the public gets a 404.
-  - `/admin/accounts/<id>` suspends an account, and removes each of its entries, each keeping its status for a restore.
+  - `/admin/accounts/<id>` suspends an account, and removes each of its entries, each keeping its status for a restore, and each series it made (#57).
     The account's token can read, but every write gets a 403 that names the contact address, before its rate counts; a trigger refuses an entry insert from a suspended account, for a write that passed the token check as the suspension committed.
     It can't make a series public, but its browser session can still log in, make tokens and delete the account.
-    Lifting the suspension restores nothing, and no entry of a suspended account can be restored (the owner's decision, 2026-11-09).
-    Reason: an entry removed as a hazard mustn't come back by accident.
+    Lifting the suspension restores nothing, and no entry or series of a suspended account can be restored (the owner's decisions, 2026-11-09).
+    Reason: an entry or series removed as a hazard mustn't come back by accident.
   - `/admin/series/<id>`, linked from its creator's account page, removes a series and restores it (#57, the owner's decisions, 2026-11-09).
     Reason: a series' title and description are its creator's text, which anyone reads once it is public.
     A removed series answers 404 on every route, to its creator and members too, and a new entry or replacement citing it is refused as one citing a series the account isn't a member of.
