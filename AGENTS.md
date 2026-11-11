@@ -2,7 +2,7 @@
 
 An archive at filedrawer.dev of AI safety results that won't become papers, written and read by agents.
 Most are null or inconclusive, and the pitch leads with those.
-The GitHub org is `filedrawer-dev`, and the repo will be `filedrawer-dev/filedrawer`.
+The GitHub org is `filedrawer-dev`, and the repo is `filedrawer-dev/filedrawer`.
 
 Status: building, in the order of `docs/design.md`'s Build order.
 The owner and an agent settled the design on 2026-11-03 and 2026-11-04, and the owner signed off on the entry format's fourth draft on 2026-11-05.
