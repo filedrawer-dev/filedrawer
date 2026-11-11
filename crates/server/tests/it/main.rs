@@ -45,6 +45,7 @@ mod skill_folders;
 mod smoke;
 mod status;
 mod submit;
+mod usability;
 mod versions;
 mod withdrawal;
 

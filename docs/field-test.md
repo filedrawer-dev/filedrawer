@@ -48,6 +48,21 @@ It writes the key to `/home/carver/code/claudedev/keep/filedrawer/field-test-key
 - When the run is over, ask the owner to run `ops/field-test-key close`.
 
 Any agent running as the sandbox's user can read the key file, as it can `ops/.vps.env`.
+The test agents of a scripted usability run can't: drive-agent runs each as a user of its own, in a box that hides the workspace.
+
+## Scripted usability runs
+
+A usability run has Claude Code or Codex, in its own TUI, follow a scripted human through a scenario, such as installing the skills, then dropping a direction whose null result the submit skill should offer to post.
+`ops/usability-run SCENARIO HARNESS NAME` runs one (`-h`), through llm-toolbox's `drive-agent`, which types each human turn once the agent's turn ends and has a simulated human answer what the script leaves open.
+
+- Each run gets a fresh staging account, signed up as a person would, with the usability mailbox and invite code in `keep/filedrawer/usability/mail.env`, and deleted at the end; so no run finds another's entries.
+  An entry that went public before the end stays up; `ops/remove-entries` (`-h`) takes down the ones the run listed, as the owner, who runs it.
+- The scenarios, the persona and the synthetic projects live in `keep/filedrawer/usability/`, not the repo, which agents under test may browse.
+- The agent runs as a system user named NAME in bwrap: it sees only its home, its network goes through a proxy that refuses GitHub and loopback, and nothing tells it it is tested.
+  Use persona-like names (`jason7`), since the agent sees its user's name.
+- Its turns use the field-test key, `{KEY}` in a scenario, for fetch tools; the run refuses a key that is closed or expires within 2 hours.
+- Run it with `bgrun --wait -o LOG`, as each turn may take 20 minutes.
+  `drive-agent digest RUN_DIR` reads a run, and `ops/usability-run headers RUN_DIR` lists its fetches of the site.
 
 ## Reports
 

@@ -68,6 +68,8 @@ The field test's entries and logs are in `field-test/`, git-excluded and local o
 - `ops/smoke-staging` follows the submit skill against staging as an agent would, and checks that each skill's tag holds what the site serves; `screen` checks staging's real screen and `eval` its labelled cases (`ops/screen-eval/`); `read` runs only the checks that write nothing, which `ops/deploy-production` runs against production.
   CI runs the first two after each deploy, each as a test account of its own.
   Read its `-h` before running it, or changing staging's test accounts, their settings or CI's deploy checks: it holds the accounts, the secrets and the settings each mode reads.
+- `ops/usability-run` (`-h`) runs one scripted usability run of the skills on staging, an agent's own TUI driven through llm-toolbox's `drive-agent`, as a fresh staging account it deletes at the end; `ops/remove-entries` takes down, as the owner, the entries a run left public.
+  `docs/field-test.md`, Scripted usability runs, says how; the scenarios live in `keep/filedrawer/usability/`, out of this public repo.
 - `GET /staging/status` (staging and dev; production has no such route) shows what screening spent today against the cap, how many entries wait for it and since when, and when its last call succeeded and when the last one failed, with the API's error; and for the link checks, GitHub's hourly allowance and the calls left, the hosts that asked the server to wait, and how often the API overruled GitHub's commit page.
   Look there first when staging's screen or link checks seem stuck: `curl -H "X-Staging-Key: $FILEDRAWER_STAGING_KEY" https://staging.filedrawer.dev/staging/status`.
   The last calls are kept in memory, so a restart empties them until the next one.

@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+"""Removes entries as the admin, from a file of entry IDs, such as the
+public-entries.txt that ops/usability-run writes for entries a run's account left
+public. The owner runs it: the admin pages answer only the owner's browser session,
+so it logs in with the owner's email and password, which it asks for.
+
+    ops/remove-entries FILE [--base URL]
+
+FILE holds one entry ID at the start of each line (anything after a tab is ignored;
+blank lines and # comments too). Each entry is removed as the admin page's Remove
+button does (design.md, Admin): the site stops serving it, with no public notice.
+An entry already removed counts as done. Prints one line per entry and a tally.
+
+  --base URL   the server (default https://staging.filedrawer.dev); production too
+
+Environment:
+  FILEDRAWER_STAGING_KEY  sent as X-Staging-Key; for staging, else STAGING_KEY in
+                          ops/.vps.env
+  FILEDRAWER_ADMIN_EMAIL, FILEDRAWER_ADMIN_PASSWORD
+                          the login, instead of asking (tests)
+
+Exit status: 0 every entry is removed, 1 one or more weren't, 2 usage or login error.
+"""
+
+import getpass
+import http.client
+import os
+import re
+import shlex
+import sys
+import urllib.parse
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+STAGING = "https://staging.filedrawer.dev"
+
+
+def staging_key(base: str) -> str:
+    if os.environ.get("FILEDRAWER_STAGING_KEY"):
+        return os.environ["FILEDRAWER_STAGING_KEY"]
+    env = HERE / ".vps.env"
+    if base == STAGING and env.exists():
+        for line in env.read_text().splitlines():
+            match = re.match(r"\s*(?:export\s+)?STAGING_KEY=(.*)$", line)
+            if match:
+                return (shlex.split(match[1]) or [""])[0]
+    return ""
+
+
+class Site:
+    def __init__(self, base: str):
+        self.base = base.rstrip("/")
+        self.url = urllib.parse.urlsplit(self.base)
+        self.key = staging_key(self.base)
+        self.cookie = ""
+
+    def post(self, path: str, form: dict) -> tuple[int, str]:
+        kind = (
+            http.client.HTTPSConnection
+            if self.url.scheme == "https"
+            else http.client.HTTPConnection
+        )
+        conn = kind(self.url.netloc, timeout=60)
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Origin": self.base,
+            "User-Agent": "filedrawer-remove-entries",
+            "Accept": "text/plain",
+        }
+        if self.key:
+            headers["X-Staging-Key"] = self.key
+        if self.cookie:
+            headers["Cookie"] = self.cookie
+        try:
+            conn.request(
+                "POST", path, body=urllib.parse.urlencode(form), headers=headers
+            )
+            response = conn.getresponse()
+            text = response.read().decode(errors="replace")
+        except OSError as error:
+            raise SystemExit(
+                f"remove-entries: POST {path} to {self.base}: {error}"
+            ) from None
+        finally:
+            conn.close()
+        for name, value in response.getheaders():
+            if name.lower() == "set-cookie" and value.startswith("fd_session="):
+                self.cookie = value.split(";", 1)[0]
+        return response.status, text
+
+
+def main() -> int:
+    args = sys.argv[1:]
+    if not args or args[0] in ("-h", "--help"):
+        print(__doc__.strip())
+        return 0 if args else 2
+    base = STAGING
+    if "--base" in args:
+        at = args.index("--base")
+        if at + 1 >= len(args):
+            print("remove-entries: --base needs a URL", file=sys.stderr)
+            return 2
+        base = args[at + 1]
+        del args[at : at + 2]
+    if len(args) != 1:
+        print("remove-entries: give one FILE", file=sys.stderr)
+        return 2
+    ids = []
+    try:
+        listed = Path(args[0]).read_text().splitlines()
+    except OSError as error:
+        print(f"remove-entries: {error}", file=sys.stderr)
+        return 2
+    for line in listed:
+        entry = line.split("\t", 1)[0].strip()
+        if entry and not entry.startswith("#"):
+            ids.append(entry)
+    site = Site(base)
+    email = os.environ.get("FILEDRAWER_ADMIN_EMAIL") or input("Admin email: ")
+    password = os.environ.get("FILEDRAWER_ADMIN_PASSWORD") or getpass.getpass(
+        "Password: "
+    )
+    status, _ = site.post("/login", {"email": email, "password": password})
+    if status not in (200, 303) or not site.cookie:
+        print(f"remove-entries: logging in answered {status}", file=sys.stderr)
+        return 2
+    removed = 0
+    for entry in dict.fromkeys(ids):
+        status, text = site.post(f"/admin/e/{urllib.parse.quote(entry)}/remove", {})
+        if status in (200, 303):
+            print(f"{entry}: removed")
+        elif status == 409 and "already removed" in text:
+            print(f"{entry}: already removed")
+        else:
+            print(f"{entry}: FAILED, {status} {' '.join(text.split())[:120]}")
+            continue
+        removed += 1
+    total = len(dict.fromkeys(ids))
+    print(f"{removed} of {total} removed")
+    return 0 if removed == total else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

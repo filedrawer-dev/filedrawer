@@ -1,0 +1,667 @@
+#!/usr/bin/env python3
+"""Scripted usability runs of File Drawer's skills on staging, through llm-toolbox's
+drive-agent, each as a fresh staging account.
+
+    ops/usability-run SCENARIO HARNESS NAME     one run (HARNESS: claude or codex)
+    ops/usability-run account --state FILE      make an account; FILE keeps its login
+    ops/usability-run delete --state FILE       delete it; list its public entries
+    ops/usability-run headers RUN_DIR           each fetch of the site in a run
+
+A run makes a staging account (unless the scenario's `token` is "none"), then runs
+`drive-agent run` with ops/usability/setup.py as its setup, the persona and projects
+from the usability folder, the field-test key as {KEY}, and the account's token where
+the scenario says: "header" (the header file), "env" ($FILEDRAWER_TOKEN) or "none".
+The agent runs as system user NAME (a persona-like name such as jason7) in drive-
+agent's box. At the end the account is deleted, which deletes every entry not yet
+public (design.md, Accounts); an entry already public stays up as "account deleted",
+and its ID is added to runs/<date>/public-entries.txt for ops/remove-entries.
+The run's folder is runs/<date>/NAME-HARNESS, with drive-agent's files and
+account.txt: the account's ID, its address's tag and what was deleted.
+
+The account signs up as a person would: a plus-address of the usability mailbox
+(<local>+<NAME>-<random>@<domain>), a random password, the display name Jason Carver
+and the usability invite code, which spares staging's per-IP signup limit
+(design.md, Limits); the verification mail is read over IMAP (INBOX, then Junk) by
+its exact address, then deleted. Every request sends the staging key, an Origin and
+User-Agent filedrawer-usability-run.
+
+The usability folder ($FILEDRAWER_USABILITY_DIR, default
+/home/carver/code/claudedev/keep/filedrawer/usability) holds persona.md,
+scenarios/, projects/, runs/ and mail.env, the owner's, mode 600, with
+USABILITY_MAIL_ADDRESS, USABILITY_MAIL_PASSWORD and USABILITY_INVITE. The
+scenarios and persona stay out of the repo, which is public: agents under test may
+browse it. Nothing here prints the mailbox, a password, a token or the key.
+
+Options:
+  --base URL         the server: https://staging.filedrawer.dev (default) or a
+                     loopback URL (tests); production is refused, and the server
+                     must answer /staging/status
+  --state FILE       (account, delete) the account's login, written mode 600
+
+Environment:
+  FILEDRAWER_STAGING_KEY          the staging key, sent as X-Staging-Key
+  FILEDRAWER_USABILITY_DIR        the usability folder (above)
+  FILEDRAWER_FIELD_TEST_KEY_FILE  the field-test key file (default
+                                  keep/filedrawer/field-test-key/key); a run whose
+                                  turns use {KEY} refuses a key that is closed,
+                                  failed, unknown or expiring within 2 hours, and
+                                  probes /tags?key= first
+  FILEDRAWER_USABILITY_MAIL_LOG   (tests, loopback base only) a server log to read
+                                  the verification link from, instead of IMAP
+  FILEDRAWER_USABILITY_MAIL_WAIT  seconds to wait for the mail (default 300)
+
+Exit status: 0 done, 1 the run or a step failed, 2 usage or settings error.
+"""
+
+import argparse
+import datetime
+import http.client
+import imaplib
+import json
+import os
+import re
+import secrets
+import shlex
+import signal
+import subprocess
+import sys
+import time
+import urllib.parse
+from email import message_from_bytes
+from email.header import decode_header, make_header
+from pathlib import Path
+
+STAGING = "https://staging.filedrawer.dev"
+HERE = Path(__file__).resolve().parent
+WORKSPACE = Path("/home/carver/code/claudedev")
+USER_AGENT = "filedrawer-usability-run"
+SUBJECT = "Verify your email for File Drawer"
+DISPLAY_NAME = "Jason Carver"
+GIT_EMAIL = "jason@example.org"
+LOOPBACK = re.compile(r"^http://(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$")
+
+
+class Usage(Exception):
+    """Exit 2."""
+
+
+class Failed(Exception):
+    """Exit 1."""
+
+
+def usability_dir() -> Path:
+    default = WORKSPACE / "keep" / "filedrawer" / "usability"
+    return Path(os.environ.get("FILEDRAWER_USABILITY_DIR", default))
+
+
+def check_base(base: str) -> str:
+    base = base.rstrip("/")
+    if base != STAGING and not LOOPBACK.match(base):
+        raise Usage(f"--base must be {STAGING} or a loopback URL, not {base}")
+    return base
+
+
+def read_env_file(path: Path) -> dict:
+    """KEY=value lines, shell-quoted or not, as ops/.vps.env and mail.env hold."""
+    values = {}
+    for line in path.read_text().splitlines():
+        match = re.match(r"\s*(?:export\s+)?([A-Z_][A-Z0-9_]*)=(.*)$", line)
+        if match:
+            parts = shlex.split(match[2]) if match[2].strip() else [""]
+            values[match[1]] = parts[0] if parts else ""
+    return values
+
+
+class Site:
+    """Requests to the server as a browser or an agent would, with the staging key,
+    an Origin, and the session cookie kept by hand (it is Secure, which Python's
+    cookie jar drops over http)."""
+
+    def __init__(self, base: str):
+        self.base = base
+        self.url = urllib.parse.urlsplit(base)
+        self.key = os.environ.get("FILEDRAWER_STAGING_KEY", "")
+        if base == STAGING and not self.key:
+            raise Usage("FILEDRAWER_STAGING_KEY is unset")
+        self.cookie = ""
+
+    def request(
+        self,
+        method: str,
+        path: str,
+        form: dict | None = None,
+        token: str | None = None,
+        key: bool = True,
+        accept: str = "text/plain",
+    ) -> tuple[int, str]:
+        kind = (
+            http.client.HTTPSConnection
+            if self.url.scheme == "https"
+            else http.client.HTTPConnection
+        )
+        conn = kind(self.url.netloc, timeout=60)
+        headers = {"User-Agent": USER_AGENT, "Accept": accept}
+        if key and self.key:
+            headers["X-Staging-Key"] = self.key
+        if self.cookie:
+            headers["Cookie"] = self.cookie
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        body = None
+        if form is not None:
+            body = urllib.parse.urlencode(form)
+            headers["Content-Type"] = "application/x-www-form-urlencoded"
+            headers["Origin"] = self.base
+        try:
+            conn.request(method, path, body=body, headers=headers)
+            response = conn.getresponse()
+            text = response.read().decode(errors="replace")
+        except OSError as error:
+            raise Failed(f"{method} {path}: {error}") from None
+        finally:
+            conn.close()
+        for name, value in response.getheaders():
+            if name.lower() == "set-cookie" and value.startswith("fd_session="):
+                self.cookie = value.split(";", 1)[0]
+        return response.status, text
+
+    def check_staging(self) -> None:
+        status, _ = self.request("GET", "/staging/status")
+        if status != 200:
+            raise Usage(
+                f"{self.base}/staging/status answered {status}: not staging or "
+                "dev, or the staging key is wrong"
+            )
+
+
+# ---------------------------------------------------------------- mail
+
+
+def wait_seconds() -> float:
+    return float(os.environ.get("FILEDRAWER_USABILITY_MAIL_WAIT", 300))
+
+
+def link_from_log(path: Path, address: str) -> str | None:
+    """The newest verification link mailed to `address` in a dev server's log, which
+    logs each email it can't send with its address and body."""
+    # The log colours its field names when it thinks it writes to a terminal.
+    text = re.sub(r"\x1b\[[0-9;]*m", "", path.read_text(errors="replace"))
+    found = None
+    for match in re.finditer(r"to=(\S+)", text):
+        if match[1].strip('"') != address:
+            continue
+        link = re.search(r"/verify\?token=([A-Za-z0-9_-]+)", text[match.end() :])
+        if link:
+            found = link[1]
+    return found
+
+
+def link_from_imap(mail: dict, address: str) -> str | None:
+    """The verification link in the newest mail to exactly `address`, from INBOX or
+    Junk; the message is deleted once read."""
+    with imaplib.IMAP4_SSL("imap.purelymail.com", 993) as imap:
+        imap.login(mail["USABILITY_MAIL_ADDRESS"], mail["USABILITY_MAIL_PASSWORD"])
+        for folder in ("INBOX", "Junk"):
+            if imap.select(folder)[0] != "OK":
+                continue
+            status, data = imap.search(
+                None, "TO", f'"{address}"', "SUBJECT", f'"{SUBJECT}"'
+            )
+            for number in reversed((data[0] or b"").split() if status == "OK" else []):
+                status, parts = imap.fetch(number, "(RFC822)")
+                if status != "OK":
+                    continue
+                message = message_from_bytes(parts[0][1])
+                to = str(make_header(decode_header(message.get("To", "")))).lower()
+                if address not in re.findall(r"[^\s<>,]+@[^\s<>,]+", to):
+                    continue
+                body = message.get_payload(decode=True) or b""
+                if message.is_multipart():
+                    body = b"".join(
+                        p.get_payload(decode=True) or b""
+                        for p in message.walk()
+                        if p.get_content_type() == "text/plain"
+                    )
+                link = re.search(rb"/verify\?token=([A-Za-z0-9_-]+)", body)
+                if link:
+                    imap.store(number, "+FLAGS", "\\Deleted")
+                    imap.expunge()
+                    return link[1].decode()
+    return None
+
+
+def verification_link(site: Site, mail: dict, address: str) -> str:
+    log = os.environ.get("FILEDRAWER_USABILITY_MAIL_LOG")
+    if log and not LOOPBACK.match(site.base):
+        raise Usage("FILEDRAWER_USABILITY_MAIL_LOG is for a loopback server only")
+    deadline = time.time() + wait_seconds()
+    while time.time() < deadline:
+        token = (
+            link_from_log(Path(log), address) if log else link_from_imap(mail, address)
+        )
+        if token:
+            return token
+        time.sleep(0.5 if log else 5)
+    raise Failed(
+        f"no verification mail reached the usability mailbox in "
+        f"{int(wait_seconds())} s: check its Junk folder, and staging's log for "
+        "a mail error"
+    )
+
+
+# ---------------------------------------------------------------- the account
+
+
+def mail_settings(base: str) -> dict:
+    if os.environ.get("FILEDRAWER_USABILITY_MAIL_LOG") and LOOPBACK.match(base):
+        return {"USABILITY_MAIL_ADDRESS": "usability@example.org"}
+    path = usability_dir() / "mail.env"
+    if not path.exists():
+        raise Usage(
+            f"{path} is missing: the owner writes it, mode 600, with "
+            "USABILITY_MAIL_ADDRESS, USABILITY_MAIL_PASSWORD and USABILITY_INVITE"
+        )
+    mail = read_env_file(path)
+    for name in ("USABILITY_MAIL_ADDRESS", "USABILITY_MAIL_PASSWORD"):
+        if not mail.get(name):
+            raise Usage(f"{path} has no {name}")
+    return mail
+
+
+def make_account(site: Site, name: str) -> dict:
+    """Signs up, verifies, logs in and makes a token. Returns the login: address,
+    tag, password, id and token."""
+    mail = mail_settings(site.base)
+    local, domain = mail["USABILITY_MAIL_ADDRESS"].lower().split("@", 1)
+    # Lower case, as the server keeps every address.
+    tag = f"{name}-{secrets.token_hex(3)}".lower()
+    address = f"{local}+{tag}@{domain}"
+    password = secrets.token_urlsafe(18)
+    form = {
+        "email": address,
+        "password": password,
+        "display_name": DISPLAY_NAME,
+        "invite": mail.get("USABILITY_INVITE", ""),
+    }
+    for attempt in range(3):
+        status, text = site.request("POST", "/signup", form)
+        if status == 200:
+            break
+        if status in (429, 422) or attempt == 2:
+            reason = re.sub(r"<[^>]+>", " ", text)
+            raise Failed(f"signup answered {status}: {' '.join(reason.split())[:300]}")
+        time.sleep(5)  # a deploy restarting staging; the same address is retried
+    token_link = verification_link(site, mail, address)
+    status, _ = site.request("POST", "/verify", {"token": token_link})
+    if status != 200:
+        raise Failed(f"verifying answered {status}")
+    login = {"address": address, "tag": tag, "password": password}
+    log_in(site, login)
+    status, page = site.request("POST", "/account/tokens", {"name": "usability run"})
+    tokens = set(re.findall(r"\bfdt_[A-Za-z0-9_-]+", page))
+    if status != 200 or len(tokens) != 1:
+        raise Failed(
+            f"making a token answered {status}, with {len(tokens)} tokens on the page"
+        )
+    login["token"] = tokens.pop()
+    status, mine = site.request("GET", "/entries/mine", token=login["token"])
+    match = re.search(r"^account: (a-\S+)", mine, re.MULTILINE)
+    if status != 200 or not match:
+        raise Failed(f"GET /entries/mine with the new token answered {status}")
+    login["id"] = match[1]
+    return login
+
+
+def log_in(site: Site, login: dict) -> None:
+    status, _ = site.request(
+        "POST", "/login", {"email": login["address"], "password": login["password"]}
+    )
+    if status not in (200, 303) or not site.cookie:
+        raise Failed(f"logging in answered {status}")
+
+
+def public_entries(site: Site, login: dict) -> list[str]:
+    status, text = site.request(
+        "GET",
+        "/entries/mine?limit=100",
+        token=login["token"],
+        accept="application/json",
+    )
+    try:
+        entries = json.loads(text)["entries"] if status == 200 else None
+    except (ValueError, KeyError):
+        entries = None
+    if entries is None:
+        raise Failed(f"GET /entries/mine answered {status}")
+    return [e["id"] for e in entries if e.get("status") == "public"]
+
+
+def delete_account(site: Site, login: dict) -> list[str]:
+    """Deletes the account; returns the IDs of its entries that were public, which
+    the deletion leaves up."""
+    public = public_entries(site, login)
+    site.cookie = ""
+    log_in(site, login)
+    status, text = site.request(
+        "POST", "/account/delete", {"password": login["password"]}
+    )
+    if status != 200 or "Account deleted" not in text:
+        raise Failed(f"deleting the account answered {status}")
+    return public
+
+
+def write_state(path: Path, login: dict) -> None:
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.fchmod(fd, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump(login, f)
+
+
+# ---------------------------------------------------------------- the run
+
+
+def field_test_key(scenario: dict, site: Site) -> str | None:
+    if "{KEY}" not in json.dumps(scenario.get("turns", [])):
+        return None
+    path = Path(
+        os.environ.get(
+            "FILEDRAWER_FIELD_TEST_KEY_FILE",
+            WORKSPACE / "keep" / "filedrawer" / "field-test-key" / "key",
+        )
+    )
+    try:
+        fields = dict(
+            line.split("=", 1) for line in path.read_text().splitlines() if "=" in line
+        )
+    except OSError:
+        raise Usage(
+            f"{path} is missing: the owner opens a key with `ops/field-test-key open`"
+        ) from None
+    if "closed" in fields or "failed" in fields or "key" not in fields:
+        raise Usage(
+            f"{path} holds no open key: ask the owner for `ops/field-test-key open`"
+        )
+    try:
+        expires = datetime.datetime.fromisoformat(
+            fields.get("expires", "").replace("Z", "+00:00")
+        )
+    except ValueError:
+        raise Usage(
+            f"{path}'s key has expires={fields.get('expires')}: ask the owner to "
+            "close it and open another"
+        ) from None
+    left = expires - datetime.datetime.now(datetime.UTC)
+    if left < datetime.timedelta(hours=2):
+        raise Usage(
+            f"the field-test key expires within 2 hours ({expires:%H:%M} UTC): ask "
+            "the owner for a new one"
+        )
+    status, _ = site.request("GET", f"/tags?key={fields['key']}", key=False)
+    if status != 200:
+        raise Usage(f"/tags?key= answered {status}: the key in {path} isn't open")
+    return fields["key"]
+
+
+def run(args) -> int:
+    site = Site(check_base(args.base))
+    site.check_staging()
+    scenario_path = Path(args.scenario)
+    if not scenario_path.exists():
+        scenario_path = usability_dir() / "scenarios" / args.scenario
+    try:
+        scenario = json.loads(scenario_path.read_text())
+    except (OSError, ValueError) as error:
+        raise Usage(f"can't read the scenario {args.scenario}: {error}") from None
+    if scenario.get("token", "none") not in ("header", "env", "none"):
+        raise Usage("the scenario's token is header, env or none")
+    if not isinstance(scenario.get("gated"), list):
+        raise Usage(
+            "the scenario needs `gated`, the actions the simulated human never "
+            "approves unless the script does"
+        )
+    if args.harness not in ("claude", "codex"):
+        raise Usage("HARNESS is claude or codex")
+    key = field_test_key(scenario, site)
+    folder = usability_dir()
+    day = folder / "runs" / time.strftime("%Y-%m-%d")
+    out = day / f"{args.name}-{args.harness}"
+    if out.exists():
+        raise Usage(f"{out} exists")
+    token_mode = scenario.get("token", "none")
+    login = make_account(site, args.name) if token_mode != "none" else None
+    env = dict(os.environ)
+    env["FILEDRAWER_USABILITY_BASE"] = site.base
+    env["FILEDRAWER_USABILITY_HARNESS"] = args.harness
+    argv = [
+        "drive-agent",
+        "run",
+        str(scenario_path),
+        "--harness",
+        args.harness,
+        "--name",
+        args.name,
+        "--out",
+        str(out),
+        "--setup",
+        str(HERE / "usability" / "setup.py"),
+        "--setup-env",
+        "FILEDRAWER_STAGING_KEY",
+        "--setup-env",
+        "FILEDRAWER_USABILITY_BASE",
+        "--setup-env",
+        "FILEDRAWER_USABILITY_HARNESS",
+        "--git-name",
+        DISPLAY_NAME,
+        "--git-email",
+        GIT_EMAIL,
+    ]
+    if (folder / "persona.md").exists():
+        argv += ["--persona", str(folder / "persona.md")]
+    if scenario.get("projects"):
+        argv += ["--projects", str(folder / "projects")]
+    if key:
+        env["KEY"] = key
+        argv += ["--var", "KEY"]
+    if login:
+        env["FILEDRAWER_TOKEN"] = login["token"]
+        argv += [
+            "--setup-env" if token_mode == "header" else "--agent-env",
+            "FILEDRAWER_TOKEN",
+        ]
+    day.mkdir(parents=True, exist_ok=True)
+    status = 1
+    deleted = True
+    try:
+        status = subprocess.run(argv, env=env, check=False).returncode
+    except FileNotFoundError:
+        raise Usage("drive-agent isn't on PATH: run llm-toolbox's install.py") from None
+    finally:
+        if login:
+            deleted = finish_account(
+                site, login, out, day, f"{args.name}-{args.harness}"
+            )
+    if not deleted:
+        status = 1
+    if key:
+        print(
+            "The field-test key is open: when the round is over, ask the owner to run "
+            "`ops/field-test-key close`."
+        )
+    return 0 if status == 0 else 1
+
+
+def finish_account(
+    site: Site, login: dict, out: Path, day: Path, run_name: str
+) -> bool:
+    """Deletes the run's account and notes it in account.txt; whether it went."""
+    note = [f"account: {login['id']}", f"tag: {login['tag']}"]
+    deleted = False
+    try:
+        public = delete_account(site, login)
+        deleted = True
+        note.append("deleted: yes")
+        note.append("public entries left: " + (" ".join(public) or "none"))
+        if public:
+            with (day / "public-entries.txt").open("a") as f:
+                f.writelines(f"{entry}\t{run_name}\n" for entry in public)
+            print(
+                f"{len(public)} public entries stay up: ops/remove-entries "
+                f"{day / 'public-entries.txt'} takes them down"
+            )
+    except Failed as error:
+        note.append(f"deleted: no ({error})")
+        print(
+            f"usability-run: the account {login['id']} wasn't deleted: {error}",
+            file=sys.stderr,
+        )
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "account.txt").write_text("\n".join(note) + "\n")
+    return deleted
+
+
+# ---------------------------------------------------------------- headers
+
+
+def commands(path: Path):
+    for line in path.read_text().splitlines():
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        content = (rec.get("message") or {}).get("content")
+        if rec.get("type") == "assistant" and isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "tool_use":
+                    given = part.get("input", {})
+                    yield (
+                        part["name"],
+                        given.get("command") or given.get("url") or json.dumps(given),
+                    )
+        payload = rec.get("payload") or {}
+        if rec.get("type") == "response_item" and payload.get("type") in (
+            "function_call",
+            "custom_tool_call",
+        ):
+            given = payload.get("arguments") or payload.get("input") or ""
+            try:
+                parsed = json.loads(given)
+                given = parsed.get("cmd") or parsed.get("command") or given
+                if isinstance(given, list):
+                    given = " ".join(given)
+            except (ValueError, AttributeError):
+                pass
+            yield payload.get("name"), given
+        if (
+            rec.get("type") == "response_item"
+            and payload.get("type") == "web_search_call"
+        ):
+            yield "web", json.dumps(payload.get("action"))
+        item = rec.get("item") or {}
+        if (
+            rec.get("type") == "item.started"
+            and item.get("type") == "command_execution"
+        ):
+            yield "exec", item.get("command")
+
+
+def redact(text: str) -> str:
+    return re.sub(r"key=[^&#\s'\"]+", "key=…", text)
+
+
+def headers(args) -> int:
+    folder = Path(args.run_dir)
+    paths = sorted(folder.glob("transcript-*.jsonl")) + sorted(
+        folder.glob("print-mode.jsonl")
+    )
+    if not paths:
+        raise Usage(f"no transcript in {folder}")
+    for path in paths:
+        for name, command in commands(path):
+            command = str(command)
+            if name in ("WebFetch", "web", "web_fetch") or "fetch" in str(name).lower():
+                print("WEBTOOL", name, redact(command)[:150])
+                continue
+            if "filedrawer.dev" not in command:
+                continue
+            for part in re.split(r"(?=\bcurl\b)", command):
+                if not part.startswith("curl") or "filedrawer.dev" not in part:
+                    continue
+                agent = re.findall(
+                    r"""(?:-A|--user-agent)\s+(?:'([^']*)'|"([^"]*)")""", part
+                )
+                agent = [x for pair in agent for x in pair if x]
+                skill = re.findall(r"X-Filedrawer-Skill: ([\w/-]+)", part)
+                header_file = "H@" if re.search(r"-H\s*@", part) else "NOHDRFILE"
+                url = re.findall(r"https?://[^\s'\"]*filedrawer\.dev[^\s'\"]*", part)
+                print(
+                    name,
+                    "|",
+                    agent,
+                    "|",
+                    skill,
+                    "|",
+                    header_file,
+                    "|",
+                    redact((url[:1] or [part[:80]])[0])[:90],
+                )
+    return 0
+
+
+# ---------------------------------------------------------------- main
+
+
+def stopped(signum, frame):
+    raise KeyboardInterrupt
+
+
+def main() -> int:
+    if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
+        print(__doc__.strip())
+        return 0
+    # A stop by signal runs the cleanup too: the run's account gets deleted.
+    signal.signal(signal.SIGTERM, stopped)
+    parser = argparse.ArgumentParser(prog="ops/usability-run", add_help=False)
+    command = sys.argv[1]
+    try:
+        if command in ("account", "delete"):
+            parser.add_argument("--state", required=True)
+            parser.add_argument("--base", default=STAGING)
+            parser.add_argument("--name", default="account")
+            args = parser.parse_args(sys.argv[2:])
+            site = Site(check_base(args.base))
+            site.check_staging()
+            state = Path(args.state)
+            if command == "account":
+                login = make_account(site, args.name)
+                write_state(state, login)
+                print(f"account {login['id']}, tag {login['tag']}")
+            else:
+                login = json.loads(state.read_text())
+                public = delete_account(site, login)
+                print(
+                    f"deleted {login['id']}; public entries left: {' '.join(public) or 'none'}"
+                )
+            return 0
+        if command == "headers":
+            parser.add_argument("run_dir")
+            return headers(parser.parse_args(sys.argv[2:]))
+        parser.add_argument("scenario")
+        parser.add_argument("harness")
+        parser.add_argument("name")
+        parser.add_argument("--base", default=STAGING)
+        return run(parser.parse_args(sys.argv[1:]))
+    except SystemExit:
+        return 2
+    except KeyboardInterrupt:
+        print("usability-run: stopped", file=sys.stderr)
+        return 1
+    except Usage as error:
+        print(f"usability-run: {error}", file=sys.stderr)
+        return 2
+    except Failed as error:
+        print(f"usability-run: {error}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

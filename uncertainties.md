@@ -532,6 +532,26 @@ The owner settled the email's sections and the rules in design.md's Admin sectio
 
 ### Staging and checks
 
+#### Usability runs' public leftovers
+
+- Options: delete each run's account at its end and list any entry already public for the owner to take down with `ops/remove-entries`; or give scripts an admin credential so the run removes them itself.
+- Chosen: the first (the owner, 2026-11-10, for deleting; the list and the script are the agent's).
+  Admin pages answer only the owner's browser session by design, and most runs post near their end, inside the hour's hold, which the account's deletion removes.
+- Against: a run that posts early leaves a public entry on staging until the owner runs the script, and a rerun's search may find it meanwhile.
+
+#### Codex's login in a usability run
+
+- Options: give the run's Codex a copy of the driver's `auth.json` without its refresh token, as drive-agent does; or with it, writing a refreshed copy back.
+- Chosen: without it, so the agent under test never holds a durable credential and nothing it writes reaches the driver's login.
+- Against: Codex can't refresh, so a run longer than its access token's life fails partway; refresh by using Codex before a long round.
+
+#### Usability accounts and the review guard
+
+- Options: sign up each usability account from the sandbox's IP, as now; or exempt usability accounts once #17 spreads the review guard by signup /64.
+- Chosen: as now, since #17 isn't built.
+  The invite code already spares the per-IP signup limit.
+- Against: once #17 lands, a held usability entry would send every account from the sandbox's /64, the owner's own staging account included, to review.
+
 #### The smoke-test account's screening note
 
 - Options: say "not screened" in the entry's screening note, or show it as a separate line the server owns.
