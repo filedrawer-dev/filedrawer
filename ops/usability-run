@@ -198,20 +198,26 @@ def link_from_log(path: Path, address: str) -> str | None:
 
 def link_from_imap(mail: dict, address: str) -> str | None:
     """The verification link in the newest mail to exactly `address`, from INBOX or
-    Junk; the message is deleted once read."""
+    Junk; the message is deleted once read. Purelymail's IMAP SEARCH matches no
+    header text (TO, SUBJECT and FROM all find nothing), so the server narrows by
+    date only and the headers are checked here."""
+    since = (datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=1)).strftime(
+        "%d-%b-%Y"
+    )
     with imaplib.IMAP4_SSL("imap.purelymail.com", 993) as imap:
         imap.login(mail["USABILITY_MAIL_ADDRESS"], mail["USABILITY_MAIL_PASSWORD"])
         for folder in ("INBOX", "Junk"):
             if imap.select(folder)[0] != "OK":
                 continue
-            status, data = imap.search(
-                None, "TO", f'"{address}"', "SUBJECT", f'"{SUBJECT}"'
-            )
+            status, data = imap.search(None, "SINCE", since)
             for number in reversed((data[0] or b"").split() if status == "OK" else []):
                 status, parts = imap.fetch(number, "(RFC822)")
                 if status != "OK":
                     continue
                 message = message_from_bytes(parts[0][1])
+                subject = str(make_header(decode_header(message.get("Subject", ""))))
+                if subject != SUBJECT:
+                    continue
                 to = str(make_header(decode_header(message.get("To", "")))).lower()
                 if address not in re.findall(r"[^\s<>,]+@[^\s<>,]+", to):
                     continue
