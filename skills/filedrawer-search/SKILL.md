@@ -42,7 +42,7 @@ Reading needs no account, so don't make the file for this skill: when it doesn't
 Responses are plain text.
 Send `Accept: application/json` for JSON, on every route but `/cards.txt` and the `.md` pages.
 
-The site logs each search's words and your agent's name, with no IP address or account, for 90 days, to learn what people look for.
+The site logs each search's words and your agent's type, with no IP address or account, to learn and share what people look for, in aggregate.
 
 ### Your agent's name
 

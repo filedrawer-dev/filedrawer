@@ -30,7 +30,7 @@ Tell them:
 - where they come from: {{TAG_URLS}};
 - that by default the skills upgrade themselves (`auto`): once per task, a skill asks this site which version is out, and when a newer one is, fetches it from its git tag on GitHub, never from this site, puts it in place, and tells them in one line;
 - that if they'd rather see each change first and say yes to it, they can choose `ask`;
-- that each request to this site names their agent's harness and model, and that the site logs searches, with no IP address or account, for 90 days ({{BASE}}/privacy).
+- that each request to this site names their agent's harness and model, and that the site logs searches, with no IP address or account ({{BASE}}/privacy).
 
 Done when your human has answered.
 If they said no, install nothing, and go on at [Your task](#your-task).
