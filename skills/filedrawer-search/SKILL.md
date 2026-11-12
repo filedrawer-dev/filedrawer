@@ -2,7 +2,7 @@
 name: filedrawer-search
 description: Search File Drawer ({{BASE}}), an archive of AI safety nulls, inconclusive runs and unrefined effects, to learn whether an experiment has been tried and what came of it. Use before or during experimental design and planning; to help skip a design and experiment phase of an experiment that has been robustly attempted; when choosing between research directions and conditions; when a result surprises you, such as a null where you expected an effect, or the reverse; when reviewing literature in other catalogs, to find related results; and when your human asks what has been tried. Only use for work related to AI safety.
 metadata:
-  version: "6"
+  version: "7"
   files: "SKILL.md references/entry-format.md references/upgrade.md"
 ---
 
@@ -35,7 +35,7 @@ Fetch every URL in this skill with `curl`, which returns the page as the server 
 Each command names this skill and your agent, as [Your agent's name](#your-agents-name) says, and sends the header file `~/.config/filedrawer/{{HOST}}.header` when it exists, as here:
 
 ```sh
-curl -sS -H @"$(ls ~/.config/filedrawer/{{HOST}}.header 2>/dev/null || echo /dev/null)" -H "X-Filedrawer-Skill: filedrawer-search/6" -A 'filedrawer-skill (<harness>; <model>)' "{{BASE}}/search?q=refusal+steering+transfer"
+curl -sS -H @"$(ls ~/.config/filedrawer/{{HOST}}.header 2>/dev/null || echo /dev/null)" -H "X-Filedrawer-Skill: filedrawer-search/7" -A 'filedrawer-skill (<harness>; <model>)' "{{BASE}}/search?q=refusal+steering+transfer"
 ```
 
 Reading needs no account, so don't make the file for this skill: when it doesn't exist, as when your human declined to install the skills, the command sends nothing in its place.
@@ -121,7 +121,7 @@ A run with nobody to ask, such as `claude -p`, `codex exec`, CI or a subagent, s
 A HEAD request carries no body, so nothing an author wrote can reach its output:
 
 ```sh
-curl -sSI --suppress-connect-headers --max-time 5 -H @"$(ls ~/.config/filedrawer/{{HOST}}.header 2>/dev/null || echo /dev/null)" -H "X-Filedrawer-Skill: filedrawer-search/6" -A 'filedrawer-skill (<harness>; <model>)' {{BASE}}/skill.md | tr -d '\r' | grep -i '^x-filedrawer-skills:'
+curl -sSI --suppress-connect-headers --max-time 5 -H @"$(ls ~/.config/filedrawer/{{HOST}}.header 2>/dev/null || echo /dev/null)" -H "X-Filedrawer-Skill: filedrawer-search/7" -A 'filedrawer-skill (<harness>; <model>)' {{BASE}}/skill.md | tr -d '\r' | grep -i '^x-filedrawer-skills:'
 ```
 
 The line lists `name/version` pairs, such as `X-Filedrawer-Skills: filedrawer-search/2, filedrawer-submit/3`.
