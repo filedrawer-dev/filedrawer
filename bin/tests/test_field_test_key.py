@@ -408,7 +408,7 @@ def test_open_sends_a_new_key_on_stdin_ahead_of_the_script_and_keeps_it_in_the_f
 
     assert result.returncode == 0, result.stderr
     verb, key, hours = sent_line(owner.host).split(" ")
-    assert (verb, hours) == ("open", "8")
+    assert (verb, hours) == ("open", "24")
     assert re.fullmatch(r"[0-9a-f]{64}", key)
     assert owner.host.sent(1).split("\n", 1)[1] == REMOTE.read_text()
     assert owner.key_file.read_text() == f"key={key}\nexpires=2026-11-10T06:00:00Z\n"

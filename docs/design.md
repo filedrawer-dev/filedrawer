@@ -995,7 +995,7 @@ Python is fine for scripts and internal tools.
 - Staging is the owner's alone.
   Caddy puts basic auth on every staging request, reads included, and staging's `robots.txt` disallows all crawling.
   For agents' fetch tools, which can't send the staging key's header, the owner opens a second key, the field-test key, with `ops/field-test-key open`: `?key=<key>` in a URL lets a `GET` or `HEAD` through, on staging and its files host, except to `/staging*` and `/admin*`, and Caddy strips it before the server sees the request (the owner's decisions, 2026-11-09).
-  Each `open` makes a new key, good for 8 hours by default and 72 at most, by the server's clock; the expiry sits in Caddy's matcher, so the key lapses with no timer, and `close` ends it early.
+  Each `open` makes a new key, good for 24 hours by default and 72 at most, by the server's clock; the expiry sits in Caddy's matcher, so the key lapses with no timer, and `close` ends it early.
   Any other request with a `key=` in its query gets a 403 that says the key isn't valid there, so an agent holding an expired key doesn't take it for a login page.
   Reason: #28's header log is for the headers agents' own fetch tools send, and Caddy refused those tools before the server saw them; the staging key can't rotate after each run, since CI sends it.
   A URL carries the key into fetch tools' logs, their vendors' servers, and Caddy's error log, which journald keeps for 14 days, so the owner closes the key after each run.

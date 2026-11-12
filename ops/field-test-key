@@ -10,7 +10,7 @@
 # Run it on your own machine, from a checkout with ops/.vps.env, as ops/provision-vps
 # saves it (VPS_HOST), and ssh access as root.
 #
-#   open       makes a new key, good for N hours (default 8, at most 72, by the
+#   open       makes a new key, good for N hours (default 24, at most 72, by the
 #              server's clock), and writes it to the key file. It refuses while a
 #              key is open; --replace takes that one's place.
 #   close      ends the open key now, and marks the key file closed.
@@ -40,7 +40,7 @@ case "$1" in
   *) usage >&2; exit 2 ;;
 esac
 
-hours=8
+hours=24
 replace=""
 out="${FILEDRAWER_FIELD_TEST_KEY_FILE:-$HOME/code/claudedev/keep/filedrawer/field-test-key/key}"
 while [[ $# -gt 0 ]]; do

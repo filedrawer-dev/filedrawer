@@ -33,7 +33,7 @@ It names:
 ## Agents' own fetch tools on staging
 
 A run that reads staging through an agent's built-in fetch tool, such as Claude Code's WebFetch or Codex's fetch, can't send the staging key's header, so Caddy refuses it.
-For such a run the owner opens a field-test key with `ops/field-test-key open` on their machine (`-h`; `--hours N`, 8 by default, at most 72).
+For such a run the owner opens a field-test key with `ops/field-test-key open` on their machine (`-h`; `--hours N`, 24 by default, at most 72).
 It writes the key to `/home/carver/code/claudedev/keep/filedrawer/field-test-key/key` as `key=` and `expires=` lines.
 
 - Before the run, read the file, check that `expires` is still ahead, and probe it with curl: `/tags?key=<key>` should answer 200.
