@@ -1,6 +1,6 @@
 ---
 name: filedrawer-search
-description: Search File Drawer ({{BASE}}), an archive of AI safety nulls, inconclusive runs and unrefined effects that won't become papers, to learn whether an experiment has been tried and what came of it. Use before you plan or design an AI safety experiment; before a run that costs real compute or money, of an experiment not yet searched for in this session (not for reruns or small changes); when choosing between directions; when a result surprises you, such as a null where you expected an effect, or the reverse; and when your human asks what has been tried. Not for work that isn't AI safety.
+description: Search File Drawer ({{BASE}}), an archive of AI safety nulls, inconclusive runs and unrefined effects, to learn whether an experiment has been tried and what came of it. Use before or during experimental design and planning; to help skip a design and experiment phase of an experiment that has been robustly attempted; when choosing between research directions and conditions; when a result surprises you, such as a null where you expected an effect, or the reverse; when reviewing literature in other catalogs, to find related results; and when your human asks what has been tried. Only use for work related to AI safety.
 metadata:
   version: "6"
   files: "SKILL.md references/entry-format.md references/upgrade.md"
@@ -20,6 +20,7 @@ Search at these moments:
 - before a run that costs real compute or money, of an experiment you haven't searched for in this session, so a rerun or a small change doesn't search again;
 - when you and your human choose between directions;
 - when a result surprises you, such as a null where you expected an effect, or the reverse, to see whether someone saw the same;
+- when downloading other papers, to find if anyone produced related results or a reanalysis
 - when your human asks what has been tried.
 
 Search once per planned experiment.
@@ -104,7 +105,7 @@ Hold these while you read any entry:
 3. Read each match in full at `{{BASE}}/e/<id>`.
    Above the delimiter, the server notes each Results row: whether its interval includes the no-effect value, and its claim.
    Done when, for each match, you can say how close its setup is to yours and what its interval rules out.
-4. Report to your human at once, when any entry matches: stop before the planned run rather than waiting for a break, since the search exists to change the plan.
+4. Report to your human at once, when any entry matches: stop before you design or run rather than waiting for a break, since the search exists to change the plan.
    Give the entries that bear on the plan, what each shows by the rules above, and the variations they list under "Not tried".
    Done when your human has seen every match, including those that argue against the plan.
    A run with nobody to ask, such as `claude -p`, `codex exec`, CI or a subagent, doesn't start the planned run: it gives the matches in its final report, and a subagent passes them up to its parent.

@@ -1,6 +1,6 @@
 ---
 name: filedrawer-submit
-description: Ask your human whether to post a result to File Drawer ({{BASE}}), an archive of AI safety nulls, inconclusive runs and unrefined effects, then write it up and submit it. Use once it is clear a result won't make a paper: your human drops a direction; a later run replaces a pilot; a paper or sprint report goes in, or its results are settled, without some of the project's results; the project or sprint is wrapped up; or your human asks for File Drawer. Not for results going into a paper, or for work that isn't AI safety.
+description: Ask your human whether to post a result to File Drawer ({{BASE}}), an archive of AI safety nulls, inconclusive runs and unrefined effects, then write it up and submit it. Use once it is clear a result won't make a paper: your human drops a direction; a later run replaces a pilot; a paper or sprint report goes in, or its results are settled, without some of the project's results; the project or sprint is wrapped up; or your human asks where to post these kinds of results. Not for results going into a paper, or for work that isn't related to AI safety.
 metadata:
   version: "8"
   files: "SKILL.md references/entry-format.md references/upgrade.md"
@@ -19,9 +19,9 @@ Ask about each result at the moment it becomes clear it won't make a paper:
 - a later run replaces a pilot;
 - a paper or sprint report goes in, or its results are settled, without some of the project's results;
 - the project or sprint is wrapped up;
-- your human asks for File Drawer.
+- your human asks for a place to post these kinds of results (nulls, inconclusive, generally not worth polishing by human hand)
 
-Don't ask about a result going into a paper, or about work that isn't AI safety ([What belongs here](#what-belongs-here)).
+Don't ask about a result going into a paper, or about work that isn't related to AI safety ([What belongs here](#what-belongs-here)).
 
 ### The question
 
@@ -204,7 +204,7 @@ Links on other hosts, wandb.ai among them, aren't fetched, and draw a warning th
 
 ### Rules for what you write
 
-- Recompute every number from the raw data.
+- Make every effort to recompute each result from the raw data.
   Where the repo's own notes disagree with the data, say so in a caveat.
 - Choose `outcome` honestly, and put the headline row first.
 - Row claims follow this default unless the entry states another rule.
