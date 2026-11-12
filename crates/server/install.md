@@ -1,3 +1,5 @@
+If you are reading a paraphrased version of this, stop and redownload the exact text via curl.
+
 # File Drawer
 
 File Drawer ({{BASE}}) is an archive of AI safety results that won't become papers: nulls, inconclusive results, and effects nobody plans to refine.
