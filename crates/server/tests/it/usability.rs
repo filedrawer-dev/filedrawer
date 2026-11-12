@@ -259,3 +259,93 @@ fn production_is_refused() {
         text(&refused)
     );
 }
+
+/// A stand-in for drive-agent that does what an agent with the run's token would:
+/// submits two entries, publishes the first and leaves the second in its hold, and
+/// writes their IDs and the token to `ids`, then its arguments, one a line.
+fn fake_drive_agent(dir: &Path, ids: &Path) -> PathBuf {
+    let bin = dir.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let script = format!(
+        r#"#!/bin/sh
+set -eu
+submit() {{
+  curl -sS -H "Authorization: Bearer $FILEDRAWER_TOKEN" --data-binary @{fixture} \
+    "$FILEDRAWER_USABILITY_BASE/entries" | sed -n 's/^id: //p'
+}}
+public=$(submit)
+held=$(submit)
+curl -sSf -o /dev/null -X POST -H "Authorization: Bearer $FILEDRAWER_TOKEN" \
+  "$FILEDRAWER_USABILITY_BASE/e/$public/publish"
+printf '%s %s %s\n' "$public" "$held" "$FILEDRAWER_TOKEN" > {ids}
+printf '%s\n' "$@" >> {ids}
+"#,
+        fixture = FIXTURE,
+        ids = ids.display()
+    );
+    let path = bin.join("drive-agent");
+    std::fs::write(&path, script).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    bin
+}
+
+#[test]
+fn a_token_carrying_run_deletes_its_account_and_lists_the_entries_left_public() {
+    let server = serve();
+    let ids = server.dir.path().join("ids");
+    let bin = fake_drive_agent(server.dir.path(), &ids);
+    let scenario = server.dir.path().join("scenario.json");
+    std::fs::write(
+        &scenario,
+        r#"{"token": "header", "turns": ["hi"], "gated": ["posting"]}"#,
+    )
+    .unwrap();
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+    let ran = Command::new(RUN)
+        .args([scenario.to_str().unwrap(), "claude", "jason3"])
+        .args(["--base", &server.url])
+        .env_remove("BASH_ENV")
+        .env_remove("FILEDRAWER_STAGING_KEY")
+        .env("PATH", path)
+        .env("FILEDRAWER_USABILITY_MAIL_LOG", server.log())
+        .env("FILEDRAWER_USABILITY_MAIL_WAIT", "20")
+        .env("FILEDRAWER_USABILITY_DIR", server.dir.path())
+        .output()
+        .unwrap();
+    assert!(ran.status.success(), "{}", text(&ran));
+    let ids = std::fs::read_to_string(&ids).expect("the fake drive-agent ran");
+    let (first, args) = ids.split_once('\n').unwrap();
+    let [public, held, token] = first.split(' ').collect::<Vec<_>>()[..] else {
+        panic!("{first}")
+    };
+    // The token reaches the setup script, which writes the header file, by name.
+    assert!(args.contains("--setup-env\nFILEDRAWER_TOKEN\n"), "{args}");
+    let day = std::fs::read_dir(server.dir.path().join("runs"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let listed = std::fs::read_to_string(day.join("public-entries.txt")).unwrap();
+    assert_eq!(listed, format!("{public}\tjason3-claude\n"));
+    let note = std::fs::read_to_string(day.join("jason3-claude/account.txt")).unwrap();
+    assert!(note.contains("deleted: yes"), "{note}");
+    assert!(
+        note.contains(&format!("public entries left: {public}\n")),
+        "{note}"
+    );
+    let (status, _) = curl(&server, token, "GET", "/entries/mine", None);
+    assert_eq!(status, 401, "the token outlived its account");
+    // The public entry stays up; the held one isn't public.
+    let anonymous = |id: &str| {
+        let out = Command::new("curl")
+            .args(["-sS", "-o", "/dev/null", "-w", "%{http_code}"])
+            .arg(format!("{}/e/{id}", server.url))
+            .output()
+            .unwrap();
+        String::from_utf8(out.stdout).unwrap()
+    };
+    assert_eq!(anonymous(public), "200");
+    assert_ne!(anonymous(held), "200");
+}

@@ -326,7 +326,8 @@ def log_in(site: Site, login: dict) -> None:
         raise Failed(f"logging in answered {status}")
 
 
-def public_entries(site: Site, login: dict) -> list[str]:
+def entries(site: Site, login: dict) -> list[str]:
+    """The IDs of every entry the account holds, whatever its status."""
     status, text = site.request(
         "GET",
         "/entries/mine?limit=100",
@@ -339,13 +340,16 @@ def public_entries(site: Site, login: dict) -> list[str]:
         entries = None
     if entries is None:
         raise Failed(f"GET /entries/mine answered {status}")
-    return [e["id"] for e in entries if e.get("status") == "public"]
+    return [e["id"] for e in entries]
 
 
 def delete_account(site: Site, login: dict) -> list[str]:
-    """Deletes the account; returns the IDs of its entries that were public, which
-    the deletion leaves up."""
-    public = public_entries(site, login)
+    """Deletes the account; returns the IDs of its entries still up after it. The
+    deletion removes every entry not yet public, so each entry is asked for
+    anonymously once the account is gone, and one that went public after the listing
+    is still found. One the server doesn't answer for stays in the list, to be
+    checked by hand, since the account is gone either way."""
+    listed = entries(site, login)
     site.cookie = ""
     log_in(site, login)
     status, text = site.request(
@@ -353,7 +357,15 @@ def delete_account(site: Site, login: dict) -> list[str]:
     )
     if status != 200 or "Account deleted" not in text:
         raise Failed(f"deleting the account answered {status}")
-    return public
+    site.cookie = ""
+    return [entry for entry in listed if still_up(site, entry)]
+
+
+def still_up(site: Site, entry: str) -> bool:
+    try:
+        return site.request("GET", f"/e/{entry}")[0] == 200
+    except Failed:
+        return True
 
 
 def write_state(path: Path, login: dict) -> None:
