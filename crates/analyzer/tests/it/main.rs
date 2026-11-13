@@ -4,7 +4,6 @@
 //! one test binary links, not one per file (#35, design.md, Stack).
 
 mod card;
-mod cli;
 mod common;
 mod encoded;
 mod file_mentions;

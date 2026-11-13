@@ -3,8 +3,8 @@
 
 use crate::common;
 
-use analyzer::{Claim, Reading, Results, Tally, WarningKind, analyze};
 use common::{EXAMPLE, with_results};
+use filedrawer_analyzer::{Claim, Reading, Results, Tally, WarningKind, analyze};
 
 const HEADER: &str = "| model | condition | estimate | ci_low | ci_high | n | outcome |\n|---|---|---|---|---|---|---|";
 
@@ -15,7 +15,7 @@ fn table(rows: &[&str]) -> String {
     )
 }
 
-fn rows(text: &str) -> Vec<analyzer::Row> {
+fn rows(text: &str) -> Vec<filedrawer_analyzer::Row> {
     match analyze(text).results {
         Results::Read(table) => table.rows,
         Results::NotRead(why) => panic!("table not read: {why}"),
@@ -210,7 +210,7 @@ fn the_interval_is_checked_against_no_effect_at() {
         ),
     );
     let rows = rows(&text);
-    let excluded = |row: &analyzer::Row| match &row.reading {
+    let excluded = |row: &filedrawer_analyzer::Row| match &row.reading {
         Reading::Read(interval) => interval
             .no_effect
             .as_ref()

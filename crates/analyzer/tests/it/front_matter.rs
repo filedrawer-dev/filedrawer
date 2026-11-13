@@ -3,8 +3,10 @@
 
 use crate::common;
 
-use analyzer::{CardContext, Choice, Outcome, Refusal, Role, WarningKind, analyze, render_card};
 use common::{EXAMPLE, entry, example_with};
+use filedrawer_analyzer::{
+    CardContext, Choice, Outcome, Refusal, Role, WarningKind, analyze, render_card,
+};
 
 fn warning_kinds(text: &str) -> Vec<WarningKind> {
     analyze(text).warnings.iter().map(|w| w.kind).collect()
@@ -484,17 +486,17 @@ fn reproduce_code_that_fetches_a_script_at_a_branch_is_refused() {
 fn stored_text_strips_label_and_fd_fields_and_keeps_their_neighbours() {
     let text = "---\ntitle: T\nlabel: supported null\nfd_status: public\nfd_flags:\n  - verified\n  - safe\nhypothesis: H\n---\n\n## Setup\n\nlabel: stays in the body\n";
     assert_eq!(
-        analyzer::stored_text(text),
+        filedrawer_analyzer::stored_text(text),
         "---\ntitle: T\nhypothesis: H\n---\n\n## Setup\n\nlabel: stays in the body\n"
     );
-    assert_eq!(analyzer::stored_text(EXAMPLE), EXAMPLE);
+    assert_eq!(filedrawer_analyzer::stored_text(EXAMPLE), EXAMPLE);
 }
 
 #[test]
 fn stored_text_strips_quoted_keys_and_after_a_byte_order_mark() {
     let text = "\u{feff}---\r\ntitle: T\r\n\"fd_status\": verified\r\n'label': x\r\nhypothesis: H\r\n---\r\nbody\r\n";
     assert_eq!(
-        analyzer::stored_text(text),
+        filedrawer_analyzer::stored_text(text),
         "\u{feff}---\r\ntitle: T\r\nhypothesis: H\r\n---\r\nbody\r\n"
     );
 }
@@ -584,7 +586,7 @@ proptest::proptest! {
             }
         }
         let text = entry(&front, "");
-        let stored = analyzer::stored_text(&text);
+        let stored = filedrawer_analyzer::stored_text(&text);
         let analysis = analyze(&stored);
         proptest::prop_assert!(
             !analysis.warnings.iter().any(|w| w.kind == WarningKind::StrippedField),
@@ -602,11 +604,13 @@ proptest::proptest! {
 #[test]
 fn slug_references_are_found_in_fields_and_body_and_end_at_punctuation() {
     let text = "replicates: slug:main-run\n\nSee slug:pilot_2. And slug:x.y, then slug: alone.";
-    let found: Vec<String> = analyzer::slug_references(text).into_iter().collect();
+    let found: Vec<String> = filedrawer_analyzer::slug_references(text)
+        .into_iter()
+        .collect();
     assert_eq!(found, vec!["main-run", "pilot_2", "x.y"]);
-    assert!(analyzer::is_valid_slug("a.b-c_1"));
-    assert!(!analyzer::is_valid_slug("x\nstatus: public"));
-    assert!(!analyzer::is_valid_slug(&"a".repeat(65)));
+    assert!(filedrawer_analyzer::is_valid_slug("a.b-c_1"));
+    assert!(!filedrawer_analyzer::is_valid_slug("x\nstatus: public"));
+    assert!(!filedrawer_analyzer::is_valid_slug(&"a".repeat(65)));
 }
 
 #[test]
