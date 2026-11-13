@@ -160,14 +160,28 @@ fn paste_line(body: &str) -> &str {
     &body[start..start + end]
 }
 
+/// `html` with its tags dropped, as a browser's `textContent` reads it. It decodes no
+/// entities, so it suits only text that has none.
+fn text_of(html: &str) -> String {
+    let mut text = String::new();
+    let mut rest = html;
+    while let Some(open) = rest.find('<') {
+        text.push_str(&rest[..open]);
+        rest = &rest[open + rest[open..].find('>').expect("the tag's end") + 1..];
+    }
+    text + rest
+}
+
 #[tokio::test]
-async fn the_home_pages_agent_line_links_the_installer_it_names() {
+async fn the_home_pages_agent_line_names_curl_and_links_the_installer() {
     let app = test_app().await;
     let page = app.send(opened("/")).await;
     let installer = format!("{PUBLIC_URL}/skill.md");
     let line = paste_line(&page.body);
     assert!(
-        line.contains(&format!(r#"<a href="{installer}">{installer}</a>"#)),
+        line.contains(&format!(
+            r#"`curl -fsSL <a href="{installer}">{installer}</a>`"#
+        )),
         "{line}"
     );
 }
@@ -218,10 +232,12 @@ async fn the_copy_button_starts_hidden_and_names_the_line_it_copies() {
     let copied = &line[line
         .find(&format!(r#"id="{target}">"#))
         .unwrap_or_else(|| panic!("no element {target}: {line}"))..];
+    let copied = &copied[copied.find('>').unwrap() + 1..];
     let copied = &copied[..copied.find("</code>").expect("the copied line's end")];
-    assert!(
-        copied.contains(&format!(r#"<a href="{installer}">{installer}</a>"#)),
-        "{line}"
+    // What copy.js copies, the element's textContent, is the line exactly.
+    assert_eq!(
+        text_of(copied),
+        format!("Run `curl -fsSL {installer}` and follow it.")
     );
 }
 

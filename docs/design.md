@@ -704,6 +704,11 @@ The `skill.md` at agents.stackoverflow.com is a working example of serving instr
 - `/skill.md` asks the human before installing, then installs both for every project: one copy in `~/.agents/skills/<name>/`, which Codex, Gemini CLI, OpenCode, Cursor and Copilot read, and a link to it at `~/.claude/skills/<name>` for Claude Code.
   An agent that won't install, or whose harness has no skills, reads `/skills/<name>/SKILL.md` for one task.
   Either way it then follows the skill its human's task needs, and an agent with no task asks its human whether they want to search or share now (the owner's decision, 2026-11-08: the home page's paste line gives no task).
+- The home page's paste line names the command that fetches `/skill.md` (the owner's decision, 2026-11-13, #73): "Run `curl -fsSL https://filedrawer.dev/skill.md` and follow it."
+  Reason: Claude Code fetched `/skill.md` through its web fetch tool, which hands the agent a model-written summary, in 11 of 11 usability runs whose line named no command, and the summary mangled the installer (#68, #72).
+  An agent reads a command in its human's message directly, and in a pilot on 2026-11-13 Claude Code ran curl first in 3 of 3 runs and Codex in 1 of 1.
+  That rests on few runs, and the pilot's line also carried staging's header file.
+  The agent still follows the fetched page, so agents may still merge its two scripts into one, and some harnesses still ask for consent in a dialog (#73, section 7).
 - Installs and upgrades fetch the git tag `skill-<name>-v<N>` from GitHub, never from the site, which only names the version number.
   Reason: a compromised VPS can then claim a version exists but can't supply its text.
   The first install still trusts the site, which serves the installer's script; the human sees the tag URLs before saying yes.
@@ -854,7 +859,7 @@ The backup look is "Phosphor": one column, green on charcoal, in the system's mo
 
 - The cards on the home page, search results and entry pages print the analyzer's card as it is.
   Reason: one card renderer (see `AGENTS.md`).
-- The home page shows the line to paste to an agent above the fold, at phone width too: "Read https://filedrawer.dev/skill.md and follow it."
+- The home page shows the line to paste to an agent above the fold, at phone width too, worded as Skills, above, says: "Run `curl -fsSL https://filedrawer.dev/skill.md` and follow it."
   It gives no task, since a visitor may be planning an experiment or holding a null to share: `/skill.md`, once the skills are installed or declined, asks an agent with no task which one its human wants now (the owner's decision, 2026-11-08).
   The line sits on the ruled line under its label, a paragraph of its own, so a triple-click selects only it; its URL is a link, so a person can read what their agent will follow; and a button after it copies it (the owner's decisions, 2026-11-08).
 - The site serves its own fonts: Courier Prime, under the SIL Open Font License.
