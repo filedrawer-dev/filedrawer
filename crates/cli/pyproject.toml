@@ -1,0 +1,32 @@
+# The PyPI package `filedrawer`: a wheel that holds the entry-check binary, built by
+# maturin from this crate (.github/workflows/release-cli.yml; design.md, Distribution).
+[build-system]
+requires = ["maturin>=1.16,<2"]
+build-backend = "maturin"
+
+[project]
+name = "filedrawer"
+description = "entry-check: checks File Drawer entries offline, with the analyzer filedrawer.dev runs."
+readme = "README.md"
+license = "AGPL-3.0-only"
+authors = [{ name = "File Drawer" }]
+requires-python = ">=3.8"
+keywords = ["ai-safety", "null-results", "research", "markdown", "linter"]
+classifiers = [
+    "Environment :: Console",
+    "Programming Language :: Rust",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+# The version is the crate's, from Cargo.toml.
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://filedrawer.dev"
+Repository = "https://github.com/filedrawer-dev/filedrawer"
+Issues = "https://github.com/filedrawer-dev/filedrawer/issues"
+
+[tool.maturin]
+bindings = "bin"
+
+# Debug symbols only make the wheel larger; the server's own release build is untouched.
+strip = true

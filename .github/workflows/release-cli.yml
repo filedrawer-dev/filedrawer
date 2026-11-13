@@ -1,0 +1,122 @@
+# Builds the PyPI package `filedrawer`, wheels that hold the entry-check binary and
+# an sdist, from crates/cli/pyproject.toml (design.md, Distribution; #74). A pull
+# request that touches the package builds and tests them; starting the workflow by
+# hand with the version also publishes them, through PyPI's trusted publishing, so no
+# token is stored. ops/claim-names starts the first release. crates.io publishing is
+# by hand, in the same script.
+name: Release CLI
+
+on:
+  pull_request:
+    paths:
+      - crates/cli/**
+      - crates/analyzer/**
+      - Cargo.lock
+      - .github/workflows/release-cli.yml
+  workflow_dispatch:
+    inputs:
+      version:
+        description: The version to publish, as crates/cli/Cargo.toml has it
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  MATURIN: maturin@1.16.0
+
+jobs:
+  wheel:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux binaries are static (musl), so one wheel serves glibc and musl
+          # systems alike and carries both tags.
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            compatibility: --compatibility manylinux2014 musllinux_1_2
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            compatibility: --compatibility manylinux2014 musllinux_1_2
+          - runner: macos-latest
+            target: aarch64-apple-darwin
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v10.3.3
+      - run: rustup target add ${{ matrix.target }}
+      - name: Build
+        run: >-
+          uvx "$MATURIN" build --release --locked
+          --manifest-path crates/cli/Cargo.toml --target ${{ matrix.target }}
+          ${{ matrix.compatibility }} --out dist
+      # Each runner runs its own wheel, as an agent's uvx would.
+      - name: Run the wheel's entry-check
+        run: |
+          wheel=$(ls dist/*.whl)
+          uvx --no-cache --from "$wheel" entry-check -h
+          uvx --no-cache --from "$wheel" entry-check crates/analyzer/tests/it/fixtures/example.md
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheel-${{ matrix.target }}
+          path: dist/*.whl
+
+  sdist:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v10.3.3
+      - run: uvx "$MATURIN" sdist --manifest-path crates/cli/Cargo.toml --out dist
+      # A platform with no wheel builds from the sdist, so build it once that way.
+      - name: Build and run from the sdist
+        run: |
+          uvx --no-cache --from "$(ls dist/*.tar.gz)" entry-check -h
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+
+  # Runs no third-party action: the job can mint a PyPI upload token. The `pypi`
+  # environment is the one PyPI's trusted publisher names (ops/claim-names).
+  publish:
+    needs: [wheel, sdist]
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      # The files must all carry the version given, so a run started on a commit
+      # whose version isn't the one meant uploads nothing.
+      - name: Check the version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          ls dist
+          for file in dist/*; do
+            case "${file#dist/}" in
+              "filedrawer-$VERSION-"*.whl | "filedrawer-$VERSION.tar.gz") ;;
+              *) echo "::error::$file isn't version $VERSION"; exit 1 ;;
+            esac
+          done
+      - name: Publish
+        run: pipx run uv==0.13.5 publish --trusted-publishing always dist/*
