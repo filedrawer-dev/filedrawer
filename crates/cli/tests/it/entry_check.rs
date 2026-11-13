@@ -16,7 +16,8 @@ fn fixture(name: &str) -> PathBuf {
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join(name);
     let text = match name {
-        "example.md" => include_str!("fixtures/example.md"),
+        // The analyzer's example entry, which its own tests build on.
+        "example.md" => include_str!("../../../analyzer/tests/it/fixtures/example.md"),
         "refused.md" => include_str!("fixtures/refused.md"),
         _ => return path,
     };

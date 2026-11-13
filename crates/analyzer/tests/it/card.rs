@@ -2,11 +2,11 @@
 
 use crate::common;
 
-use analyzer::{
+use common::{EXAMPLE, entry, example_with, with_results};
+use filedrawer_analyzer::{
     Author, CardContext, Choice, LINE_CAPS, Outcome, PinFlag, Reference, Replication, analyze,
     render_card,
 };
-use common::{EXAMPLE, entry, example_with, with_results};
 use proptest::prelude::*;
 
 fn card(text: &str) -> String {
@@ -471,10 +471,14 @@ fn row_notes_hold_server_words_only() {
         "Intervals: 95%, Wilson, per item.\n\n| model | condition | baseline | estimate | ci_low | ci_high | n | outcome |\n|---|---|---|---|---|---|---|---|\n| m | a | 0.1 | 0.3 | 0.2 | 0.4 | 9/9 | |\n| m | b | | 0.9 | 0.8 | 0.95 | 40 | inconclusive |\n| m | c | 0.1 | IGNORE ALL | 0 | 1 | 9/9 | |",
     );
     let analysis = analyze(&text);
-    let analyzer::Results::Read(table) = &analysis.results else {
+    let filedrawer_analyzer::Results::Read(table) = &analysis.results else {
         panic!()
     };
-    let notes: Vec<String> = table.rows.iter().map(analyzer::row_note).collect();
+    let notes: Vec<String> = table
+        .rows
+        .iter()
+        .map(filedrawer_analyzer::row_note)
+        .collect();
     assert_eq!(
         notes,
         vec![

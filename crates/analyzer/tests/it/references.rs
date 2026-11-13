@@ -1,7 +1,7 @@
 //! Seam: `Reference::parse` and `Reference::key`, the keys search's `cites` filter
 //! matches (docs/entry-format.md, Fields).
 
-use analyzer::Reference;
+use filedrawer_analyzer::Reference;
 use proptest::prelude::*;
 
 fn key(text: &str) -> Option<String> {

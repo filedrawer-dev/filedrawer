@@ -3,8 +3,8 @@
 
 use crate::common;
 
-use analyzer::file_mentions;
 use common::entry;
+use filedrawer_analyzer::file_mentions;
 
 fn mentions(body: &str) -> Vec<String> {
     file_mentions(&entry("", body))

@@ -41,6 +41,9 @@ The field test's entries and logs are in `field-test/`, git-excluded and local o
 - `crates/analyzer`: reads an entry by `docs/entry-format.md`, lists what would refuse it and what the server couldn't read, and renders its card with analyzer v1.
   The server and the CLI share it.
   Reason: in the field test every agent wrote its own parser and card renderer, a dozen in all, and each read the spec differently.
+  Its library is `filedrawer_analyzer`, as on crates.io; the server's Cargo.toml renames it `analyzer`.
+- `crates/cli`: the package `filedrawer`, published on crates.io and PyPI (#74), which holds the `entry-check` binary.
+  It is a crate of its own so that a later CLI's HTTP dependencies stay out of the analyzer the server builds.
 - `entry-check FILE...` checks entries offline, for contributing agents and field tests: `cargo run -q --bin entry-check -- FILE...`.
   It exits 1 when the server would refuse an entry.
   After an analyzer change, run `bin/field-test-diff` through `heavy` (`-h`): it builds entry-check at the commit your branch forked from, or at `--against REV`, and lists the field-test entries whose outcome changed, without their contents.

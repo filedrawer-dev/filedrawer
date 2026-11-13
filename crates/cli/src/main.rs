@@ -4,7 +4,7 @@
 
 use std::process::ExitCode;
 
-use analyzer::{Analysis, CardContext, analyze, render_card};
+use filedrawer_analyzer::{Analysis, CardContext, analyze, render_card};
 
 const USAGE: &str = "\
 usage: entry-check FILE...

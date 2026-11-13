@@ -23,9 +23,11 @@ A Cargo workspace.
 Each crate lives under `crates/`:
 
 - `crates/analyzer`: parses an entry, lists its refusals and warnings, reads the Results table and renders the card.
-  It has no I/O beyond the `entry-check` CLI, so the server and the CLI run the same code.
+  It has no I/O, so the server and the CLI run the same code.
   Nothing else parses entries or renders cards.
-- The server, when it exists, is a crate beside it that depends on the analyzer by path.
+- `crates/cli`: the `filedrawer` package, whose `entry-check` binary reads files and prints what the analyzer found.
+  It depends on the analyzer by path and by version, since both are published to crates.io.
+- `crates/server`: the server, which depends on the analyzer by path.
 
 Python goes in `bin/` and only for scripts and tools, never in the server's request path.
 
