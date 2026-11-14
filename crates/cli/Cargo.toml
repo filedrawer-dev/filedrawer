@@ -3,7 +3,7 @@ name = "filedrawer"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
-description = "entry-check: checks File Drawer entries offline, with the analyzer filedrawer.dev runs."
+description = "Checks File Drawer entries offline, with the analyzer filedrawer.dev runs."
 homepage = "https://filedrawer.dev"
 repository = "https://github.com/filedrawer-dev/filedrawer"
 readme = "README.md"
@@ -11,14 +11,18 @@ keywords = ["ai-safety", "null-results", "research", "markdown", "linter"]
 categories = ["command-line-utilities", "science"]
 # The tests read fixtures from the analyzer's folder, which a package can't reach;
 # they run from the repository.
-include = ["src/**", "Cargo.toml", "README.md"]
-# The binary keeps the name agents already run. The server's binary is called
-# filedrawer, and two binaries of one name collide in the workspace's target/.
+include = ["src/**", "Cargo.toml", "README.md", "LICENSE"]
 autobins = false
 
 [[bin]]
-name = "entry-check"
+name = "filedrawer"
 path = "src/main.rs"
+
+# `filedrawer check` under the name the published submit skill runs:
+# `cargo run -q --bin entry-check -- FILE`.
+[[bin]]
+name = "entry-check"
+path = "src/bin/entry-check.rs"
 
 [dependencies]
 filedrawer-analyzer = { version = "0.1.0", path = "../analyzer" }

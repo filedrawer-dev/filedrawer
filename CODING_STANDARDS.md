@@ -25,7 +25,7 @@ Each crate lives under `crates/`:
 - `crates/analyzer`: parses an entry, lists its refusals and warnings, reads the Results table and renders the card.
   It has no I/O, so the server and the CLI run the same code.
   Nothing else parses entries or renders cards.
-- `crates/cli`: the `filedrawer` package, whose `entry-check` binary reads files and prints what the analyzer found.
+- `crates/cli`: the `filedrawer` package, whose binaries, `filedrawer` (its `check` command) and `entry-check`, read files and print what the analyzer found.
   It depends on the analyzer by path and by version, since both are published to crates.io.
 - `crates/server`: the server, which depends on the analyzer by path.
 
@@ -65,7 +65,7 @@ Python goes in `bin/` and only for scripts and tools, never in the server's requ
 
 - Every route has at least one test that sends a request through the router (`tower::ServiceExt::oneshot`) against a fresh SQLite database, and checks the status and the body.
   Routes that need a browser session or refuse a token get a test that proves the refusal.
-- Tests go through public interfaces: the analyzer's `analyze` and `render_card`, the `entry-check` binary, the router.
+- Tests go through public interfaces: the analyzer's `analyze` and `render_card`, the `filedrawer` and `entry-check` binaries, the router.
   No test reaches into a private function.
 - A test finds a page's content by a URL, an id, a class or other markup, never by the words a template puts around it.
   The owner rewords the pages by hand (`bin/live-preview`), and a test that pinned the old words refuses the next commit.
