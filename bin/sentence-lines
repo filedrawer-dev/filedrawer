@@ -7,7 +7,9 @@
 It breaks paragraphs, list items and block quotes after a sentence's `.`, `!` or `?`,
 any closing `)`, `]`, quote, `*` or `_`, and the spaces after them, when the next
 sentence starts with a capital, a digit, a code span, a link, emphasis, a quote or a
-parenthesis. A new line takes the list item's indent and the block quote's `>`
+parenthesis that holds a sentence of its own, ending in `.`, `!` or `?`. Any other
+parenthesis, such as a citation, `"... follow it." (#73)`, belongs to the sentence
+before it. A new line takes the list item's indent and the block quote's `>`
 prefix, so the page renders as before. It never joins lines, and hard line breaks
 stay where they are.
 
@@ -419,8 +421,14 @@ def starts_sentence(text: str, at: int) -> bool:
     """Whether a new line may start at `at`: with a sentence's start that can't be
     read as a block's."""
     char = text[at]
-    if char.isupper() or char in '[("':
+    if char.isupper() or char in '["':
         return True
+    if char == "(":
+        close = matching(text, at + 1, "(", ")")
+        if close is None:
+            return True
+        stop = stop_before(text, close)
+        return stop is not None and not abbreviation(text, stop)
     if char.isdigit():
         return not ORDERED_MARKER.match(text, at)
     if char == "`":
@@ -432,12 +440,35 @@ def starts_sentence(text: str, at: int) -> bool:
     return False
 
 
-def ends_sentence(text: str, at: int, covering) -> bool:
-    """Whether the text before the spaces at `at` ends a sentence."""
+def stop_before(text: str, at: int) -> int | None:
+    """The index of the `.`, `!` or `?` that ends the text before `at`, past any
+    closers; None when it ends in none."""
     t = at - 1
     while t >= 0 and text[t] in CLOSERS:
         t -= 1
-    if t < 0 or text[t] not in ".!?":
+    return t if t >= 0 and text[t] in ".!?" else None
+
+
+def abbreviation(text: str, t: int) -> bool:
+    """Whether the `.` at `t` ends an abbreviation or an initial, not a sentence."""
+    if text[t] != ".":
+        return False
+    word_start = t
+    while word_start > 0 and (
+        text[word_start - 1].isalpha() or text[word_start - 1] == "."
+    ):
+        word_start -= 1
+    word = text[word_start:t]
+    if word.lower() in ABBREVIATIONS:
+        return True
+    before = text[word_start - 1] if word_start > 0 else " "
+    return bool(INITIALS.fullmatch(word) and before in " (.")
+
+
+def ends_sentence(text: str, at: int, covering) -> bool:
+    """Whether the text before the spaces at `at` ends a sentence."""
+    t = stop_before(text, at)
+    if t is None:
         return False
     escape = t
     while escape > 0 and text[escape - 1] == "\\":
@@ -447,18 +478,7 @@ def ends_sentence(text: str, at: int, covering) -> bool:
     span = covering(t)
     if span and not (span[2] in ("paren", "quote") and span[1] <= at):
         return False
-    if text[t] != ".":
-        return True
-    word_start = t
-    while word_start > 0 and (
-        text[word_start - 1].isalpha() or text[word_start - 1] == "."
-    ):
-        word_start -= 1
-    word = text[word_start:t]
-    if word.lower() in ABBREVIATIONS:
-        return False
-    before = text[word_start - 1] if word_start > 0 else " "
-    return not (INITIALS.fullmatch(word) and before in " (.")
+    return not abbreviation(text, t)
 
 
 def pieces(text: str) -> tuple[list[str], bool]:

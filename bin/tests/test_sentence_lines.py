@@ -87,6 +87,19 @@ SPLIT = {
         '(See it. Then go.) Said "Go. Now." Done.\n',
         '(See it. Then go.)\nSaid "Go. Now."\nDone.\n',
     ),
+    # A parenthesis starts a sentence only when it holds one.
+    "a parenthesis holding a sentence": (
+        "Done. (See below.) Next.\n",
+        "Done.\n(See below.)\nNext.\n",
+    ),
+    "a parenthesis left open at the line's end": (
+        "Done. (See the list\nbelow.) Next.\n",
+        "Done.\n(See the list\nbelow.) Next.\n",
+    ),
+    "a quote ending a sentence, then a new one": (
+        'It says "Go." Then it stops.\n',
+        'It says "Go."\nThen it stops.\n',
+    ),
     # Not after abbreviations, decimals, versions, file names or initials.
     "abbreviations": (
         "Use e.g. Foo, i.e. Bar, etc. Baz vs. Qux, cf. Quux, Smith et al. Found it.\n",
@@ -190,6 +203,24 @@ LEFT = {
     "link reference definition": "[a]: https://x.y/ 'Go. Stop.'\n",
     "a definition's title on its next line": "[a]: /url\n'Title. Two'\n",
     "a link title over two lines": "[x](/u 'One.\nTwo. Three') end.\n",
+    # A sentence end inside a quotation or code followed by more of its sentence:
+    # design.md's quoted paste lines, which the hook split (402887a).
+    "a citation after a quoted sentence": (
+        "- The home page's paste line names the command that fetches `/skill.md`:"
+        ' "Run `curl -fsSL https://filedrawer.dev/skill.md` and follow it."'
+        " (the owner's decision, 2026-11-13, #73)\n"
+    ),
+    "an issue number after a quoted sentence": (
+        '- The line: "Read https://filedrawer.dev/skill.md and follow it." (#73)\n'
+    ),
+    "a citation after a sentence": "It ships. (#73)\n",
+    "a citation ending in an abbreviation": (
+        "It ships. (Smith et al.) It ran. (approx.) Done. (J. R.)\n"
+    ),
+    "a comma after a quoted sentence": 'Said "go.", then left.\n',
+    "a quoted question, then lower case": 'She asked "Why?" of him.\n',
+    "a quoted question, then a parenthesis": 'She asked "Why?" (twice) and left.\n',
+    "code ending in a period": "Ran `make check.` (twice), then `x.` Twice.\n",
 }
 
 
