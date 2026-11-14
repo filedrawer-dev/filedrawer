@@ -65,7 +65,8 @@ fails, is a failure. Its settings, neither printed:
               ops/.screen-test.env
   the key     FILEDRAWER_STAGING_KEY, else STAGING_KEY in ops/.vps.env
 (FILEDRAWER_OPS_DIR moves where it looks for those files and where eval keeps its
-run files, and FILEDRAWER_FIELD_TEST_DIR where eval looks for field-test entries.
+run files, FILEDRAWER_FIELD_TEST_DIR where eval looks for field-test entries, and
+FILEDRAWER_SCREEN_EVAL_DIR where it looks for its labelled cases, for tests.
 FILEDRAWER_SCREEN_WAIT_SECONDS is how long it waits for a verdict, default 120: 4
 times that for an entry citing attached code, which the screen reads in parts, and
 once more for each 10 entries of a batch, whose entries are decided together. Raise
@@ -78,10 +79,13 @@ local folder with file://.)
 
 eval runs a labelled test set through the screen, as the screen-test account, to
 see whether it is too strict or too lax. By hand only. The cases are the entries
-under ops/screen-eval/<expected>/, <expected> being public, rejected or review,
-plus --field-test N (default 10; 0 for none) honest entries picked at random from
-each repo's latest round in field-test/ (its *.md files with front matter, not its
-series), expected public (their contents are never printed). An entry or batch the
+under ops/screen-eval/<expected>/, <expected> being public, rejected or review
+(ops/screen-eval/README.md says what each tests). A case with a folder beside it,
+<name>.files/, is sent citing an attachment set of every file in it, each as the
+author's own at its path there: the planted cases, which hide an instruction to
+reading agents in attached code. Then come --field-test N (default 10; 0 for
+none) honest entries picked at random from each repo's latest round in
+field-test/ (its *.md files with front matter, not its series), expected public (their contents are never printed). An entry or batch the
 server refuses is a FAIL, reported again by a resumed run, and its reasons go to a
 file beside the run file, never to the output. A field-test entry
 with a list of attached files beside it, <name>.attachments, is sent citing an
@@ -424,6 +428,7 @@ if [[ $mode == eval ]]; then
   stopped=0
   stop_why=""
   field_test_dir="${FILEDRAWER_FIELD_TEST_DIR:-$(dirname "$0")/../field-test}"
+  cases_dir="${FILEDRAWER_SCREEN_EVAL_DIR:-$(dirname "$0")/screen-eval}"
   # The field-test entries' attached files, named by SHA-256, as bin/field-test-files
   # gathers them.
   store="$field_test_dir/files"
@@ -436,10 +441,21 @@ if [[ $mode == eval ]]; then
     printf '%s\n' "$*" >> "$run_file"
   }
 
+  # files_of CASE: the folder of files a screen-eval case attaches, beside it:
+  # <name>.files/ for <name>.md.
+  files_of() {
+    printf '%s\n' "${1%.md}.files"
+  }
+
   # listed LIST: the store path of each file the attachment list LIST names, one a
-  # line as `<origin> <size> <sha256>`, a last line with no newline included.
+  # line as `<origin> <size> <sha256>`, a last line with no newline included; or, for
+  # a case's folder of files, each file in it.
   listed() {
     local line
+    if [[ -d $1 ]]; then
+      find "$1" -type f | LC_ALL=C sort
+      return
+    fi
     while IFS= read -r line || [[ -n $line ]]; do
       printf '%s\n' "$store/${line##* }"
     done < "$1"
@@ -458,8 +474,13 @@ if [[ $mode == eval ]]; then
     done < <(listed "$1")
   }
 
-  # list_key LIST: the key a set made from LIST goes by in the run file.
+  # list_key LIST: the key a set made from LIST, or from a case's folder of files,
+  # goes by in the run file.
   list_key() {
+    if [[ -d $1 ]]; then
+      (cd "$1" && find . -type f | LC_ALL=C sort | xargs -d '\n' sha256sum) | sha256sum | cut -d' ' -f1
+      return
+    fi
     sha256sum < "$1" | cut -d' ' -f1
   }
 
@@ -477,7 +498,7 @@ if [[ $mode == eval ]]; then
     mkdir -p "$(dirname "$run_file")"
     record tag "$tag"
     for expected in public rejected review; do
-      for file in "$(dirname "$0")/screen-eval/$expected"/*.md; do
+      for file in "$cases_dir/$expected"/*.md; do
         [[ -e $file ]] && record case "$expected" "$file"
       done
     done
@@ -563,8 +584,11 @@ if [[ $mode == eval ]]; then
   done
 
   # bin: the filedrawer-server binary, whose `unpack` is the server's own decoding, needed
-  # only when a field-test entry attaches files.
+  # when a case or a field-test entry attaches files.
   attaches=0
+  for file in "${cases[@]}"; do
+    [[ -d $(files_of "$file") ]] && attaches=1
+  done
   for file in "${candidates[@]}"; do
     [[ -f $(list_of "$file") ]] && attaches=1
   done
@@ -860,8 +884,9 @@ if [[ $mode == eval ]]; then
   }
 
   # set_for LIST [WHAT]: sets SET to the ID of the attachment set made from the files
-  # LIST names, uploading it unless the run already did. Returns 1 when the server
-  # refuses it and 3 when it can't be made from the store, saying what then happens
+  # LIST names, or from every file in a case's folder LIST, each as the author's own
+  # at its path there, uploading it unless the run already did. Returns 1 when the
+  # server refuses it and 3 when it can't be made from its files, saying what happens
   # to its entry (WHAT, default "is passed over"), and 2 when the server can't take it
   # now (see later), saying why.
   set_for() {
@@ -869,14 +894,21 @@ if [[ $mode == eval ]]; then
     key=$(list_key "$1")
     SET=${set_ids[$key]:-}
     [[ -n $SET ]] && return 0
-    python3 - "$1" "$store" > "$dir/set.json" 2>/dev/null <<'PY' || { echo "  an attachment set couldn't be made from the store: its entry $what"; return 3; }
+    python3 - "$1" "$store" > "$dir/set.json" 2>/dev/null <<'PY' || { echo "  an attachment set couldn't be made from its files: its entry $what"; return 3; }
 import json
 import pathlib
 import sys
 
-listing, store = sys.argv[1], pathlib.Path(sys.argv[2])
+listing, store = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
 repos, files = {}, []
-for line in pathlib.Path(listing).read_text(encoding="utf-8").splitlines():
+if listing.is_dir():
+    for path in sorted(p for p in listing.rglob("*") if p.is_file()):
+        origin = f"author:{path.relative_to(listing).as_posix()}"
+        files.append({"origin": origin, "text": path.read_bytes().decode("utf-8")})
+    lines = []
+else:
+    lines = listing.read_text(encoding="utf-8").splitlines()
+for line in lines:
     origin, _size, sha = line.rsplit(" ", 2)
     head = origin.split(":", 1)[0]
     if "@" in head:
@@ -956,10 +988,27 @@ PY
     echo "$line)"
   }
 
+  # A case with a folder of files beside it is sent citing a set of them. One whose
+  # set the server refuses is a FAIL, its reasons in a file (fail_refused).
   for i in "${!cases[@]}"; do
     file=${cases[$i]}
+    recount_refusal "an eval case's attachment set" "$file" && continue
     screen_entry "$file" > "$dir/case.md"
     CITED=0
+    if [[ -d $(files_of "$file") ]]; then
+      CITED=1
+      if [[ -z "${sent[$file]:-}" ]]; then
+        set_for "$(files_of "$file")" "fails"
+        case $? in
+          1) fail_refused "an eval case's attachment set" "$file"; continue ;;
+          2) stop_run "an attachment set couldn't be uploaded now"; break ;;
+          # Not recorded: a resumed run tries the files again, and fails again.
+          3) echo "FAIL ${expecteds[$i]} $(basename "$file" .md): its files couldn't be read as text"
+             fail=$((fail + 1)); continue ;;
+        esac
+        sed -i "1a attachments: $SET" "$dir/case.md"
+      fi
+    fi
     eval_case "$file" "$dir/case.md" && judge "$(basename "$file" .md)" "${expecteds[$i]}"
     (( stopped )) && break
   done

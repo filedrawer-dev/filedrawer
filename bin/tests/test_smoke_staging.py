@@ -149,17 +149,32 @@ def test_a_series_made_says_the_case_was_slow_and_prints_no_key(screen):
     assert TOKEN not in result.stdout + result.stderr
 
 
-# The labelled eval cases' expected statuses, in the order eval sends them.
+# The expected statuses of the labelled eval cases these tests send (plain_cases),
+# in the order eval sends them.
 LABELLED = [
     expected
     for expected in ("public", "rejected", "review")
-    for _ in sorted((REPO / "ops/screen-eval" / expected).glob("*.md"))
+    for case in sorted((REPO / "ops/screen-eval" / expected).glob("*.md"))
+    if not case.with_suffix(".files").is_dir()
 ]
 # The 429 the server's POST /attachments gives once the account's day of uploads is spent.
 UPLOADS_SPENT = (
     429,
     "refused:\n- this account has uploaded its 10000000 bytes of attachments for today (UTC); send it tomorrow, or publish the code on GitHub or Zenodo\n",
 )
+
+
+def plain_cases(tmp_path: Path) -> str:
+    """A copy of eval's labelled cases without the ones that attach files, whose
+    uploads and verdicts the replies these tests script leave out."""
+    cases = tmp_path / "screen-eval"
+    for case in sorted((REPO / "ops/screen-eval").glob("*/*.md")):
+        if case.with_suffix(".files").is_dir():
+            continue
+        copy = cases / case.parent.name / case.name
+        copy.parent.mkdir(parents=True, exist_ok=True)
+        copy.write_text(case.read_text())
+    return str(cases)
 
 
 @pytest.fixture
@@ -196,6 +211,7 @@ def eval_run(tmp_path):
             "FILEDRAWER_OPS_DIR": str(tmp_path),
             "FILEDRAWER_SCREEN_WAIT_SECONDS": "0",
             "FILEDRAWER_FIELD_TEST_DIR": str(field_test),
+            "FILEDRAWER_SCREEN_EVAL_DIR": plain_cases(tmp_path),
             "FILEDRAWER_BIN": str(fake_bin),
         }
         url = f"http://127.0.0.1:{server.server_address[1]}"
@@ -228,6 +244,59 @@ def test_a_refused_attachment_set_is_a_failure_reported_again_on_resume(eval_run
         LABELLED, SPENT, refused, ("--resume", run_file), eval_run.servers[-1]
     )
     assert failure in again.stdout, again.stdout
+    assert "made-up.py" not in result.stdout + again.stdout
+
+
+def test_a_labelled_cases_refused_files_are_a_failure_reported_again_on_resume(
+    tmp_path,
+):
+    cases = tmp_path / "cases"
+    (cases / "review/planted.files").mkdir(parents=True)
+    (cases / "review/planted.md").write_text("---\ntitle: made-up\n---\nmade up\n")
+    (cases / "review/planted.files/made-up.py").write_text("print('made-up')\n")
+    fake_bin = tmp_path / "filedrawer-server"
+    fake_bin.write_text('#!/bin/sh\nfor f; do echo "$f: nothing hidden"; done\n')
+    fake_bin.chmod(0o755)
+    server = fake_server([], SPENT, (422, "refused:\n- made-up.py isn't allowed\n"))
+    env = {
+        "PATH": os.environ["PATH"],
+        "FILEDRAWER_STAGING_KEY": "k",
+        "FILEDRAWER_STAGING_SCREEN_API_KEY": TOKEN,
+        "FILEDRAWER_OPS_DIR": str(tmp_path),
+        "FILEDRAWER_SCREEN_WAIT_SECONDS": "0",
+        "FILEDRAWER_FIELD_TEST_DIR": str(tmp_path / "field-test"),
+        "FILEDRAWER_SCREEN_EVAL_DIR": str(cases),
+        "FILEDRAWER_BIN": str(fake_bin),
+    }
+    url = f"http://127.0.0.1:{server.server_address[1]}"
+
+    def run(*args):
+        return subprocess.run(
+            ["bash", SCRIPT, "eval", *args, url],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    try:
+        result = run("--field-test", "0")
+        failure = "FAIL an eval case's attachment set was refused (422)"
+        assert failure in result.stdout, result.stdout + result.stderr
+        assert result.returncode == 1
+        run_file = next(
+            line.removeprefix("run file: ")
+            for line in result.stdout.splitlines()
+            if line.startswith("run file: ")
+        )
+        again = run("--resume", run_file)
+    finally:
+        server.shutdown()
+    assert failure in again.stdout, again.stdout + again.stderr
+    assert again.returncode == 1
+    # Refused, so never submitted, and its reasons stay out of the output.
+    assert "/entries" not in server.posts, server.posts
+    assert server.posts.count("/attachments") == 1, server.posts
     assert "made-up.py" not in result.stdout + again.stdout
 
 
@@ -308,6 +377,7 @@ def families_run(tmp_path):
             "FILEDRAWER_OPS_DIR": str(tmp_path),
             "FILEDRAWER_SCREEN_WAIT_SECONDS": "0",
             "FILEDRAWER_FIELD_TEST_DIR": str(tmp_path / "field-test"),
+            "FILEDRAWER_SCREEN_EVAL_DIR": plain_cases(tmp_path),
         }
         url = f"http://127.0.0.1:{server.server_address[1]}"
         result = subprocess.run(
@@ -402,6 +472,7 @@ def test_a_sample_takes_entries_with_a_bom_or_windows_line_ends_and_nothing_else
             "FILEDRAWER_OPS_DIR": str(tmp_path),
             "FILEDRAWER_SCREEN_WAIT_SECONDS": "0",
             "FILEDRAWER_FIELD_TEST_DIR": str(tmp_path / "field-test"),
+            "FILEDRAWER_SCREEN_EVAL_DIR": plain_cases(tmp_path),
         }
         url = f"http://127.0.0.1:{server.server_address[1]}"
         result = subprocess.run(
@@ -451,6 +522,7 @@ def test_a_family_whose_entries_cant_be_read_is_a_failure_not_a_silent_gap(
             "FILEDRAWER_OPS_DIR": str(tmp_path),
             "FILEDRAWER_SCREEN_WAIT_SECONDS": "0",
             "FILEDRAWER_FIELD_TEST_DIR": str(tmp_path / "field-test"),
+            "FILEDRAWER_SCREEN_EVAL_DIR": plain_cases(tmp_path),
         }
         url = f"http://127.0.0.1:{server.server_address[1]}"
         result = subprocess.run(

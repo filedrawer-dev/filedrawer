@@ -307,7 +307,7 @@ fn screen_without_its_settings_names_where_it_looked() {
 
 #[test]
 fn eval_against_a_server_that_doesnt_screen_passes_only_the_public_cases() {
-    let (server, token) = server_and_token("eval");
+    let (server, token) = serve_attachments("eval");
     let output = screen_mode(
         "eval",
         &["--field-test", "0", "--wait", "30", &server.url],
@@ -327,9 +327,17 @@ fn eval_against_a_server_that_doesnt_screen_passes_only_the_public_cases() {
     };
     assert!(failed("rejected sourdough"), "{printed}");
     assert!(failed("review participant-data"), "{printed}");
-    assert!(printed.contains("public: 4 of 4"), "{printed}");
+    // A planted case's hidden text is the screen's to judge, so it passes here too;
+    // the one past the decoding limit goes to review with no screen.
+    assert!(failed("review hidden-base64-script"), "{printed}");
+    assert!(printed.contains("PASS review nested-too-deep"), "{printed}");
+    assert!(
+        printed.contains("PASS public real-requirements-export"),
+        "{printed}"
+    );
+    assert!(printed.contains("public: 5 of 5"), "{printed}");
     assert!(printed.contains("rejected: 0 of 4"), "{printed}");
-    assert!(printed.contains("review: 0 of 1"), "{printed}");
+    assert!(printed.contains("review: 1 of 5"), "{printed}");
     assert!(
         printed.contains("then clear the screen-test account's guard"),
         "{printed}"
@@ -339,7 +347,7 @@ fn eval_against_a_server_that_doesnt_screen_passes_only_the_public_cases() {
 
 #[test]
 fn eval_samples_field_test_entries_without_printing_them() {
-    let (server, token) = server_and_token("eval-field");
+    let (server, token) = serve_attachments("eval-field");
     let fake = scratch_database("eval-field-entries");
     let fake = fake.parent().unwrap().to_path_buf();
     let fixture = std::fs::read_to_string(
@@ -415,6 +423,10 @@ fn every_eval_case_is_an_entry_the_analyzer_accepts() {
     for expected in ["public", "rejected", "review"] {
         for file in std::fs::read_dir(dir.join(expected)).unwrap() {
             let path = file.unwrap().path();
+            // A case's attached files sit in a folder beside it.
+            if path.is_dir() {
+                continue;
+            }
             let analysis = analyzer::analyze(&std::fs::read_to_string(&path).unwrap());
             assert_eq!(analysis.refusals, vec![], "{}", path.display());
             seen += 1;
@@ -427,7 +439,7 @@ fn every_eval_case_is_an_entry_the_analyzer_accepts() {
 /// these extra settings, and an account's token. No test lets it reach the API: the
 /// cap is $0, or its calls go to a proxy that isn't there.
 fn screening_server(name: &str, settings: &[(&str, &str)]) -> (Server, String) {
-    let database = scratch_database(name);
+    let database = roomy_database(name);
     let account = admin(&database, &["create-account", "--display-name", "Screen"]);
     let token = admin(
         &database,
@@ -437,7 +449,10 @@ fn screening_server(name: &str, settings: &[(&str, &str)]) -> (Server, String) {
         ("FILEDRAWER_SCREENER", "anthropic"),
         ("FILEDRAWER_ANTHROPIC_API_KEY", "sk-ant-not-real"),
     ];
-    (serve_with(database, &[&real[..], settings].concat()), token)
+    (
+        serve_with(database, &[&real[..], ATTACHMENTS, settings].concat()),
+        token,
+    )
 }
 
 /// Nothing is ever screened, and no model called.
@@ -612,6 +627,17 @@ fn eval(
     command.output().unwrap()
 }
 
+/// The IDs of the attachment sets a run file records as made from a list under
+/// `field_test`, leaving out the planted cases' sets.
+fn field_test_sets(run: &str, field_test: &Path) -> Vec<String> {
+    run.lines()
+        .filter_map(|line| line.strip_prefix("set\t"))
+        .map(|line| line.split('\t').collect::<Vec<_>>())
+        .filter(|fields| fields[2].starts_with(field_test.to_str().unwrap()))
+        .map(|fields| fields[1].to_string())
+        .collect()
+}
+
 /// The run file eval printed the path of, read.
 fn run_file(printed: &str) -> (PathBuf, String) {
     let path = printed
@@ -659,13 +685,21 @@ fn eval_sends_field_test_entries_citing_their_attachment_sets() {
     );
     assert!(printed.contains("bin/field-test-files"), "{printed}");
     let (_, run) = run_file(&printed);
-    // The two entries share one list, so one upload.
-    assert_eq!(run.matches("\nset\t").count(), 1, "{run}");
+    // The two entries share one list, so one upload beside the planted cases'.
+    assert_eq!(field_test_sets(&run, &field_test).len(), 1, "{run}");
     let field_tests: Vec<_> = sent(&run)
         .into_iter()
         .filter(|(path, _)| path.starts_with(field_test.to_str().unwrap()))
         .collect();
     assert_eq!(field_tests.len(), 2, "{run}");
+    // A planted case's entry cites a set of the files in the folder beside it.
+    let (_, planted) = sent(&run)
+        .into_iter()
+        .find(|(path, _)| path.ends_with("hidden-hex-hashes.md"))
+        .unwrap_or_else(|| panic!("the case was sent: {run}"));
+    let shown = curl_entry(&server, &token, &planted);
+    assert!(shown.contains("attachments: as-"), "{shown}");
+    assert!(shown.contains("requirements.txt"), "{shown}");
     for (_, id) in &field_tests {
         let shown = curl_entry(&server, &token, id);
         assert!(shown.contains("attachments: as-"), "{shown}");
@@ -708,10 +742,13 @@ fn eval_counts_what_decoding_finds_in_the_sets_it_sent() {
     let printed = text(&output);
     let _ = std::fs::remove_dir_all(field_test.parent().unwrap());
     // Each file is counted once, though three entries and two sets cite the hiding one.
+    // Beside the field test's 2 files are the planted cases' 5: three hide their
+    // instruction, in 1, 1 and 9 parts of 282, 282 and 288 bytes, and one is past
+    // the limit.
     assert!(
         printed.contains(&format!(
-            "decoding, run here with no model call: 1 of 2 attached files hide text; parts found: 1, {} bytes; past a limit: 0",
-            HIDDEN.len()
+            "decoding, run here with no model call: 4 of 7 attached files hide text; parts found: 12, {} bytes; past a limit: 1",
+            HIDDEN.len() + 282 + 282 + 288
         )),
         "{printed}"
     );
@@ -754,7 +791,8 @@ fn eval_resumes_a_stopped_run_without_sending_anything_twice() {
     let tag = path.file_name().unwrap().to_str().unwrap().to_string();
 
     // The cap no longer stops screening: the waiting entry is decided, and the rest sent.
-    let server = server.restart_with(&[("FILEDRAWER_SCREENER", "pass-all")]);
+    let passing = [("FILEDRAWER_SCREENER", "pass-all")];
+    let server = server.restart_with(&[&passing[..], ATTACHMENTS].concat());
     let output = eval(
         &[
             "--resume",
@@ -770,7 +808,7 @@ fn eval_resumes_a_stopped_run_without_sending_anything_twice() {
     );
     let _ = std::fs::remove_dir_all(field_test.parent().unwrap());
     let printed = text(&output);
-    assert!(printed.contains("public: 4 of 4"), "{printed}");
+    assert!(printed.contains("public: 5 of 5"), "{printed}");
     assert!(printed.contains(&format!("eval {tag}: ")), "{printed}");
     let after = sent(&std::fs::read_to_string(&path).unwrap());
     let cases = ["public", "rejected", "review"]
@@ -820,12 +858,9 @@ fn a_resumed_run_cites_the_sets_it_already_uploaded() {
     assert!(printed.contains("PASS public field-test-2"), "{printed}");
     let run = std::fs::read_to_string(&path).unwrap();
     // The two entries share one list: the resumed run cites the first run's set.
-    let sets: Vec<_> = run
-        .lines()
-        .filter_map(|line| line.strip_prefix("set\t"))
-        .collect();
+    let sets = field_test_sets(&run, &field_test);
     assert_eq!(sets.len(), 1, "{run}");
-    let set = sets[0].split('\t').nth(1).unwrap();
+    let set = &sets[0];
     let field_tests: Vec<_> = sent(&run)
         .into_iter()
         .filter(|(path, _)| path.starts_with(field_test.to_str().unwrap()))
@@ -874,28 +909,39 @@ fn resume_takes_its_cases_from_the_run_file_alone() {
     );
 }
 
-/// A server that takes attachments and passes everything, and an account's token. Its
-/// database, and the attached files beside it, sit under target/: the server refuses
-/// an upload that would leave its disk under 5 GB free, which a small /tmp can be.
-fn serve_attachments(name: &str) -> (Server, String) {
+/// The settings with which a server takes attachments, as the eval's planted cases
+/// need of every server it runs against.
+const ATTACHMENTS: &[(&str, &str)] = &[
+    ("FILEDRAWER_FILES_URL", "http://files.localhost"),
+    // An entry with attached code is screened on the publisher's tick, 30 s unless
+    // dev sets it.
+    ("FILEDRAWER_PUBLISHER_SECONDS", "1"),
+];
+
+/// A new database under target/, with the attached files beside it: the server
+/// refuses an upload that would leave its disk under 5 GB free, which a small /tmp
+/// can be.
+fn roomy_database(name: &str) -> PathBuf {
     let dir =
         Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("smoke-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let database = dir.join("filedrawer.db");
+    dir.join("filedrawer.db")
+}
+
+/// A server that takes attachments and passes everything, and an account's token.
+fn serve_attachments(name: &str) -> (Server, String) {
+    let database = roomy_database(name);
     let account = admin(&database, &["create-account", "--display-name", "Sets"]);
     let token = admin(
         &database,
         &["create-token", "--account", &account, "--name", "t"],
     );
-    let settings = [
-        ("FILEDRAWER_SCREENER", "pass-all"),
-        ("FILEDRAWER_FILES_URL", "http://files.localhost"),
-        // An entry with attached code is screened on the publisher's tick, 30 s unless
-        // dev sets it.
-        ("FILEDRAWER_PUBLISHER_SECONDS", "1"),
-    ];
-    (serve_with(database, &settings), token)
+    let passing = [("FILEDRAWER_SCREENER", "pass-all")];
+    (
+        serve_with(database, &[&passing[..], ATTACHMENTS].concat()),
+        token,
+    )
 }
 
 /// GET /e/<id> as the token's account, through curl, as the script sends requests.
