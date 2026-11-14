@@ -628,3 +628,33 @@ The owner settled the email's sections and the rules in design.md's Admin sectio
 - Chosen: replace them, saying so, from `origin/main`'s text (the checkout must be at `origin/main`).
   The install's lock and copy and the nightly copy's matching lock must be on the server for the deploy to keep its promises.
 - Against: the deploy then changes more than the binary, through a path the wizard also owns.
+
+### Packages
+
+#### The analyzer's library name
+
+- Options: keep `[lib] name = "analyzer"` as published, or use the package's own name, `filedrawer_analyzer`.
+- Chosen: `filedrawer_analyzer`, with the server's Cargo.toml renaming the dependency `analyzer`, so no server code changed.
+  A crate on crates.io whose library is called `analyzer` reads as a generic name to anyone who depends on it, and docs.rs shows it under that name.
+- Against: the server and the analyzer's own tests now call the same library by two names.
+
+#### Versions
+
+- Options: start both crates and the PyPI package at 0.1.0, or at 0.0.x; keep the two crates' versions apart, or in step.
+- Chosen: 0.1.0 each, versioned apart; the PyPI package takes `crates/cli`'s version.
+  The CLI's version moves with what agents run, and the analyzer's with its API.
+- Against: a version in step would let one bump cover both, and 0.0.x would say more plainly that nothing is stable yet.
+
+#### What the packages ship
+
+- Options: ship the tests and fixtures, or only the source; ship the AGPL text in each package, or only its SPDX identifier.
+- Chosen: only the source and a README, and the identifier `AGPL-3.0-only` in each package's metadata.
+  The CLI's tests read the analyzer's fixtures, which a package can't reach, and the repository holds the licence.
+- Against: AGPL asks that a copy of the licence go with the program; a `LICENSE` copied into each crate would carry it in the crates and wheels.
+
+#### Wheel tags and the release's guards
+
+- Options: tag the static Linux wheels manylinux only, musllinux only, or both; let any branch's run publish, or only main's.
+- Chosen: both tags on each static Linux wheel, as uv's own wheels do, so pip and uv on glibc and on musl systems take the same file.
+  `ops/claim-names` makes the `pypi` environment open to main only, and the workflow refuses files whose version isn't the one typed in.
+- Against: a release from a branch would let a fix go out before it lands.

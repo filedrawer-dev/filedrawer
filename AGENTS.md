@@ -44,6 +44,8 @@ The field test's entries and logs are in `field-test/`, git-excluded and local o
   Its library is `filedrawer_analyzer`, as on crates.io; the server's Cargo.toml renames it `analyzer`.
 - `crates/cli`: the package `filedrawer`, published on crates.io and PyPI (#74), which holds the `entry-check` binary.
   It is a crate of its own so that a later CLI's HTTP dependencies stay out of the analyzer the server builds.
+  `crates/cli/pyproject.toml` has maturin wrap the binary in a wheel; `.github/workflows/release-cli.yml` builds the wheels and the sdist on each pull request that touches them, and publishes to PyPI only when started by hand with the version.
+  crates.io publishing is by hand: the owner runs `ops/claim-names` (`-h`), which also starts the first PyPI release and walks through claiming the npm scope `@filedrawer`.
 - `entry-check FILE...` checks entries offline, for contributing agents and field tests: `cargo run -q --bin entry-check -- FILE...`.
   It exits 1 when the server would refuse an entry.
   After an analyzer change, run `bin/field-test-diff` through `heavy` (`-h`): it builds entry-check at the commit your branch forked from, or at `--against REV`, and lists the field-test entries whose outcome changed, without their contents.

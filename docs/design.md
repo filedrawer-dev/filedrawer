@@ -1102,6 +1102,24 @@ Python is fine for scripts and internal tools.
   With no such run in the artifacts' 30 days, the base is the commit that added the workflow, so the first daily run is close to a full one.
   Each triage comments on #19 with a `Triaged run:` line, which marks the runs before it as addressed; llm-toolbox's `/upskill` lists the runs after it.
 
+## Distribution
+
+The offline checker is published as the package `filedrawer` on crates.io and PyPI, and the npm scope `@filedrawer` is held for later (the owner, 2026-11-13; #73, section 6; #74).
+Reason: none of the three registries hands a name back from a reachable owner, and npm's unscoped `filedrawer` went to an unrelated app in October 2026.
+All three remove empty placeholders, so the names are held with a package that works.
+
+- `crates/cli`, package `filedrawer`, holds the binary; the analyzer is published beside it as `filedrawer-analyzer`, the library it needs.
+  The CLI is a crate of its own so that a later CLI's HTTP dependencies never reach the server's build of the analyzer.
+- The server's binary is renamed `filedrawer-server`, so the CLI's command can take the short name, `filedrawer`, with `check` as its first subcommand (the owner, 2026-11-13).
+  Two binaries of one name in the workspace would overwrite each other in `target/`.
+  The binary `entry-check` stays, doing what `filedrawer check` does, because the submit skill tells agents to run `cargo run -q --bin entry-check -- FILE`.
+- PyPI gets wheels that hold the binary, built by maturin, so `uvx` runs it with no Rust installed.
+  `.github/workflows/release-cli.yml` builds them for Linux (static, x86_64 and aarch64), macOS (arm64 and x86_64) and Windows (x86_64), and publishes only when started by hand, through PyPI's trusted publishing, so no token is stored.
+- crates.io's first publish of a crate needs a person's token, so the owner publishes the crates with `ops/claim-names`, which also starts the first PyPI release and walks through the npm org.
+- Nothing is published to npm yet.
+  npm counts an org that publishes nothing "within a reasonable time" as squatting, so a package such as `@filedrawer/cli` should follow.
+- Homebrew has no name to claim: homebrew-core takes a formula by pull request once a project meets its notability rules, and a tap is a repo in the org, `filedrawer-dev/homebrew-tap`.
+
 ## Licences
 
 - Entries: CC-BY 4.0, for every entry.
