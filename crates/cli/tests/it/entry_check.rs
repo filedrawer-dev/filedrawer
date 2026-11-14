@@ -1,44 +1,12 @@
 //! Seam: the `entry-check` binary, run as a process.
 
-use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::path::Path;
 
-/// A fixture written to a fresh scratch directory, from text compiled into the test.
-/// Paths from `CARGO_MANIFEST_DIR` would name the temporary tree the commit hook built
-/// the test in, which is gone by the next run. Each call gets its own directory, so
-/// tests running in parallel never read a file another is rewriting. An unknown name
-/// gives a path to no file.
-fn fixture(name: &str) -> PathBuf {
-    static CALLS: AtomicUsize = AtomicUsize::new(0);
-    let call = CALLS.fetch_add(1, Ordering::Relaxed);
-    let dir = std::env::temp_dir().join(format!("entry-check-tests-{}-{call}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join(name);
-    let text = match name {
-        // The analyzer's example entry, which its own tests build on.
-        "example.md" => include_str!("../../../analyzer/tests/it/fixtures/example.md"),
-        "refused.md" => include_str!("fixtures/refused.md"),
-        _ => return path,
-    };
-    std::fs::write(&path, text).unwrap();
-    path
-}
-
-fn entry_check(args: &[&Path]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_entry-check"))
-        .args(args)
-        .output()
-        .expect("entry-check runs")
-}
-
-fn stdout(output: &Output) -> String {
-    String::from_utf8(output.stdout.clone()).unwrap()
-}
+use crate::common::{entry_check, fixture, stdout};
 
 #[test]
 fn an_accepted_entry_prints_its_card_and_parsed_primary_row_and_exits_0() {
-    let output = entry_check(&[&fixture("example.md")]);
+    let output = entry_check([&fixture("example.md")]);
     assert_eq!(output.status.code(), Some(0));
     let out = stdout(&output);
     assert!(out.contains("example.md: accepted, 0 warnings"), "{out}");
@@ -54,7 +22,7 @@ fn an_accepted_entry_prints_its_card_and_parsed_primary_row_and_exits_0() {
 
 #[test]
 fn a_refused_entry_lists_every_reason_and_exits_1() {
-    let output = entry_check(&[&fixture("example.md"), &fixture("refused.md")]);
+    let output = entry_check([&fixture("example.md"), &fixture("refused.md")]);
     assert_eq!(output.status.code(), Some(1));
     let out = stdout(&output);
     assert!(out.contains("refused.md: refused"), "{out}");
@@ -81,7 +49,7 @@ fn warnings_are_listed_and_point_to_feedback() {
         .unwrap()
         .replace("stage: main", "stage: final");
     std::fs::write(&path, text).unwrap();
-    let output = entry_check(&[&path]);
+    let output = entry_check([&path]);
     assert_eq!(output.status.code(), Some(0));
     let out = stdout(&output);
     assert!(out.contains("warned.md: accepted, 1 warning\n"), "{out}");
@@ -94,7 +62,7 @@ fn warnings_are_listed_and_point_to_feedback() {
 
 #[test]
 fn a_file_that_cant_be_read_exits_2() {
-    let output = entry_check(&[&fixture("example.md"), &fixture("no-such-file.md")]);
+    let output = entry_check([&fixture("example.md"), &fixture("no-such-file.md")]);
     assert_eq!(output.status.code(), Some(2));
     let err = String::from_utf8(output.stderr.clone()).unwrap();
     assert!(err.contains("no-such-file.md"), "{err}");
@@ -103,7 +71,7 @@ fn a_file_that_cant_be_read_exits_2() {
 
 #[test]
 fn no_arguments_print_usage_and_exit_2() {
-    let output = entry_check(&[]);
+    let output = entry_check::<[&Path; 0], &Path>([]);
     assert_eq!(output.status.code(), Some(2));
     assert!(
         String::from_utf8(output.stderr)
@@ -114,7 +82,7 @@ fn no_arguments_print_usage_and_exit_2() {
 
 #[test]
 fn help_prints_usage_and_exits_0() {
-    let output = entry_check(&[Path::new("-h")]);
+    let output = entry_check([Path::new("-h")]);
     assert_eq!(output.status.code(), Some(0));
     assert!(stdout(&output).contains("usage: entry-check FILE..."));
 }
@@ -124,7 +92,7 @@ fn help_prints_usage_and_exits_0() {
 fn a_file_name_that_isnt_utf8_is_reported_not_a_panic() {
     use std::os::unix::ffi::OsStrExt;
     let name = std::ffi::OsStr::from_bytes(b"\xff.md");
-    let output = entry_check(&[Path::new(name)]);
+    let output = entry_check([Path::new(name)]);
     assert_eq!(output.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&output.stderr).contains("can't read"));
 }
@@ -138,7 +106,7 @@ fn a_series_cite_the_server_cant_read_makes_entry_check_refuse() {
         text.replacen("tags:", "series: ser_madeUp1@1\ntags:", 1),
     )
     .unwrap();
-    let output = entry_check(&[&path]);
+    let output = entry_check([&path]);
     assert_eq!(output.status.code(), Some(1));
     let out = stdout(&output);
     assert!(

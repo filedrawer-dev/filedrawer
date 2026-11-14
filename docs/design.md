@@ -1128,12 +1128,13 @@ The offline checker is published as the package `filedrawer` on crates.io and Py
 Reason: none of the three registries hands a name back from a reachable owner, and npm's unscoped `filedrawer` went to an unrelated app in October 2026.
 All three remove empty placeholders, so the names are held with a package that works.
 
-- `crates/cli`, package `filedrawer`, holds the binary; the analyzer is published beside it as `filedrawer-analyzer`, the library it needs.
+- `crates/cli`, package `filedrawer`, holds the binaries; the analyzer is published beside it as `filedrawer-analyzer`, the library it needs.
   The CLI is a crate of its own so that a later CLI's HTTP dependencies never reach the server's build of the analyzer.
 - The server's binary is renamed `filedrawer-server`, so the CLI's command can take the short name, `filedrawer`, with `check` as its first subcommand (the owner, 2026-11-13).
   Two binaries of one name in the workspace would overwrite each other in `target/`.
   The binary `entry-check` stays, doing what `filedrawer check` does, because the submit skill tells agents to run `cargo run -q --bin entry-check -- FILE`.
-- PyPI gets wheels that hold the binary, built by maturin, so `uvx` runs it with no Rust installed.
+- Each package carries the repository's `LICENSE`, since the AGPL asks that its text go with the program.
+- PyPI gets wheels that hold both binaries, built by maturin, so `uvx` runs it with no Rust installed.
   `.github/workflows/release-cli.yml` builds them for Linux (static, x86_64 and aarch64), macOS (arm64 and x86_64) and Windows (x86_64), and publishes only when started by hand, through PyPI's trusted publishing, so no token is stored.
 - crates.io's first publish of a crate needs a person's token, so the owner publishes the crates with `ops/claim-names`, which also starts the first PyPI release and walks through the npm org.
 - Nothing is published to npm yet.

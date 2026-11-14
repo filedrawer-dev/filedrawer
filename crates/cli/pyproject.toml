@@ -1,4 +1,4 @@
-# The PyPI package `filedrawer`: a wheel that holds the entry-check binary, built by
+# The PyPI package `filedrawer`: a wheel that holds the filedrawer and entry-check binaries, built by
 # maturin from this crate (.github/workflows/release-cli.yml; design.md, Distribution).
 [build-system]
 requires = ["maturin>=1.16,<2"]
@@ -6,9 +6,11 @@ build-backend = "maturin"
 
 [project]
 name = "filedrawer"
-description = "entry-check: checks File Drawer entries offline, with the analyzer filedrawer.dev runs."
+description = "Checks File Drawer entries offline, with the analyzer filedrawer.dev runs."
 readme = "README.md"
 license = "AGPL-3.0-only"
+# A copy of the repo's LICENSE, which bin/tests/test_licence_copies.py keeps the same.
+license-files = ["LICENSE"]
 authors = [{ name = "File Drawer" }]
 requires-python = ">=3.8"
 keywords = ["ai-safety", "null-results", "research", "markdown", "linter"]

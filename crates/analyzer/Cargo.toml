@@ -11,7 +11,7 @@ keywords = ["ai-safety", "null-results", "research", "markdown", "parser"]
 categories = ["parser-implementations", "science"]
 # The tests and their fixtures run from the repository; a user of the library
 # needs only its source.
-include = ["src/**", "Cargo.toml", "README.md"]
+include = ["src/**", "Cargo.toml", "README.md", "LICENSE"]
 
 [dependencies]
 # DOIs in doi.org links arrive percent-encoded.

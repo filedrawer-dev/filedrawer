@@ -3,7 +3,9 @@
 //! Each file here is a module of this one binary, so one test binary links, not one
 //! per file (#35, design.md, Stack).
 
+mod common;
 mod entry_check;
+mod filedrawer;
 
 /// Cargo builds only the files `main.rs` reaches, so a test file here without a `mod`
 /// line above would never run.

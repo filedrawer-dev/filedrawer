@@ -203,7 +203,8 @@ usage() {
   cat <<'EOF'
 usage: ops/claim-names [-h]
 
-Holds the name filedrawer on crates.io and PyPI, with the entry-check package, and
+Holds the name filedrawer on crates.io and PyPI, with the package whose command is
+`filedrawer check` (entry-check under its new name), and
 the @filedrawer scope on npm (design.md, Distribution; #74). Run it on your own
 machine, from the repo root of a clean clone at origin/main, logged in to gh. It asks for a
 crates.io token, hidden, and passes it to `cargo login`; nothing else is secret.

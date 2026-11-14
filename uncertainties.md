@@ -685,13 +685,6 @@ The owner settled the email's sections and the rules in design.md's Admin sectio
   The CLI's version moves with what agents run, and the analyzer's with its API.
 - Against: a version in step would let one bump cover both, and 0.0.x would say more plainly that nothing is stable yet.
 
-#### What the packages ship
-
-- Options: ship the tests and fixtures, or only the source; ship the AGPL text in each package, or only its SPDX identifier.
-- Chosen: only the source and a README, and the identifier `AGPL-3.0-only` in each package's metadata.
-  The CLI's tests read the analyzer's fixtures, which a package can't reach, and the repository holds the licence.
-- Against: AGPL asks that a copy of the licence go with the program; a `LICENSE` copied into each crate would carry it in the crates and wheels.
-
 #### Wheel tags and the release's guards
 
 - Options: tag the static Linux wheels manylinux only, musllinux only, or both; let any branch's run publish, or only main's.
