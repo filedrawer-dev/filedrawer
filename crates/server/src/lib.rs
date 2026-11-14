@@ -17,7 +17,7 @@ pub mod config;
 pub mod daily_email;
 pub mod db;
 mod deletion;
-mod embargo;
+pub mod embargo;
 mod entries;
 mod error;
 pub mod event_log;

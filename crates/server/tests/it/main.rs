@@ -17,6 +17,7 @@ mod config;
 mod daily_email;
 mod deletion;
 mod embargo;
+mod embargo_limit;
 mod embargo_paused;
 mod entries_mine;
 mod entry_deletion;
