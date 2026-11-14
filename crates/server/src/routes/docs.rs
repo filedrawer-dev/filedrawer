@@ -8,6 +8,7 @@ use axum::response::IntoResponse;
 
 use crate::AppState;
 use crate::error::AppError;
+use crate::routes::files::host_of;
 use crate::skills::{self, Skill};
 
 const INSTALL: &str = include_str!("../../install.md");
@@ -19,7 +20,9 @@ const MARKDOWN: &str = "text/markdown; charset=utf-8";
 /// alone, and the commit the server was built from in `X-Filedrawer-Commit`, which
 /// ops/deploy-production reads.
 pub async fn skill(State(state): State<AppState>) -> impl IntoResponse {
-    let text = skills::render(INSTALL, &state.public_url)
+    let text = INSTALL
+        .replace("{{BASE}}", &state.public_url)
+        .replace("{{HOST}}", host_of(&state.public_url))
         .replace("{{SKILLS}}", &skills::versions(" "))
         .replace("{{TAG_URLS}}", &skills::tag_urls());
     (
@@ -38,7 +41,7 @@ pub async fn skill(State(state): State<AppState>) -> impl IntoResponse {
     )
 }
 
-/// `/skills/<name>/<path>`: a file of a skill's folder, rendered for this site, for an
+/// `/skills/<name>/<path>`: a file of a skill's folder, pointed at this site, for an
 /// agent that reads the skill without installing it.
 pub async fn skill_file(
     State(state): State<AppState>,
@@ -49,7 +52,7 @@ pub async fn skill_file(
         .ok_or(AppError::NotFound)?;
     Ok((
         [(header::CONTENT_TYPE, MARKDOWN)],
-        skills::render(text, &state.public_url),
+        skills::for_site(text, &state.public_url),
     ))
 }
 

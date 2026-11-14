@@ -13,12 +13,14 @@ Otherwise it is `ask`, and a line `declined filedrawer-search VERSION` means you
 ## 2. Fetch the version
 
 This fetches the version from its git tag on GitHub, never from the site, into a new folder, and prints the folder.
+A tag's files name the production site; when this copy was installed from another site, such as staging, the script points the new files at that site too.
 Put the version in place of VERSION:
 
 ```sh
 sh -eu <<'SH'
 N=VERSION
 skill=filedrawer-search
+base=https://filedrawer.dev
 case $N in ''|*[!0-9]*) echo "not a version: $N" >&2; exit 1;; esac
 raw=https://raw.githubusercontent.com/filedrawer-dev/filedrawer/refs/tags/skill-$skill-v$N/skills/$skill
 new=$(mktemp -d)
@@ -33,9 +35,16 @@ files=$(sed -n 's/^  files: "\(.*\)"$/\1/p' "$new/SKILL.md")
 for f in $files; do
   case "$f" in /*|*..*) echo "refused path: $f" >&2; exit 1;; esac
   [ "$f" = SKILL.md ] || fetch "$f"
-  sed 's#[{]{BASE}}#{{BASE}}#g; s#[{]{HOST}}#{{HOST}}#g' "$new/$f" > "$new/$f.put"
-  mv "$new/$f.put" "$new/$f"
 done
+case $base in
+  https://filedrawer[.]dev) ;;
+  *)
+    for f in $files; do
+      sed "s#https://filedrawer[.]dev#$base#g; s#/filedrawer[.]dev[.]header#/${base#*://}.header#g" "$new/$f" > "$new/$f.put"
+      mv "$new/$f.put" "$new/$f"
+    done
+    ;;
+esac
 echo "$new"
 SH
 ```

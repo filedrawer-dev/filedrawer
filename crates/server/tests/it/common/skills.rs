@@ -9,7 +9,7 @@ pub fn skills_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills")
 }
 
-/// A skill's file as the repo holds it, placeholders and all.
+/// A skill's file as the repo holds it, naming production.
 pub fn raw(name: &str, file: &str) -> String {
     let path = skills_dir().join(name).join(file);
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))

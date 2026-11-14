@@ -13,13 +13,17 @@ use sha2::{Digest, Sha256};
 
 const FIX: &str = "run bin/skills sync";
 
+/// The site the files name: production, which a deployment elsewhere rewrites to its
+/// own address when it serves or installs them.
+const SITE: &str = "https://filedrawer.dev";
+
 /// How a command that needs a token sends the header file.
-const HEADER_FILE: &str = "-H @\"$HOME/.config/filedrawer/{{HOST}}.header\"";
+const HEADER_FILE: &str = "-H @\"$HOME/.config/filedrawer/filedrawer.dev.header\"";
 
 /// How a command that needs no token sends it: the file when it exists, and nothing
 /// otherwise, as after a declined install (#38).
 const HEADER_FILE_IF_ANY: &str =
-    "-H @\"$(ls ~/.config/filedrawer/{{HOST}}.header 2>/dev/null || echo /dev/null)\"";
+    "-H @\"$(ls ~/.config/filedrawer/filedrawer.dev.header 2>/dev/null || echo /dev/null)\"";
 
 /// The files of a skill an agent follows: SKILL.md and its upgrade steps.
 const FOLLOWED: [&str; 2] = ["SKILL.md", "references/upgrade.md"];
@@ -150,6 +154,24 @@ fn each_folder_is_on_record_at_its_version() {
     }
 }
 
+/// An installed folder equals its tag's on production only while nothing in it needs
+/// filling.
+#[test]
+fn the_files_hold_no_placeholders() {
+    for name in NAMES {
+        for file in std::fs::read_dir(skills_dir().join(name).join("references"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .chain([skills_dir().join(name).join("SKILL.md")])
+        {
+            let text = read(&file);
+            for placeholder in ["{{BASE}}", "{{HOST}}"] {
+                assert!(!text.contains(placeholder), "{}", file.display());
+            }
+        }
+    }
+}
+
 #[test]
 fn metadata_files_lists_the_folders_files() {
     for name in NAMES {
@@ -181,6 +203,20 @@ fn front_matter_keeps_to_the_agent_skills_standard() {
         let text = skill_md(name);
         assert_eq!(front(&text, "name").as_deref(), Some(name));
         assert!(name.len() <= 64);
+        // YAML reads `: ` or ` #` in an unquoted value as a key or a comment, and
+        // installers such as `npx skills add` skip a skill whose front matter won't parse.
+        let line = text
+            .lines()
+            .find_map(|line| line.strip_prefix("description: "))
+            .expect("a description line");
+        let quoted = line.len() > 1
+            && line.starts_with('"')
+            && line.ends_with('"')
+            && !line[1..line.len() - 1].contains(['"', '\\']);
+        assert!(
+            quoted || !(line.contains(": ") || line.contains(" #")),
+            "{name}: quote the description"
+        );
         assert!(
             name.split('-').all(|part| !part.is_empty()
                 && part
@@ -188,10 +224,10 @@ fn front_matter_keeps_to_the_agent_skills_standard() {
                     .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())),
             "{name}"
         );
-        // Rendered for the longest site address the server runs at.
+        // Pointed at the longest site address the server runs at.
         let description = front(&text, "description")
             .expect("description")
-            .replace("{{BASE}}", "https://staging.filedrawer.dev");
+            .replace(SITE, "https://staging.filedrawer.dev");
         assert!(
             description.chars().count() <= 1024,
             "{name}: {} characters",
@@ -208,12 +244,12 @@ fn every_request_to_the_site_sends_the_header_file_and_names_the_skill() {
         let skill_header = format!("-H \"X-Filedrawer-Skill: {name}/{}\"", version(name));
         let commands: Vec<String> = curls(&text)
             .into_iter()
-            .filter(|command| command.contains("{{BASE}}"))
+            .filter(|command| command.contains(SITE))
             .collect();
         assert!(!commands.is_empty(), "{name}");
         for command in commands {
             let needs_no_token =
-                name == "filedrawer-search" || command.contains("{{BASE}}/skill.md");
+                name == "filedrawer-search" || command.contains(&format!("{SITE}/skill.md"));
             let header = if needs_no_token {
                 HEADER_FILE_IF_ANY
             } else {
@@ -224,7 +260,7 @@ fn every_request_to_the_site_sends_the_header_file_and_names_the_skill() {
             assert!(command.contains(AGENT_NAME), "{name}: {command}");
         }
         for command in curls(&text) {
-            if !command.contains("{{BASE}}") {
+            if !command.contains(SITE) {
                 assert!(
                     !command.contains(" -A") && !command.contains("--user-agent"),
                     "{name}: a request to GitHub names no agent: {command}"
@@ -265,8 +301,8 @@ fn only_the_token_setup_reads_filedrawer_token() {
 fn the_skills_send_the_agent_to_no_instructions_on_the_site() {
     for name in NAMES {
         let text = FOLLOWED.map(|file| raw(name, file)).join("\n");
-        assert!(!text.contains("{{BASE}}/entry-format.md"), "{name}");
-        for (at, _) in text.match_indices("{{BASE}}/skill.md") {
+        assert!(!text.contains(&format!("{SITE}/entry-format.md")), "{name}");
+        for (at, _) in text.match_indices(&format!("{SITE}/skill.md")) {
             let line_start = text[..at].rfind('\n').map_or(0, |i| i + 1);
             let line = &text[line_start..at];
             assert!(

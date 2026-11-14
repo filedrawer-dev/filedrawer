@@ -698,6 +698,11 @@ The `skill.md` at agents.stackoverflow.com is a working example of serving instr
 - The skills live in the repo's `skills/` folder, one folder each, in the Agent Skills format.
   A `SKILL.md` gives `name`, `description` and `metadata` (its `version`, and the folder's `files`) in its front matter, `references/entry-format.md` is a copy of [entry-format.md](entry-format.md), and `references/upgrade.md` holds the upgrade steps, which only a newer version calls for.
   Installed copies fetch upgrades from that path, so it doesn't move.
+- The skills' files name production outright, `https://filedrawer.dev`, and its header file, `~/.config/filedrawer/filedrawer.dev.header`, with nothing to fill (the owner's decision, 2026-11-13, #73).
+  An install on production is then byte for byte the tag's folder, so the hash in `skills/versions.txt` checks it, and tools such as `npx skills add` or a plain copy of the folder install a working skill.
+  Reason: with placeholders, an installed folder never equalled its tag, and an agent that left the installer's script had to know the substitution; one filled `{{HOST}}` with its own `sed` (#73, class D).
+  A server elsewhere, staging or dev, points the files at itself where it serves them, and the installer and the upgrade steps do the same for a copy installed from it: `https://filedrawer.dev` becomes the site's address and `/filedrawer.dev.header` its host's header file, which can't apply twice, since neither appears in the result.
+  So staging's installed copies differ from their tags, and nothing of ours checks the hash of an install (the owner, 2026-11-13).
 - An installed skill is a full copy, and everything the agent follows comes from the installed folder.
   Neither skill tells the agent to fetch instructions from the site.
   Reason: a careful user can then pin what their agent runs.

@@ -293,9 +293,9 @@ read_checks() {
   check "an agent opening / gets plain text" '[[ $agent == text/plain* ]]'
 
   # The skills (design.md, Skills): a HEAD of /skill.md names each one's version, and
-  # each version's git tag, rendered as the installer renders it, holds what the site
-  # serves at /skills/<name>/, so an install from the tag gets what this server
-  # describes.
+  # each version's git tag, pointed at this site as the installer points it, holds
+  # what the site serves at /skills/<name>/, so an install from the tag gets what this
+  # server describes. On production that changes nothing.
   local heads skills running tags_url pair name n files file
   heads=$(curl -sSI --suppress-connect-headers --max-time 10 -K <(headers) "$base/skill.md" | tr -d '\r')
   skills=$(sed -n 's/^[Xx]-[Ff]iledrawer-[Ss]kills: //p' <<< "$heads")
@@ -313,7 +313,7 @@ read_checks() {
     check "$name $n: SKILL.md lists its files" '[[ -n $files ]]'
     for file in $files; do
       curl -fsSL --max-time 30 "$tags_url/refs/tags/skill-$name-v$n/skills/$name/$file" 2>/dev/null |
-        sed "s#[{]{BASE}}#$base#g; s#[{]{HOST}}#$host#g" > "$dir/tagged"
+        sed "s#https://filedrawer[.]dev#$base#g; s#/filedrawer[.]dev[.]header#/$host.header#g" > "$dir/tagged"
       CODE=$(curl -s -o "$dir/served" -w '%{http_code}' -K <(headers) "$base/skills/$name/$file")
       check "$name $n: the tag's $file is what the site serves" \
         '[[ $CODE == 200 && -s $dir/tagged ]] && cmp -s "$dir/tagged" "$dir/served"'

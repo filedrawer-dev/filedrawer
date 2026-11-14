@@ -59,7 +59,7 @@ for pair in {{SKILLS}}; do
   for f in $files; do
     case "$f" in /*|*..*) echo "refused path: $f" >&2; exit 1;; esac
     [ "$f" = SKILL.md ] || fetch "$f"
-    sed 's#[{]{BASE}}#{{BASE}}#g; s#[{]{HOST}}#{{HOST}}#g' "$new/$f" > "$new/$f.put"
+    sed "s#https://filedrawer[.]dev#{{BASE}}#g; s#/filedrawer[.]dev[.]header#/{{HOST}}.header#g" "$new/$f" > "$new/$f.put"
     mv "$new/$f.put" "$new/$f"
   done
   fetched="$fetched $skill=$new"

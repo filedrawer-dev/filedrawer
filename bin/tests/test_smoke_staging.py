@@ -482,7 +482,10 @@ def site(commit: str = COMMIT) -> ThreadingHTTPServer:
     versions = {"filedrawer-search": 4, "filedrawer-submit": 9}
 
     def skill(name: str) -> str:
-        return f'name: {name}\n  files: "SKILL.md"\nfor {{{{BASE}}}}\n'
+        return (
+            f'name: {name}\n  files: "SKILL.md"\nfor https://filedrawer.dev\n'
+            "with ~/.config/filedrawer/filedrawer.dev.header\n"
+        )
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_args) -> None:
@@ -502,7 +505,11 @@ def site(commit: str = COMMIT) -> ThreadingHTTPServer:
                 code, data, kind = 200, skill(tagged[0]).encode(), "text/plain"
             elif served:
                 base = f"http://127.0.0.1:{self.server.server_address[1]}"
-                text = skill(served[0]).replace("{{BASE}}", base)
+                text = (
+                    skill(served[0])
+                    .replace("https://filedrawer.dev", base)
+                    .replace("/filedrawer.dev.header", f"/{base.split('//')[1]}.header")
+                )
                 code, data, kind = 200, text.encode(), "text/markdown"
             elif self.path in ("/skill.md", "/tags"):
                 code, data, kind = 200, b"text\n", "text/markdown"

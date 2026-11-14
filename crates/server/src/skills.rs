@@ -56,7 +56,7 @@ impl Skill {
         SKILLS.iter().find(|skill| skill.name == name)
     }
 
-    /// The file at `path` in the folder, as stored, placeholders and all.
+    /// The file at `path` in the folder, as stored, naming production.
     pub fn file(&self, path: &str) -> Option<&'static str> {
         self.files
             .iter()
@@ -96,9 +96,15 @@ pub fn tag_urls() -> String {
         .join(" and ")
 }
 
-/// `text` with `{{BASE}}` as this site's address and `{{HOST}}` as its host, as the
-/// installer's `sed` renders a skill's files.
-pub fn render(text: &str, public_url: &str) -> String {
-    text.replace("{{BASE}}", public_url)
-        .replace("{{HOST}}", crate::routes::files::host_of(public_url))
+/// The site the skills' files name.
+const PRODUCTION: &str = "https://filedrawer.dev";
+
+/// A skill's file pointed at the site at `public_url`, as the installer and the upgrade
+/// steps point it: `https://filedrawer.dev` becomes `public_url`, and the header file
+/// `~/.config/filedrawer/filedrawer.dev.header` becomes that site's. On production it
+/// changes nothing.
+pub fn for_site(text: &str, public_url: &str) -> String {
+    let host = crate::routes::files::host_of(public_url);
+    text.replace(PRODUCTION, public_url)
+        .replace("/filedrawer.dev.header", &format!("/{host}.header"))
 }

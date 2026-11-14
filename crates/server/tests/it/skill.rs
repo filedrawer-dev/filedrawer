@@ -132,7 +132,9 @@ async fn skill_md_is_the_installer_for_this_site() {
     );
     assert!(text.contains("filedrawer/localhost.header"), "{text}");
     assert!(
-        text.contains("sed 's#[{]{BASE}}#http://localhost#g; s#[{]{HOST}}#localhost#g'"),
+        text.contains(
+            r#"sed "s#https://filedrawer[.]dev#http://localhost#g; s#/filedrawer[.]dev[.]header#/localhost.header#g""#
+        ),
         "{text}"
     );
     for placeholder in ["{{BASE}}", "{{HOST}}", "{{SKILLS}}", "{{TAG_URLS}}"] {
@@ -194,18 +196,86 @@ async fn no_other_reply_names_the_versions() {
     }
 }
 
+/// A test app whose site is at `public_url`.
+async fn app_at(public_url: &str) -> common::TestApp {
+    let mut app = test_app().await;
+    app.state.public_url = public_url.to_string();
+    app.router = filedrawer_server::app(app.state.clone());
+    app
+}
+
+const PRODUCTION: &str = "https://filedrawer.dev";
+const STAGING: &str = "https://staging.filedrawer.dev";
+
 #[tokio::test]
-async fn each_skills_files_are_served_for_this_site() {
+async fn production_serves_each_skills_files_as_the_repo_holds_them() {
+    let app = app_at(PRODUCTION).await;
     for name in NAMES {
         assert!(files(name).len() >= 3, "{name}");
         for file in files(name) {
-            let text = served(&format!("/skills/{name}/{file}")).await;
-            let expected = raw(name, &file)
-                .replace("{{BASE}}", "http://localhost")
-                .replace("{{HOST}}", "localhost");
-            assert_eq!(text, expected, "{name}/{file}");
+            let reply = app.get(&format!("/skills/{name}/{file}")).await;
+            assert_eq!(reply.status, StatusCode::OK, "{name}/{file}");
+            assert_eq!(reply.body, raw(name, &file), "{name}/{file}");
         }
     }
+}
+
+#[tokio::test]
+async fn staging_serves_each_skills_files_pointed_at_itself_once() {
+    let app = app_at(STAGING).await;
+    for name in NAMES {
+        for file in files(name) {
+            let text = app.get(&format!("/skills/{name}/{file}")).await.body;
+            let source = raw(name, &file);
+            assert!(!text.contains("https://filedrawer.dev"), "{name}/{file}");
+            assert!(!text.contains("staging.staging"), "{name}/{file}");
+            assert_eq!(
+                text.matches(STAGING).count(),
+                source.matches(PRODUCTION).count(),
+                "{name}/{file}"
+            );
+            for kept in [
+                "github.com/filedrawer-dev/filedrawer",
+                "~/.config/filedrawer/",
+                "filedrawer.dev counts as its ID",
+            ] {
+                assert_eq!(
+                    text.matches(kept).count(),
+                    source.matches(kept).count(),
+                    "{name}/{file}: {kept}"
+                );
+            }
+        }
+        let skill = app.get(&format!("/skills/{name}/SKILL.md")).await.body;
+        assert!(
+            skill.contains(&format!(
+                "-H @\"$(ls ~/.config/filedrawer/staging.filedrawer.dev.header 2>/dev/null || echo /dev/null)\" -H \"X-Filedrawer-Skill: {name}/{}\"",
+                version(name)
+            )),
+            "{name}"
+        );
+        assert!(
+            skill.contains("https://staging.filedrawer.dev/skill.md | tr -d"),
+            "{name}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn each_skills_files_are_served_for_this_site() {
+    for name in NAMES {
+        for file in files(name) {
+            let text = served(&format!("/skills/{name}/{file}")).await;
+            assert!(!text.contains(PRODUCTION), "{name}/{file}");
+            assert!(!text.contains("{{"), "{name}/{file}");
+        }
+    }
+    let search = served("/skills/filedrawer-search/SKILL.md").await;
+    assert!(
+        search.contains("~/.config/filedrawer/localhost.header"),
+        "{search}"
+    );
+    assert!(search.contains("\"http://localhost/search?q="), "{search}");
 }
 
 #[tokio::test]
