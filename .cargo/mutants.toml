@@ -17,3 +17,18 @@ minimum_test_timeout = 60
 cap_lints = true
 # Cargo.toml's `mutants` profile: the test profile without debug info.
 profile = "mutants"
+# Mutants no test can or should catch, from the full run of 2026-11-10 (#26): each
+# line matched only missed mutants there, none a test caught.
+exclude_re = [
+    # A Debug impl made to print nothing: it can't leak, and Debug text is pinned
+    # nowhere. Mutants inside those impls, some of which hide secrets, still run.
+    "impl std::fmt::Debug for \\w+>::fmt -> std::fmt::Result with Ok\\(Default::default\\(\\)\\)",
+    # An fsync of a directory, which no test can observe.
+    "replace sync_dir ",
+    # Equivalent: the bits it joins never overlap.
+    "replace \\| with \\^ in pack$",
+    # Equivalent: at the boundary it only pushes an empty text event.
+    "replace [<>] with [<>]= in link_slugs$",
+    # Only the words of a warning.
+    "replace stopped_waiting ",
+]
