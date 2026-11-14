@@ -653,14 +653,78 @@ mod screened {
             placed.body
         );
         run_worker(app).await;
-        let own = app.get_as_author(&format!("/e/{id}")).await;
-        (id, field(&own.body, "status").unwrap().to_string())
+        let status = status(app, &id).await;
+        (id, status)
     }
 
     async fn run_worker(app: &TestApp) {
         filedrawer_server::jobs::publish_due(&app.state, time::OffsetDateTime::now_utc())
             .await
             .unwrap();
+    }
+
+    async fn status(app: &TestApp, id: &str) -> String {
+        let own = app.get_as_author(&format!("/e/{id}")).await;
+        field(&own.body, "status").unwrap().to_string()
+    }
+
+    /// How many times the model was sent text holding `marker`.
+    fn sent_with(models: &FakeModels, marker: &str) -> usize {
+        models
+            .screened()
+            .iter()
+            .filter(|text| text.contains(marker))
+            .count()
+    }
+
+    #[tokio::test]
+    async fn a_file_whose_screening_reply_cant_be_read_is_retried_and_after_three_goes_to_review() {
+        let models = FakeModels::default();
+        let app = app_with(&models, 1_000_000_000).await;
+        let cookie = common::owner(&app).await;
+        let set = set_of(&app, json!([file("author:run.py", "# FAKE-GARBLED\n")])).await;
+
+        let (id, first) = publish(&app, &set, "garbled").await;
+        assert_eq!(first, "screening", "it waits for the next try");
+        run_worker(&app).await;
+        assert_eq!(status(&app, &id).await, "screening");
+        run_worker(&app).await;
+
+        assert_eq!(status(&app, &id).await, "review");
+        assert_eq!(sent_with(&models, "FAKE-GARBLED"), 3);
+        let page = app.page(&format!("/admin/e/{id}"), Some(&cookie)).await;
+        // The reason as the page escapes its apostrophe.
+        assert!(
+            page.body
+                .contains("screening replies couldn&#39;t be read 3 times"),
+            "{}",
+            page.body
+        );
+        run_worker(&app).await;
+        assert_eq!(
+            sent_with(&models, "FAKE-GARBLED"),
+            3,
+            "nothing more is sent"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_outage_while_screening_a_file_doesnt_count_against_the_entry() {
+        let models = FakeModels::default();
+        let app = app_with(&models, 1_000_000_000).await;
+        let set = set_of(&app, json!([file("author:run.py", "# FAKE-ERROR\n")])).await;
+
+        let (id, first) = publish(&app, &set, "outage").await;
+        assert_eq!(first, "screening");
+        for _ in 0..3 {
+            run_worker(&app).await;
+        }
+
+        assert_eq!(status(&app, &id).await, "screening");
+        assert!(
+            sent_with(&models, "FAKE-ERROR") >= 4,
+            "each tick tries again"
+        );
     }
 
     #[tokio::test]
