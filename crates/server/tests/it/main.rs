@@ -23,6 +23,7 @@ mod entry_deletion;
 mod error_bodies;
 mod fair_queue;
 mod feedback;
+mod file_store;
 mod hold;
 mod http_fetcher;
 mod invites;

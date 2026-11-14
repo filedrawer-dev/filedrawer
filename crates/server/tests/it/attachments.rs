@@ -576,6 +576,40 @@ async fn the_files_host_serves_a_public_entrys_files_as_plain_text_and_nothing_e
     }
 }
 
+#[tokio::test]
+async fn the_files_host_answers_404_for_a_name_that_isnt_a_sha256_in_either_case() {
+    let app = test_app().await;
+    let set = a_set(&app, &app.token).await;
+    let held = app.post("/entries", citing(&set)).await;
+    publish_and_place(&app, &common::id_in(&held.body)).await;
+    let sha = sha256(SCRIPT);
+    assert_eq!(
+        get_on(&app, FILES_HOST, &format!("/f/{sha}")).await.status,
+        StatusCode::OK
+    );
+
+    for name in [
+        "..".to_string(),
+        "%2e%2e".to_string(),
+        format!("../f/{sha}/.."),
+        format!("{sha}/"),
+        format!("{sha}/../{sha}"),
+        sha[..63].to_string(),
+        format!("{sha}0"),
+        "g".repeat(64),
+        format!("{}..", &sha[..62]),
+    ] {
+        let reply = get_on(&app, FILES_HOST, &format!("/f/{name}")).await;
+
+        assert_eq!(reply.status, StatusCode::NOT_FOUND, "{name}");
+        assert_eq!(reply.body, "not found\n", "{name}");
+    }
+    // Hex reads the same in either case, so the host serves the file for both.
+    let upper = get_on(&app, FILES_HOST, &format!("/f/{}", sha.to_uppercase())).await;
+    assert_eq!(upper.status, StatusCode::OK);
+    assert_eq!(upper.body, SCRIPT);
+}
+
 mod screened {
     //! Attached files through the screen, with the fake model client.
 
