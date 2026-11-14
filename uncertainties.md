@@ -437,6 +437,46 @@ Add a new entry at the end of the topic it belongs to, or start a topic when non
 - Against: a public entry whose links were all live at submission is never rechecked, so a repository deleted later keeps a clean card.
   And a host that is down for a day is retried 4 times that day, at 1, 3, 7 and 15 hours.
 
+### Skills and their install
+
+#### Staging installs of search 7 and submit 9 upgrade to files that name production
+
+- Options: accept it, since a rerun of the installer against staging repairs it; or keep placeholders beside the production names for one more version, which the old upgrade steps would fill; or have staging's `/skill.md` name no newer version until those installs are gone.
+- Chosen: accept it.
+  An installed copy upgrades through its own installed `references/upgrade.md`, whose `sed` fills `{{BASE}}`, and the new files have none, so a staging copy upgraded from 7 or 9 searches production and checks production's `/skill.md`, sending no staging key.
+  On production the same steps leave the tag's bytes, which is right.
+- Against: until someone reruns the installer, a test machine's searches reach production and count in its search log, which the per-host header files were meant to keep apart.
+
+#### The installer comes from the site, not from a git tag
+
+- Options: the server serves `crates/server/install.sh` at `/install.sh`; or `/skill.md` names a tagged copy on GitHub, as #73 proposed, so the site supplies no code at all.
+- Chosen: the site, as the build's brief asked; production serves the repo's bytes, and `X-Filedrawer-Commit` names the commit to compare with.
+- Against: a compromised server could serve another script to an agent that doesn't read it first, where a tag can only be planted through the deploy key.
+
+#### Where the downloaded installer stays
+
+- Options: `~/.config/filedrawer/install.sh`, kept after the install; a temporary file; or the installer deletes itself.
+- Chosen: `~/.config/filedrawer/install.sh`, a fixed path the human can read before the second command runs (the owner wanted the download and the run apart, so the script can be audited), and can read again later.
+- Against: it leaves a second file in the home folder, which a careful human may not expect.
+
+#### The installer's mode has no default
+
+- Options: `auto` when no mode is given, or refuse.
+- Chosen: refuse, before anything is fetched, so an agent that drops the argument doesn't choose `auto` for its human.
+- Against: a person running the script by hand must type the mode.
+
+#### Skills installed by the human's own means don't upgrade themselves
+
+- Options: the upgrade steps stop and tell the human, in a line, that a version is out, for a copy outside `~/.agents/skills/` and `~/.claude/skills/`; or they try to put the new folder where the copy is.
+- Chosen: tell the human; their own tooling put the copy there, and the steps' swap assumes the installer's folders.
+- Against: the agent repeats the line once per task until the human upgrades.
+
+#### `/skill.md`'s download command off production
+
+- Options: the same plain command everywhere; or, on staging and dev, a command that also sends the header file when it exists.
+- Chosen: the header file off production, since staging's Caddy refuses a request without the key, and usability scenarios reach `/skill.md` through `?key=`, which the next command doesn't carry.
+- Against: staging's page differs from production's in more than its address.
+
 ### Pages for people
 
 #### A MIXED tab on the outcome divider cards

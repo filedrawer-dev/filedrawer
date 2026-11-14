@@ -219,3 +219,49 @@ def test_setup_without_the_token_it_needs_says_so(tmp_path):
     done, _ = run_setup(tmp_path, {"token": "header"}, FILEDRAWER_STAGING_KEY="k")
     assert done.returncode == 1 and "FILEDRAWER_TOKEN is unset" in done.stderr
     assert "Traceback" not in done.stderr
+
+
+# A stand-in for /install.sh that records its argument and the header file it found.
+FAKE_INSTALLER = b"""printf '%s\\n' "$*" > "$HOME/installed-with"
+cp "$HOME/.config/filedrawer/127.0.0.1.header" "$HOME/header-seen"
+"""
+
+
+class InstallerSite(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        keyed = self.headers.get("X-Staging-Key") == "k"
+        ok = self.path == "/install.sh" and keyed
+        self.send_response(200 if ok else 403)
+        self.end_headers()
+        if ok:
+            self.wfile.write(FAKE_INSTALLER)
+
+    def log_message(self, *args):
+        pass
+
+
+@pytest.fixture
+def installer_site():
+    httpd = http.server.HTTPServer(("127.0.0.1", 0), InstallerSite)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{httpd.server_port}"
+    httpd.shutdown()
+    httpd.server_close()
+
+
+def test_setup_installs_with_the_sites_installer_in_the_scenarios_mode(
+    tmp_path, installer_site
+):
+    done, home = run_setup(
+        tmp_path,
+        {"install": "installed", "mode": "ask"},
+        FILEDRAWER_STAGING_KEY="k",
+        FILEDRAWER_USABILITY_BASE=installer_site,
+    )
+    assert done.returncode == 0, done.stderr
+    assert (home / "installed-with").read_text() == "ask\n"
+    # The installer ran after the header file was written, so its own requests carry
+    # the key.
+    assert (home / "header-seen").read_text() == "X-Staging-Key: k\n"
+    assert (home / ".config" / "filedrawer" / "install.sh").exists()

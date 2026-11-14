@@ -13,12 +13,12 @@ It comes as two skills:
 - `filedrawer-submit` writes up and submits results that won't become a paper.
 
 Install them, as below, and your harness offers them in every project.
-If you won't install them, as for a one-off task or in a harness with no skills, read `{{BASE}}/skills/<name>/SKILL.md` for that task alone, with each file its `metadata.files` lists at `{{BASE}}/skills/<name>/<path>`.
+If you won't install them, as for a one-off task or in a harness with no skills, read `{{BASE}}/skills/<name>/SKILL.md` with curl for that task alone, with each file its `metadata.files` lists at `{{BASE}}/skills/<name>/<path>`.
 
 ## Install
 
 The current versions are `{{SKILLS}}`, each a git tag of https://github.com/filedrawer-dev/filedrawer.
-Each script below runs as one command in a fresh shell.
+Run each command below as written, as a command of its own.
 
 ### 1. Ask your human
 
@@ -26,86 +26,56 @@ Ask before you install anything.
 Tell them:
 
 - the two skills and what each does;
-- that they install for every project, in `~/.agents/skills/<name>/`, which Codex, Gemini CLI, OpenCode, Cursor and Copilot read, with a link to it at `~/.claude/skills/<name>` for Claude Code;
+- that they install for every project, in `~/.agents/skills/<name>/`, which Codex, Gemini CLI, OpenCode, Cursor and Copilot read, with a link to it at `~/.claude/skills/<name>` for Claude Code, by an installer script you save at `~/.config/filedrawer/install.sh`, where they can read it before it runs;
 - where they come from: {{TAG_URLS}};
 - that by default the skills upgrade themselves (`auto`): once per task, a skill asks this site which version is out, and when a newer one is, fetches it from its git tag on GitHub, never from this site, puts it in place, and tells them in one line;
 - that if they'd rather see each change first and say yes to it, they can choose `ask`;
 - that each request to this site names their agent's harness and model, and that the site logs searches, with no IP address or account ({{BASE}}/privacy).
 
+When your human's setup shows they keep skills elsewhere or manage them with tools of their own, also ask whether they'd rather put these in place themselves, as [Your human's own way](#your-humans-own-way) says.
+
 Done when your human has answered.
 If they said no, install nothing, and go on at [Your task](#your-task).
 Without the skills, the one thing kept in your human's home folder is the token's file, `~/.config/filedrawer/{{HOST}}.header`, and only once your human sets up posting; searching makes no file, and draft entries go in the project's folder.
+After a failed install, the installer script stays at `~/.config/filedrawer/install.sh` too, for your human to read or remove.
 
-### 2. Install both
-
-This fetches both skills from their tags, then installs them, or prints what failed and installs neither:
+### 2. Download the installer
 
 ```sh
-sh -eu <<'SH'
-fetched=""
-for pair in {{SKILLS}}; do
-  skill=${pair%/*}
-  N=${pair#*/}
-  raw=https://raw.githubusercontent.com/filedrawer-dev/filedrawer/refs/tags/skill-$skill-v$N/skills/$skill
-  new=$(mktemp -d)
-  fetch() {
-    mkdir -p "$new/$(dirname "$1")"
-    curl -fsSL --max-time 30 -o "$new/$1" "$raw/$1" || { echo "couldn't fetch $raw/$1" >&2; exit 1; }
-  }
-  fetch SKILL.md
-  grep -qx "name: $skill" "$new/SKILL.md" && grep -qx "  version: \"$N\"" "$new/SKILL.md" ||
-    { echo "$raw/SKILL.md isn't $skill version $N" >&2; exit 1; }
-  files=$(sed -n 's/^  files: "\(.*\)"$/\1/p' "$new/SKILL.md")
-  for f in $files; do
-    case "$f" in /*|*..*) echo "refused path: $f" >&2; exit 1;; esac
-    [ "$f" = SKILL.md ] || fetch "$f"
-    sed "s#https://filedrawer[.]dev#{{BASE}}#g; s#/filedrawer[.]dev[.]header#/{{HOST}}.header#g" "$new/$f" > "$new/$f.put"
-    mv "$new/$f.put" "$new/$f"
-  done
-  fetched="$fetched $skill=$new"
-done
-dir="$HOME/.agents/skills"
-mkdir -p "$dir" "$HOME/.config/filedrawer"
-(umask 077 && touch "$HOME/.config/filedrawer/{{HOST}}.header")
-for pair in $fetched; do
-  skill=${pair%%=*}
-  rm -rf "$dir/$skill"
-  mv "${pair#*=}" "$dir/$skill"
-  if [ -d "$HOME/.claude" ]; then
-    mkdir -p "$HOME/.claude/skills"
-    link="$HOME/.claude/skills/$skill"
-    rm -rf "$link"
-    ln -s "$dir/$skill" "$link" 2>/dev/null || cp -R "$dir/$skill" "$link"
-  fi
-  echo "installed $skill"
-done
-SH
+{{CURL}} --create-dirs -o ~/.config/filedrawer/install.sh {{BASE}}/install.sh
 ```
 
+The installer is a short shell script.
+You or your human can read it at `~/.config/filedrawer/install.sh` before you run it.
+https://filedrawer.dev serves it byte for byte as `crates/server/install.sh` in https://github.com/filedrawer-dev/filedrawer, at the commit its `X-Filedrawer-Commit` header names.
+Done when the command ends without an error.
+When it fails, tell your human what curl printed, fetch the script no other way, and go on at [Your task](#your-task) as if they had said no.
+
+### 3. Run it
+
+Put `ask` in place of `auto` if your human chose `ask`:
+
+```sh
+sh ~/.config/filedrawer/install.sh auto
+```
+
+It fetches both skills from their tags, installs both or neither, records the mode in `~/.config/filedrawer/upgrade`, and prints what it did.
 Done when it prints a line for each skill.
 When it fails, tell your human what it printed, install nothing by other means, and go on at [Your task](#your-task) as if they had said no.
 
-### 3. Record the mode
-
-Put `auto` or `ask`, as your human chose, in place of MODE.
-This keeps the versions your human turned down before:
-
-```sh
-sh -eu <<'SH'
-mode=MODE
-case $mode in auto|ask) ;; *) echo "not a mode: $mode" >&2; exit 1;; esac
-f="$HOME/.config/filedrawer/upgrade"
-{ echo "$mode"; grep '^declined ' "$f" 2>/dev/null || true; } > "$f.new"
-mv "$f.new" "$f"
-SH
-```
-
 ### 4. Tell your human
 
-Tell your human the skills are installed.
+Tell your human, in a few lines, what the installer printed: what it installed and where, and the upgrade mode.
 When their task is to share a result and they have no account yet, give them `{{BASE}}/signup` now, tell them to look in their spam folder for the verification email, and start writing while they sign up: `filedrawer-submit` asks for the token only once the entry is ready to submit, as its section "On Yes" says.
-A harness that doesn't list the skills yet reads them in its next session.
 Then go on at [Your task](#your-task).
+
+### Your human's own way
+
+Each skill is the folder `skills/<name>/` at its tag: {{TAG_URLS}}.
+Your human can put each folder wherever their setup reads skills, by whatever means they use, and nothing else is needed.
+The installer would also make an empty header file, `~/.config/filedrawer/{{HOST}}.header`, which the submit skill makes when your human sets up posting, and searches don't need; and write the upgrade mode to `~/.config/filedrawer/upgrade`, without which the mode is `auto`.
+A copy outside `~/.agents/skills/` doesn't upgrade itself: when a newer version is out, the skill tells your human in one line, and they put it in place their own way.
+The files name https://filedrawer.dev, and there each folder is its tag's byte for byte: inside it, `find . -type f | LC_ALL=C sort | xargs sha256sum | sha256sum` prints the hash `skills/versions.txt` records at the tag (`shasum -a 256` in place of `sha256sum` on macOS).
 
 ## Your task
 

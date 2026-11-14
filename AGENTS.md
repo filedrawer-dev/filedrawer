@@ -53,7 +53,8 @@ The field test's entries and logs are in `field-test/`, git-excluded and local o
   `filedrawer-server -h` lists its commands and every setting, with what production refuses; a test (`cli::help_names_every_setting_serve_reads`) fails when it misses one `config.rs` reads, so read it there rather than keep a list here.
   The GitHub token is shared with staging (`ops/provision-vps github`).
   Email goes to the log when no SMTP settings are set, but staging has real ones (`ops/remote/mail.sh`), so a feature that emails the owner reaches their inbox from staging too, where CI publishes test entries after each deploy.
-  `crates/server/install.md` is what agents read at `/skill.md`: it installs the two skills in `skills/`.
+  `crates/server/install.md` is what agents read at `/skill.md`: it has the agent ask its human, then download and run `crates/server/install.sh`, served at `/install.sh`, which installs the two skills in `skills/` from their tags.
+  Production serves the script's bytes as they are, so a reader can compare it with the repo; staging and dev put their own address on its `base=` line.
   A new route is named there or in a skill, or listed in `NOT_FOR_AGENTS` in `crates/server/tests/it/skill.rs` (CODING_STANDARDS.md, Untrusted text, says which); a test refuses one that is neither.
   `CODING_STANDARDS.md` holds the rules the review applies.
 - `crates/server/templates`: the HTML pages, askama templates.
@@ -65,6 +66,7 @@ The field test's entries and logs are in `field-test/`, git-excluded and local o
   It renders `GET /` from `base.html` and `home.html` on disk on each request, around the entries of a dev server it builds and seeds, serves `site.css` and `copy.js` from disk, and reloads the page when any of the four changes; other pages' markup is the dev server's, as built.
   Run it without `heavy`, which it refuses: it queues its own build, and inside a heavy job it would hold the lane every commit check waits for until it stopped.
 - `skills/`: `filedrawer-search` and `filedrawer-submit`, the skills agents install from this repo's git tags and the server serves at `/skills/<name>/` (design.md, Skills).
+  Their files name `https://filedrawer.dev` outright, with nothing to fill; staging and dev point them at themselves where they serve or install them.
   They aren't skills for working on this repo, which live in `.claude/skills/`.
   They describe only what the server does, so update them with each change to a route.
   Then run `bin/skills sync`, which also follows a change to `docs/entry-format.md`: it copies the format into each skill and records each version in `skills/versions.txt`, bumping past every version origin's tags or origin/main already hold; a test refuses a skill changed without it.
@@ -122,7 +124,7 @@ For a change with no build input (below), such as most of `docs/`, `bin/` and `o
 `bin/checks-needed --why PATH` says whether a path is a build input.
 
 Committing runs the hook's checks, so read its output rather than running them first; the full check runs when wt-ship lands each commit.
-Every commit runs `bin/slop-lint` on staged markdown, lychee (links and anchors, offline) over every markdown file, actionlint with shellcheck (when a workflow is staged), shellcheck on staged shell scripts in `bin/` and `ops/`, and `bin/sentence-lines` on staged markdown, ruff, and `cargo fmt` (when a `.rs` file is staged), which write: a person's commit that needs formatting is refused with the files rewritten, to stage, and `bin/pre-commit-run` stages an agent's and checks again.
+Every commit runs `bin/slop-lint` on staged markdown, lychee (links and anchors, offline) over every markdown file, actionlint with shellcheck (when a workflow is staged), shellcheck on staged shell scripts in `bin/` and `ops/` and on `crates/server/install.sh`, and `bin/sentence-lines` on staged markdown, ruff, and `cargo fmt` (when a `.rs` file is staged), which write: a person's commit that needs formatting is refused with the files rewritten, to stage, and `bin/pre-commit-run` stages an agent's and checks again.
 An agent's commit then runs clippy, for a build input, the skills check, for a change to the skills, the one test that every route is named for agents or listed in `NOT_FOR_AGENTS`, for a change to the router, a document naming routes or `skill.rs`, and the rule that no test in `bin/tests` sets a wall-clock limit, for a change there, and, for a change in a crate's `tests/it/`, `bin/test-modules`, which refuses a file there that the staged `main.rs` has no `mod` line for (`bin/agent-commit-check`, which `agent-commit-gate` runs in the full check's place because `bin/git-pre-commit` sets `AGENT_CHECK_AT_COMMIT`): run the tests you wrote or touched before you commit.
 It also runs the real-Caddy tests, which `bin/tests/conftest.py` marks `real_caddy`, in heavy's queue, for a change to `ops/remote/caddy.sh`, `ops/remote/field-test-key.sh`, `bin/caddy`, the test files that hold them or `conftest.py`; without a network they skip, which passes.
 wt-ship runs the full check, `bin/agent-pre-commit`, on each commit when it lands, while it holds the main tree: the skills check, the tests in `bin/tests`, clippy and the Rust tests, each only when the change needs it.

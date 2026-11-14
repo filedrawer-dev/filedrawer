@@ -131,13 +131,14 @@ async fn skill_md_is_the_installer_for_this_site() {
         "{text}"
     );
     assert!(text.contains("filedrawer/localhost.header"), "{text}");
-    assert!(
-        text.contains(
-            r#"sed "s#https://filedrawer[.]dev#http://localhost#g; s#/filedrawer[.]dev[.]header#/localhost.header#g""#
-        ),
-        "{text}"
-    );
-    for placeholder in ["{{BASE}}", "{{HOST}}", "{{SKILLS}}", "{{TAG_URLS}}"] {
+    assert!(text.contains(&format!("{PUBLIC_URL}/install.sh")), "{text}");
+    for placeholder in [
+        "{{BASE}}",
+        "{{HOST}}",
+        "{{SKILLS}}",
+        "{{TAG_URLS}}",
+        "{{CURL}}",
+    ] {
         assert!(!text.contains(placeholder), "{placeholder} is left");
     }
 }
@@ -397,10 +398,6 @@ async fn the_example_entry_is_entry_format_mds_example() {
 
 const RAW_GITHUB: &str = "https://raw.githubusercontent.com/filedrawer-dev/filedrawer";
 
-fn mirror(root: &Path) -> PathBuf {
-    tags_mirror(&root.join("mirror"), |_, _, text| text)
-}
-
 /// The `n`th `sh -eu <<'SH'` script after `heading` in `text`, through its `SH` line.
 fn script(text: &str, heading: &str, n: usize) -> String {
     let after = &text[text.find(heading).expect(heading)..];
@@ -458,14 +455,119 @@ fn text(output: &Output) -> String {
     String::from_utf8_lossy(&output.stdout).to_string() + &String::from_utf8_lossy(&output.stderr)
 }
 
-/// Asserts the skill installed under `home` holds what the site serves, and Claude
+/// A site and GitHub for the installer to reach: the test app at `public_url`, served
+/// on loopback, and a folder laid out as GitHub serves the tags. A `curl` first on PATH
+/// sends requests for `public_url` to the app and those for GitHub to the folder, and
+/// logs each call's arguments.
+struct StandIn {
+    app: common::TestApp,
+    root: tempfile::TempDir,
+    mirror: PathBuf,
+    log: PathBuf,
+    path: String,
+}
+
+impl StandIn {
+    async fn at(public_url: &str) -> StandIn {
+        Self::with_tags(public_url, |_, _, text| text).await
+    }
+
+    /// With `edit` applied to each tagged file's text, given its skill and path.
+    async fn with_tags(public_url: &str, edit: impl Fn(&str, &str, String) -> String) -> StandIn {
+        let app = app_at(public_url).await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let router = app.router.clone();
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let root = tempfile::tempdir().unwrap();
+        let mirror = tags_mirror(&root.path().join("mirror"), edit);
+        let log = root.path().join("curl.log");
+        let bin = root.path().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let shim = format!(
+            "#!/bin/sh\n\
+             for a do\n\
+             \x20 case $a in\n\
+             \x20   {public_url}*) a=\"http://127.0.0.1:{port}${{a#{public_url}}}\" ;;\n\
+             \x20   {RAW_GITHUB}*) a=\"file://{mirror}${{a#{RAW_GITHUB}}}\" ;;\n\
+             \x20 esac\n\
+             \x20 set -- \"$@\" \"$a\"\n\
+             \x20 shift\n\
+             done\n\
+             printf '%s\\n' \"$*\" >> '{log}'\n\
+             exec '{curl}' \"$@\"\n",
+            mirror = mirror.display(),
+            log = log.display(),
+            curl = real_curl().display(),
+        );
+        std::fs::write(bin.join("curl"), shim).unwrap();
+        std::fs::set_permissions(
+            bin.join("curl"),
+            std::os::unix::fs::PermissionsExt::from_mode(0o755),
+        )
+        .unwrap();
+        let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+        StandIn {
+            app,
+            root,
+            mirror,
+            log,
+            path,
+        }
+    }
+
+    async fn get(&self, path: &str) -> common::Reply {
+        self.app.get(path).await
+    }
+
+    /// A home folder, with Claude Code's folder in it.
+    fn home(&self) -> PathBuf {
+        let home = self.root.path().join("home");
+        std::fs::create_dir_all(home.join(".claude")).unwrap();
+        home
+    }
+
+    /// `sh -c script` with `home` as HOME and the stand-in curl first on PATH.
+    fn run(&self, script: &str, home: &Path) -> Output {
+        shell(script, home)
+            .env("PATH", &self.path)
+            .output()
+            .unwrap()
+    }
+
+    /// The installer as the site serves it, run with `args`.
+    async fn install(&self, home: &Path, args: &str) -> Output {
+        let file = self.root.path().join("install.sh");
+        std::fs::write(&file, self.get("/install.sh").await.body).unwrap();
+        self.run(&format!("sh '{}' {args}", file.display()), home)
+    }
+
+    /// Each curl call so far, its arguments joined by spaces.
+    fn calls(&self) -> Vec<String> {
+        std::fs::read_to_string(&self.log)
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+}
+
+/// The curl on PATH, which the stand-in hands each call to.
+fn real_curl() -> PathBuf {
+    std::env::split_paths(&std::env::var("PATH").unwrap())
+        .map(|dir| dir.join("curl"))
+        .find(|path| path.is_file())
+        .expect("curl on PATH")
+}
+
+/// Asserts each skill installed under `home` holds what `site` serves, and Claude
 /// Code's folder links to it.
-async fn assert_installed(home: &Path, name: &str) {
+async fn assert_installed(site: &StandIn, home: &Path, name: &str) {
     let installed = home.join(".agents/skills").join(name);
     for file in files(name) {
         assert_eq!(
             std::fs::read_to_string(installed.join(&file)).unwrap(),
-            served(&format!("/skills/{name}/{file}")).await,
+            site.get(&format!("/skills/{name}/{file}")).await.body,
             "{name}/{file}"
         );
     }
@@ -473,62 +575,118 @@ async fn assert_installed(home: &Path, name: &str) {
     assert_eq!(std::fs::read_link(&link).unwrap(), installed, "{name}");
 }
 
-async fn installer() -> String {
-    served("/skill.md").await
-}
-
-/// A home where the installer has run, with Claude Code's folder present.
-async fn installed_home(root: &Path, mirror: &Path) -> PathBuf {
-    let home = root.join("home");
-    std::fs::create_dir_all(home.join(".claude")).unwrap();
-    let output = run(&script(&installer().await, "## Install", 0), &home, mirror);
-    assert!(output.status.success(), "{}", text(&output));
-    home
-}
-
-#[tokio::test]
-async fn the_installer_installs_what_the_site_serves() {
-    let root = tempfile::tempdir().unwrap();
-    let mirror = mirror(root.path());
-    let home = installed_home(root.path(), &mirror).await;
-    for name in NAMES {
-        assert_installed(&home, name).await;
-    }
-    let header = home.join(".config/filedrawer/localhost.header");
-    let mode =
-        std::os::unix::fs::PermissionsExt::mode(&std::fs::metadata(header).unwrap().permissions());
-    assert_eq!(mode & 0o777, 0o600);
-}
-
-#[tokio::test]
-async fn the_installer_installs_neither_skill_when_one_tag_is_missing() {
-    let root = tempfile::tempdir().unwrap();
-    let mirror = mirror(root.path());
-    let submit = format!(
-        "refs/tags/skill-filedrawer-submit-v{}",
-        version("filedrawer-submit")
-    );
-    std::fs::remove_dir_all(mirror.join(&submit)).unwrap();
-    let home = root.path().join("home");
-    let output = run(&script(&installer().await, "## Install", 0), &home, &mirror);
-    assert!(!output.status.success(), "{}", text(&output));
-    assert!(
-        text(&output).contains(&format!(
-            "couldn't fetch file://{}/{submit}",
-            mirror.display()
-        )),
-        "{}",
-        text(&output)
-    );
+/// Asserts the installer failed, said `why`, and left `home` without the skills or a
+/// recorded mode.
+fn assert_installed_nothing(output: &Output, home: &Path, why: &str) {
+    let said = text(output);
+    assert!(!output.status.success(), "{said}");
+    assert!(said.contains(why), "{said}");
+    assert!(said.contains("install nothing by other means"), "{said}");
     for name in NAMES {
         assert!(!home.join(".agents/skills").join(name).exists(), "{name}");
     }
+    assert!(!home.join(".config/filedrawer/upgrade").exists());
 }
 
-#[tokio::test]
-async fn recording_the_mode_keeps_the_versions_declined_before() {
-    let root = tempfile::tempdir().unwrap();
-    let home = root.path().join("home");
+fn tag_url(name: &str) -> String {
+    format!(
+        "https://github.com/filedrawer-dev/filedrawer/tree/skill-{name}-v{}/skills/{name}",
+        version(name)
+    )
+}
+
+fn read(path: &Path) -> String {
+    std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn on_production_the_installer_installs_each_tags_folder_byte_for_byte() {
+    let site = StandIn::at(PRODUCTION).await;
+    let home = site.home();
+    let output = site.install(&home, "auto").await;
+    assert!(output.status.success(), "{}", text(&output));
+    for name in NAMES {
+        let installed = home.join(".agents/skills").join(name);
+        for file in files(name) {
+            assert_eq!(
+                read(&installed.join(&file)),
+                raw(name, &file),
+                "{name}/{file}"
+            );
+        }
+        assert_eq!(
+            std::fs::read_link(home.join(".claude/skills").join(name)).unwrap(),
+            installed
+        );
+    }
+    let header = home.join(".config/filedrawer/filedrawer.dev.header");
+    let mode =
+        std::os::unix::fs::PermissionsExt::mode(&std::fs::metadata(header).unwrap().permissions());
+    assert_eq!(mode & 0o777, 0o600);
+    assert_eq!(read(&home.join(".config/filedrawer/upgrade")), "auto\n");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn elsewhere_the_installer_points_the_skills_at_its_site_once() {
+    let site = StandIn::at(STAGING).await;
+    let home = site.home();
+    let output = site.install(&home, "auto").await;
+    assert!(output.status.success(), "{}", text(&output));
+    for name in NAMES {
+        assert_installed(&site, &home, name).await;
+        let skill = read(&home.join(".agents/skills").join(name).join("SKILL.md"));
+        assert!(!skill.contains(PRODUCTION), "{name}");
+        assert!(
+            skill.contains("~/.config/filedrawer/staging.filedrawer.dev.header"),
+            "{name}"
+        );
+    }
+    assert!(
+        home.join(".config/filedrawer/staging.filedrawer.dev.header")
+            .exists()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_installer_asks_the_site_with_the_header_file_when_there_is_one() {
+    let site = StandIn::at(STAGING).await;
+    let home = site.home();
+    let output = site.install(&home, "auto").await;
+    assert!(output.status.success(), "{}", text(&output));
+    let header = home.join(".config/filedrawer/staging.filedrawer.dev.header");
+    let asked = |calls: &[String]| {
+        calls
+            .iter()
+            .filter(|call| call.contains("/skill.md"))
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    // The first run found no header file, and made one.
+    assert!(
+        asked(&site.calls())[0].contains("-H @/dev/null"),
+        "{:?}",
+        site.calls()
+    );
+    std::fs::write(&header, "X-Staging-Key: k\n").unwrap();
+    let output = site.install(&home, "auto").await;
+    assert!(output.status.success(), "{}", text(&output));
+    let calls = asked(&site.calls());
+    assert!(
+        calls[1].contains(&format!("-H @{}", header.display())),
+        "{calls:?}"
+    );
+    // Requests to GitHub carry nothing of the site's.
+    for call in site.calls() {
+        if call.contains("file://") {
+            assert!(!call.contains(".header"), "{call}");
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_installer_tells_the_agent_what_it_installed_and_how_to_switch_the_mode() {
+    let site = StandIn::at(PRODUCTION).await;
+    let home = site.home();
     let config = home.join(".config/filedrawer");
     std::fs::create_dir_all(&config).unwrap();
     std::fs::write(
@@ -536,19 +694,272 @@ async fn recording_the_mode_keeps_the_versions_declined_before() {
         "auto\ndeclined filedrawer-search 4\n",
     )
     .unwrap();
-    let record = script(&installer().await, "## Install", 1);
-    let output = run(
-        &record.replace("mode=MODE\n", "mode=ask\n"),
-        &home,
-        root.path(),
-    );
+    let output = site.install(&home, "ask").await;
     assert!(output.status.success(), "{}", text(&output));
+    let said = String::from_utf8(output.stdout).unwrap();
+    for name in NAMES {
+        assert!(said.contains(&tag_url(name)), "{said}");
+        let folder = home.join(".agents/skills").join(name);
+        assert!(said.contains(&format!("{}/", folder.display())), "{said}");
+    }
+    assert!(
+        said.contains(&format!(
+            "{}/<name>/SKILL.md",
+            home.join(".agents/skills").display()
+        )),
+        "{said}"
+    );
     assert_eq!(
-        std::fs::read_to_string(config.join("upgrade")).unwrap(),
+        read(&config.join("upgrade")),
         "ask\ndeclined filedrawer-search 4\n"
     );
-    let output = run(&record, &home, root.path());
-    assert!(!output.status.success(), "an unfilled mode was recorded");
+    // The command it gives switches the mode and keeps what was declined.
+    let switch = said
+        .lines()
+        .skip_while(|line| !line.contains("To switch to auto"))
+        .nth(1)
+        .unwrap_or_else(|| panic!("no command to switch: {said}"));
+    let output = site.run(switch.trim(), &home);
+    assert!(output.status.success(), "{}", text(&output));
+    assert_eq!(
+        read(&config.join("upgrade")),
+        "auto\ndeclined filedrawer-search 4\n"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rerun_installs_the_same_again() {
+    let site = StandIn::at(PUBLIC_URL).await;
+    let home = site.home();
+    for _ in 0..2 {
+        let output = site.install(&home, "auto").await;
+        assert!(output.status.success(), "{}", text(&output));
+    }
+    for name in NAMES {
+        assert_installed(&site, &home, name).await;
+    }
+    let left: Vec<_> = std::fs::read_dir(home.join(".agents/skills"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(left.len(), 2, "{left:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_bad_or_missing_mode_fails_before_anything_is_fetched() {
+    let site = StandIn::at(PUBLIC_URL).await;
+    let home = site.home();
+    for args in ["maybe", "", "auto ask", "MODE"] {
+        let output = site.install(&home, args).await;
+        assert_installed_nothing(&output, &home, "auto or ask");
+        assert_eq!(site.calls(), Vec::<String>::new(), "{args:?}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_installer_installs_neither_skill_when_one_tag_is_missing() {
+    let site = StandIn::at(PUBLIC_URL).await;
+    let submit = format!(
+        "refs/tags/skill-filedrawer-submit-v{}",
+        version("filedrawer-submit")
+    );
+    std::fs::remove_dir_all(site.mirror.join(&submit)).unwrap();
+    let home = site.home();
+    let output = site.install(&home, "auto").await;
+    let url = format!("couldn't fetch {RAW_GITHUB}/{submit}");
+    assert_installed_nothing(&output, &home, &url);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_installer_installs_neither_skill_when_a_tag_holds_another_version() {
+    let site = StandIn::with_tags(PUBLIC_URL, |name, file, text| {
+        if name == "filedrawer-submit" && file == "SKILL.md" {
+            let n = version(name);
+            text.replace(&format!("  version: \"{n}\""), "  version: \"999\"")
+        } else {
+            text
+        }
+    })
+    .await;
+    let home = site.home();
+    let output = site.install(&home, "auto").await;
+    assert_installed_nothing(&output, &home, "isn't filedrawer-submit version");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_installer_refuses_a_tag_that_names_a_file_outside_its_folder() {
+    let site = StandIn::with_tags(PUBLIC_URL, |name, file, text| {
+        let listed = "  files: \"SKILL.md references/entry-format.md references/upgrade.md\"";
+        if name == "filedrawer-submit" && file == "SKILL.md" {
+            text.replace(listed, "  files: \"SKILL.md ../../escaped.md\"")
+        } else {
+            text
+        }
+    })
+    .await;
+    let home = site.home();
+    let output = site.install(&home, "auto").await;
+    assert_installed_nothing(
+        &output,
+        &home,
+        "refused path in filedrawer-submit's files: ../../escaped.md",
+    );
+    assert!(!site.root.path().join("escaped.md").exists());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_installer_installs_nothing_when_agents_folder_is_a_file() {
+    let site = StandIn::at(PUBLIC_URL).await;
+    let home = site.home();
+    std::fs::write(home.join(".agents"), "").unwrap();
+    let output = site.install(&home, "auto").await;
+    let said = text(&output);
+    assert!(!output.status.success(), "{said}");
+    assert!(said.contains("install nothing by other means"), "{said}");
+    assert!(home.join(".agents").is_file());
+    assert!(!home.join(".config/filedrawer/upgrade").exists());
+    assert!(!home.join(".claude/skills").exists());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_installer_installs_nothing_when_claude_codes_skills_folder_is_a_file() {
+    let site = StandIn::at(PUBLIC_URL).await;
+    let home = site.home();
+    std::fs::write(home.join(".claude/skills"), "").unwrap();
+    let output = site.install(&home, "auto").await;
+    assert_installed_nothing(&output, &home, "couldn't");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_rerun_leaves_the_install_and_the_mode_as_they_were() {
+    let site = StandIn::at(PUBLIC_URL).await;
+    let home = site.home();
+    let output = site.install(&home, "ask").await;
+    assert!(output.status.success(), "{}", text(&output));
+    std::fs::remove_dir_all(site.mirror.join("refs")).unwrap();
+    let output = site.install(&home, "auto").await;
+    assert!(!output.status.success(), "{}", text(&output));
+    for name in NAMES {
+        assert_installed(&site, &home, name).await;
+    }
+    assert_eq!(read(&home.join(".config/filedrawer/upgrade")), "ask\n");
+}
+
+#[tokio::test]
+async fn production_serves_the_installer_byte_for_byte_as_plain_text() {
+    let app = app_at(PRODUCTION).await;
+    let script = include_str!("../../install.sh");
+    for page in [false, true] {
+        let mut request = Request::builder().uri("/install.sh");
+        if page {
+            request = request
+                .header("sec-fetch-dest", "document")
+                .header("sec-fetch-mode", "navigate");
+        }
+        let reply = app.send(request.body(Body::empty()).unwrap()).await;
+        assert_eq!(reply.status, StatusCode::OK);
+        assert_eq!(reply.headers["content-type"], "text/plain; charset=utf-8");
+        assert!(reply.headers.contains_key("x-filedrawer-commit"));
+        assert_eq!(reply.body, script);
+    }
+}
+
+#[tokio::test]
+async fn staging_serves_the_installer_with_its_own_address_alone() {
+    let app = app_at(STAGING).await;
+    let script = include_str!("../../install.sh");
+    let reply = app.get("/install.sh").await;
+    let changed: Vec<(&str, &str)> = script
+        .lines()
+        .zip(reply.body.lines())
+        .filter(|(a, b)| a != b)
+        .collect();
+    assert_eq!(
+        changed,
+        [(
+            "  base=https://filedrawer.dev",
+            "  base=https://staging.filedrawer.dev"
+        )]
+    );
+    assert_eq!(script.lines().count(), reply.body.lines().count());
+}
+
+/// `/skill.md`'s two install commands at `site`: the download, then the run.
+async fn page_commands(site: &StandIn) -> (String, String) {
+    let page = site.get("/skill.md").await.body;
+    (
+        command(&page, "### 2. Download", 0),
+        command(&page, "### 3. Run", 0),
+    )
+}
+
+/// A home where the agent ran `/skill.md`'s two commands, with Claude Code's folder
+/// present.
+async fn installed_home(site: &StandIn) -> PathBuf {
+    let home = site.home();
+    let (download, install) = page_commands(site).await;
+    for command in [download, install] {
+        let output = site.run(&command, &home);
+        assert!(output.status.success(), "{command}: {}", text(&output));
+    }
+    home
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn skill_mds_two_commands_download_the_installer_then_install() {
+    for public_url in [PRODUCTION, STAGING] {
+        let site = StandIn::at(public_url).await;
+        let home = site.home();
+        let (download, install) = page_commands(&site).await;
+        let output = site.run(&download, &home);
+        assert!(output.status.success(), "{}", text(&output));
+        // Downloaded, to read before the next command, and nothing installed yet.
+        assert_eq!(
+            read(&home.join(".config/filedrawer/install.sh")),
+            site.get("/install.sh").await.body
+        );
+        assert!(!home.join(".agents").exists());
+        assert_eq!(install, "sh ~/.config/filedrawer/install.sh auto");
+        let output = site.run(&install, &home);
+        assert!(output.status.success(), "{}", text(&output));
+        for name in NAMES {
+            assert_installed(&site, &home, name).await;
+        }
+    }
+}
+
+#[tokio::test]
+async fn skill_md_downloads_from_production_with_a_plain_curl() {
+    let page = app_at(PRODUCTION).await.get("/skill.md").await.body;
+    assert_eq!(
+        command(&page, "### 2. Download", 0),
+        "curl -fsSL --create-dirs -o ~/.config/filedrawer/install.sh https://filedrawer.dev/install.sh"
+    );
+}
+
+#[tokio::test]
+async fn skill_md_never_pipes_or_chains_a_download_into_a_shell() {
+    for public_url in [PRODUCTION, STAGING] {
+        let page = app_at(public_url).await.get("/skill.md").await.body;
+        for piped in page.split('|').skip(1) {
+            let program = piped.split_whitespace().next().unwrap_or_default();
+            let program = program.trim_end_matches(['`', ')', '.']);
+            assert!(
+                !["sh", "bash", "zsh", "dash"].contains(&program),
+                "{public_url}: a pipe into {program}"
+            );
+        }
+        for line in page.lines().filter(|line| line.contains("curl ")) {
+            for chain in ["&&", ";", "||", "$(curl"] {
+                let after_url = line.split("/install.sh").nth(1).unwrap_or_default();
+                assert!(!after_url.contains(chain), "{public_url}: {line}");
+            }
+        }
+        assert!(
+            !page.contains("sh -eu <<"),
+            "{public_url}: a script in the page"
+        );
+    }
 }
 
 /// A skill's `references/upgrade.md`, as the site serves it.
@@ -582,11 +993,11 @@ fn installed_text(home: &Path, name: &str) -> String {
     std::fs::read_to_string(home.join(".agents/skills").join(name).join("SKILL.md")).unwrap()
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn an_upgrade_puts_the_tags_files_in_place() {
-    let root = tempfile::tempdir().unwrap();
-    let mirror = mirror(root.path());
-    let home = installed_home(root.path(), &mirror).await;
+    let site = StandIn::at(PUBLIC_URL).await;
+    let home = installed_home(&site).await;
+    let mirror = site.mirror.clone();
     for name in NAMES {
         write_old_copy(&home, name);
         let (output, new) = fetch_upgrade(name, &version(name), &home, &mirror).await;
@@ -598,7 +1009,7 @@ async fn an_upgrade_puts_the_tags_files_in_place() {
             "{}",
             text(&output)
         );
-        assert_installed(&home, name).await;
+        assert_installed(&site, &home, name).await;
         let skills = home.join(".agents/skills");
         assert!(
             !skills.join(format!(".{name}.lock")).exists(),
@@ -611,11 +1022,11 @@ async fn an_upgrade_puts_the_tags_files_in_place() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn an_upgrade_replaces_a_copy_where_claude_codes_link_would_be() {
-    let root = tempfile::tempdir().unwrap();
-    let mirror = mirror(root.path());
-    let home = installed_home(root.path(), &mirror).await;
+    let site = StandIn::at(PUBLIC_URL).await;
+    let home = installed_home(&site).await;
+    let mirror = site.mirror.clone();
     let name = "filedrawer-submit";
     let link = home.join(".claude/skills").join(name);
     std::fs::remove_file(&link).unwrap();
@@ -624,27 +1035,27 @@ async fn an_upgrade_replaces_a_copy_where_claude_codes_link_would_be() {
     let (_, new) = fetch_upgrade(name, &version(name), &home, &mirror).await;
     let output = put_in_place(name, &new, &home).await;
     assert!(output.status.success(), "{}", text(&output));
-    assert_installed(&home, name).await;
+    assert_installed(&site, &home, name).await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn an_upgrade_links_the_skill_for_claude_code_when_its_folder_is_new() {
-    let root = tempfile::tempdir().unwrap();
-    let mirror = mirror(root.path());
-    let home = installed_home(root.path(), &mirror).await;
+    let site = StandIn::at(PUBLIC_URL).await;
+    let home = installed_home(&site).await;
+    let mirror = site.mirror.clone();
     std::fs::remove_dir_all(home.join(".claude/skills")).unwrap();
     let name = "filedrawer-search";
     let (_, new) = fetch_upgrade(name, &version(name), &home, &mirror).await;
     let output = put_in_place(name, &new, &home).await;
     assert!(output.status.success(), "{}", text(&output));
-    assert_installed(&home, name).await;
+    assert_installed(&site, &home, name).await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn an_upgrade_leaves_the_skill_to_a_session_holding_its_lock() {
-    let root = tempfile::tempdir().unwrap();
-    let mirror = mirror(root.path());
-    let home = installed_home(root.path(), &mirror).await;
+    let site = StandIn::at(PUBLIC_URL).await;
+    let home = installed_home(&site).await;
+    let mirror = site.mirror.clone();
     let name = "filedrawer-search";
     let lock = home.join(".agents/skills").join(format!(".{name}.lock"));
     std::fs::create_dir(&lock).unwrap();
@@ -656,11 +1067,11 @@ async fn an_upgrade_leaves_the_skill_to_a_session_holding_its_lock() {
     assert!(lock.exists(), "the other session's lock was removed");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn an_upgrade_clears_a_lock_a_dead_session_left() {
-    let root = tempfile::tempdir().unwrap();
-    let mirror = mirror(root.path());
-    let home = installed_home(root.path(), &mirror).await;
+    let site = StandIn::at(PUBLIC_URL).await;
+    let home = installed_home(&site).await;
+    let mirror = site.mirror.clone();
     let name = "filedrawer-search";
     let lock = home.join(".agents/skills").join(format!(".{name}.lock"));
     std::fs::create_dir(&lock).unwrap();
@@ -673,14 +1084,14 @@ async fn an_upgrade_clears_a_lock_a_dead_session_left() {
     let (_, new) = fetch_upgrade(name, &version(name), &home, &mirror).await;
     let output = put_in_place(name, &new, &home).await;
     assert!(output.status.success(), "{}", text(&output));
-    assert_installed(&home, name).await;
+    assert_installed(&site, &home, name).await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn an_upgrade_left_unfilled_changes_nothing() {
-    let root = tempfile::tempdir().unwrap();
-    let mirror = mirror(root.path());
-    let home = installed_home(root.path(), &mirror).await;
+    let site = StandIn::at(PUBLIC_URL).await;
+    let home = installed_home(&site).await;
+    let mirror = site.mirror.clone();
     let name = "filedrawer-search";
     let (output, _) = fetch_upgrade(name, "VERSION", &home, &mirror).await;
     assert!(!output.status.success(), "{}", text(&output));
@@ -691,11 +1102,11 @@ async fn an_upgrade_left_unfilled_changes_nothing() {
     assert_eq!(installed_text(&home, name), "old\n");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn an_upgrade_names_the_url_it_couldnt_fetch() {
-    let root = tempfile::tempdir().unwrap();
-    let mirror = mirror(root.path());
-    let home = installed_home(root.path(), &mirror).await;
+    let site = StandIn::at(PUBLIC_URL).await;
+    let home = installed_home(&site).await;
+    let mirror = site.mirror.clone();
     let (output, _) = fetch_upgrade("filedrawer-search", "99", &home, &mirror).await;
     assert!(!output.status.success(), "{}", text(&output));
     assert!(output.stdout.is_empty(), "{}", text(&output));

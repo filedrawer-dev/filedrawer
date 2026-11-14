@@ -99,10 +99,15 @@ pub fn tag_urls() -> String {
 /// The site the skills' files name.
 const PRODUCTION: &str = "https://filedrawer.dev";
 
-/// A skill's file pointed at the site at `public_url`, as the installer and the upgrade
-/// steps point it: `https://filedrawer.dev` becomes `public_url`, and the header file
-/// `~/.config/filedrawer/filedrawer.dev.header` becomes that site's. On production it
-/// changes nothing.
+/// Whether the site at `public_url` is the one the skills' files name.
+pub fn is_production(public_url: &str) -> bool {
+    public_url == PRODUCTION
+}
+
+/// A skill's file, or the installer, pointed at the site at `public_url`, as the
+/// installer and the upgrade steps point a skill's files: `https://filedrawer.dev`
+/// becomes `public_url`, and the header file `~/.config/filedrawer/filedrawer.dev.header`
+/// becomes that site's. On production it changes nothing.
 pub fn for_site(text: &str, public_url: &str) -> String {
     let host = crate::routes::files::host_of(public_url);
     text.replace(PRODUCTION, public_url)

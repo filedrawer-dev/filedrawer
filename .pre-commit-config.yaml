@@ -68,12 +68,12 @@ repos:
       # from CI's. Infos refuse a commit, style nits don't. pre-commit counts csh, tcsh
       # and zsh as shell too, which shellcheck can't read.
       - id: shellcheck
-        name: shellcheck (shell scripts in bin/ and ops/)
+        name: shellcheck (shell scripts in bin/ and ops/, and the skills' installer)
         entry: uvx --from shellcheck-py==0.11.0.1 shellcheck --norc --severity=info
         language: system
         types: [shell]
         exclude_types: [csh, tcsh, zsh]
-        files: ^(bin|ops)/
+        files: ^((bin|ops)/|crates/server/install\.sh$)
       # Every markdown file on every commit (milliseconds), so renaming a heading or
       # deleting a file that another doc links to is refused too. The field test's
       # drafts in field-test/ are skipped, and so are the skills' copies of

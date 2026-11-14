@@ -7,9 +7,9 @@ run's user, in its box, with the scenario's path as its argument (ops/usability-
 It writes ~/.config/filedrawer/<host>.header (mode 600) with the staging key line,
 and the API token after it when the scenario's `token` is "header", as AGENTS.md
 says a run on staging needs. Then, by the scenario's keys:
-  install         "installed": run the installer and the mode script /skill.md shows,
-                  as an agent would; "none" (default): install nothing
-  mode            auto or ask, the mode script's choice (default auto)
+  install         "installed": download BASE/install.sh and run it, as /skill.md has an
+                  agent do; "none" (default): install nothing
+  mode            auto or ask, the installer's argument (default auto)
   version_down    skill names whose installed copy gets metadata.version lowered by
                   one, so the agent finds an upgrade
   agents_blocked  true: ~/.agents is a file, so an install fails
@@ -59,19 +59,11 @@ def main() -> int:
 
 
 def install(scenario: dict, base: str, key: str) -> None:
-    """Runs the installer and mode script /skill.md shows, its first two sh blocks."""
+    """Downloads the installer /skill.md names and runs it with the scenario's mode."""
+    script = Path.home() / ".config" / "filedrawer" / "install.sh"
     curl = ["curl", "-fsS"] + (["-H", f"X-Staging-Key: {key}"] if key else [])
-    page = subprocess.run(
-        [*curl, f"{base}/skill.md"], check=True, text=True, capture_output=True
-    ).stdout
-    blocks = re.findall(r"```sh\n(.*?)```", page, re.DOTALL)
-    if len(blocks) < 2:
-        sys.exit("setup: /skill.md shows fewer than two sh blocks to install with")
-    subprocess.run(["sh", "-c", blocks[0]], check=True)
-    mode = scenario.get("mode", "auto")
-    subprocess.run(
-        ["sh", "-c", blocks[1].replace("mode=MODE", f"mode={mode}")], check=True
-    )
+    subprocess.run([*curl, "-o", str(script), f"{base}/install.sh"], check=True)
+    subprocess.run(["sh", str(script), scenario.get("mode", "auto")], check=True)
     for skill in scenario.get("version_down", []):
         path = Path.home() / ".agents" / "skills" / skill / "SKILL.md"
         text = path.read_text()

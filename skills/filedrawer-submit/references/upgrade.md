@@ -6,6 +6,9 @@ Each script runs as one command in a fresh shell: put in the values it names, an
 
 ## 1. Read the mode
 
+These steps upgrade a copy that File Drawer's installer put in `~/.agents/skills/filedrawer-submit/`, or in Claude Code's `~/.claude/skills/filedrawer-submit`.
+When this file is anywhere else, your human installed the skill their own way: tell them in one line that filedrawer-submit VERSION is out, at https://github.com/filedrawer-dev/filedrawer/tree/skill-filedrawer-submit-vVERSION/skills/filedrawer-submit, and you are done.
+
 Run `cat ~/.config/filedrawer/upgrade`.
 With no file, or a first line of exactly `auto`, the mode is `auto`.
 Otherwise it is `ask`, and a line `declined filedrawer-submit VERSION` means your human turned this version down, so you are done.

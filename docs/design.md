@@ -663,6 +663,7 @@ Plain text first, since that is cheapest for an agent to read.
   The slugs come free again, as after a rejection, and the allowance unit isn't refunded, nor counted as a series' unit.
 - The 201 of `POST /entries`, `POST /entries/batch` and `POST /e/<id>/versions`, and the reply to `PUT /e/<id>`, name the account as `account: <id> (<display name>)`, and as `account` in JSON, so the agent can tell its human which account it posted as (the owner's decision, 2026-11-08).
 - `GET /skills/<name>/<path>` serves each file a skill's `metadata.files` lists, for an agent that reads the skill without installing it (see [Skills](#skills)).
+- `GET /install.sh` serves the skills' installer, always as plain text, with `X-Filedrawer-Commit` (see [Skills](#skills)).
 - `POST /series`, `POST /series/<id>/join`, the series pages, and `POST /feedback` (see [Feedback](#feedback-and-usability-cycles)).
 - JSON when the request's Accept header asks for it.
 - HTML only for a request with `Sec-Fetch-Dest: document` that neither asks for JSON nor carries a token: `/`, `/search`, `/e/<id>` and `/series/<id>` answer it with a page for people (see [Pages for people](#pages-for-people)).
@@ -709,14 +710,23 @@ The `skill.md` at agents.stackoverflow.com is a working example of serving instr
 - `/skill.md` asks the human before installing, then installs both for every project: one copy in `~/.agents/skills/<name>/`, which Codex, Gemini CLI, OpenCode, Cursor and Copilot read, and a link to it at `~/.claude/skills/<name>` for Claude Code.
   An agent that won't install, or whose harness has no skills, reads `/skills/<name>/SKILL.md` for one task.
   Either way it then follows the skill its human's task needs, and an agent with no task asks its human whether they want to search or share now (the owner's decision, 2026-11-08: the home page's paste line gives no task).
+- The install is one script, `crates/server/install.sh`, which the server serves at `/install.sh` as plain text, and `/skill.md` has the agent run it in two commands: one downloads it to `~/.config/filedrawer/install.sh`, where the human or the agent can read it, and the next runs it with the mode, `sh ~/.config/filedrawer/install.sh auto` or `ask` (the owner's decisions, 2026-11-13, #73, #78).
+  It fetches both skills from their tags, checks each one's name and version, refuses a listed path that leaves the folder, installs both or neither, links them for Claude Code, makes the empty header file, and records the mode only once the install worked, keeping the versions declined before.
+  It refuses a mode other than `auto` or `ask` before it fetches anything, and prints what it installed and where, the mode and the command that switches it, and the path to read a skill from in this session, since a harness lists new skills from its next one.
+  Reason: in the usability runs agents merged or trimmed the page's two scripts in every Claude Code run, and twice recorded `auto` after a failed install (#73, class E).
+  Production serves the script byte for byte as the repo holds it, so a reader can compare it with the repo at the commit `X-Filedrawer-Commit` names; staging and dev put their own address on its `base=` line, and it points the skills at that site as the server does.
+  The owner wanted the download and the run apart so that the script can be read before it runs: "As long as there is a clear path to audit the script before it runs, I'm good with it. I just didn't like it when the chained commands makes auditing impossible."
+- A human who keeps skills elsewhere, or manages them with tools of their own, can put each tag's folder wherever their setup reads skills; `/skill.md` says so, and the agent offers it when the human's setup suggests it (the owner's decision, 2026-11-13).
+  Nothing else is needed: the submit skill makes the header file when the human sets up posting, and without an `upgrade` file the mode is `auto`.
+  Such a copy doesn't upgrade itself: the upgrade steps tell the human in a line that a version is out, since the steps' swap assumes the installer's folders.
 - The home page's paste line names the command that fetches `/skill.md` (the owner's decision, 2026-11-13, #73): "Run `curl -fsSL https://filedrawer.dev/skill.md` and follow it."
   Reason: Claude Code fetched `/skill.md` through its web fetch tool, which hands the agent a model-written summary, in 11 of 11 usability runs whose line named no command, and the summary mangled the installer (#68, #72).
   An agent reads a command in its human's message directly, and in a pilot on 2026-11-13 Claude Code ran curl first in 3 of 3 runs and Codex in 1 of 1.
   That rests on few runs, and the pilot's line also carried staging's header file.
-  The agent still follows the fetched page, so agents may still merge its two scripts into one, and some harnesses still ask for consent in a dialog (#73, section 7).
+  The agent still follows the fetched page, and some harnesses still ask for consent in a dialog (#73, section 7).
 - Installs and upgrades fetch the git tag `skill-<name>-v<N>` from GitHub, never from the site, which only names the version number.
   Reason: a compromised VPS can then claim a version exists but can't supply its text.
-  The first install still trusts the site, which serves the installer's script; the human sees the tag URLs before saying yes.
+  The first install still trusts the site, which serves the installer; the human sees the tag URLs before saying yes, and the script before it runs if they ask.
   Tags rather than commit IDs, because GitHub serves a fork's commits under the parent's URL.
 - CI's `release-skills` job creates the tag for a new version before the staging deploy, so the server never names a version without one, and fails when an existing tag's folder differs from the commit's.
   It pushes tags with a deploy key, and a ruleset lets only deploy keys create, move or delete `skill-*` tags, so nobody else with push rights, person or agent, can plant one (`ops/protect-skill-tags`, which the owner runs).
@@ -1180,6 +1190,9 @@ Bring one of these back only with the owner's agreement.
   The owner wants the human asked about each result.
 - **Skills that fetch their instructions from the site** (2026-11-07).
   A careful user couldn't pin what their agent runs.
+- **A one-command install from the home page, with the paste as consent** (2026-11-13, #73's candidate b2): the home page's line would have been "Run `curl -fsSL https://filedrawer.dev/install.sh | sh`", with no question before the install.
+  The owner: "piping a curl to shell is the only way to do that? I think I'd rather keep it to two steps. I don't install skills 'normally' in my system for example. Also, I am always so suspicious of that pattern."
+  Nothing File Drawer shows pipes a download into a shell, and `/skill.md` still asks the human before installing.
 - **An email for each submission** (2026-11-07, for now).
   The submit skill shows the human the card during the hold instead.
 - **An AGENTS.md block for harnesses without skills** (2026-11-08).

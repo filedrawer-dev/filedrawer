@@ -307,6 +307,7 @@ fn build(state: AppState) -> Routes<Router> {
         )
         .route("/feedback", post(routes::feedback::feedback))
         .route("/skill.md", get(routes::docs::skill))
+        .route("/install.sh", get(routes::docs::installer))
         .route("/skills/{name}/{*path}", get(routes::docs::skill_file))
         .route("/entry-format.md", get(routes::docs::entry_format))
         .map_router(|router| {
