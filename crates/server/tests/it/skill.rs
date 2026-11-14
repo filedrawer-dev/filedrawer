@@ -816,18 +816,52 @@ async fn the_installer_installs_nothing_when_agents_folder_is_a_file() {
     let said = text(&output);
     assert!(!output.status.success(), "{said}");
     assert!(said.contains("install nothing by other means"), "{said}");
+    // It names the one path that stopped it, and why.
+    let agents = home.join(".agents");
+    assert!(
+        said.contains(&format!("{} is a file, not a folder", agents.display())),
+        "{said}"
+    );
+    assert!(!said.contains(".config/filedrawer"), "{said}");
     assert!(home.join(".agents").is_file());
     assert!(!home.join(".config/filedrawer/upgrade").exists());
     assert!(!home.join(".claude/skills").exists());
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn the_installer_names_a_parent_folder_that_is_a_file() {
+    let site = StandIn::at(PUBLIC_URL).await;
+    let home = site.home();
+    let config = home.join(".config");
+    std::fs::write(&config, "").unwrap();
+    let output = site.install(&home, "auto").await;
+    let why = format!("{} is a file, not a folder", config.display());
+    assert_installed_nothing(&output, &home, &why);
+    assert!(!text(&output).contains(".agents"), "{}", text(&output));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_installer_names_a_broken_link_in_the_way() {
+    let site = StandIn::at(PUBLIC_URL).await;
+    let home = site.home();
+    let agents = home.join(".agents");
+    std::os::unix::fs::symlink(home.join("gone"), &agents).unwrap();
+    let output = site.install(&home, "auto").await;
+    let why = format!("{} is in the way", agents.display());
+    let said = text(&output);
+    assert!(!output.status.success(), "{said}");
+    assert!(said.contains(&why), "{said}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn the_installer_installs_nothing_when_claude_codes_skills_folder_is_a_file() {
     let site = StandIn::at(PUBLIC_URL).await;
     let home = site.home();
-    std::fs::write(home.join(".claude/skills"), "").unwrap();
+    let links = home.join(".claude/skills");
+    std::fs::write(&links, "").unwrap();
     let output = site.install(&home, "auto").await;
-    assert_installed_nothing(&output, &home, "couldn't");
+    let why = format!("{} is a file, not a folder", links.display());
+    assert_installed_nothing(&output, &home, &why);
 }
 
 #[tokio::test(flavor = "multi_thread")]

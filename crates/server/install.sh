@@ -70,9 +70,9 @@ main() {
     check_installed "$skill"
   done
 
-  mkdir -p "$HOME/.agents/skills" "$config" 2>/dev/null ||
-    fail "couldn't make $HOME/.agents/skills and $config"
   dir="$HOME/.agents/skills"
+  make_folder "$dir"
+  make_folder "$config"
   # The fetched folders move next to the installed ones, so putting each in place is
   # a rename.
   ready=$(mktemp -d "$dir/.filedrawer-install.XXXXXX") || fail "couldn't write in $dir"
@@ -86,7 +86,7 @@ main() {
   links=""
   if [ -d "$HOME/.claude" ]; then
     links="$HOME/.claude/skills"
-    { mkdir -p "$links" 2>/dev/null && [ -w "$links" ]; } || fail "couldn't write in $links"
+    make_folder "$links"
   fi
 
   # Nothing below can fail but for a full disk or a folder changed meanwhile.
@@ -216,6 +216,24 @@ refuse() {
   echo "File Drawer's installer stopped: $1 is installed already, and $2." >&2
   echo "It installed nothing and changed nothing, so the folder is as it was. Leave it as it is yourself. Tell your human what this says: they can move or remove $HOME/.agents/skills/$1 and run the installer again; install nothing by other means." >&2
   exit 1
+}
+
+# make_folder PATH: makes PATH and the folders above it, or fails naming the one path
+# that stopped it: one that exists but isn't a folder, or a folder it can't write in.
+make_folder() {
+  mkdir -p "$1" 2>/dev/null && [ -w "$1" ] && return 0
+  at=$1
+  while [ ! -e "$at" ] && [ ! -L "$at" ]; do
+    at=$(dirname "$at")
+  done
+  if [ -f "$at" ]; then
+    fail "$at is a file, not a folder"
+  elif [ ! -d "$at" ]; then
+    fail "$at is in the way: it isn't a folder"
+  elif [ ! -w "$at" ] || [ ! -x "$at" ]; then
+    fail "$at is a folder this user can't write in"
+  fi
+  fail "couldn't make $1"
 }
 
 # get URL DIR FILE: fetches URL/FILE to DIR/FILE, or fails.
