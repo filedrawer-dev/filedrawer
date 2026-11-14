@@ -14,7 +14,7 @@ use common::{DELIMITER, Outbox, TestApp, entry, id_in, owner, test_app_with};
 use filedrawer_server::config::Environment;
 use filedrawer_server::daily_email::{DailyRun, Pinger, Pinging, send_daily_email};
 use filedrawer_server::mail::{Email, MailError, Mailer, Sending};
-use time::{Duration, OffsetDateTime};
+use time::{Date, Duration, OffsetDateTime};
 
 const DOLLAR: i64 = 1_000_000_000;
 const HAZARD: &str = "FAKE-HAZARD FAKE-SONNET-HAZARD";
@@ -58,20 +58,41 @@ fn stamp(at: OffsetDateTime) -> String {
     .unwrap()
 }
 
-/// Writes today's nightly copy, so production finds its copies fresh.
-fn fresh_copy(app: &TestApp) {
+/// Writes the nightly copy of `day`, the day of the run that reads it, so production
+/// finds its copies fresh. The clock's own day may be the one before: `soon` can
+/// cross midnight.
+fn fresh_copy(app: &TestApp, day: Date) {
     std::fs::create_dir(&app.state.backups_dir).unwrap();
-    let today = OffsetDateTime::now_utc().date();
     std::fs::write(
-        app.state.backups_dir.join(format!("filedrawer-{today}.db")),
+        app.state.backups_dir.join(format!("filedrawer-{day}.db")),
         "",
     )
     .unwrap();
 }
 
-/// A minute from now, so whatever the test did lies in the run's period.
+/// A minute from now, so whatever the test did lies in the run's period. Its day
+/// is the clock's or the next one, so a test that needs two runs on one day, or a
+/// day to match the server's, takes both from one call.
 fn soon() -> OffsetDateTime {
     OffsetDateTime::now_utc() + Duration::minutes(1)
+}
+
+/// The last moment of `at`'s UTC day: a later run that is still the same day's.
+fn end_of_day(at: OffsetDateTime) -> OffsetDateTime {
+    at.replace_time(time::Time::MAX)
+}
+
+/// What `setup` built, and the UTC day it built it on: it runs again, from
+/// nothing, when midnight passed meanwhile, so everything the server stamped
+/// carries that one day.
+async fn on_one_day<T>(setup: impl AsyncFn() -> T) -> (T, Date) {
+    loop {
+        let day = OffsetDateTime::now_utc().date();
+        let built = setup().await;
+        if OffsetDateTime::now_utc().date() == day {
+            return (built, day);
+        }
+    }
 }
 
 /// The daily emails sent so far, leaving out the owner's signup email.
@@ -116,9 +137,10 @@ async fn feedback(app: &TestApp, experiment: &str, wanted: &str, workaround: &st
 #[tokio::test]
 async fn a_day_with_nothing_to_report_sends_nothing_and_pings_success() {
     let (app, pings) = app_in(Environment::Production, true).await;
-    fresh_copy(&app);
+    let now = soon();
+    fresh_copy(&app, now.date());
 
-    let run = send_daily_email(&app.state, soon()).await.unwrap();
+    let run = send_daily_email(&app.state, now).await.unwrap();
 
     assert_eq!(run, DailyRun::Quiet);
     assert!(reports(&app.outbox).is_empty());
@@ -189,11 +211,12 @@ async fn production_lists_what_screening_published_each_by_an_admin_link() {
 #[tokio::test]
 async fn the_next_days_email_leaves_out_what_the_last_one_listed() {
     let (app, _) = app_in(Environment::Production, true).await;
-    fresh_copy(&app);
     submit(&app, &entry("Steering published", "")).await;
-    send_daily_email(&app.state, soon()).await.unwrap();
+    let first = soon();
+    fresh_copy(&app, first.date());
+    send_daily_email(&app.state, first).await.unwrap();
 
-    let run = send_daily_email(&app.state, soon() + Duration::days(1))
+    let run = send_daily_email(&app.state, first + Duration::days(1))
         .await
         .unwrap();
 
@@ -311,18 +334,22 @@ async fn a_failure_the_screen_recovered_from_is_listed_but_sends_nothing_alone()
 
 #[tokio::test]
 async fn the_cap_running_out_and_an_account_at_its_share_are_reported() {
-    let mut app = test_app_with(FakeModels::default().screener(), 1).await;
-    owner(&app).await;
-    app.state.environment = Environment::Production;
-    submit(&app, &entry("Steering costly", "")).await;
+    let (app, today) = on_one_day(async || {
+        let mut app = test_app_with(FakeModels::default().screener(), 1).await;
+        owner(&app).await;
+        app.state.environment = Environment::Production;
+        submit(&app, &entry("Steering costly", "")).await;
+        app
+    })
+    .await;
 
     // Today's spend is reported once the day is whole.
-    send_daily_email(&app.state, soon() + Duration::days(1))
+    let tomorrow = today.midnight().assume_utc() + Duration::days(1);
+    send_daily_email(&app.state, tomorrow + Duration::minutes(1))
         .await
         .unwrap();
 
     let body = the_report(&app).body;
-    let today = OffsetDateTime::now_utc().date();
     assert!(
         body.contains(&format!(
             "Screening cap: ran out on {today}, of today's $0.00 cap"
@@ -341,15 +368,16 @@ async fn the_cap_running_out_and_an_account_at_its_share_are_reported() {
 #[tokio::test]
 async fn a_paused_host_is_listed_but_sends_nothing_alone() {
     let (app, _) = app_in(Environment::Production, true).await;
-    fresh_copy(&app);
     let logs =
         "https://huggingface.co/datasets/ada/logs/tree/0123456789abcdef0123456789abcdef01234567";
     app.web.answer_after(logs, 429, 300);
     app.post("/entries", entry("Linked", &format!("logs: [{logs}]\n")))
         .await;
+    let now = soon();
+    fresh_copy(&app, now.date());
 
     assert_eq!(
-        send_daily_email(&app.state, soon()).await.unwrap(),
+        send_daily_email(&app.state, now).await.unwrap(),
         DailyRun::Quiet
     );
 
@@ -646,12 +674,13 @@ async fn with_no_admin_production_pings_failure_and_staging_success() {
         let (app, pings) = app_in(environment, false).await;
         feedback(&app, "x", "y", "z").await;
 
-        let run = send_daily_email(&app.state, soon()).await.unwrap();
+        let first = soon();
+        let run = send_daily_email(&app.state, first).await.unwrap();
 
         assert_eq!(run, DailyRun::NoOneToTell, "{environment:?}");
         assert_eq!(pings.sent(), vec![ping], "{environment:?}");
         assert_eq!(
-            send_daily_email(&app.state, soon() + Duration::hours(1))
+            send_daily_email(&app.state, end_of_day(first))
                 .await
                 .unwrap(),
             DailyRun::NotDue,
@@ -689,13 +718,14 @@ async fn a_send_that_fails_for_one_admin_is_retried_for_that_admin_only() {
         outbox: app.outbox.clone(),
     });
 
-    let failed = send_daily_email(&app.state, soon()).await;
+    let first = soon();
+    let failed = send_daily_email(&app.state, first).await;
     assert!(failed.is_err(), "{failed:?}");
     assert_eq!(pings.sent(), vec![false]);
     assert_eq!(the_report(&app).to, OWNER);
 
     app.state.mailer = Arc::new(app.outbox.clone());
-    let retried = send_daily_email(&app.state, soon() + Duration::seconds(1))
+    let retried = send_daily_email(&app.state, end_of_day(first))
         .await
         .unwrap();
 
