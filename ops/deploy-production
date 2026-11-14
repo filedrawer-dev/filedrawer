@@ -61,7 +61,7 @@ ask() {
   [[ "$reply" =~ ^[Yy] ]]
 }
 setting() {
-  [[ -r "$ops_dir/.vps.env" ]] && sed -n "s/^$1='\(.*\)'\$/\1/p" "$ops_dir/.vps.env" | head -n 1
+  [[ -r "$ops_dir/.vps.env" ]] && sed -n "s/^$1='\(.*\)'\$/\1/p" "$ops_dir/.vps.env" | sed -n 1p
 }
 in_repo() { git -C "$repo" "$@"; }
 
@@ -84,7 +84,7 @@ staging_commit() {
   heads=$(printf 'header = "X-Staging-Key: %s"\n' "$staging_key" |
     curl -sSI --max-time 15 -K - "$STAGING/skill.md" | tr -d '\r') || heads=""
   status=$(head -n 1 <<< "$heads" | awk '{print $2}')
-  staging=$(sed -n 's/^[Xx]-[Ff]iledrawer-[Cc]ommit: //p' <<< "$heads" | head -n 1)
+  staging=$(sed -n 's/^[Xx]-[Ff]iledrawer-[Cc]ommit: //p' <<< "$heads" | sed -n 1p)
   if [[ "$status" != 200 ]]; then
     staging_unknown="staging answered ${status:-nothing} for /skill.md"
   elif [[ ! "$staging" =~ ^[0-9a-f]{40}$ ]]; then
@@ -168,7 +168,7 @@ grep -aqF "filedrawer-commit $target" "$binary" ||
 # The server, in one round.
 facts=$(ssh -o BatchMode=yes "root@$vps_host" "bash -s" < "$remote_dir/deploy-facts.sh") ||
   die "ssh root@$vps_host failed"
-fact() { sed -n "s/^$1 //p" <<< "$facts" | head -n 1; }
+fact() { sed -n "s/^$1 //p" <<< "$facts" | sed -n 1p; }
 production=$(fact binary | sed -n 's/^filedrawer-commit //p')
 schema=$(fact schema)
 rollback=0

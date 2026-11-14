@@ -20,7 +20,8 @@ ufw allow 443/udp
 ufw --force enable
 
 # A guard against the OOM killer, never part of the memory plan.
-if ! swapon --show=NAME --noheadings | grep -qx /swapfile; then
+swaps=$(swapon --show=NAME --noheadings || true)
+if ! grep -qx /swapfile <<<"$swaps"; then
   fallocate -l 1G /swapfile
   chmod 600 /swapfile
   mkswap /swapfile

@@ -167,7 +167,7 @@ if (( families )); then
 fi
 # setting_from FILE NAME: NAME's value in FILE, written as NAME='value', if any.
 setting_from() {
-  [[ -r "$1" ]] && sed -n "s/^$2='\(.*\)'\$/\1/p" "$1" | head -1
+  [[ -r "$1" ]] && sed -n "s/^$2='\(.*\)'\$/\1/p" "$1" | sed -n 1p
 }
 
 ops_dir="${FILEDRAWER_OPS_DIR:-$(dirname "$0")}"
@@ -250,7 +250,7 @@ anon() {
 }
 
 # field NAME: the first `NAME: value` line's value in BODY.
-field() { printf '%s\n' "$BODY" | sed -n "s/^$1: //p" | head -1; }
+field() { printf '%s\n' "$BODY" | sed -n "s/^$1: //p" | sed -n 1p; }
 
 # make_entry TITLE [LINE]: the fixture with a smoke-test title and tags, and LINE, if
 # given, added to its front matter. The fixture links nothing, so staging fetches
@@ -397,7 +397,7 @@ explain_undecided() {
   local reason
   # A refusal's first `- ` line, or a screen's rejection's `error: ` line: the
   # model's reasons below the delimiter aren't printed.
-  reason=$(printf '%s\n' "$BODY" | sed -n 's/^- //p; s/^error: //p' | head -1)
+  reason=$(printf '%s\n' "$BODY" | sed -n 's/^- //p; s/^error: //p' | sed -n 1p)
   case "$CODE:$reason" in
     "429:the day's screening budget is spent"*)
       echo "  the day's screening cap is spent: rerun after 00:00 UTC"; DAY_SPENT=1 ;;
@@ -467,7 +467,7 @@ if [[ $mode == eval ]]; then
   # goes on without sending anything twice. It holds paths and IDs, never entry text.
   if [[ -n $resume_file ]]; then
     run_file=$resume_file
-    tag=$(sed -n 's/^tag\t//p' "$run_file" 2>/dev/null | head -1)
+    tag=$(sed -n 's/^tag\t//p' "$run_file" 2>/dev/null | sed -n 1p)
     if [[ -z $tag ]]; then
       echo "smoke-staging: can't read $run_file as an eval run file" >&2
       exit 2
@@ -600,7 +600,7 @@ if [[ $mode == eval ]]; then
       fail=$((fail + 1))
       stopped=1
     elif [[ -z $status ]]; then
-      echo "FAIL $2 $1 ($ID): GET /e/$ID answered $CODE: $(printf '%s' "$BODY" | head -c 300)"
+      echo "FAIL $2 $1 ($ID): GET /e/$ID answered $CODE: $(printf '%s' "${BODY:0:300}")"
       fail=$((fail + 1))
     else
       echo "FAIL $2 $1 ($ID): got $status"
@@ -652,7 +652,7 @@ if [[ $mode == eval ]]; then
 
   # first_reason: the first reason in the last reply, a `- ` line or an `error: ` one.
   first_reason() {
-    printf '%s\n' "$BODY" | sed -n 's/^- //p; s/^error: //p' | head -1
+    printf '%s\n' "$BODY" | sed -n 's/^- //p; s/^error: //p' | sed -n 1p
   }
 
   # later: whether the last request's CODE asks to try again later: no answer, a 429

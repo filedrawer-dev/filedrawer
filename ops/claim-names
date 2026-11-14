@@ -233,7 +233,7 @@ POLLS=30
 
 # cargo_version FILE: the first `version = "..."` in a Cargo.toml read on stdin.
 cargo_version() {
-  sed -n 's/^version = "\(.*\)"$/\1/p' | head -n 1
+  sed -n 's/^version = "\(.*\)"$/\1/p' | sed -n 1p
 }
 
 # http_get URL: the body, then a last line with the HTTP status (000 when the

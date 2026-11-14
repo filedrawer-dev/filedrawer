@@ -61,7 +61,7 @@ fi
 
 ops_dir="${FILEDRAWER_OPS_DIR:-$(dirname "$0")}"
 setting_from() {
-  [[ -r "$1" ]] && sed -n "s/^$2='\(.*\)'\$/\1/p" "$1" | head -1
+  [[ -r "$1" ]] && sed -n "s/^$2='\(.*\)'\$/\1/p" "$1" | sed -n 1p
 }
 VPS_HOST=$(setting_from "$ops_dir/.vps.env" VPS_HOST || true)
 [[ -n "$VPS_HOST" ]] || die "no VPS_HOST in $ops_dir/.vps.env: run ops/provision-vps first" 2

@@ -25,7 +25,7 @@ else
 fi
 echo "schema $schema"
 commit=""
-[[ -f "$binary" ]] && commit=$(grep -aoE 'filedrawer-commit [0-9a-f]{40}' "$binary" | head -n 1)
+[[ -f "$binary" ]] && commit=$(grep -aoE 'filedrawer-commit [0-9a-f]{40}' "$binary" | sed -n 1p)
 echo "binary ${commit:-none}"
 for name in install backup; do
   file=/usr/local/sbin/filedrawer-$name

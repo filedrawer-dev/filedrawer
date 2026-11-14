@@ -263,7 +263,9 @@ need_gh() {
 
 # staging_has_secret NAME: whether the `staging` environment holds secret NAME.
 staging_has_secret() {
-  gh secret list --env staging --json name --jq '.[].name' 2>/dev/null | grep -qx "$1"
+  local names
+  names=$(gh secret list --env staging --json name --jq '.[].name' 2>/dev/null) || return 1
+  [[ -n "$names" ]] && grep -qx "$1" <<<"$names"
 }
 
 # set_staging_secret NAME VALUE: sets NAME as a secret of the `staging` environment,

@@ -124,6 +124,13 @@ Entry text, series descriptions, feedback and screening notes are written by str
 - `bin/pre-commit-run`, `bin/slop-lint` and `bin/tests/leftover_processes.py` are copies of llm-toolbox's.
   Change them there and copy them back, not here.
 
+## Shell in `bin/` and `ops/`
+
+- A script that sets `pipefail` never pipes into a reader that stops early: `cmd | grep -q PATTERN`, `cmd | grep -m 1 PATTERN` or `cmd | head -1`.
+  Reason: the reader exits before `cmd` has written everything, `cmd` dies of SIGPIPE, and the pipeline fails though the reader found what it wanted; `ops/protect-skill-tags` read a secret that exists as missing that way in 11 of 400 runs (#39).
+  Read the output whole instead: `out=$(cmd)`, then `grep -q PATTERN <<<"$out"`; `cmd | sed -n 1p` for the first line; `${var:0:300}` for a variable's first characters.
+  `bin/tests/test_no_early_exit_readers.py` refuses the plain spellings, `| head` and `| grep -q`; its docstring lists what it misses, such as a reader inside a function the pipe calls.
+
 ## GitHub workflows
 
 - A `run:` block runs a few commands in a row.
