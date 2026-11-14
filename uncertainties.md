@@ -445,7 +445,25 @@ Add a new entry at the end of the topic it belongs to, or start a topic when non
 - Chosen: accept it.
   An installed copy upgrades through its own installed `references/upgrade.md`, whose `sed` fills `{{BASE}}`, and the new files have none, so a staging copy upgraded from 7 or 9 searches production and checks production's `/skill.md`, sending no staging key.
   On production the same steps leave the tag's bytes, which is right.
+  A rerun of the installer against staging repairs such a copy without a refusal: its `SKILL.md` names production, so the local-change check compares it with the tag as an install from production holds it, finds it unchanged, and replaces it with files pointed at staging.
 - Against: until someone reruns the installer, a test machine's searches reach production and count in its search log, which the per-host header files were meant to keep apart.
+
+#### What the installer's local-change check compares against, and what it ignores
+
+- Options: compare an installed folder with its version's tag as an install from this site would hold it, as the owner's ruling reads; or as an install from the site its own `SKILL.md` names; and refuse every extra file, or ignore some.
+- Chosen: the site the folder's `SKILL.md` names, in its line `File Drawer (<address>) is an archive`, which every tag of both skills has; `{{BASE}}` there means a copy straight from an old tag, compared with the tag's bytes.
+  So an unchanged install from another site (staging, then production; a dev server on another port) and a staging copy an old upgrade left naming production pass, and a rerun replaces them.
+  An edited address line makes `SKILL.md` differ, which refuses.
+  `.DS_Store`, which macOS Finder leaves in any folder it shows, is ignored as an extra file.
+  A link at `~/.agents/skills/<name>` refuses, since the install would replace the link with a folder.
+- Against: a human who pointed a staging install at production by hand would see that edit replaced; and ignoring `.DS_Store` bends "a file the tag's list doesn't" hold.
+
+#### A copy at `~/.claude/skills/<name>` isn't checked
+
+- Options: check it like the folder in `~/.agents/skills/`, or leave it, as the owner said.
+- Chosen: leave it.
+  Where the installer made a copy there, because `ln -s` failed, a rerun replaces the copy, and edits a human made in it are lost.
+- Against: Claude Code reads that copy, so on such a machine it is the folder a human would edit.
 
 #### The installer comes from the site, not from a git tag
 

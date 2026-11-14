@@ -845,6 +845,282 @@ async fn a_failed_rerun_leaves_the_install_and_the_mode_as_they_were() {
     assert_eq!(read(&home.join(".config/filedrawer/upgrade")), "ask\n");
 }
 
+// A rerun over skills already installed (the owner's rulings of 2026-11-13, #78).
+
+/// The host of a site's address, as the installer names its header file.
+fn host(base: &str) -> &str {
+    base.split_once("://").map_or(base, |(_, rest)| rest)
+}
+
+/// `name`'s current files as an install from the site at `base` holds them.
+fn installed_from(name: &str, base: &str) -> Vec<(String, String)> {
+    files(name)
+        .into_iter()
+        .map(|file| {
+            let text = raw(name, &file)
+                .replace(PRODUCTION, base)
+                .replace("/filedrawer.dev.header", &format!("/{}.header", host(base)));
+            (file, text)
+        })
+        .collect()
+}
+
+/// `name`'s current files written as an old tag would hold them, with placeholders,
+/// at `version`.
+fn old_files(name: &str, version: &str) -> Vec<(String, String)> {
+    files(name)
+        .into_iter()
+        .map(|file| {
+            let text = raw(name, &file)
+                .replace(PRODUCTION, "{{BASE}}")
+                .replace("/filedrawer.dev.header", "/{{HOST}}.header")
+                .replace(
+                    &format!("  version: \"{}\"", self::version(name)),
+                    &format!("  version: \"{version}\""),
+                );
+            (file, text)
+        })
+        .collect()
+}
+
+/// Writes `files` as the tag `skill-NAME-vVERSION` in `mirror`.
+fn add_tag(mirror: &Path, name: &str, version: &str, files: &[(String, String)]) {
+    let tag = mirror.join(format!("refs/tags/skill-{name}-v{version}/skills/{name}"));
+    lay_out(&tag, files);
+}
+
+/// Writes `files` into `folder`.
+fn lay_out(folder: &Path, files: &[(String, String)]) {
+    for (file, text) in files {
+        let path = folder.join(file);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+}
+
+fn skill_folder(home: &Path, name: &str) -> PathBuf {
+    home.join(".agents/skills").join(name)
+}
+
+/// Every file under `dir` with its bytes, and every link with its target.
+fn snapshot(dir: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(at) = stack.pop() {
+        for entry in std::fs::read_dir(&at).unwrap() {
+            let path = entry.unwrap().path();
+            let kind = std::fs::symlink_metadata(&path).unwrap().file_type();
+            if kind.is_symlink() {
+                let target = std::fs::read_link(&path).unwrap();
+                out.push((path, target.into_os_string().into_encoded_bytes()));
+            } else if kind.is_dir() {
+                out.push((path.clone(), Vec::new()));
+                stack.push(path);
+            } else {
+                out.push((path.clone(), std::fs::read(&path).unwrap()));
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// Asserts a rerun refused for `name`, saying `why`, and changed nothing in `home`.
+async fn assert_refused(site: &StandIn, home: &Path, name: &str, why: &str) {
+    let before = snapshot(home);
+    let output = site.install(home, "ask").await;
+    let said = text(&output);
+    assert!(!output.status.success(), "{said}");
+    assert!(said.contains(name), "{said}");
+    assert!(said.contains(why), "{why}: {said}");
+    assert!(said.contains("install nothing by other means"), "{said}");
+    assert_eq!(snapshot(home), before, "{said}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rerun_installs_over_unchanged_installs_from_the_old_installer() {
+    for base in [PRODUCTION, STAGING] {
+        let site = StandIn::at(base).await;
+        let home = site.home();
+        for name in NAMES {
+            let old = old_files(name, "3");
+            add_tag(&site.mirror, name, "3", &old);
+            let filled: Vec<(String, String)> = old
+                .into_iter()
+                .map(|(file, text)| {
+                    let text = text
+                        .replace("{{BASE}}", base)
+                        .replace("{{HOST}}", host(base));
+                    (file, text)
+                })
+                .collect();
+            lay_out(&skill_folder(&home, name), &filled);
+        }
+        let output = site.install(&home, "auto").await;
+        assert!(output.status.success(), "{base}: {}", text(&output));
+        for name in NAMES {
+            assert_installed(&site, &home, name).await;
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rerun_on_staging_replaces_skills_an_old_upgrade_left_naming_production() {
+    let site = StandIn::at(STAGING).await;
+    let home = site.home();
+    for name in NAMES {
+        lay_out(
+            &skill_folder(&home, name),
+            &installed_from(name, PRODUCTION),
+        );
+    }
+    let output = site.install(&home, "auto").await;
+    assert!(output.status.success(), "{}", text(&output));
+    for name in NAMES {
+        assert_installed(&site, &home, name).await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rerun_installs_over_an_unchanged_install_from_another_site() {
+    let site = StandIn::at(PRODUCTION).await;
+    let home = site.home();
+    for name in NAMES {
+        lay_out(&skill_folder(&home, name), &installed_from(name, STAGING));
+    }
+    let output = site.install(&home, "auto").await;
+    assert!(output.status.success(), "{}", text(&output));
+    for name in NAMES {
+        assert_installed(&site, &home, name).await;
+    }
+}
+
+/// A home where the installer ran once, in `ask` mode.
+async fn reinstall_home(site: &StandIn) -> PathBuf {
+    let home = site.home();
+    let output = site.install(&home, "ask").await;
+    assert!(output.status.success(), "{}", text(&output));
+    home
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rerun_refuses_a_changed_file_and_writes_nothing() {
+    let site = StandIn::at(STAGING).await;
+    let home = reinstall_home(&site).await;
+    let skill = skill_folder(&home, "filedrawer-submit").join("references/upgrade.md");
+    std::fs::write(&skill, read(&skill) + "my note\n").unwrap();
+    std::fs::write(home.join(".config/filedrawer/upgrade"), "auto\n").unwrap();
+    assert_refused(&site, &home, "filedrawer-submit", "references/upgrade.md").await;
+    let said = text(&site.install(&home, "auto").await);
+    assert!(said.contains("move or remove"), "{said}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rerun_refuses_an_extra_or_a_missing_file() {
+    let site = StandIn::at(PUBLIC_URL).await;
+    let home = reinstall_home(&site).await;
+    std::fs::write(
+        skill_folder(&home, "filedrawer-search").join("notes.md"),
+        "mine",
+    )
+    .unwrap();
+    assert_refused(&site, &home, "filedrawer-search", "notes.md").await;
+    std::fs::remove_file(skill_folder(&home, "filedrawer-search").join("notes.md")).unwrap();
+    std::fs::remove_file(
+        skill_folder(&home, "filedrawer-search").join("references/entry-format.md"),
+    )
+    .unwrap();
+    assert_refused(
+        &site,
+        &home,
+        "filedrawer-search",
+        "references/entry-format.md",
+    )
+    .await;
+    std::fs::write(
+        skill_folder(&home, "filedrawer-search").join("references/entry-format.md"),
+        raw("filedrawer-search", "references/entry-format.md"),
+    )
+    .unwrap();
+    // A name that word splitting would read as listed files is still extra.
+    for odd in ["SKILL.md SKILL.md", "SKILL.md\nSKILL.md", "*"] {
+        let file = skill_folder(&home, "filedrawer-search").join(odd);
+        std::fs::write(&file, "mine").unwrap();
+        assert_refused(&site, &home, "filedrawer-search", "isn't in version").await;
+        std::fs::remove_file(&file).unwrap();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rerun_ignores_finders_ds_store() {
+    let site = StandIn::at(PUBLIC_URL).await;
+    let home = reinstall_home(&site).await;
+    std::fs::write(
+        skill_folder(&home, "filedrawer-search").join(".DS_Store"),
+        "x",
+    )
+    .unwrap();
+    let output = site.install(&home, "auto").await;
+    assert!(output.status.success(), "{}", text(&output));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rerun_refuses_a_folder_with_no_version_it_can_check() {
+    let site = StandIn::at(PUBLIC_URL).await;
+    let home = reinstall_home(&site).await;
+    let skill = skill_folder(&home, "filedrawer-search").join("SKILL.md");
+    let text_now = read(&skill);
+    let n = version("filedrawer-search");
+    std::fs::write(
+        &skill,
+        text_now.replace(&format!("  version: \"{n}\""), "  version: x"),
+    )
+    .unwrap();
+    assert_refused(&site, &home, "filedrawer-search", "names no version").await;
+    // A version with no tag can't be checked either.
+    std::fs::write(
+        &skill,
+        text_now.replace(&format!("  version: \"{n}\""), "  version: \"99\""),
+    )
+    .unwrap();
+    assert_refused(
+        &site,
+        &home,
+        "filedrawer-search",
+        "skill-filedrawer-search-v99",
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rerun_refuses_a_link_where_the_folder_goes() {
+    let site = StandIn::at(PUBLIC_URL).await;
+    let home = reinstall_home(&site).await;
+    let folder = skill_folder(&home, "filedrawer-search");
+    let elsewhere = home.join("dotfiles/filedrawer-search");
+    std::fs::create_dir_all(home.join("dotfiles")).unwrap();
+    std::fs::rename(&folder, &elsewhere).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &folder).unwrap();
+    assert_refused(&site, &home, "filedrawer-search", "is a link").await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rerun_installs_a_version_declined_before_and_keeps_the_line() {
+    let site = StandIn::at(PUBLIC_URL).await;
+    let home = site.home();
+    let config = home.join(".config/filedrawer");
+    std::fs::create_dir_all(&config).unwrap();
+    let declined = format!(
+        "ask\ndeclined filedrawer-search {}\n",
+        version("filedrawer-search")
+    );
+    std::fs::write(config.join("upgrade"), &declined).unwrap();
+    let output = site.install(&home, "ask").await;
+    assert!(output.status.success(), "{}", text(&output));
+    assert_installed(&site, &home, "filedrawer-search").await;
+    assert_eq!(read(&config.join("upgrade")), declined);
+}
+
 #[tokio::test]
 async fn production_serves_the_installer_byte_for_byte_as_plain_text() {
     let app = app_at(PRODUCTION).await;

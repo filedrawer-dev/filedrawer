@@ -703,7 +703,7 @@ The `skill.md` at agents.stackoverflow.com is a working example of serving instr
   An install on production is then byte for byte the tag's folder, so the hash in `skills/versions.txt` checks it, and tools such as `npx skills add` or a plain copy of the folder install a working skill.
   Reason: with placeholders, an installed folder never equalled its tag, and an agent that left the installer's script had to know the substitution; one filled `{{HOST}}` with its own `sed` (#73, class D).
   A server elsewhere, staging or dev, points the files at itself where it serves them, and the installer and the upgrade steps do the same for a copy installed from it: `https://filedrawer.dev` becomes the site's address and `/filedrawer.dev.header` its host's header file, which can't apply twice, since neither appears in the result.
-  So staging's installed copies differ from their tags, and nothing of ours checks the hash of an install (the owner, 2026-11-13).
+  So staging's installed copies differ from their tags, and nothing of ours checks the hash of an install (the owner, 2026-11-13); the installer's rerun compares files only to keep a human's changes, below.
 - An installed skill is a full copy, and everything the agent follows comes from the installed folder.
   Neither skill tells the agent to fetch instructions from the site.
   Reason: a careful user can then pin what their agent runs.
@@ -713,6 +713,12 @@ The `skill.md` at agents.stackoverflow.com is a working example of serving instr
 - The install is one script, `crates/server/install.sh`, which the server serves at `/install.sh` as plain text, and `/skill.md` has the agent run it in two commands: one downloads it to `~/.config/filedrawer/install.sh`, where the human or the agent can read it, and the next runs it with the mode, `sh ~/.config/filedrawer/install.sh auto` or `ask` (the owner's decisions, 2026-11-13, #73, #78).
   It fetches both skills from their tags, checks each one's name and version, refuses a listed path that leaves the folder, installs both or neither, links them for Claude Code, makes the empty header file, and records the mode only once the install worked, keeping the versions declined before.
   It refuses a mode other than `auto` or `ask` before it fetches anything, and prints what it installed and where, the mode and the command that switches it, and the path to read a skill from in this session, since a harness lists new skills from its next one.
+- Run again, the installer refuses to replace a folder with local changes (the owner's decision, 2026-11-13, #78: "Refuse if there are local changes").
+  Before it writes anything, it reads each installed folder's version, fetches that version's tag, brings it to the form an install had, and compares; when a file differs, is missing or was added, or the version can't be read or its tag fetched, it installs neither skill, names the files, and tells the agent to have its human move or remove the folder and run it again.
+  It offers no way to force it.
+  An install by an older installer had the tag's `{{BASE}}` and `{{HOST}}` filled with the site's address and host, and the comparison does the same, so an unchanged old install passes.
+- A rerun installs the current versions even over a version the human declined in `ask` mode, and keeps the `declined` lines for later upgrades (the owner's decision, 2026-11-13: "It's fair to treat running an install script as (temporarily) overriding an earlier decline").
+  `/skill.md` tells the human so before the install.
   Reason: in the usability runs agents merged or trimmed the page's two scripts in every Claude Code run, and twice recorded `auto` after a failed install (#73, class E).
   Production serves the script byte for byte as the repo holds it, so a reader can compare it with the repo at the commit `X-Filedrawer-Commit` names; staging and dev put their own address on its `base=` line, and it points the skills at that site as the server does.
   The owner wanted the download and the run apart so that the script can be read before it runs: "As long as there is a clear path to audit the script before it runs, I'm good with it. I just didn't like it when the chained commands makes auditing impossible."

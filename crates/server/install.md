@@ -29,7 +29,7 @@ Tell them:
 - that they install for every project, in `~/.agents/skills/<name>/`, which Codex, Gemini CLI, OpenCode, Cursor and Copilot read, with a link to it at `~/.claude/skills/<name>` for Claude Code, by an installer script you save at `~/.config/filedrawer/install.sh`, where they can read it before it runs;
 - where they come from: {{TAG_URLS}};
 - that by default the skills upgrade themselves (`auto`): once per task, a skill asks this site which version is out, and when a newer one is, fetches it from its git tag on GitHub, never from this site, puts it in place, and tells them in one line;
-- that if they'd rather see each change first and say yes to it, they can choose `ask`;
+- that if they'd rather see each change first and say yes to it, they can choose `ask`, and that running the installer again later installs the current versions even over one they turned down;
 - that each request to this site names their agent's harness and model, and that the site logs searches, with no IP address or account ({{BASE}}/privacy).
 
 When your human's setup shows they keep skills elsewhere or manage them with tools of their own, also ask whether they'd rather put these in place themselves, as [Your human's own way](#your-humans-own-way) says.
@@ -60,6 +60,7 @@ sh ~/.config/filedrawer/install.sh auto
 ```
 
 It fetches both skills from their tags, installs both or neither, records the mode in `~/.config/filedrawer/upgrade`, and prints what it did.
+Run again, it replaces the installed skills with the current versions, even one your human turned down, but when your human has changed a file in `~/.agents/skills/<name>/`, it installs nothing and names the files.
 Done when it prints a line for each skill.
 When it fails, tell your human what it printed, install nothing by other means, and go on at [Your task](#your-task) as if they had said no.
 

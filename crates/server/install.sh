@@ -12,12 +12,21 @@
 # declined there, and makes the empty header file ~/.config/filedrawer/<host>.header,
 # where the token goes once your human sets up posting.
 #
+# Run again, it installs the current versions over the ones in place, even a version
+# declined in ask mode: running the installer overrides that decline for this once,
+# and the declined lines stay for later upgrades (the owner, 2026-11-13). It first
+# checks each folder already in place against its own version's tag, as an install
+# from the site it names would hold it, and when any file differs, is missing or
+# was added, it installs nothing and says which, so a human's own changes are never
+# overwritten.
+#
 # The production site serves this file at /install.sh byte for byte as it stands in
 # crates/server/install.sh at the commit its X-Filedrawer-Commit header names. A
 # staging or dev server serves it with its own address in place of production's, on
 # the line that sets base below.
 
-set -eu
+# -f: no word of a list here is a pattern to expand.
+set -euf
 
 main() {
   base=https://filedrawer.dev
@@ -55,6 +64,10 @@ main() {
     [ -n "$n" ] || fail "$base/skill.md names no version of $skill"
     fetch_skill "$skill" "$n"
     installed="$installed $skill/$n"
+  done
+  # Before anything is written: a rerun keeps a human's own changes.
+  for skill in $skills; do
+    check_installed "$skill"
   done
 
   mkdir -p "$HOME/.agents/skills" "$config" 2>/dev/null ||
@@ -122,6 +135,87 @@ fetch_skill() {
       fi
     fi
   done
+}
+
+# check_installed NAME: refuses, before anything is written, when
+# ~/.agents/skills/NAME holds changes of its own: when its files differ from its
+# version's tag as an install from the site it names would hold them. An old
+# install had the tag's {{BASE}} and {{HOST}} filled in, a newer one the address
+# rewritten off production; one pass of sed does both, and leaves alone what the
+# other already did.
+check_installed() {
+  at="$HOME/.agents/skills/$1"
+  if [ -L "$at" ]; then
+    refuse "$1" "$at is a link, which the install would replace with a folder"
+  fi
+  [ -e "$at" ] || return 0
+  [ -d "$at" ] || refuse "$1" "$at isn't a folder"
+  was_n=$(sed -n 's/^  version: "\([0-9][0-9]*\)"$/\1/p' "$at/SKILL.md" 2>/dev/null | head -n 1)
+  [ -n "$was_n" ] || refuse "$1" "$at/SKILL.md names no version to check it against"
+  was=$(sed -n 's/^File Drawer (\([^)]*\)) is an archive.*/\1/p' "$at/SKILL.md" | head -n 1)
+  case $was in
+    '{{BASE}}') ;;
+    http://* | https://*) case $was in *'#'* | *'&'* | *' '* | *[\\]*) was=$base ;; esac ;;
+    *) was=$base ;;
+  esac
+  was_host=${was#*://}
+  was_host=${was_host%%/*}
+  from="$raw/refs/tags/skill-$1-v$was_n/skills/$1"
+  tagged="$work/installed/$1"
+  mkdir -p "$tagged" || fail "couldn't make a folder in $work"
+  if ! curl -fsSL --max-time 30 -o "$tagged/SKILL.md" "$from/SKILL.md"; then
+    refuse "$1" "couldn't fetch $from/SKILL.md to check it against version $was_n. If the network is down, run the installer again later; if not, that version has no tag"
+  fi
+  listed=$(sed -n 's/^  files: "\(.*\)"$/\1/p' "$tagged/SKILL.md")
+  differ=""
+  for f in $listed; do
+    case $f in
+      /* | *..*) refuse "$1" "version $was_n's tag lists a path outside its folder: $f" ;;
+    esac
+    if [ "$f" != SKILL.md ]; then
+      mkdir -p "$(dirname "$tagged/$f")" || fail "couldn't make a folder in $work"
+      if ! curl -fsSL --max-time 30 -o "$tagged/$f" "$from/$f"; then
+        refuse "$1" "couldn't fetch $from/$f to check it against version $was_n. If the network is down, run the installer again later"
+      fi
+    fi
+    if [ "$was" != '{{BASE}}' ]; then
+      sed "s#[{]{BASE}}#$was#g; s#[{]{HOST}}#$was_host#g; s#https://filedrawer[.]dev#$was#g; s#/filedrawer[.]dev[.]header#/$was_host.header#g" \
+        "$tagged/$f" > "$tagged/$f.put" || fail "couldn't write in $work"
+      mv "$tagged/$f.put" "$tagged/$f" || fail "couldn't write in $work"
+    fi
+    if [ ! -f "$at/$f" ]; then
+      differ="$differ $f (missing)"
+    elif ! cmp -s "$tagged/$f" "$at/$f"; then
+      differ="$differ $f"
+    fi
+  done
+  # A name holding a line break would read as two names below.
+  odd=$(cd "$at" && find . -name '*
+*')
+  [ -z "$odd" ] || refuse "$1" "$at holds a file whose name has a line break, which isn't in version $was_n"
+  extra=$(cd "$at" && find . ! -type d ! -name .DS_Store)
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    f=${f#./}
+    known=""
+    for l in $listed; do
+      [ "$f" != "$l" ] || known=yes
+    done
+    [ -n "$known" ] || differ="$differ $f (isn't in version $was_n)"
+  done <<LISTED
+$extra
+LISTED
+  if [ -n "$differ" ]; then
+    refuse "$1" "$at differs from version $was_n as installed, in:$differ"
+  fi
+}
+
+# refuse NAME WHY: ends the run, having changed nothing, because NAME's installed
+# folder can't be replaced without losing what WHY names.
+refuse() {
+  echo "File Drawer's installer stopped: $1 is installed already, and $2." >&2
+  echo "It installed nothing and changed nothing, so the folder is as it was. Leave it as it is yourself. Tell your human what this says: they can move or remove $HOME/.agents/skills/$1 and run the installer again; install nothing by other means." >&2
+  exit 1
 }
 
 # get URL DIR FILE: fetches URL/FILE to DIR/FILE, or fails.
