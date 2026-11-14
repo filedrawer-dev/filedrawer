@@ -516,3 +516,75 @@ async fn an_entry_withdrawn_while_screened_is_dropped_its_cost_kept_and_the_queu
         "both calls' costs are kept, the withdrawn entry's with no entry"
     );
 }
+
+#[tokio::test]
+async fn the_account_page_lists_only_the_accounts_own_entries() {
+    let app = test_app().await;
+    let (_, author) = browser_account(&app, "author@example.com").await;
+    let held = app
+        .post_as("/entries", Some(&author), entry("Zettel-draft-41", ""))
+        .await;
+    let theirs = id_in(&held.body);
+    let (cookie, token) = browser_account(&app, "mallory@example.com").await;
+
+    let page = app.page("/account", Some(&cookie)).await;
+
+    assert!(!offers(&page.body, &theirs), "{}", page.body);
+    assert!(!page.body.contains("Zettel-draft-41"), "{}", page.body);
+
+    let held = app
+        .post_as("/entries", Some(&token), entry("Mine", ""))
+        .await;
+    let mine = id_in(&held.body);
+    let page = app.page("/account", Some(&cookie)).await;
+
+    assert!(offers(&page.body, &mine), "{}", page.body);
+    assert!(!offers(&page.body, &theirs), "{}", page.body);
+    assert!(!page.body.contains("Zettel-draft-41"), "{}", page.body);
+}
+
+#[tokio::test]
+async fn a_chain_of_three_whose_newest_is_with_the_owner_is_named_once() {
+    let models = FakeModels::default();
+    let app = models_app(&models).await;
+    let (cookie, token) = browser_account(&app, EMAIL).await;
+    let first = submit_with(&app, &token, &entry("First", &embargo())).await;
+    let second = version_of(&app, &token, &first, &entry("Second", ""), true).await;
+    let third = version_of(
+        &app,
+        &token,
+        &second,
+        &entry(&format!("Third {HAZARD}"), ""),
+        true,
+    )
+    .await;
+    assert_eq!(status(&app, &token, &third).await, "review");
+
+    let page = app.page("/account", Some(&cookie)).await;
+
+    assert!(with_owner(&page.body, &third), "{}", page.body);
+    assert_eq!(
+        page.body.matches(r#"<code class="with-owner">"#).count(),
+        1,
+        "{}",
+        page.body
+    );
+}
+
+#[tokio::test]
+async fn withdrawing_an_older_version_names_its_own_chains_later_one() {
+    let app = test_app().await;
+    let (cookie, token) = browser_account(&app, EMAIL).await;
+    let first = submit_with(&app, &token, &entry("First", &embargo())).await;
+    let second = version_of(&app, &token, &first, &entry("Second", ""), true).await;
+    // Another account's chain, made later: its newest version is the table's newest.
+    let (_, other) = browser_account(&app, "author@example.com").await;
+    let other_first = submit_with(&app, &other, &entry("Other first", &embargo())).await;
+    let other_second =
+        version_of(&app, &other, &other_first, &entry("Other second", ""), true).await;
+
+    let reply = refused(&app, &cookie, &first, &[&first, &second]).await;
+
+    assert!(reply.body.contains(&second), "{}", reply.body);
+    assert!(!reply.body.contains(&other_second), "{}", reply.body);
+}
