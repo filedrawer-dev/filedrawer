@@ -32,6 +32,7 @@ const NOT_FOR_AGENTS: &[&str] = &[
     "/admin",
     "/admin/invites",
     "/admin/invites/{code}/revoke",
+    "/admin/unknown-fields",
     "/admin/e/{id}/release",
     "/admin/e/{id}",
     "/admin/e/{id}/publish",

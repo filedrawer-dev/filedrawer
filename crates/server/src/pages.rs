@@ -376,6 +376,13 @@ pub struct AdminSeriesPage<'a> {
 }
 
 #[derive(Template)]
+#[template(path = "admin_unknown_fields.html")]
+pub struct AdminUnknownFieldsPage<'a> {
+    pub report: &'a crate::unknown_fields::Report,
+    pub most_listed: usize,
+}
+
+#[derive(Template)]
 #[template(path = "admin_invites.html")]
 pub struct AdminInvitesPage<'a> {
     pub codes: &'a [crate::invites::Listed],

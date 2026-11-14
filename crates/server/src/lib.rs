@@ -47,6 +47,7 @@ mod series;
 mod skills;
 mod suspension;
 mod time;
+mod unknown_fields;
 pub mod unpack;
 mod warnings;
 mod withdraw;
@@ -221,6 +222,7 @@ fn build(state: AppState) -> Routes<Router> {
             get(admin::invites).post(admin::create_invite),
         )
         .route("/admin/invites/{code}/revoke", post(admin::revoke_invite))
+        .route("/admin/unknown-fields", get(admin::unknown_fields))
         .route("/admin/e/{id}/release", post(admin::release))
         .route("/admin/e/{id}", get(admin::entry))
         .route("/admin/e/{id}/publish", post(admin::publish))

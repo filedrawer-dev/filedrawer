@@ -1,0 +1,54 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT u.name AS \"name!\",\n                  COUNT(DISTINCT e.account_id) AS \"accounts!: i64\",\n                  COUNT(DISTINCT u.entry_seq) AS \"entries!: i64\",\n                  MIN(e.submitted_at) AS \"first_seen!: String\",\n                  MAX(e.submitted_at) AS \"last_seen!: String\"\n           FROM entry_unknown_fields u JOIN entries e ON e.seq = u.entry_seq\n           GROUP BY u.name\n           ORDER BY 2 DESC, 3 DESC, u.name\n           LIMIT ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "name!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entry_unknown_fields",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "accounts!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "entries!: i64",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "first_seen!: String",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "name": "last_seen!: String",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "0aefbaeed953fd5f9c654ca6b87d8a40eaef5cf9b09e57d947df396a6cfd4195"
+}

@@ -527,6 +527,18 @@ The owner settled the email's sections and the rules in design.md's Admin sectio
 
 ## Architecture
 
+#### The unknown-field report: what it counts and shows
+
+- Options: count entries, chains or accounts; order by any of them; show a field's values or only its name.
+- Chosen: one row a field name, as written, with its accounts and its entries, where each stored version counts as an entry, and the times the first and the last were submitted.
+  The fields most accounts use come first, then the ones in most entries, then by name, at most 200.
+  Reason: a field one account adds to every entry is that account's habit, and one many accounts add on their own is a candidate for the format.
+  Only the name shows, cut to 80 characters and escaped: it is author text, and a value can be long or private.
+  Entries of every status count, since an agent adds a field before it knows what screening will say; a deleted entry's fields go with it.
+- Against: names that differ only in case or spelling (`seed`, `seeds`, `Seed`) are separate rows, so a field can look rarer than it is.
+  Past 200 fields the page says so and shows no more, and has no way to see the rest.
+  Nothing caps how many unknown fields one entry stores, so one account can make the report's query slow (#80).
+
 ### Storage
 
 #### Deleted text in the database's files

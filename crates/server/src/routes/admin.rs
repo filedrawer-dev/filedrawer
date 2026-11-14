@@ -12,7 +12,7 @@ use crate::error::AppError;
 use crate::link_checks::{self, LinkFlags};
 use crate::pages::{
     AdminAccountPage, AdminEntryPage, AdminFilePage, AdminInvitesPage, AdminQueuePage,
-    AdminSeriesPage, QueueRow, ShownFile, page,
+    AdminSeriesPage, AdminUnknownFieldsPage, QueueRow, ShownFile, page,
 };
 use crate::removed_entries::{self, Removed, Restored};
 use crate::removed_files::{self, Removal};
@@ -22,7 +22,7 @@ use crate::routes::account::SessionAccount;
 use crate::series::RefusalCall;
 use crate::suspension::{self, Changed};
 use crate::time::now_utc;
-use crate::{AppState, accounts, attachments, entries, invites, jobs, series};
+use crate::{AppState, accounts, attachments, entries, invites, jobs, series, unknown_fields};
 use axum::Form;
 use serde::Deserialize;
 
@@ -234,6 +234,21 @@ pub async fn dismiss_refusal(
     Path(id): Path<String>,
 ) -> Result<Response, AppError> {
     decide_refusal(&state, &id, RefusalCall::Dismiss).await
+}
+
+/// The owner's report of the front-matter fields the format doesn't name.
+pub async fn unknown_fields(
+    _: AdminSession,
+    State(state): State<AppState>,
+) -> Result<Response, AppError> {
+    let report = unknown_fields::report(&state.pool).await?;
+    Ok(page(
+        StatusCode::OK,
+        &AdminUnknownFieldsPage {
+            report: &report,
+            most_listed: unknown_fields::MOST_LISTED,
+        },
+    ))
 }
 
 /// The owner's page of invite codes, with the form that makes one.

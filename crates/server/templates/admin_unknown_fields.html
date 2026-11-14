@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Unknown fields{% endblock %}
+{% block wide %} wide{% endblock %}
+{% block content %}
+<p><a href="/admin">Review queue</a></p>
+<h1>Unknown fields</h1>
+<p>Front-matter fields the entry format doesn't name, which the server stores as written. A field many accounts add on their own is a candidate for the format. The most accounts come first; each version of an entry counts as an entry.</p>
+{% if report.fields.is_empty() %}<p>None yet.</p>{% else %}
+<table>
+<tr><th>Field</th><th>Accounts</th><th>Entries</th><th>First submitted</th><th>Last submitted</th></tr>
+{% for field in report.fields %}
+<tr class="unknown-field"><td><code class="name">{{ field.shown_name() }}</code></td><td class="accounts">{{ field.accounts }}</td><td class="entries">{{ field.entries }}</td><td>{{ field.first_seen }}</td><td>{{ field.last_seen }}</td></tr>
+{% endfor %}
+</table>
+{% if report.more %}<p class="cut">Only the first {{ most_listed }} are listed.</p>{% endif %}
+{% endif %}
+{% endblock %}

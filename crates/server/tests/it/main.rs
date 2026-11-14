@@ -7,6 +7,7 @@ mod accounts;
 mod admin_removal;
 mod admin_series;
 mod admin_suspension;
+mod admin_unknown_fields;
 mod allowance;
 mod attachments;
 mod batches;
