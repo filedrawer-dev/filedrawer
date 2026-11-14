@@ -289,6 +289,22 @@ fn not_on_default(app: &TestApp, others: usize) {
 }
 
 #[tokio::test]
+async fn a_github_link_whose_owner_isnt_a_plain_name_reaches_no_api_call() {
+    let app = test_app().await;
+    let code = format!("https://github.com/a%2Fb/repo/tree/{SHA}");
+
+    let reply = app.post("/entries", with_code(&code)).await;
+
+    assert_eq!(app.web.api_calls(), Vec::<String>::new(), "{}", reply.body);
+    assert_eq!(
+        app.web.json_fetched(),
+        Vec::<String>::new(),
+        "{}",
+        reply.body
+    );
+}
+
+#[tokio::test]
 async fn a_commit_on_the_default_branch_is_verified_with_one_call() {
     let app = test_app().await;
     let reply = app.post("/entries", with_code(&github_code())).await;

@@ -8,6 +8,7 @@ mod common;
 mod encoded;
 mod file_mentions;
 mod front_matter;
+mod links;
 mod references;
 mod results;
 
