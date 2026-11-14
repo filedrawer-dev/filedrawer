@@ -20,8 +20,8 @@ host can reach the sandbox too late for that; reloading by hand always shows the
 latest save. Every other request (other pages, forms, an agent's GET /) goes to the
 dev server unchanged, so other pages' markup is what it was built with.
 
-The dev server is `filedrawer serve` in the dev environment, built first with
-`heavy --share -- cargo build --bin filedrawer` (plain cargo without heavy), on
+The dev server is `filedrawer-server serve` in the dev environment, built first with
+`heavy --share -- cargo build --bin filedrawer-server` (plain cargo without heavy), on
 127.0.0.1:SERVER_PORT, with its database in target/live-preview/. A new database is
 seeded with the analyzer's example fixture, ops/smoke-fixture.md and
 ops/screen-eval/public/*.md, published at once, so the drawer isn't empty.
@@ -305,12 +305,12 @@ def run(command: list[str], **kwargs) -> str:
 
 
 class DevServer:
-    """The checkout's `filedrawer serve` in the dev environment, its database in
+    """The checkout's `filedrawer-server serve` in the dev environment, its database in
     target/live-preview/."""
 
     def __init__(self, root: Path, port: int, public_url: str) -> None:
         self.root = root
-        self.binary = root / "target/debug/filedrawer"
+        self.binary = root / "target/debug/filedrawer-server"
         self.data = root / "target/live-preview"
         self.database = self.data / "filedrawer.db"
         self.port = port
@@ -337,7 +337,7 @@ class DevServer:
         }
 
     def build(self) -> None:
-        command = ["cargo", "build", "-q", "--bin", "filedrawer"]
+        command = ["cargo", "build", "-q", "--bin", "filedrawer-server"]
         if shutil.which("heavy"):
             command = ["heavy", "--share", "--", *command]
         print("live-preview: building the server", flush=True)

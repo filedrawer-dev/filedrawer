@@ -456,6 +456,53 @@ def test_the_screen_check_passes_with_a_warning_only_when_nothing_could_be_check
     assert ("checked screen" in result.stdout) == checked, result.stdout
 
 
+def test_staging_and_production_deploy_the_file_cargo_builds(tmp_path):
+    # One name runs from Cargo.toml's [[bin]] through CI's build, upload and deploy
+    # to the file ops/deploy-production takes from the artifact (#77).
+    jobs = workflow_jobs()
+    build, deploy = jobs["build-staging"], jobs["deploy-staging"]
+    name = Path(re.search(r"BINARY: (\S+)", build).group(1)).name
+    cargo = (REPO / "crates/server/Cargo.toml").read_text()
+    assert f'[[bin]]\nname = "{name}"\n' in cargo, name
+    assert f"--bin {name}\n" in build, build
+    [uploaded] = re.findall(r"upload-artifact@\S+\n\s+with:\n\s+name: (\S+)", build)
+    [downloaded] = re.findall(
+        r"download-artifact@\S+\n\s+with:\n\s+name: (\S+)", deploy
+    )
+    assert uploaded == downloaded
+    promote = (REPO / "ops/deploy-production").read_text()
+    assert f'select(.name == "{uploaded}")' in promote
+    assert f'binary="$work/{name}"' in promote
+
+    # The Deploy step pipes that file, by its hash, to the deploy key's command.
+    data = b"the built binary"
+    (tmp_path / name).write_bytes(data)
+    fakes = tmp_path / "fakes"
+    fakes.mkdir()
+    executable(
+        fakes / "ssh",
+        f'#!/bin/sh\nfor a; do last=$a; done\necho "$last" > {tmp_path}/command\n'
+        f"cat > {tmp_path}/sent\n",
+    )
+    env = {
+        "PATH": f"{fakes}:{os.environ['PATH']}",
+        "DEPLOY_SSH_KEY": "a key",
+        "VPS_HOST": "vps.example",
+        "VPS_KNOWN_HOSTS": "vps.example ssh-ed25519 AAAA",
+    }
+    result = subprocess.run(
+        ["bash", "-e", "-c", step_script(deploy, "Deploy")],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (tmp_path / "sent").read_bytes() == data
+    assert (tmp_path / "command").read_text() == f"deploy staging {sha(data)}\n"
+
+
 def test_the_files_host_has_a_caddy_site_behind_the_staging_gate_and_a_dns_record():
     caddy = (REPO / "ops/remote/caddy.sh").read_text()
     sites = re.findall(r"^([a-z.]+\.filedrawer\.dev) \{\n(.*?)^\}", caddy, re.M | re.S)

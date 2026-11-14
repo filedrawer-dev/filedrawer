@@ -104,7 +104,7 @@ pub async fn release_due(state: &AppState, now: OffsetDateTime) -> Result<usize,
     entries::release(&state.pool, &releases, now).await
 }
 
-/// Runs `release_due` every minute, for `filedrawer serve`, so an embargo ends
+/// Runs `release_due` every minute, for `filedrawer-server serve`, so an embargo ends
 /// within a minute of 23:59 at UTC−12 on its date. An error is logged and the loop
 /// goes on.
 pub async fn run_releaser(state: AppState) {
@@ -133,7 +133,7 @@ pub async fn tidy_files(state: &AppState, now: OffsetDateTime) -> Result<(), Sto
 }
 
 /// Runs `tidy_files`, and deletes the rate limits' expired counts and the search
-/// log's old rows, every hour, for `filedrawer serve`. An error is logged and the
+/// log's old rows, every hour, for `filedrawer-server serve`. An error is logged and the
 /// loop goes on.
 pub async fn run_tidier(state: AppState) {
     let mut ticks = tokio::time::interval(std::time::Duration::from_secs(60 * 60));
@@ -151,9 +151,9 @@ pub async fn run_tidier(state: AppState) {
     }
 }
 
-/// Rechecks the links whose next check has come, every minute, for `filedrawer
-/// serve`, so a link due an hour after its check is checked then. An error is
-/// logged and the loop goes on.
+/// Rechecks the links whose next check has come, every minute, for
+/// `filedrawer-server serve`, so a link due an hour after its check is checked then.
+/// An error is logged and the loop goes on.
 pub async fn run_link_rechecker(state: AppState) {
     let mut ticks = tokio::time::interval(std::time::Duration::from_secs(60));
     loop {
@@ -171,7 +171,7 @@ pub async fn run_link_rechecker(state: AppState) {
 }
 
 /// Runs `publish_due` every `tick` (`Config::publisher_tick`: 30 seconds, unless dev sets another),
-/// for `filedrawer serve`. An error is logged and the loop goes on.
+/// for `filedrawer-server serve`. An error is logged and the loop goes on.
 pub async fn run_publisher(state: AppState, tick: std::time::Duration) {
     let mut ticks = tokio::time::interval(tick);
     loop {
@@ -188,7 +188,7 @@ const DAILY_EMAIL_TICK: std::time::Duration = std::time::Duration::from_secs(5 *
 /// How long the job waits after a failed run before trying again.
 const DAILY_EMAIL_RETRY: Duration = Duration::hours(1);
 
-/// Runs `send_daily_email` every 5 minutes, for `filedrawer serve`, so today's run
+/// Runs `send_daily_email` every 5 minutes, for `filedrawer-server serve`, so today's run
 /// goes within 5 minutes of midnight UTC, or of the server starting. A failed run is
 /// logged and tried again an hour later.
 pub async fn run_daily_email(state: AppState) {

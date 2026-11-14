@@ -157,7 +157,11 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 gh run download "$run" --repo "$GH_REPO" --name filedrawer --dir "$work" >/dev/null ||
   die "gh run download $run failed"
-binary="$work/filedrawer"
+# The artifact's one file has the binary's name: filedrawer-server, or filedrawer in
+# a run from before #77 renamed it, which a rollback may take until those expire.
+binary="$work/filedrawer-server"
+[[ -f "$binary" ]] || binary="$work/filedrawer"
+[[ -f "$binary" ]] || die "run $run's filedrawer artifact holds no filedrawer-server binary; nothing changed"
 grep -aqF "filedrawer-commit $target" "$binary" ||
   die "run $run's binary doesn't name $target as its commit; nothing changed"
 

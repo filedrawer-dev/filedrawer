@@ -1,5 +1,5 @@
 //! Seam: `ops/usability-run account` and `delete`, and `ops/remove-entries`, run as
-//! processes against a real `filedrawer serve` on loopback, the way they run against
+//! processes against a real `filedrawer-server serve` on loopback, the way they run against
 //! staging. The server logs the mail it can't send, so the scripts read the
 //! verification link from its log (FILEDRAWER_USABILITY_MAIL_LOG) instead of IMAP.
 
@@ -43,7 +43,7 @@ fn serve() -> Server {
         .port();
     let url = format!("http://127.0.0.1:{port}");
     let log = std::fs::File::create(dir.path().join("server.log")).unwrap();
-    let child = Command::new(env!("CARGO_BIN_EXE_filedrawer"))
+    let child = Command::new(env!("CARGO_BIN_EXE_filedrawer-server"))
         .arg("serve")
         .env_clear()
         .env("FILEDRAWER_DATABASE", dir.path().join("filedrawer.db"))
@@ -193,7 +193,7 @@ fn remove_entries_takes_down_each_listed_entry_as_the_admin() {
     let server = serve();
     let author = account(&server, "jason2");
     let admin = account(&server, "owner");
-    let granted = Command::new(env!("CARGO_BIN_EXE_filedrawer"))
+    let granted = Command::new(env!("CARGO_BIN_EXE_filedrawer-server"))
         .args(["admin", "grant", "--account", admin["id"].as_str().unwrap()])
         .env_clear()
         .env("FILEDRAWER_DATABASE", server.database())

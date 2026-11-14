@@ -1,4 +1,4 @@
-//! Seam: the `filedrawer` binary, run as a process.
+//! Seam: the `filedrawer-server` binary, run as a process.
 
 use crate::common;
 
@@ -15,8 +15,8 @@ fn scratch_database(name: &str) -> PathBuf {
     dir.join("filedrawer.db")
 }
 
-fn filedrawer(database: &PathBuf, args: &[&str], env: &[(&str, &str)]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_filedrawer"))
+fn server(database: &PathBuf, args: &[&str], env: &[(&str, &str)]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_filedrawer-server"))
         .args(args)
         .env_clear()
         .env("FILEDRAWER_DATABASE", database)
@@ -40,7 +40,7 @@ fn printed(output: &Output) -> String {
 #[tokio::test]
 async fn admin_commands_make_an_account_and_a_token_the_server_accepts() {
     let database = scratch_database("admin");
-    let account = printed(&filedrawer(
+    let account = printed(&server(
         &database,
         &["admin", "create-account", "--display-name", "Ada"],
         &[],
@@ -49,7 +49,7 @@ async fn admin_commands_make_an_account_and_a_token_the_server_accepts() {
         account.starts_with("a-") && account.len() == 12,
         "{account}"
     );
-    let token = printed(&filedrawer(
+    let token = printed(&server(
         &database,
         &[
             "admin",
@@ -106,7 +106,7 @@ async fn admin_grant_lets_the_accounts_browser_session_reach_the_admin_pages() {
     );
     let account = common::account_id(&test, &cookie).await;
     assert_eq!(
-        printed(&filedrawer(
+        printed(&server(
             &database,
             &["admin", "grant", "--account", &account],
             &[]
@@ -117,7 +117,7 @@ async fn admin_grant_lets_the_accounts_browser_session_reach_the_admin_pages() {
         test.page("/admin", Some(&cookie)).await.status,
         StatusCode::OK
     );
-    let unknown = filedrawer(&database, &["admin", "grant", "--account", "a-nobody"], &[]);
+    let unknown = server(&database, &["admin", "grant", "--account", "a-nobody"], &[]);
     assert!(!unknown.status.success());
     assert!(String::from_utf8_lossy(&unknown.stderr).contains("no account a-nobody"));
 }
@@ -125,7 +125,7 @@ async fn admin_grant_lets_the_accounts_browser_session_reach_the_admin_pages() {
 #[test]
 fn a_token_for_an_unknown_account_is_refused() {
     let database = scratch_database("unknown");
-    let output = filedrawer(
+    let output = server(
         &database,
         &[
             "admin",
@@ -144,7 +144,7 @@ fn a_token_for_an_unknown_account_is_refused() {
 #[test]
 fn production_refuses_the_pass_all_screener() {
     let database = scratch_database("production");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_filedrawer"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_filedrawer-server"))
         .arg("serve")
         .env_clear()
         .env("FILEDRAWER_DATABASE", &database)
@@ -180,7 +180,7 @@ fn production_refuses_the_pass_all_screener() {
 #[test]
 fn serve_names_a_missing_setting() {
     let database = scratch_database("missing");
-    let output = filedrawer(
+    let output = server(
         &database,
         &["serve"],
         &[("FILEDRAWER_ENVIRONMENT", "staging")],
@@ -192,7 +192,7 @@ fn serve_names_a_missing_setting() {
 #[test]
 fn production_without_smtp_settings_refuses_to_start() {
     let database = scratch_database("no-smtp");
-    let output = filedrawer(
+    let output = server(
         &database,
         &["serve"],
         &[
@@ -213,7 +213,7 @@ const HIDDEN_B64: &str = "bWFkZS11cCBpbnN0cnVjdGlvbiBmb3IgYWdlbnRzIHJlYWRpbmcgdG
 /// HIDDEN in base64 four times over, one layer past the limit (`base64 -w0`, four times).
 const HIDDEN_B64_X4: &str = "V1d4a1IyRXhjRlJOVkVacVVUQktkMWx0TlU5TlIwNTFWbTF3YTFJeWVESlpiV3hEWWxkSmVsTlhaRnBXTWxKeldXMDFVMlZyYkVsVGJYaGFWakZLZDFsdE1XcGFNbEpJWVVoQ2FtVlZTblJaVm1RMFlrRTlQUT09";
 
-/// Runs `filedrawer unpack` on files holding `texts`, written to a scratch folder,
+/// Runs `filedrawer-server unpack` on files holding `texts`, written to a scratch folder,
 /// and returns the output and each file's path.
 fn unpack(name: &str, texts: &[&[u8]]) -> (Output, Vec<String>) {
     let dir = scratch_database(name).parent().unwrap().to_path_buf();
@@ -226,7 +226,7 @@ fn unpack(name: &str, texts: &[&[u8]]) -> (Output, Vec<String>) {
             path.display().to_string()
         })
         .collect();
-    let output = Command::new(env!("CARGO_BIN_EXE_filedrawer"))
+    let output = Command::new(env!("CARGO_BIN_EXE_filedrawer-server"))
         .arg("unpack")
         .args(&paths)
         .env_clear()
@@ -307,7 +307,7 @@ const CONFIG_SOURCE: &str = include_str!("../../src/config.rs");
 
 #[test]
 fn help_names_every_setting_serve_reads() {
-    let output = Command::new(env!("CARGO_BIN_EXE_filedrawer"))
+    let output = Command::new(env!("CARGO_BIN_EXE_filedrawer-server"))
         .arg("-h")
         .env_clear()
         .output()
@@ -322,13 +322,13 @@ fn help_names_every_setting_serve_reads() {
     missing.dedup();
     assert!(
         missing.is_empty(),
-        "`filedrawer -h` doesn't name {missing:?}, which config.rs reads"
+        "`filedrawer-server -h` doesn't name {missing:?}, which config.rs reads"
     );
 }
 
 #[test]
 fn help_names_the_commit_the_binary_was_built_from() {
-    let output = Command::new(env!("CARGO_BIN_EXE_filedrawer"))
+    let output = Command::new(env!("CARGO_BIN_EXE_filedrawer-server"))
         .arg("-h")
         .env_clear()
         .output()

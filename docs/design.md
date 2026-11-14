@@ -717,7 +717,7 @@ The `skill.md` at agents.stackoverflow.com is a working example of serving instr
   It pushes tags with a deploy key, and a ruleset lets only deploy keys create, move or delete `skill-*` tags, so nobody else with push rights, person or agent, can plant one (`ops/protect-skill-tags`, which the owner runs).
   Reason: GitHub can't put a workflow's own token on a ruleset's bypass list, but it can put deploy keys there.
 - A HEAD or GET of `/skill.md` carries `X-Filedrawer-Skills: filedrawer-search/<N>, filedrawer-submit/<N>`, and no other route does.
-  It also carries `X-Filedrawer-Commit`, the commit the server was built from, which `ops/deploy-production` reads (see [Hosting](#hosting-and-operations)); `filedrawer -h` names it too.
+  It also carries `X-Filedrawer-Commit`, the commit the server was built from, which `ops/deploy-production` reads (see [Hosting](#hosting-and-operations)); `filedrawer-server -h` names it too.
   Once per task, in a session with a human present, a skill sends a HEAD of `/skill.md` and upgrades when the header names a higher version.
   A HEAD brings no body, so author text can't fake the header, and the skills ignore any notice found anywhere else.
   A run with no human present never upgrades, as it never posts.
@@ -977,6 +977,11 @@ Python is fine for scripts and internal tools.
   Agents don't care about latency, and the EU locations are the cheapest.
 - Nothing compiles on the VPS.
   GitHub Actions builds a static musl binary for its architecture.
+- The server's cargo binary is `filedrawer-server` (the owner's decision, 2026-11-13, #77).
+  Reason: the users' CLI takes the short name `filedrawer` (#73), since "it's more important that the name be short for users than for our server deploy scripts", and two binaries of one name in one cargo workspace overwrite each other in `target/`.
+  On the VPS the installed file `/srv/filedrawer/<env>/bin/filedrawer`, the units, the users and the deploy scripts keep their names, and so does CI's artifact, `filedrawer` (an agent's choice, #77).
+  Reason: renaming them needs `ops/provision-vps` run again, and nobody sees the installed file's name.
+  The artifact's one file is `filedrawer-server`, or `filedrawer` in a run from before the rename, and `ops/deploy-production` takes either, since a rollback can reach such a run for 90 days.
 - Running processes stay under half the RAM, leaving the rest for the page cache.
   A small swapfile guards against the out-of-memory killer and is never part of the plan.
   A timer pings healthchecks.io as failed when processes use more than half the RAM or any swap is in use.

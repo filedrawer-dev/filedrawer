@@ -1,5 +1,5 @@
 #![forbid(unsafe_code)]
-//! The `filedrawer` binary: the server, and the owner's admin commands. See `-h`.
+//! The `filedrawer-server` binary: the server, and the owner's admin commands. See `-h`.
 
 use std::process::ExitCode;
 
@@ -15,11 +15,11 @@ use filedrawer_server::{AppState, admin, app, db, unpack};
 
 const USAGE: &str = "\
 usage:
-  filedrawer serve
-  filedrawer admin create-account --display-name NAME
-  filedrawer admin create-token --account ID --name NAME
-  filedrawer admin grant --account ID
-  filedrawer unpack FILE...
+  filedrawer-server serve
+  filedrawer-server admin create-account --display-name NAME
+  filedrawer-server admin create-token --account ID --name NAME
+  filedrawer-server admin grant --account ID
+  filedrawer-server unpack FILE...
 
 serve runs the server. It reads FILEDRAWER_DATABASE (the SQLite file),
 FILEDRAWER_LISTEN (such as 127.0.0.1:8080), FILEDRAWER_ENVIRONMENT (production,
@@ -119,7 +119,7 @@ fn main() -> ExitCode {
     }
 }
 
-/// `filedrawer unpack FILE...`: what the server's decoding finds in the files, read as
+/// `filedrawer-server unpack FILE...`: what the server's decoding finds in the files, read as
 /// one entry's attached files sharing one text budget, as the screen reads them. One
 /// line a file, giving counts only: the hidden text, and the labels that quote the
 /// start of each encoded run, stay unprinted, since field-test files mustn't be shown.
@@ -129,11 +129,11 @@ fn unpack_files(paths: &[&str]) -> ExitCode {
         match std::fs::read(path).map(String::from_utf8) {
             Ok(Ok(text)) => texts.push(text),
             Ok(Err(_)) => {
-                eprintln!("filedrawer: {path} isn't UTF-8 text, as attached files must be");
+                eprintln!("filedrawer-server: {path} isn't UTF-8 text, as attached files must be");
                 return ExitCode::from(2);
             }
             Err(error) => {
-                eprintln!("filedrawer: can't read {path}: {error}");
+                eprintln!("filedrawer-server: can't read {path}: {error}");
                 return ExitCode::from(2);
             }
         }
@@ -175,7 +175,7 @@ async fn admin_command(
 }
 
 fn fail(message: &str) -> ExitCode {
-    eprintln!("filedrawer: {message}");
+    eprintln!("filedrawer-server: {message}");
     ExitCode::FAILURE
 }
 

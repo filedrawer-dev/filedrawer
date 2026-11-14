@@ -90,8 +90,8 @@ field-test/files/ first; one whose files aren't all there is passed over, and
 entries with the same list share one upload. It prints PASS or FAIL per case and a
 tally per expectation, and exits 1 when any case misses. Then it counts what the
 server's own decoding finds hidden in the sets' files, run here with no model call
-(filedrawer unpack, built with cargo unless FILEDRAWER_BIN names the binary), and
-how the field-test entries citing a set that hides text fared. It stops at the
+(filedrawer-server unpack, built with cargo unless FILEDRAWER_BIN names the binary),
+and how the field-test entries citing a set that hides text fared. It stops at the
 first case left undecided, and says why as screen does, or at the first field-test
 entry or set the server can't take now (no answer, a 429 or a 5xx); one it refuses
 is a FAIL, as above. Each run writes its cases, and the ID of each entry and set it sends,
@@ -562,7 +562,7 @@ if [[ $mode == eval ]]; then
     fail=$((fail + 1))
   done
 
-  # bin: the filedrawer binary, whose `unpack` is the server's own decoding, needed
+  # bin: the filedrawer-server binary, whose `unpack` is the server's own decoding, needed
   # only when a field-test entry attaches files.
   attaches=0
   for file in "${candidates[@]}"; do
@@ -576,11 +576,11 @@ if [[ $mode == eval ]]; then
     bin=${FILEDRAWER_BIN:-}
     if [[ -z $bin ]]; then
       repo="$(dirname "$0")/.."
-      if ! (cd "$repo" && cargo build -q --bin filedrawer); then
-        echo "smoke-staging: building filedrawer failed; run cargo build --bin filedrawer to see why" >&2
+      if ! (cd "$repo" && cargo build -q --bin filedrawer-server); then
+        echo "smoke-staging: building filedrawer-server failed; run cargo build --bin filedrawer-server to see why" >&2
         exit 2
       fi
-      bin="${CARGO_TARGET_DIR:-$repo/target}/debug/filedrawer"
+      bin="${CARGO_TARGET_DIR:-$repo/target}/debug/filedrawer-server"
     fi
   fi
 
@@ -920,7 +920,7 @@ PY
     local -a paths
     for key in "${!set_lists[@]}"; do
       mapfile -t paths < <(listed "${set_lists[$key]}")
-      "$bin" unpack "${paths[@]}" > "$dir/unpack" || echo "  filedrawer unpack couldn't read a set's files"
+      "$bin" unpack "${paths[@]}" > "$dir/unpack" || echo "  filedrawer-server unpack couldn't read a set's files"
       while IFS= read -r line; do
         path=${line%%: *}
         what=${line#*: }

@@ -1,4 +1,4 @@
-//! Seam: `Config::from_env`, the settings `filedrawer serve` reads.
+//! Seam: `Config::from_env`, the settings `filedrawer-server serve` reads.
 
 use std::collections::HashMap;
 

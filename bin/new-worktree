@@ -27,7 +27,7 @@ What it reuses from the main checkout: the dependencies it compiled that sccache
 (RUSTC_WRAPPER, set by sandbox-setup) still holds in its shared cache, so the tree's
 own target/ compiles little more than this workspace's crates, in about half a minute
 once heavy starts it. It never shares or
-links the main tree's target/: two trees on one target swap target/debug/filedrawer
+links the main tree's target/: two trees on one target swap target/debug/filedrawer-server
 under each other's tests. Copying it isn't worth it either: it runs to tens of GB on
 a mount without copy-on-write.
 

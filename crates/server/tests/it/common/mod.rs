@@ -396,7 +396,7 @@ impl TestApp {
             .await
     }
 
-    /// Sends `request` as if over a connection from `peer`, as `filedrawer serve`
+    /// Sends `request` as if over a connection from `peer`, as `filedrawer-server serve`
     /// gives the rate limits it.
     pub async fn send_from(&self, peer: &str, mut request: Request<Body>) -> Reply {
         let peer: std::net::SocketAddr = peer.parse().unwrap();
@@ -687,7 +687,7 @@ fn encode(text: &str) -> String {
         .collect()
 }
 
-/// A browser session for a new account made the admin, as `filedrawer admin grant`
+/// A browser session for a new account made the admin, as `filedrawer-server admin grant`
 /// does.
 pub async fn owner(app: &TestApp) -> String {
     let (cookie, _) = browser_account(app, "owner@example.com").await;

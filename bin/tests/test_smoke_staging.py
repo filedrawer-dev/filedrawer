@@ -165,7 +165,8 @@ UPLOADS_SPENT = (
 @pytest.fixture
 def eval_run(tmp_path):
     """Runs eval with one made-up field-test entry that attaches a gathered file,
-    against a fake server, and a fake filedrawer binary whose unpack finds nothing."""
+    against a fake server, and a fake filedrawer-server binary whose unpack finds
+    nothing."""
     field_test = tmp_path / "field-test"
     (field_test / "round3/demo").mkdir(parents=True)
     (field_test / "files").mkdir()
@@ -178,7 +179,7 @@ def eval_run(tmp_path):
     (field_test / "round3/demo/one.attachments").write_text(
         f"author:run.py {len(text)} {digest}\n"
     )
-    fake_bin = tmp_path / "filedrawer"
+    fake_bin = tmp_path / "filedrawer-server"
     fake_bin.write_text('#!/bin/sh\nfor f; do echo "$f: nothing hidden"; done\n')
     fake_bin.chmod(0o755)
     servers = []
@@ -421,8 +422,8 @@ def test_an_entry_whose_status_comes_back_empty_doesnt_break_the_decoding_tally(
     eval_run, tmp_path
 ):
     # A GET that fails under load leaves no status; the tally still counts the entry,
-    # whose set (says this fake filedrawer) hides text.
-    (tmp_path / "filedrawer").write_text(
+    # whose set (says this fake filedrawer-server) hides text.
+    (tmp_path / "filedrawer-server").write_text(
         '#!/bin/sh\nfor f; do echo "$f: 1 part, 10 bytes hidden"; done\n'
     )
     uploaded = (201, "id: as-1\nbytes: 17\n")

@@ -1,7 +1,7 @@
 """Tests for bin/live-preview, run as a process: against a fake dev server (--upstream),
 it renders the home page from a copy of the templates on each request, serves the
 stylesheet and script from disk, and forwards everything else; with a fake
-`filedrawer` binary in a scratch checkout, it seeds a new database once, starts the
+`filedrawer-server` binary in a scratch checkout, it seeds a new database once, starts the
 server in an environment of its own, and stops it. The build isn't tested: it is
 cargo's.
 """
@@ -305,7 +305,7 @@ def test_no_build_without_a_binary_is_refused_in_one_line(tmp_path):
     assert "--no-build" in message, message
 
 
-# A stand-in for target/debug/filedrawer: its admin commands make the database file,
+# A stand-in for target/debug/filedrawer-server: its admin commands make the database file,
 # as the real ones do, and print an ID and a token,
 # and `serve` answers on FILEDRAWER_LISTEN, accepting each entry unless its text holds
 # a word in ./refuse and exiting at the first publish when ./die-on-publish exists.
@@ -383,8 +383,8 @@ class Checkout:
         subprocess.run(["git", "-C", root, "add", *FIXTURES], check=True)
         self.bin = root / "target/debug"
         self.bin.mkdir(parents=True)
-        (self.bin / "filedrawer").write_text(FAKE_FILEDRAWER)
-        (self.bin / "filedrawer").chmod(0o755)
+        (self.bin / "filedrawer-server").write_text(FAKE_FILEDRAWER)
+        (self.bin / "filedrawer-server").chmod(0o755)
 
     def calls(self) -> list[str]:
         path = self.bin / "calls"

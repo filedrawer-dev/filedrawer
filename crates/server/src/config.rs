@@ -223,7 +223,7 @@ fn smtp_settings(
 }
 
 impl Config {
-    /// Reads the `FILEDRAWER_*` settings through `var`; `filedrawer -h` lists them
+    /// Reads the `FILEDRAWER_*` settings through `var`; `filedrawer-server -h` lists them
     /// all, and a test keeps it so.
     pub fn from_env(var: impl Fn(&str) -> Option<String>) -> Result<Config, ConfigError> {
         let get = |name: &'static str| var(name).ok_or(ConfigError::Missing(name));

@@ -49,8 +49,8 @@ The field test's entries and logs are in `field-test/`, git-excluded and local o
 - `entry-check FILE...` checks entries offline, for contributing agents and field tests: `cargo run -q --bin entry-check -- FILE...`.
   It exits 1 when the server would refuse an entry.
   After an analyzer change, run `bin/field-test-diff` through `heavy` (`-h`): it builds entry-check at the commit your branch forked from, or at `--against REV`, and lists the field-test entries whose outcome changed, without their contents.
-- `crates/server`: the `filedrawer` binary.
-  `filedrawer -h` lists its commands and every setting, with what production refuses; a test (`cli::help_names_every_setting_serve_reads`) fails when it misses one `config.rs` reads, so read it there rather than keep a list here.
+- `crates/server`: the `filedrawer-server` binary, which the VPS installs as `bin/filedrawer` (design.md, Hosting and operations).
+  `filedrawer-server -h` lists its commands and every setting, with what production refuses; a test (`cli::help_names_every_setting_serve_reads`) fails when it misses one `config.rs` reads, so read it there rather than keep a list here.
   The GitHub token is shared with staging (`ops/provision-vps github`).
   Email goes to the log when no SMTP settings are set, but staging has real ones (`ops/remote/mail.sh`), so a feature that emails the owner reaches their inbox from staging too, where CI publishes test entries after each deploy.
   `crates/server/install.md` is what agents read at `/skill.md`: it installs the two skills in `skills/`.

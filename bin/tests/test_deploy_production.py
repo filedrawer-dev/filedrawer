@@ -41,7 +41,8 @@ def sha256(data: bytes) -> str:
 
 
 # The fake gh: `gh api PATH` prints api[PATH] as JSON; `gh run download ID ...
-# --dir DIR` copies binaries[ID] to DIR/filedrawer; `gh auth status` succeeds unless
+# --dir DIR` copies binary-ID to DIR, under the name in file-ID, as GitHub unpacks an
+# artifact of one file under that file's name; `gh auth status` succeeds unless
 # `logged-out` exists. Every call is a line in `log`.
 FAKE_GH = """#!/usr/bin/env python3
 import json, shutil, sys
@@ -64,7 +65,8 @@ if args[:2] == ["run", "download"]:
     run = args[2]
     out = Path(args[args.index("--dir") + 1])
     out.mkdir(parents=True, exist_ok=True)
-    shutil.copy(root / f"binary-{{run}}", out / "filedrawer")
+    name = (root / f"file-{{run}}").read_text()
+    shutil.copy(root / f"binary-{{run}}", out / name)
     sys.exit(0)
 sys.exit(2)
 """
@@ -136,7 +138,8 @@ def deploy(tmp_path, fake_host):
     )
 
     def run_for(commit: str, run_id: int, **overrides) -> None:
-        """A push run of ci.yml on main for `commit`, its jobs and its artifact."""
+        """A push run of ci.yml on main for `commit`, its jobs and its artifact, whose
+        one file is named `file`: the server's binary, `filedrawer-server` since #77."""
         run = {
             "id": run_id,
             "head_sha": commit,
@@ -175,6 +178,9 @@ def deploy(tmp_path, fake_host):
             "binary", f"ELF...filedrawer-commit {commit}...".encode()
         )
         (gh_root / f"binary-{run_id}").write_bytes(binary)
+        (gh_root / f"file-{run_id}").write_text(
+            overrides.get("file", "filedrawer-server")
+        )
 
     state.run_for = run_for
     run_for(new, 100)
@@ -298,6 +304,25 @@ def test_a_rollback_to_an_older_commit_deploys_once_asked(deploy):
     assert result.returncode == 0, result.stdout + result.stderr
     binary = (deploy.gh / "binary-90").read_bytes()
     assert sent_binary(deploy) == binary
+
+
+def test_a_rollback_takes_a_binary_built_before_the_rename(deploy):
+    # Before #77 the binary, and so the artifact's one file, was named `filedrawer`.
+    deploy.production = deploy.new
+    deploy.api.clear()
+    deploy.run_for(deploy.old, 90, file="filedrawer")
+    result = deploy.run(deploy.old, answers="y\n")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert sent_binary(deploy) == (deploy.gh / "binary-90").read_bytes()
+
+
+def test_an_artifact_without_the_servers_binary_is_refused(deploy):
+    deploy.api.clear()
+    deploy.run_for(deploy.new, 100, file="entry-check")
+    result = deploy.run()
+    assert result.returncode != 0
+    assert "holds no filedrawer-server" in result.stderr
+    assert installs(deploy) == []
 
 
 @pytest.mark.parametrize(

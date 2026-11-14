@@ -1,4 +1,4 @@
-//! Seam: `ops/smoke-staging`, run as a process against a real `filedrawer serve` on
+//! Seam: `ops/smoke-staging`, run as a process against a real `filedrawer-server serve` on
 //! loopback. CI runs the script against staging after each deploy, so a change to the
 //! server's replies that would break it there fails here first.
 
@@ -21,7 +21,7 @@ fn true_skill_tags() -> &'static Path {
     .path()
 }
 
-/// A `filedrawer serve` on a free loopback port, stopped when dropped.
+/// A `filedrawer-server serve` on a free loopback port, stopped when dropped.
 struct Server {
     child: Child,
     url: String,
@@ -63,7 +63,7 @@ fn serve(database: PathBuf) -> Server {
 fn serve_with(database: PathBuf, settings: &[(&str, &str)]) -> Server {
     let port = free_port();
     let url = format!("http://127.0.0.1:{port}");
-    let child = Command::new(env!("CARGO_BIN_EXE_filedrawer"))
+    let child = Command::new(env!("CARGO_BIN_EXE_filedrawer-server"))
         .arg("serve")
         .env_clear()
         .env("FILEDRAWER_DATABASE", &database)
@@ -83,9 +83,9 @@ fn serve_with(database: PathBuf, settings: &[(&str, &str)]) -> Server {
     }
 }
 
-/// Runs a `filedrawer admin` command on `database` and returns what it printed.
+/// Runs a `filedrawer-server admin` command on `database` and returns what it printed.
 fn admin(database: &Path, args: &[&str]) -> String {
-    let output = Command::new(env!("CARGO_BIN_EXE_filedrawer"))
+    let output = Command::new(env!("CARGO_BIN_EXE_filedrawer-server"))
         .arg("admin")
         .args(args)
         .env_clear()
@@ -607,7 +607,7 @@ fn eval(
         .env("FILEDRAWER_OPS_DIR", ops_dir)
         .env("FILEDRAWER_FIELD_TEST_DIR", field_test)
         .env("FILEDRAWER_STAGING_SCREEN_API_KEY", token)
-        .env("FILEDRAWER_BIN", env!("CARGO_BIN_EXE_filedrawer"))
+        .env("FILEDRAWER_BIN", env!("CARGO_BIN_EXE_filedrawer-server"))
         .envs(settings.iter().copied());
     command.output().unwrap()
 }

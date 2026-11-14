@@ -45,7 +45,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      BINARY: target/x86_64-unknown-linux-musl/release/filedrawer
+      BINARY: target/x86_64-unknown-linux-musl/release/filedrawer-server
     steps:
       - uses: actions/checkout@v7
         with:
@@ -64,7 +64,7 @@ jobs:
         env:
           SQLX_OFFLINE: "true"
           FILEDRAWER_COMMIT: ${{ github.sha }}
-        run: cargo build --release --locked --target x86_64-unknown-linux-musl --bin filedrawer
+        run: cargo build --release --locked --target x86_64-unknown-linux-musl --bin filedrawer-server
       - name: Check the binary is static and names its commit
         run: |
           file "$BINARY"
@@ -72,7 +72,9 @@ jobs:
           "$BINARY" -h | grep -Fq "filedrawer-commit $GITHUB_SHA"
           grep -aFq "filedrawer-commit $GITHUB_SHA" "$BINARY"
       # Kept 90 days, GitHub's most, since ops/deploy-production promotes this
-      # artifact to production, and rolls back to an older one.
+      # artifact to production, and rolls back to an older one. The artifact keeps the
+      # name filedrawer, and holds the one file filedrawer-server; runs from before
+      # #77 hold the file filedrawer, which ops/deploy-production also takes.
       - uses: actions/upload-artifact@v7
         with:
           name: filedrawer
@@ -136,10 +138,10 @@ jobs:
           trap 'rm -f "$key"' EXIT
           printf '%s\n' "$DEPLOY_SSH_KEY" > "$key"
           printf '%s\n' "$VPS_KNOWN_HOSTS" > known_hosts
-          hash=$(sha256sum filedrawer | cut -d' ' -f1)
+          hash=$(sha256sum filedrawer-server | cut -d' ' -f1)
           ssh -i "$key" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile=known_hosts \
-            "deploy@$VPS_HOST" "deploy staging $hash" < filedrawer
+            "deploy@$VPS_HOST" "deploy staging $hash" < filedrawer-server
 
   # After each deploy, ops/smoke-staging follows the submit skill against staging as an agent
   # would, as an account of its own. deploy-staging succeeds only once the new binary

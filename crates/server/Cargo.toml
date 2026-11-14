@@ -9,7 +9,7 @@ description = "The File Drawer server: submission, reading and search."
 name = "filedrawer_server"
 
 [[bin]]
-name = "filedrawer"
+name = "filedrawer-server"
 path = "src/main.rs"
 
 [dependencies]
