@@ -3,6 +3,8 @@
 drive-agent, each as a fresh staging account.
 
     ops/usability-run SCENARIO HARNESS NAME     one run (HARNESS: claude or codex)
+    ops/usability-run batch SCENARIO:HARNESS:NAME...   several runs at once
+    ops/usability-run report RUN_DIR...         a few lines on what each run did
     ops/usability-run account --state FILE      make an account; FILE keeps its login
     ops/usability-run delete --state FILE       delete it; list its public entries
     ops/usability-run headers RUN_DIR           each fetch of the site in a run
@@ -25,17 +27,42 @@ and the usability invite code, which spares staging's per-IP signup limit
 its exact address, then deleted. Every request sends the staging key, an Origin and
 User-Agent filedrawer-usability-run.
 
+`batch` starts each run as the one-run form above, all at once, each logging to
+logs/SCENARIO-HARNESS-NAME.log in the usability folder (an earlier log of that name
+is moved aside to NAME.log.<its mtime>), waits for all, and prints one line a run:
+`NAME-HARNESS: exit N, OUTCOME, RUN_FOLDER`, OUTCOME from run.json. It refuses a
+NAME given twice, since each is a system user, or a run folder that exists, before
+starting any run. Stopped, it
+stops each run, which deletes its account. Its exit status is 0 when every run's is.
+
+`report` reads each run folder, with no model, and prints at most 15 lines a run:
+the scenario (the file in scenarios/ equal to the run's scenario.json, else ?), the
+harness and its version, run.json's outcome; the tool that first fetched /skill.md
+(a shell tool, saying whether through curl, or a fetch tool by name; whether a fetch
+tool handed the agent a summary can't be read from the folder); the turns turns.md
+says were typed into a question dialog; the skills in files/.agents/skills and their
+versions; ~/.config/filedrawer/upgrade when files/ holds it; how many requests went
+to production (a curl or wget command, or a fetch tool's call, naming
+https://filedrawer.dev); the first 4 curls that send POST, PUT, PATCH or DELETE to
+the site; and the first 6 shell commands or fetches that name the site, install.sh
+or ~/.config/filedrawer, one line each, cut to the parts that do. A curl -I, a
+version probe, doesn't count as fetching /skill.md. It replaces with REDACTED what
+`drive-agent digest` blanks by default: runs of 32 or more hex digits except
+exactly 40, the values of X-...-Key, X-...-Token and Authorization headers, the word
+after Bearer, NAME_KEY=, _TOKEN=, _SECRET= and _PASSWORD= values, key= in a URL, and
+prefixed tokens such as fdt_….
+
 The usability folder ($FILEDRAWER_USABILITY_DIR, default
 /home/carver/code/claudedev/keep/filedrawer/usability) holds persona.md,
-scenarios/, projects/, runs/ and mail.env, the owner's, mode 600, with
+scenarios/, projects/, runs/, logs/ and mail.env, the owner's, mode 600, with
 USABILITY_MAIL_ADDRESS, USABILITY_MAIL_PASSWORD and USABILITY_INVITE. The
 scenarios and persona stay out of the repo, which is public: agents under test may
 browse it. Nothing here prints the mailbox, a password, a token or the key.
 
 Options:
-  --base URL         the server: https://staging.filedrawer.dev (default) or a
-                     loopback URL (tests); production is refused, and the server
-                     must answer /staging/status
+  --base URL         (a run, batch) the server: https://staging.filedrawer.dev
+                     (default) or a loopback URL (tests); production is refused,
+                     and the server must answer /staging/status
   --state FILE       (account, delete) the account's login, written mode 600
 
 Environment:
@@ -625,6 +652,339 @@ def headers(args) -> int:
     return 0
 
 
+# ---------------------------------------------------------------- batch
+
+
+class BatchStopped(Exception):
+    """batch got SIGTERM."""
+
+
+RUN_SPEC = re.compile(r"([^:\s]+):(claude|codex):([a-z][a-z0-9-]{0,30})")
+KEY_OPEN = "The field-test key is open"
+
+
+def batch(args) -> int:
+    runs = []
+    for spec in args.runs:
+        found = RUN_SPEC.fullmatch(spec)
+        if not found:
+            raise Usage(
+                f"{spec}: a run is SCENARIO:HARNESS:NAME, HARNESS claude or codex, "
+                "NAME lower-case letters, digits and -"
+            )
+        scenario, harness, name = found.groups()
+        folder = usability_dir() / "scenarios"
+        paths = [Path(scenario), folder / scenario, folder / f"{scenario}.json"]
+        path = next((p for p in paths if p.is_file()), None)
+        if not path:
+            raise Usage(f"{spec}: no scenario {scenario} here or in {folder}")
+        runs.append((path, harness, name))
+    names = [name for _, _, name in runs]
+    twice = sorted({name for name in names if names.count(name) > 1})
+    if twice:
+        raise Usage(
+            f"{', '.join(twice)} is given twice: each run's NAME is a system user "
+            "of its own"
+        )
+    folder = usability_dir()
+    day = folder / "runs" / time.strftime("%Y-%m-%d")
+    for _, harness, name in runs:
+        if (day / f"{name}-{harness}").exists():
+            raise Usage(f"{day / f'{name}-{harness}'} exists: give the run a new NAME")
+    logs = folder / "logs"
+    logs.mkdir(parents=True, exist_ok=True)
+    children = []
+
+    def stop(signum, frame):
+        raise BatchStopped
+
+    signal.signal(signal.SIGTERM, stop)
+    try:
+        for scenario, harness, name in runs:
+            log = logs / f"{scenario.stem}-{harness}-{name}.log"
+            if log.exists() and log.stat().st_size:
+                log.rename(log.with_name(f"{log.name}.{int(log.stat().st_mtime)}"))
+            with log.open("w") as f:
+                child = subprocess.Popen(
+                    [sys.executable, __file__, str(scenario), harness, name]
+                    + ["--base", args.base],
+                    stdin=subprocess.DEVNULL,
+                    stdout=f,
+                    stderr=subprocess.STDOUT,
+                )
+            children.append((f"{name}-{harness}", log, child))
+        statuses = [child.wait() for _, _, child in children]
+    except (BatchStopped, KeyboardInterrupt) as why:
+        # Each run deletes its account when stopped. Ctrl-C reached the runs too,
+        # since they share the terminal's process group; a second signal would
+        # stop that cleanup.
+        if isinstance(why, BatchStopped):
+            for _, _, child in children:
+                child.terminate()
+        for _, _, child in children:
+            while child.poll() is None:
+                try:
+                    child.wait()
+                except KeyboardInterrupt:
+                    continue
+        raise KeyboardInterrupt from None
+    key_open = False
+    for (run_name, log, _), status in zip(children, statuses):
+        out = day / run_name
+        try:
+            outcome = json.loads((out / "run.json").read_text())["outcome"]
+        except (OSError, ValueError, KeyError):
+            outcome = f"no run.json (see {log})"
+        print(f"{run_name}: exit {status}, {outcome}, {out}")
+        text = log.read_text(errors="replace")
+        key_open = key_open or KEY_OPEN in text
+        for line in text.splitlines():
+            if "public entries stay up" in line:
+                print(f"  {line}")
+    if key_open:
+        print(
+            "The field-test key is open: when the round is over, ask the owner to run "
+            "`ops/field-test-key close`."
+        )
+    return 0 if not any(statuses) else 1
+
+
+# ---------------------------------------------------------------- report
+
+
+# What report blanks: a copy of REDACTIONS in llm-toolbox's bin/drive-agent, which
+# digest blanks by default; change both together.
+SECRET_VALUE = r"[^\s'\"\\]+"
+REDACTIONS = [
+    (
+        re.compile(
+            r"(?<![0-9a-fA-F])(?:[0-9a-fA-F]{41,}|[0-9a-fA-F]{32,39})(?![0-9a-fA-F])"
+        ),
+        "REDACTED",
+    ),
+    (re.compile(rf"(?i)(\bX-[\w-]*(?:Key|Token):\s*){SECRET_VALUE}"), r"\1REDACTED"),
+    (
+        re.compile(rf"(?i)(\bAuthorization:\s*(?:[A-Za-z]+\s+)?){SECRET_VALUE}"),
+        r"\1REDACTED",
+    ),
+    (re.compile(rf"(?i)(\bBearer\s+){SECRET_VALUE}"), r"\1REDACTED"),
+    (
+        re.compile(rf"(\b[A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD)=){SECRET_VALUE}"),
+        r"\1REDACTED",
+    ),
+    (re.compile(r"([?&]key=)[^&#\s'\"\\]+"), r"\1REDACTED"),
+    (re.compile(r"\b([A-Za-z][A-Za-z0-9]{1,7}_)[A-Za-z0-9]{32,}"), r"\1REDACTED"),
+]
+SHELL_TOOLS = {"Bash", "exec", "exec_command", "shell", "local_shell", "unified_exec"}
+SITE_URL = re.compile(r"https?://[^\s'\"\\)]*filedrawer\.dev[^\s'\"\\)]*")
+PRODUCTION = re.compile(r"https?://(?:www\.)?filedrawer\.dev(?![\w.-])")
+TOUCHES = ("filedrawer.dev/", "install.sh", ".config/filedrawer")
+REPORT_COMMANDS = 6
+REPORT_WRITES = 4
+# A shell command that sends a request.
+REQUEST = re.compile(r"\s*(?:\w+=\S*\s+)*(?:curl|wget)\b")
+
+
+def blank(text: str) -> str:
+    for pattern, replacement in REDACTIONS:
+        text = pattern.sub(replacement, text)
+    return text
+
+
+def first_time(path: Path) -> str:
+    """A transcript's first timestamp, or "" when it has none."""
+    for line in path.read_text().splitlines():
+        try:
+            stamp = json.loads(line).get("timestamp")
+        except (ValueError, AttributeError):
+            continue
+        if isinstance(stamp, str):
+            return stamp
+    return ""
+
+
+def run_calls(folder: Path) -> list[tuple[str, str]]:
+    """Each tool call of a run, (tool, input), in the order the sessions ran."""
+    paths = sorted(
+        folder.glob("transcript-*.jsonl"), key=lambda p: (first_time(p), p.name)
+    )
+    paths += sorted(folder.glob("print-mode.jsonl"))
+    return [(str(name), str(given)) for path in paths for name, given in commands(path)]
+
+
+def site_writes(command: str) -> list[str]:
+    """`METHOD URL` for each curl in `command` that posts, puts or deletes on the
+    site."""
+    writes = []
+    for part in shell_segments(command):
+        part = part.strip()
+        url = SITE_URL.search(part)
+        if not re.match(r"(?:\w+=\S*\s+)*curl\b", part) or not url:
+            continue
+        method = re.search(r"(?:-X\s*|--request[\s=]+)([A-Z]+)", part)
+        sends = re.search(
+            r"\s(?:-d|-F|-T|--data[\w-]*|--form|--json|--upload-file)\b", part
+        )
+        query = re.search(r"\s(?:-G|--get)\b", part)
+        verb = method.group(1) if method else "POST" if sends and not query else "GET"
+        if verb in ("POST", "PUT", "DELETE", "PATCH"):
+            writes.append(f"{verb} {blank(url.group(0))}")
+    return writes
+
+
+# A quoted string, a run of separators (pipe, `;`, `&`, newline), or other text.
+SHELL_PIECE = re.compile(r"""'[^']*'|"(?:[^"\\]|\\.)*"|[|;&\n]+|[^'"|;&\n]+|.""", re.S)
+
+
+def shell_segments(command: str) -> list[str]:
+    """`command` cut at each pipe, `;`, `&`, `&&` and newline outside quotes."""
+    segments = [""]
+    for piece in SHELL_PIECE.findall(command):
+        if re.fullmatch(r"[|;&\n]+", piece):
+            segments.append("")
+        else:
+            segments[-1] += piece
+    return segments
+
+
+def shell_text(given: str) -> str:
+    """The shell commands in Codex's JavaScript tool call (`tools.exec_command({cmd:
+    "..."})`), joined by ` ; `, or `given` as it is."""
+    found = re.findall(r'cmd:\s*"((?:[^"\\]|\\.)*)"', given)
+    if not found:
+        return given
+    try:
+        return " ; ".join(json.loads(f'"{cmd}"') for cmd in found)
+    except ValueError:
+        return given
+
+
+def skill_versions(files: Path) -> list[str]:
+    found = []
+    for skill in sorted((files / ".agents" / "skills").glob("*/SKILL.md")):
+        version = re.search(
+            r"^\s+version:\s*\"?([^\"\s]+)", skill.read_text(errors="replace"), re.M
+        )
+        found.append(f"{skill.parent.name} {version.group(1) if version else '?'}")
+    return found
+
+
+def dialog_turns(turns: Path) -> list[str]:
+    """The turns turns.md says were typed into a question dialog."""
+    answered = []
+    if not turns.exists():
+        return answered
+    for section in re.split(r"(?m)^(?=## Turn )", turns.read_text()):
+        number = re.match(r"## Turn (\d+)", section)
+        if not number:
+            continue
+        if "Answered in the question dialog" in section:
+            answered.append(number.group(1))
+        elif "Left a dialog of" in section:
+            answered.append(f"{number.group(1)} (left through Chat about this)")
+    return answered
+
+
+def scenario_name(folder: Path) -> str:
+    """The scenario file the run's scenario.json equals, or "?"."""
+    try:
+        ran = json.loads((folder / "scenario.json").read_text())
+    except (OSError, ValueError):
+        return "?"
+    for path in sorted((usability_dir() / "scenarios").glob("*.json")):
+        try:
+            if json.loads(path.read_text()) == ran:
+                return path.stem
+        except (OSError, ValueError):
+            continue
+    return "?"
+
+
+def report_run(folder: Path) -> list[str]:
+    try:
+        record = json.loads((folder / "run.json").read_text())
+    except (OSError, ValueError):
+        raise Usage(f"{folder} has no run.json: is it a run folder?") from None
+    number = re.search(r"\d+(?:\.\d+)+", record.get("version") or "")
+    version = number.group(0) if number else "?"
+    lines = [
+        f"{folder.name}: {scenario_name(folder)}, {record.get('harness')} "
+        f"{version}, outcome {record.get('outcome')}"
+    ]
+    calls = run_calls(folder)
+    fetched = "never"
+    for name, given in calls:
+        if name in SHELL_TOOLS:
+            # A curl -I is a version probe, which reads only the headers.
+            reads = [
+                s
+                for s in shell_segments(shell_text(given))
+                if re.search(r"/skill\.md\b", s)
+                and not re.search(r"\s(?:-\w*I\w*|--head)\b", s)
+            ]
+            if reads:
+                curl = any(re.match(r"\s*curl\b", s) for s in reads)
+                fetched = f"shell {'curl ' if curl else ''}({name})"
+                break
+        elif re.search(r"/skill\.md\b", given):
+            fetched = f"fetch tool {name}"
+            break
+    lines.append(f"  skill.md first fetched by: {fetched}")
+    lines.append(
+        f"  turns answered in a dialog: {', '.join(dialog_turns(folder / 'turns.md')) or 'none'}"
+    )
+    files = folder / "files"
+    lines.append(f"  skills: {', '.join(skill_versions(files)) or 'none'}")
+    upgrade = files / ".config" / "filedrawer" / "upgrade"
+    mode = (
+        " ".join(blank(upgrade.read_text(errors="replace")).split())
+        if upgrade.exists()
+        else "not saved"
+    )
+    lines.append(f"  upgrade file: {mode}")
+    production = sum(
+        1
+        for name, given in calls
+        for request in (
+            [s for s in shell_segments(shell_text(given)) if REQUEST.match(s)]
+            if name in SHELL_TOOLS
+            else [given]
+        )
+        if PRODUCTION.search(request)
+    )
+    lines.append(f"  requests to production filedrawer.dev: {production or 'none'}")
+    writes = [w for _, given in calls for w in site_writes(shell_text(given))]
+    shown = ", ".join(writes[:REPORT_WRITES])
+    more = (
+        f", {len(writes) - REPORT_WRITES} more" if len(writes) > REPORT_WRITES else ""
+    )
+    lines.append(f"  site writes: {shown or 'none'}{more}")
+    touching = [
+        (name, given)
+        for name, given in calls
+        if (name in SHELL_TOOLS or given.startswith("http"))
+        and any(t in given for t in TOUCHES)
+    ]
+    lines.append(f"  site and installer commands: {len(touching)}")
+    for name, given in touching[:REPORT_COMMANDS]:
+        # Only the parts of a compound command that touch the site or installer.
+        parts = [
+            s for s in shell_segments(shell_text(given)) if any(t in s for t in TOUCHES)
+        ]
+        text = " ".join(blank(" ; ".join(parts) or given).split())
+        lines.append(f"    [{name}] {text[:150]}{'…' if len(text) > 150 else ''}")
+    if len(touching) > REPORT_COMMANDS:
+        lines.append(f"    … {len(touching) - REPORT_COMMANDS} more")
+    return lines
+
+
+def report(args) -> int:
+    for n, run_dir in enumerate(args.run_dirs):
+        lines = report_run(Path(run_dir))
+        print(("\n" if n else "") + "\n".join(lines))
+    return 0
+
+
 # ---------------------------------------------------------------- main
 
 
@@ -663,6 +1023,15 @@ def main() -> int:
         if command == "headers":
             parser.add_argument("run_dir")
             return headers(parser.parse_args(sys.argv[2:]))
+        if command == "report":
+            parser.add_argument("run_dirs", nargs="+")
+            return report(parser.parse_args(sys.argv[2:]))
+        if command == "batch":
+            parser.add_argument("runs", nargs="+")
+            parser.add_argument("--base", default=STAGING)
+            args = parser.parse_args(sys.argv[2:])
+            check_base(args.base)
+            return batch(args)
         parser.add_argument("scenario")
         parser.add_argument("harness")
         parser.add_argument("name")

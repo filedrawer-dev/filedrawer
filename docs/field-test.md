@@ -62,7 +62,10 @@ A usability run has Claude Code or Codex, in its own TUI, follow a scripted huma
   Use persona-like names (`jason7`), since the agent sees its user's name.
 - Its turns use the field-test key, `{KEY}` in a scenario, for fetch tools; the run refuses a key that is closed or expires within 2 hours.
 - Run it with `bgrun --wait -o LOG`, as each turn may take 20 minutes.
-  `drive-agent digest RUN_DIR` reads a run, and `ops/usability-run headers RUN_DIR` lists its fetches of the site.
+  `ops/usability-run batch SCENARIO:HARNESS:NAME...` starts several runs at once, each logging to `logs/` in the usability folder, and prints one line a run once all have ended.
+- To read runs, start with `ops/usability-run report RUN_DIR...`: at most 15 lines a run, with keys and tokens blanked, saying how `/skill.md` was fetched, what got installed, the upgrade mode, the site and installer commands, and any write to the site or call naming production.
+  `drive-agent digest RUN_DIR --calls` lists each human turn and tool call on one line, and `drive-agent digest RUN_DIR` adds the agent's text; both blank keys and tokens by default.
+  `ops/usability-run headers RUN_DIR` lists a run's fetches of the site, each with its User-Agent, its skill header and whether it sent the header file.
 
 ## Reports
 

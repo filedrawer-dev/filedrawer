@@ -153,6 +153,86 @@ def test_an_unknown_token_mode_is_refused(setting, server):
     assert not setting["log"].exists()
 
 
+# Each run of a batch: says it started, waits for the run named in FAKE_WAIT_<NAME>
+# to start (so runs one after another would never end), then saves run.json in its
+# --out as drive-agent does; a NAME ending in 9 times out.
+FAKE_BATCH_AGENT = """#!/usr/bin/env python3
+import json, os, sys, time
+a = sys.argv
+name, out = a[a.index("--name") + 1], a[a.index("--out") + 1]
+d = os.environ["FAKE_DIR"]
+open(os.path.join(d, "started-" + name), "w").close()
+other = os.environ.get("FAKE_WAIT_" + name)
+while other and not os.path.exists(os.path.join(d, "started-" + other)):
+    time.sleep(0.05)
+os.makedirs(out)
+outcome = "timeout" if name.endswith("9") else "done"
+open(os.path.join(out, "run.json"), "w").write(json.dumps({"outcome": outcome}))
+print(name + ": " + outcome + " key " + os.environ.get("KEY", "-"))
+sys.exit(outcome != "done")
+"""
+
+
+@pytest.fixture
+def batch_setting(setting, tmp_path):
+    (tmp_path / "bin" / "drive-agent").write_text(FAKE_BATCH_AGENT)
+    setting["env"].update(FAKE_DIR=str(tmp_path), FAKE_WAIT_jason1="jason9")
+    return setting
+
+
+def test_a_batch_runs_in_parallel_and_prints_one_line_a_run(batch_setting, server):
+    scenario(batch_setting, "s1.json", turns=["Read skill.md?key={KEY}"])
+    scenario(batch_setting, "s2.json", turns=["hi"])
+    done = usability_run(
+        batch_setting,
+        "batch",
+        "s1:claude:jason1",
+        "s2.json:codex:jason9",
+        "--base",
+        server,
+    )
+    assert done.returncode == 1, done.stderr
+    lines = done.stdout.splitlines()
+    runs = batch_setting["folder"] / "runs"
+    day = next(runs.iterdir())
+    assert lines[0] == f"jason1-claude: exit 0, done, {day / 'jason1-claude'}"
+    assert lines[1] == f"jason9-codex: exit 1, timeout, {day / 'jason9-codex'}"
+    logs = batch_setting["folder"] / "logs"
+    assert "jason1: done" in (logs / "s1-claude-jason1.log").read_text()
+    assert "jason9: timeout" in (logs / "s2-codex-jason9.log").read_text()
+    # The key reaches each run by name only, and nothing prints it.
+    assert "open-key" not in done.stdout + done.stderr
+    assert done.stdout.count("ops/field-test-key close") == 1
+
+
+def test_a_batch_refuses_one_name_twice_before_any_run(batch_setting, server):
+    scenario(batch_setting, "s1.json", turns=["hi"])
+    done = usability_run(
+        batch_setting, "batch", "s1:claude:jason3", "s1:codex:jason3", "--base", server
+    )
+    assert done.returncode == 2 and "jason3" in done.stderr
+    assert not (batch_setting["folder"] / "logs").exists()
+
+
+def test_a_batch_refuses_a_run_whose_folder_exists(batch_setting, server):
+    scenario(batch_setting, "s1.json", turns=["hi"])
+    day = batch_setting["folder"] / "runs" / datetime.date.today().isoformat()
+    (day / "jason6-claude").mkdir(parents=True)
+    done = usability_run(batch_setting, "batch", "s1:claude:jason6", "--base", server)
+    assert done.returncode == 2 and "jason6-claude" in done.stderr
+    assert not (batch_setting["folder"] / "logs").exists()
+
+
+@pytest.mark.parametrize(
+    "spec", ["s1:claude", "s1:gemini:jason4", "s1:claude:Jason4", "s0:claude:jason4"]
+)
+def test_a_batch_refuses_a_malformed_run(batch_setting, server, spec):
+    scenario(batch_setting, "s1.json", turns=["hi"])
+    done = usability_run(batch_setting, "batch", spec, "--base", server)
+    assert done.returncode == 2 and spec in done.stderr
+    assert not (batch_setting["folder"] / "logs").exists()
+
+
 SETUP = ROOT / "ops" / "usability" / "setup.py"
 
 
