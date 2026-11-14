@@ -943,7 +943,7 @@ async fn a_recheck_spends_no_account_share() {
 }
 
 #[tokio::test]
-async fn the_recheck_stops_while_githubs_calls_run_low() {
+async fn the_recheck_holds_a_github_entry_once_the_calls_run_low() {
     let app = test_app().await;
     for digit in ['1', '2'] {
         let sha = hash(digit);
@@ -965,6 +965,132 @@ async fn the_recheck_stops_while_githubs_calls_run_low() {
     let url = format!("https://github.com/ada/steering/tree/{}", hash('3'));
     app.post("/entries", with_code(&url)).await;
     assert_eq!(app.web.api_calls().len(), calls + 1);
+}
+
+/// A link as the server stores its last check.
+#[derive(Debug, PartialEq, sqlx::FromRow)]
+struct StoredLink {
+    field: String,
+    pin: Option<String>,
+    next_check_at: Option<String>,
+    retries: i64,
+}
+
+/// Entry `id`'s stored links.
+async fn link_rows(app: &TestApp, id: &str) -> Vec<StoredLink> {
+    sqlx::query_as(
+        "SELECT l.field, l.pin, l.next_check_at, l.retries
+         FROM link_checks l JOIN entries e ON e.seq = l.entry_seq
+         WHERE e.id = ? ORDER BY l.field",
+    )
+    .bind(id)
+    .fetch_all(&app.pool)
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn a_run_rechecks_a_hundred_entries_and_leaves_the_rest_to_the_next() {
+    let app = test_app().await.with_limits(common::through_caddy::wide());
+    for n in 0..101 {
+        let logs = format!("https://huggingface.co/datasets/ada/logs-{n}/tree/{SHA}");
+        app.web.answer(&logs, 503);
+        app.submit_held(&with_logs(&logs)).await;
+        app.web.answer(&logs, 200);
+    }
+
+    assert_eq!(recheck_after_minutes(&app, 61).await, 100);
+    assert_eq!(recheck_after_minutes(&app, 62).await, 1);
+}
+
+/// A Hugging Face `logs` link that answered 503 at submission, so its entry is due
+/// for a recheck in an hour, and answers 200 from now on; returns the entry's ID.
+async fn hugging_face_entry_due_in_an_hour(app: &TestApp) -> String {
+    let logs = format!("https://huggingface.co/datasets/ada/logs/tree/{SHA}");
+    app.web.answer(&logs, 503);
+    let id = app.submit(&with_logs(&logs)).await;
+    app.web.answer(&logs, 200);
+    id
+}
+
+/// Asserts that a recheck an hour on rechecks only entry `rechecked`, whose links
+/// then wait for nothing, holds entry `held` as it was, and calls GitHub's API for
+/// neither.
+async fn assert_recheck_holds(app: &TestApp, held: &str, rechecked: &str) {
+    let calls = app.web.api_calls().len();
+    let held_before = link_rows(app, held).await;
+    assert!(held_before[0].next_check_at.is_some(), "{held_before:?}");
+
+    assert_eq!(recheck_after_minutes(app, 61).await, 1);
+
+    assert_eq!(app.web.api_calls().len(), calls);
+    assert_eq!(link_rows(app, held).await, held_before);
+    let after = link_rows(app, rechecked).await;
+    assert!(
+        after.iter().all(|link| link.next_check_at.is_none()),
+        "{after:?}"
+    );
+}
+
+#[tokio::test]
+async fn while_githubs_calls_run_low_a_recheck_that_needs_none_goes_on() {
+    let app = test_app().await;
+    app.web.api_fails(&compare_path("HEAD", SHA));
+    let github = app.submit(&with_code(&github_code())).await;
+    let hugging_face = hugging_face_entry_due_in_an_hour(&app).await;
+    // An answer with fewer than three quarters of the hour's 5,000 calls left.
+    let other = hash('5');
+    app.web.api(
+        &compare_path("HEAD", &other),
+        200,
+        serde_json::json!({"status": "identical"}),
+        3000,
+    );
+    let url = format!("https://github.com/ada/steering/tree/{other}");
+    app.post("/entries", with_code(&url)).await;
+
+    assert_recheck_holds(&app, &github, &hugging_face).await;
+}
+
+#[tokio::test]
+async fn while_githubs_api_is_paused_a_recheck_that_needs_none_goes_on() {
+    let app = test_app().await;
+    app.web.api_after(
+        &compare_path("HEAD", SHA),
+        429,
+        serde_json::json!({"message": "You have exceeded a secondary rate limit"}),
+        4000,
+        Some(120),
+    );
+    let github = app.submit(&with_code(&github_code())).await;
+    let hugging_face = hugging_face_entry_due_in_an_hour(&app).await;
+
+    assert_recheck_holds(&app, &github, &hugging_face).await;
+}
+
+#[tokio::test]
+async fn while_githubs_calls_run_low_an_entry_whose_commit_is_confirmed_is_rechecked() {
+    let app = test_app().await;
+    app.web.api_fails(&compare_path("HEAD", SHA));
+    let unconfirmed = app.submit(&with_code(&github_code())).await;
+    let confirmed = hash('5');
+    app.web.api(
+        &compare_path("HEAD", &confirmed),
+        200,
+        serde_json::json!({"status": "identical"}),
+        3000,
+    );
+    let logs = format!("https://huggingface.co/datasets/ada/logs/tree/{SHA}");
+    app.web.answer(&logs, 503);
+    let both = app
+        .submit(&entry(
+            "Linked",
+            &format!("code: https://github.com/ada/steering/tree/{confirmed}\nlogs: [{logs}]\n"),
+        ))
+        .await;
+    app.web.answer(&logs, 200);
+
+    assert_recheck_holds(&app, &unconfirmed, &both).await;
 }
 
 #[tokio::test]

@@ -22,8 +22,9 @@ pub const RECHECK_DAYS: i64 = 7;
 /// [`RECHECK_DAYS`] (uncertainties.md, "What a recheck covers, and when").
 const FIRST_RETRY: Duration = Duration::hours(1);
 
-/// The most entries one run rechecks; the rest wait for the next run.
-const RECHECKS_PER_RUN: i64 = 100;
+/// The most entries one run rechecks; the rest wait for the next run. A run also
+/// reads, and checks nothing of, each entry it holds for GitHub's API.
+const RECHECKS_PER_RUN: usize = 100;
 
 /// When a link is checked again.
 struct NextCheck {
@@ -240,44 +241,60 @@ pub async fn stored(pool: &SqlitePool, seq: i64) -> Result<Vec<CheckedLink>, sql
 }
 
 /// Rechecks the links of every entry with a link whose next check (`next_check`) has
-/// come by `now`, unless the entry is rejected, withdrawn or removed. Its GitHub calls
-/// count against no account's share, and it stops while fewer than three quarters of
-/// the hour's calls are left. Returns how many entries it rechecked.
+/// come by `now`, unless the entry is rejected, withdrawn or removed, the oldest
+/// `RECHECKS_PER_RUN` of them. Its GitHub calls count against no account's share.
+/// While fewer than three quarters of the hour's calls are left, or GitHub's API
+/// asked the server to wait, an entry whose check may call that API is held as it
+/// is, and the others go on (#21). Returns how many entries it rechecked.
 pub async fn recheck_due(state: &AppState, now: OffsetDateTime) -> Result<usize, sqlx::Error> {
     let now_text = stamp(now);
+    // No LIMIT: held entries count toward none, so they can't fill a run.
     let due = sqlx::query_scalar!(
         r#"SELECT DISTINCT l.entry_seq AS "seq!: i64"
            FROM link_checks l JOIN entries e ON e.seq = l.entry_seq
            WHERE l.next_check_at <= ?
              AND e.status NOT IN ('rejected', 'withdrawn', 'removed')
-           ORDER BY l.entry_seq
-           LIMIT ?"#,
-        now_text,
-        RECHECKS_PER_RUN
+           ORDER BY l.entry_seq"#,
+        now_text
     )
     .fetch_all(&state.pool)
     .await?;
     let mut rechecked = 0;
     for seq in due {
-        if state.link_checker.github_low() || state.link_checker.github_paused() {
+        if rechecked == RECHECKS_PER_RUN {
             break;
         }
-        recheck_entry(state, seq, now).await?;
-        rechecked += 1;
+        let hold_github = state.link_checker.github_low() || state.link_checker.github_paused();
+        if recheck_entry(state, seq, now, hold_github).await? {
+            rechecked += 1;
+        }
     }
     Ok(rechecked)
 }
 
-/// Checks entry `seq`'s links again at `now`. A pin found bad only flags the card:
-/// nothing rejects an entry after submission (the owner's decision, 2026-11-07).
-async fn recheck_entry(state: &AppState, seq: i64, now: OffsetDateTime) -> Result<(), sqlx::Error> {
+/// Checks entry `seq`'s links again at `now`, and says whether the entry counts
+/// toward the run's `RECHECKS_PER_RUN`, as all do but one held: with `hold_github`,
+/// an entry whose check may call GitHub's API is left as stored, its next check and
+/// retries included. A pin found bad only flags the card: nothing
+/// rejects an entry after submission (the owner's decision, 2026-11-07).
+async fn recheck_entry(
+    state: &AppState,
+    seq: i64,
+    now: OffsetDateTime,
+    hold_github: bool,
+) -> Result<bool, sqlx::Error> {
     let source = sqlx::query_scalar!("SELECT source FROM entries WHERE seq = ?", seq)
         .fetch_optional(&state.pool)
         .await?;
     let Some(source) = source else {
-        return Ok(());
+        return Ok(true);
     };
     let analysis = analyzer::analyze(&source);
+    // Decided on the text about to be checked, not on the stored links, which a PUT
+    // since may have replaced.
+    if hold_github && super::github::may_call_github(state, &analysis.fields).await {
+        return Ok(false);
+    }
     let links = check(state, &[&analysis.fields], None)
         .await
         .pop()
@@ -291,5 +308,6 @@ async fn recheck_entry(state: &AppState, seq: i64, now: OffsetDateTime) -> Resul
     if unchanged {
         store_rechecked(&mut transaction, seq, &links, now).await?;
     }
-    transaction.commit().await
+    transaction.commit().await?;
+    Ok(true)
 }

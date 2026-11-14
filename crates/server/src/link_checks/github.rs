@@ -76,7 +76,8 @@ impl LinkChecker {
     }
 
     /// Whether fewer than three quarters of the hour's calls are left, so the
-    /// rechecks leave the server's half to submissions.
+    /// rechecks that may call the API wait, and leave the server's half to
+    /// submissions.
     pub(super) fn github_low(&self) -> bool {
         let three_quarters = self.github_hourly / 4 * 3;
         self.github_below(three_quarters)
@@ -122,6 +123,21 @@ pub(super) async fn github_pin(
         CommitPage::HeldByNone => confirm_held_by_none(state, commit, account).await,
         CommitPage::Unread => api_pin(state, commit, account).await,
     }
+}
+
+/// Whether checking `fields`' links may call GitHub's API: a `code` link names a
+/// GitHub commit that isn't confirmed yet, which `github_pin` would ask about. A
+/// confirmed one it answers from the database.
+pub(super) async fn may_call_github(state: &AppState, fields: &analyzer::Fields) -> bool {
+    for (field, url) in super::checked_links(fields) {
+        if field == super::Field::Code
+            && let Some(commit) = analyzer::github_commit(&url)
+            && !known_confirmed(&state.pool, &commit).await
+        {
+            return true;
+        }
+    }
+    false
 }
 
 /// The commit page said no branch or tag holds `commit`. One API call, a compare

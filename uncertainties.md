@@ -433,7 +433,12 @@ Add a new entry at the end of the topic it belongs to, or start a topic when non
   Retry a link that couldn't be checked every hour, or an hour then doubling.
 - Chosen: every link of an entry with a link whose next check has come, so a link that died since gets its flag too; every status except rejected, withdrawn and removed.
   A dead link or a bad pin waits a week; a "retry later" link or an unconfirmed pin waits an hour, then 2, 4 and so on, at most a week, as GitHub advises for backing off.
-  The job runs every minute, up to 100 entries a run, and stops while fewer than three quarters of GitHub's hourly calls are left, leaving submissions the rest of the server's half.
+  The job runs every minute, up to 100 entries a run.
+  While fewer than three quarters of GitHub's hourly calls are left, or GitHub's API asked the server to wait, it holds each entry whose check may call that API, leaving submissions the rest of the server's half, and rechecks the others (#21).
+  Such an entry has a `code` link to a GitHub commit not yet confirmed on a branch or tag; it waits whole, its other links too, with its next check and retries as they were.
+  Each run reads and analyzes every held entry again, a minute apart, to see whether it still must wait; that grows with the entries held, and is small at the sizes expected.
+  The other choice in #21, not taken without the owner: let the held entry's check run and refuse only its API calls, so a commit GitHub's commit page can confirm alone is confirmed sooner.
+  Against that one: a pin whose check needs the API would then turn from "commit on no branch" to "pin not verified" on a public card, and spend a retry on a call nobody made.
 - Against: a public entry whose links were all live at submission is never rechecked, so a repository deleted later keeps a clean card.
   And a host that is down for a day is retried 4 times that day, at 1, 3, 7 and 15 hours.
 
@@ -585,7 +590,7 @@ The owner settled the email's sections and the rules in design.md's Admin sectio
   A page host's 503 pauses it only with `Retry-After`.
   `Retry-After` is held to a day, and a doubling wait to an hour.
   A pause only grows, and a normal answer ends the doubling but not the pause, since it may answer a fetch sent before the host asked.
-  The recheck job doesn't run while GitHub's API is paused, so a long wait costs no retries.
+  The recheck job holds the entries that may call GitHub's API while it is paused, so a long wait costs them no retries; a link on another host is rechecked meanwhile, and counts its own.
 - Against: a restart forgets a pause, so a deploy during GitHub's secondary limit sends one call too soon; and a rate-limit 403 worded otherwise is read as a plain error, retried at the next submission.
 
 ### Staging and checks

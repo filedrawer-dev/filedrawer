@@ -225,7 +225,7 @@ A submission goes through these steps in order: the first two when it is submitt
    - The server spends at most half of the hour's calls: it calls nothing while GitHub's last answer left fewer than half.
      GitHub counts every call a person's tokens and apps make against one limit, so the rest stays with the token's owner (the owner: "I'd want to stay well under the limit. Like half, at most.").
      Each account may spend a tenth of the server's calls, as with screening's cap (the owner's decision, 2026-11-07; that it is a tenth of the half is in uncertainties.md); past that, its links get "pin not verified".
-     Rechecks spend none of an account's share, and stop while fewer than three quarters of the hour's calls are left, so submissions keep theirs (uncertainties.md).
+     Rechecks spend none of an account's share, and while fewer than three quarters of the hour's calls are left, or GitHub's API asked the server to wait, a recheck that may call the API waits, so submissions keep theirs (uncertainties.md).
      Reason: one account must not be able to spend everyone's checks.
    - A host that asks the server to wait is left alone until the wait is over, as GitHub's docs ask.
      A 429, or a 503 with `Retry-After`, from github.com, huggingface.co or zenodo.org pauses fetches from that host; a 429 from GitHub's API, or a 403 with no calls left, with `Retry-After`, or saying it is a rate limit, pauses every API call.
