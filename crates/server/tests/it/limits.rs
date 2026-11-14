@@ -399,9 +399,13 @@ async fn resending_a_verification_counts_as_an_email() {
 }
 
 mod windows {
-    //! `count_event` with times of the test's choosing.
+    //! `count_event` and `RateLimits::take` with times of the test's choosing.
 
-    use filedrawer_server::limits::{Counted, Limits, count_event, tidy};
+    use std::time::Instant;
+
+    use filedrawer_server::limits::{
+        Counted, Limits, MAX_BUCKETS, Rate, RateLimits, count_event, tidy,
+    };
     use time::macros::datetime;
 
     use super::*;
@@ -464,8 +468,6 @@ mod windows {
 
     #[test]
     fn a_bucket_lends_its_count_then_refills_one_every_share_of_the_period() {
-        use filedrawer_server::limits::RateLimits;
-        use std::time::Instant;
         let rate = per_minute(3);
         let limits = RateLimits::new(wide());
         let start = Instant::now();
@@ -482,5 +484,49 @@ mod windows {
             assert_eq!(limits.take("k", rate, rested), Ok(()));
         }
         assert!(limits.take("k", rate, rested).is_err());
+    }
+
+    /// Limits whose map holds `MAX_BUCKETS` keys at `rate`, two requests a minute:
+    /// at `start`, `busy` took both of its requests and every other key took one.
+    fn full_map(start: Instant) -> (RateLimits, Rate) {
+        let rate = per_minute(2);
+        let limits = RateLimits::new(wide());
+        for _ in 0..2 {
+            assert_eq!(limits.take("busy", rate, start), Ok(()));
+        }
+        for n in 1..MAX_BUCKETS {
+            assert_eq!(limits.take(&format!("idle {n}"), rate, start), Ok(()));
+        }
+        (limits, rate)
+    }
+
+    #[test]
+    fn a_full_map_drops_the_refilled_buckets_and_keeps_the_ones_in_use() {
+        let start = Instant::now();
+        let (limits, rate) = full_map(start);
+
+        // The idle keys have their request back; `busy` has one of its two.
+        let later = start + Duration::from_secs(45);
+        assert_eq!(limits.take("a new client", rate, later), Ok(()));
+
+        assert_eq!(limits.take("busy", rate, later), Ok(()));
+        assert!(
+            limits.take("busy", rate, later).is_err(),
+            "a new key reset the limit of a key in use"
+        );
+    }
+
+    #[test]
+    fn a_full_map_with_no_refilled_bucket_forgets_them_all() {
+        let start = Instant::now();
+        let (limits, rate) = full_map(start);
+
+        // Nobody has refilled, so nothing but a clean start makes room.
+        assert_eq!(limits.take("a new client", rate, start), Ok(()));
+
+        for _ in 0..2 {
+            assert_eq!(limits.take("busy", rate, start), Ok(()));
+        }
+        assert!(limits.take("busy", rate, start).is_err());
     }
 }

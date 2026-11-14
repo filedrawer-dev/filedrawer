@@ -95,7 +95,7 @@ const LONGEST_WINDOW_SECONDS: i64 = 86_400;
 /// bucket is what a new one would be, so dropping it changes nothing; if none is
 /// full, all go, which forgives at most a minute's requests, or an hour's GitHub
 /// calls, and only happens to a server that 100,000 clients reach within a minute.
-const MAX_BUCKETS: usize = 100_000;
+pub const MAX_BUCKETS: usize = 100_000;
 
 /// The limits and the per-minute counts.
 #[derive(Debug)]
