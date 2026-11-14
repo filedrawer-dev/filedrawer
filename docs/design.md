@@ -939,7 +939,8 @@ Reason: entries and feedback can carry instructions, such as "create an invite c
   It deletes attached files that no other entry uses.
   Backups can't be edited under Object Lock, so purged data leaves them within 45 days.
   Reason: the VPS is in Germany, and people have a legal right to have their personal data erased.
-  - A purge runs with SQLite's `secure_delete` on, and uses FTS5's `secure-delete` option or follows with FTS5 `optimize` and `VACUUM`.
+  - Every connection runs with SQLite's `secure_delete` on, so each deletion overwrites its rows, an author's deletion of a pending entry and an account's deletion included, and each hour the server empties the write-ahead log, which holds the pages as they were before (#65).
+    A purge also uses FTS5's `secure-delete` option or follows with FTS5 `optimize` and `VACUUM`.
     Reason: by default SQLite leaves deleted rows' bytes in freed pages, and FTS5 keeps old index entries, so every later Litestream snapshot would copy the purged text and it would never age out.
     A test plants a string, purges it, and greps the database file and a fresh snapshot for it.
   - The server logs each purge's IDs, with no content, in a file outside the database, with its own copy in B2.

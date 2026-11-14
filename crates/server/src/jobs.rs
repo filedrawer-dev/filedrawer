@@ -132,9 +132,10 @@ pub async fn tidy_files(state: &AppState, now: OffsetDateTime) -> Result<(), Sto
     expired.map_err(StoreError::from).and(swept)
 }
 
-/// Runs `tidy_files`, and deletes the rate limits' expired counts and the search
-/// log's old rows, every hour, for `filedrawer-server serve`. An error is logged and the
-/// loop goes on.
+/// Runs `tidy_files`, deletes the rate limits' expired counts and the search
+/// log's old rows, and then empties the database's write-ahead log, which would
+/// otherwise keep deleted text (`db::trim_log`), every hour, for `filedrawer-server
+/// serve`. An error is logged and the loop goes on.
 pub async fn run_tidier(state: AppState) {
     let mut ticks = tokio::time::interval(std::time::Duration::from_secs(60 * 60));
     loop {
@@ -147,6 +148,15 @@ pub async fn run_tidier(state: AppState) {
         }
         if let Err(error) = crate::search_log::tidy(&state.pool, OffsetDateTime::now_utc()).await {
             tracing::error!(%error, "tidying the search log failed");
+        }
+        match crate::db::trim_log(&state.pool).await {
+            Ok(true) => {}
+            Ok(false) => tracing::warn!(
+                "the database's write-ahead log wasn't emptied: a reader was at work; the next hour tries again"
+            ),
+            Err(error) => {
+                tracing::error!(%error, "emptying the database's write-ahead log failed");
+            }
         }
     }
 }
