@@ -148,11 +148,20 @@ jobs:
             echo "::error::not version $VERSION: $others"
             exit 1
           fi
-      # --check-url skips the files PyPI has already, so a rerun finishes a release.
+      # A version PyPI has already is skipped whole, so a rerun can finish npm: a
+      # rebuilt wheel isn't byte for byte the one PyPI holds, which it refuses
+      # (run 43669677567).
       - name: Publish
-        run: >-
-          pipx run uv==0.13.5 publish --trusted-publishing always
-          --check-url https://pypi.org/simple/ dist/*
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          status=$(curl -sS --retry 3 --max-time 30 -o /dev/null -w '%{http_code}' \
+            "https://pypi.org/pypi/filedrawer/$VERSION/json" || true)
+          case $status in
+            200) echo "::notice::PyPI has filedrawer $VERSION already, so nothing is uploaded." ;;
+            404) pipx run uv==0.13.5 publish --trusted-publishing always dist/* ;;
+            *) echo "::error::PyPI didn't answer about filedrawer $VERSION"; exit 1 ;;
+          esac
 
   # Runs no third-party action: the job can mint an npm publish token. The `npm`
   # environment is the one each package's trusted publisher names (ops/claim-names).
