@@ -74,10 +74,12 @@ function packFolder(manifest, files, outdir) {
   const folder = mkdtempSync(join(tmpdir(), "filedrawer-npm-"));
   try {
     writePackage(folder, manifest, files);
-    // Through a shell, which finds npm.cmd on Windows, with each argument quoted
-    // for sh and cmd.exe alike: a path holds no double quote.
-    const args = ["npm", "pack", "--json", "--pack-destination", resolve(outdir), folder];
-    const packed = execSync(args.map((arg) => `"${arg}"`).join(" "), { encoding: "utf8" });
+    // Through a shell, which finds npm.cmd on Windows, with each path quoted for sh
+    // and cmd.exe alike: a path holds no double quote. `npm` itself stays bare:
+    // cmd.exe runs a quoted "npm" so that npm.cmd looks for npm beside the current
+    // folder instead of beside itself.
+    const paths = [resolve(outdir), folder].map((path) => `"${path}"`);
+    const packed = execSync(`npm pack --json --pack-destination ${paths.join(" ")}`, { encoding: "utf8" });
     console.log(join(resolve(outdir), JSON.parse(packed)[0].filename));
   } finally {
     rmSync(folder, { recursive: true, force: true });
