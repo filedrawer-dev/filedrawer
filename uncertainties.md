@@ -728,7 +728,7 @@ The owner settled the email's sections and the rules in design.md's Admin sectio
 #### Versions
 
 - Options: start both crates and the PyPI package at 0.1.0, or at 0.0.x; keep the two crates' versions apart, or in step.
-- Chosen: 0.1.0 each, versioned apart; the PyPI package takes `crates/cli`'s version.
+- Chosen: 0.1.0 each, versioned apart; the PyPI and npm packages take `crates/cli`'s version.
   The CLI's version moves with what agents run, and the analyzer's with its API.
 - Against: a version in step would let one bump cover both, and 0.0.x would say more plainly that nothing is stable yet.
 
@@ -736,5 +736,12 @@ The owner settled the email's sections and the rules in design.md's Admin sectio
 
 - Options: tag the static Linux wheels manylinux only, musllinux only, or both; let any branch's run publish, or only main's.
 - Chosen: both tags on each static Linux wheel, as uv's own wheels do, so pip and uv on glibc and on musl systems take the same file.
-  `ops/claim-names` makes the `pypi` environment open to main only, and the workflow refuses files whose version isn't the one typed in.
+  `ops/claim-names` makes the `pypi` and `npm` environments open to main only, and the workflow refuses files whose version isn't the one typed in.
 - Against: a release from a branch would let a fix go out before it lands.
+
+#### npm's trusted publishers, set up again on each run
+
+- Options: for a package npm has only as the 0.0.0 placeholder, set up its trusted publisher afresh on each run of `ops/claim-names` (revoke any, then add); add one only where `npm trust list` shows none; or ask the owner to look at the package's settings page.
+- Chosen: afresh, right before the release stage, since `npm trust list` doesn't say whether a publisher has lapsed after its 2 days (npm/cli v11.21.2, `lib/trust-cmd.js`), so a rerun days after a failed release would otherwise keep one that no longer works (#84).
+  A released package's publisher has been used, so it is left alone.
+- Against: each rerun before the first release asks for up to three second factors a package, eighteen in all, where most reruns come within the 2 days and need none.

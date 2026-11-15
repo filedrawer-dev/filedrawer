@@ -198,8 +198,8 @@ def test_the_launcher_depends_on_every_platform_at_its_own_version(tmp_path):
     assert_published_metadata(package)
 
 
-def assert_published_metadata(package: dict) -> None:
-    assert package["version"] == CLI_VERSION
+def assert_published_metadata(package: dict, version: str = CLI_VERSION) -> None:
+    assert package["version"] == version
     assert package["license"] == "AGPL-3.0-only"
     # npm's trusted publishing refuses a repository.url that isn't the repo's own.
     assert package["repository"]["url"] == REPOSITORY
@@ -207,6 +207,45 @@ def assert_published_metadata(package: dict) -> None:
     assert package["publishConfig"]["access"] == "public"
     # No install script: npm's --ignore-scripts would leave a package that runs none.
     assert "scripts" not in package
+
+
+def placeholders(out: Path) -> list[Path]:
+    done = subprocess.run(
+        ["node", str(PACK), "placeholders", str(out)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert done.returncode == 0, done.stderr
+    return [Path(line) for line in done.stdout.splitlines()]
+
+
+def test_placeholders_hold_each_name_at_0_0_0_in_publishing_order(tmp_path):
+    """ops/claim-names publishes them, since npm's trusted publishing needs a
+    package that exists; the release's real version then follows."""
+    folders = placeholders(tmp_path)
+    names = [name for name, *_ in PLATFORMS.values()]
+    assert [json.loads((f / "package.json").read_text())["name"] for f in folders] == [
+        *names,
+        "@filedrawer/cli",
+    ]
+    for folder in folders:
+        assert folder.parent == tmp_path
+        package = json.loads((folder / "package.json").read_text())
+        assert_published_metadata(package, "0.0.0")
+        assert "@filedrawer/cli" in (folder / "README.md").read_text()
+        assert (folder / "LICENSE").read_bytes() == (REPO / "LICENSE").read_bytes()
+        assert "optionalDependencies" not in package
+
+
+def test_the_launchers_placeholder_says_how_to_install_meanwhile(tmp_path):
+    launcher = placeholders(tmp_path)[-1]
+    bin_path = json.loads((launcher / "package.json").read_text())["bin"]["filedrawer"]
+    run = subprocess.run(
+        ["node", str(launcher / bin_path)], capture_output=True, text=True, check=False
+    )
+    assert run.returncode == 1
+    assert "uvx filedrawer" in run.stderr
 
 
 def test_a_target_with_no_package_is_refused(tmp_path):

@@ -3,12 +3,15 @@
 //
 //   node crates/cli/npm/pack.mjs platform RUST_TARGET BINARY OUTDIR
 //   node crates/cli/npm/pack.mjs launcher OUTDIR
+//   node crates/cli/npm/pack.mjs placeholders OUTDIR
 //
 // `platform` packs @filedrawer/cli-<os>-<cpu> around one release binary, and
 // `launcher` packs @filedrawer/cli, whose optionalDependencies are those packages,
 // so npm installs only the one for its machine; filedrawer.js runs it. Each package
 // takes its version from crates/cli/Cargo.toml and carries the crate's LICENSE. Each
 // command prints the path of the .tgz it wrote. release-cli.yml runs both.
+// `placeholders` writes a 0.0.0 of each package, a folder each, which
+// ops/claim-names publishes before the first release.
 
 import { execSync } from "node:child_process";
 import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -52,19 +55,25 @@ function common(name, description) {
   };
 }
 
+// Writes a package's files into FOLDER: its package.json, the crate's LICENSE, and
+// each of FILES, copied `from` a path or written from its `text`.
+function writePackage(folder, manifest, files) {
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(join(folder, "package.json"), JSON.stringify(manifest, null, 2) + "\n");
+  copyFileSync(join(CRATE, "LICENSE"), join(folder, "LICENSE"));
+  for (const [to, { from, text, mode }] of Object.entries(files)) {
+    mkdirSync(dirname(join(folder, to)), { recursive: true });
+    if (text === undefined) copyFileSync(from, join(folder, to));
+    else writeFileSync(join(folder, to), text);
+    if (mode) chmodSync(join(folder, to), mode);
+  }
+}
+
 // Writes the package in a temp folder, packs it into OUTDIR, and prints the .tgz.
 function packFolder(manifest, files, outdir) {
   const folder = mkdtempSync(join(tmpdir(), "filedrawer-npm-"));
   try {
-    writeFileSync(join(folder, "package.json"), JSON.stringify(manifest, null, 2) + "\n");
-    copyFileSync(join(CRATE, "LICENSE"), join(folder, "LICENSE"));
-    // Each file is copied `from` a path, or written from its `text`.
-    for (const [to, { from, text, mode }] of Object.entries(files)) {
-      mkdirSync(dirname(join(folder, to)), { recursive: true });
-      if (text === undefined) copyFileSync(from, join(folder, to));
-      else writeFileSync(join(folder, to), text);
-      if (mode) chmodSync(join(folder, to), mode);
-    }
+    writePackage(folder, manifest, files);
     // Through a shell, which finds npm.cmd on Windows, with each argument quoted
     // for sh and cmd.exe alike: a path holds no double quote.
     const args = ["npm", "pack", "--json", "--pack-destination", resolve(outdir), folder];
@@ -115,12 +124,51 @@ function packLauncher(outdir) {
   );
 }
 
+// What the launcher's placeholder runs: there is no binary until the release.
+const PLACEHOLDER_BIN = `#!/usr/bin/env node
+console.error([
+  "filedrawer: this is a placeholder that holds the name on npm until the first release.",
+  "Meanwhile, install it from PyPI or crates.io:",
+  "  uvx filedrawer check ENTRY.md",
+  "  cargo install filedrawer --locked",
+].join("\\n"));
+process.exit(1);
+`;
+
+// Writes a 0.0.0 of each package into OUTDIR, one folder each, and prints them in
+// the order to publish them, the launcher last. npm's trusted publishing can be
+// set up only for a package npm has, so ops/claim-names publishes these first.
+function writePlaceholders(outdir) {
+  const names = [...Object.values(PLATFORMS).map(platformName), "@filedrawer/cli"];
+  for (const name of names) {
+    const folder = join(resolve(outdir), name.replace("@filedrawer/", ""));
+    const launcher = name === "@filedrawer/cli";
+    const manifest = {
+      ...common(name, "Holds the name until the first release; install @filedrawer/cli."),
+      version: "0.0.0",
+      ...(launcher && { bin: { filedrawer: "bin/filedrawer.js" } }),
+    };
+    const readme =
+      `# ${name}\n\n` +
+      "A placeholder that holds the name on npm until the first release of [@filedrawer/cli](https://www.npmjs.com/package/@filedrawer/cli), File Drawer's offline entry checker.\n";
+    writePackage(folder, manifest, {
+      "README.md": { text: readme },
+      ...(launcher && { "bin/filedrawer.js": { text: PLACEHOLDER_BIN, mode: 0o755 } }),
+    });
+    console.log(folder);
+  }
+}
+
 const [command, ...args] = process.argv.slice(2);
 if (command === "platform" && args.length === 3) {
   packPlatform(...args);
 } else if (command === "launcher" && args.length === 1) {
   packLauncher(...args);
+} else if (command === "placeholders" && args.length === 1) {
+  writePlaceholders(...args);
 } else {
-  console.error("usage: pack.mjs platform RUST_TARGET BINARY OUTDIR | pack.mjs launcher OUTDIR");
+  console.error(
+    "usage: pack.mjs platform RUST_TARGET BINARY OUTDIR | pack.mjs launcher OUTDIR | pack.mjs placeholders OUTDIR",
+  );
   process.exit(2);
 }

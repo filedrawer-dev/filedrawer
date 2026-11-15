@@ -47,7 +47,7 @@ The field test's entries and logs are in `field-test/`, git-excluded and local o
   Each published crate holds a copy of the repo's `LICENSE`, since cargo and maturin package only files inside the crate, and `bin/tests/test_licence_copies.py` fails when a copy differs.
   It is a crate of its own so that a later CLI's HTTP dependencies stay out of the analyzer the server builds.
   `crates/cli/pyproject.toml` has maturin wrap both binaries in a wheel, and `crates/cli/npm/pack.mjs` packs the `filedrawer` binary in an npm package per platform beside the launcher `@filedrawer/cli` (`crates/cli/npm/filedrawer.js`); `.github/workflows/release-cli.yml` builds the wheels, the sdist and the npm packages on each pull request that touches them, and publishes to PyPI and npm only when started by hand with the version.
-  crates.io publishing is by hand: the owner runs `ops/claim-names` (`-h`), which also starts the first PyPI release and walks through claiming the npm scope `@filedrawer`.
+  crates.io publishing is by hand: the owner runs `ops/claim-names` (`-h`), which also makes the npm packages, as placeholders with a trusted publisher each, and starts the first release to PyPI and npm.
 - `entry-check FILE...` checks entries offline, for contributing agents and field tests: `cargo run -q --bin entry-check -- FILE...`.
   It exits 1 when the server would refuse an entry.
   After an analyzer change, run `bin/field-test-diff` through `heavy` (`-h`): it builds entry-check at the commit your branch forked from, or at `--against REV`, and lists the field-test entries whose outcome changed, without their contents.

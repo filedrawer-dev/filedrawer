@@ -203,18 +203,23 @@ usage() {
   cat <<'EOF'
 usage: ops/claim-names [-h]
 
-Holds the name filedrawer on crates.io and PyPI, with the package whose command is
-`filedrawer check` (entry-check under its new name), and
-the @filedrawer scope on npm (design.md, Distribution; #74). Run it on your own
+Publishes the package whose command is `filedrawer check` (entry-check under its
+new name) as filedrawer on crates.io and PyPI and as @filedrawer/cli on npm
+(design.md, Distribution; #74, #84), all at one version. Run it on your own
 machine, from the repo root of a clean clone at origin/main, logged in to gh. It asks for a
 crates.io token, hidden, and passes it to `cargo login`; nothing else is secret.
 
   crates.io   cargo login, then cargo publish of filedrawer-analyzer and then of
               filedrawer, at the versions in this clone's Cargo.toml files
-  PyPI        your account and a pending trusted publisher, the GitHub environment
-              pypi, then a run of .github/workflows/release-cli.yml on main, which
-              publishes the version in main's crates/cli/Cargo.toml
-  npm         the organization filedrawer; nothing is published there
+  PyPI        your account and a pending trusted publisher
+  GitHub      the environments pypi and npm, which only main may use
+  npm         the organization filedrawer, then, through npm 11 (npx, node 20.17 or
+              22.9 or later), npm login, a placeholder 0.0.0 of each of the six
+              packages and a trusted publisher for each: npm sets one up only for a
+              package it has, and drops one that publishes nothing within 2 days
+  release     a run of .github/workflows/release-cli.yml on main, which publishes
+              the version in main's crates/cli/Cargo.toml to PyPI and npm, once
+              crates.io has it
   Homebrew    nothing to claim, said in a line
 
 Each step checks the registry first and skips what is done, so a rerun picks up
@@ -296,6 +301,73 @@ npm_scope_state() {
   esac
 }
 
+# npm 11.10 or later has `npm trust`; Ubuntu's npm is older, so npx runs this one.
+NPM=(npx --yes npm@11.21.2)
+
+# npm_package_state NAME: of @filedrawer/NAME, `absent` when npm has no such
+# package, `placeholder` when it has only this wizard's 0.0.0, `released` when it
+# has another version, and `unknown` when npm didn't answer.
+npm_package_state() {
+  local reply
+  reply=$(http_get "https://registry.npmjs.org/@filedrawer/$1")
+  case ${reply##*$'\n'} in
+    404) echo absent; return ;;
+    200) ;;
+    *) echo unknown; return ;;
+  esac
+  python3 -c 'import json, sys
+versions = set(json.load(sys.stdin)["versions"])
+print("placeholder" if versions <= {"0.0.0"} else "released")' <<<"${reply%$'\n'*}" 2>/dev/null \
+    || echo unknown
+}
+
+# npm_has VERSION: whether npm has the launcher @filedrawer/cli at VERSION.
+npm_has() {
+  [[ $(http_get "https://registry.npmjs.org/@filedrawer/cli/$1" | tail -n1) == 200 ]]
+}
+
+# node_ready: whether this node can run npm 11, which needs 20.17 or 22.9 or later.
+node_ready() {
+  local version
+  command -v npx >/dev/null && version=$(node -p process.versions.node 2>/dev/null) || return 1
+  python3 -c 'import sys
+v = tuple(int(x) for x in sys.argv[1].split(".")[:2])
+sys.exit(not (v >= (22, 9) or (20, 17) <= v < (21, 0)))' "$version" 2>/dev/null
+}
+
+# on_tty FILE CMD...: runs CMD on a terminal of its own, showing what it prints and
+# keeping a copy in FILE. npm asks for a second factor only on a terminal, so a
+# command whose output is read can't run in a pipe. Keys typed go to CMD only
+# when this wizard's own input is a terminal.
+on_tty() {
+  python3 -c 'import os, pty, sys
+copy = open(sys.argv[1], "wb")
+def shown(fd):
+    data = os.read(fd, 1024)
+    copy.write(data)
+    return data
+typed = (lambda fd: os.read(fd, 1024)) if os.isatty(0) else (lambda fd: b"")
+sys.exit(os.waitstatus_to_exitcode(pty.spawn(sys.argv[2:], shown, typed)))' "$@"
+}
+
+# npm_trust NAME: sets up @filedrawer/NAME's trusted publisher afresh, this repo's
+# release workflow in the environment npm. npm allows one per package and says
+# nothing of whether one has lapsed, so any it has goes first.
+npm_trust() {
+  local name="@filedrawer/$1" listed id
+  listed=$(mktemp)
+  if ! on_tty "$listed" "${NPM[@]}" trust list "$name" --json; then
+    rm -f "$listed"
+    return 1
+  fi
+  for id in $(python3 -c 'import re, sys
+print(*re.findall(r"\"id\": *\"([^\"\s]+)\"", open(sys.argv[1], errors="replace").read()))' "$listed"); do
+    "${NPM[@]}" trust revoke "$name" --id="$id" || { rm -f "$listed"; return 1; }
+  done
+  rm -f "$listed"
+  "${NPM[@]}" trust github "$name" --file "$WORKFLOW" --repo "$REPO_SLUG" --env npm --allow-publish --yes
+}
+
 # publish_crate NAME VERSION: publishes NAME from this clone, unless crates.io has
 # it already. Returns 1, having said why, when it can't.
 publish_crate() {
@@ -344,7 +416,7 @@ case ${1:-} in
   *) usage >&2; exit 2 ;;
 esac
 
-TOTAL_STAGES=7
+TOTAL_STAGES=8
 # Nothing is saved: the one secret goes to cargo, and the rest is on the registries.
 ENV_FILE=/dev/null
 if [[ ! -f crates/cli/Cargo.toml || ! -f crates/analyzer/Cargo.toml ]]; then
@@ -463,74 +535,27 @@ case $pypi in
     pause "Press Enter once the pending publisher is listed." ;;
 esac
 
-stage "GitHub: the pypi environment"
-if gh api "repos/$REPO_SLUG/environments/pypi" >/dev/null 2>&1; then
-  say "$REPO_SLUG has the environment pypi. ✓"
-else
-  step "Making the environment pypi, open to main only..."
-  gh api -X PUT "repos/$REPO_SLUG/environments/pypi" --input - >/dev/null <<'JSON'
+stage "GitHub: the pypi and npm environments"
+# The release's publish jobs run in these, and PyPI's and npm's trusted publishers
+# name them, so only main's workflows can publish.
+for env in pypi npm; do
+  if gh api "repos/$REPO_SLUG/environments/$env" >/dev/null 2>&1; then
+    say "$REPO_SLUG has the environment $env. ✓"
+  else
+    step "Making the environment $env, open to main only..."
+    gh api -X PUT "repos/$REPO_SLUG/environments/$env" --input - >/dev/null <<'JSON'
 {"deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}}
 JSON
-  gh api -X POST "repos/$REPO_SLUG/environments/pypi/deployment-branch-policies" \
-    -f name=main -f type=branch >/dev/null
-  say "Made the environment pypi; only main's workflows can use it. ✓"
-fi
-pause
-
-stage "PyPI: the first release"
-if [[ $pypi == taken ]]; then
-  warn "Skipped: PyPI's filedrawer isn't this repo's."
-elif [[ -z $main_version ]] || ! git cat-file -e "origin/main:.github/workflows/$WORKFLOW" 2>/dev/null; then
-  warn "origin/main has no .github/workflows/$WORKFLOW yet, and the workflow runs from main."
-  say "Push main, then rerun ops/claim-names."
-  SKIPPED+=("PyPI: push main, then rerun for the first release")
-elif [[ $(pypi_state "$main_version") == published ]]; then
-  say "PyPI has filedrawer $main_version. ✓"
-else
-  say "This starts $WORKFLOW on main, which builds the wheels and publishes"
-  say "filedrawer $main_version, the version in main's crates/cli/Cargo.toml."
-  if confirm "Publish filedrawer $main_version to PyPI? A version can't be uploaded twice"; then
-    before=$(gh run list --repo "$REPO_SLUG" --workflow "$WORKFLOW" \
-      --event workflow_dispatch --branch main --limit 1 \
-      --json databaseId --jq '.[0].databaseId // ""')
-    gh workflow run "$WORKFLOW" --repo "$REPO_SLUG" --ref main -f "version=$main_version"
-    run=""
-    for ((poll = 0; poll < POLLS; poll++)); do
-      run=$(gh run list --repo "$REPO_SLUG" --workflow "$WORKFLOW" \
-        --event workflow_dispatch --branch main --limit 1 \
-        --json databaseId --jq '.[0].databaseId // ""')
-      [[ -n $run && $run != "$before" ]] && break
-      run=""
-      sleep "$POLL_SECONDS"
-    done
-    if [[ -z $run ]]; then
-      warn "The run didn't show up. Look at $REPO_URL/actions/workflows/$WORKFLOW"
-      SKIPPED+=("PyPI: check the $WORKFLOW run")
-    elif gh run watch "$run" --repo "$REPO_SLUG" --exit-status; then
-      published=""
-      for ((poll = 0; poll < POLLS; poll++)); do
-        [[ $(pypi_state "$main_version") == published ]] && { published=1; break; }
-        sleep "$POLL_SECONDS"
-      done
-      if [[ -n $published ]]; then
-        say "PyPI has filedrawer $main_version. ✓"
-      else
-        warn "The run passed, but PyPI doesn't list filedrawer $main_version yet; rerun later to check."
-        SKIPPED+=("PyPI: confirm filedrawer $main_version is listed")
-      fi
-    else
-      warn "The run failed: gh run view $run --repo $REPO_SLUG --log-failed"
-      SKIPPED+=("PyPI: the $WORKFLOW run failed")
-    fi
-  else
-    SKIPPED+=("PyPI: the first release (rerun ops/claim-names)")
+    gh api -X POST "repos/$REPO_SLUG/environments/$env/deployment-branch-policies" \
+      -f name=main -f type=branch >/dev/null
+    say "Made the environment $env; only main's workflows can use it. ✓"
   fi
-fi
+done
 pause
 
-stage "npm: the @filedrawer scope"
-say "npm's filedrawer belongs to an unrelated app, so our packages would be"
-say "@filedrawer/NAME. Nothing is published there now."
+stage "npm: the @filedrawer packages"
+say "npm's filedrawer belongs to an unrelated app, so ours is @filedrawer/cli, with a"
+say "package per platform, @filedrawer/cli-<os>-<cpu>, holding its binary."
 scope=$(npm_scope_state)
 if [[ $scope == exists ]]; then
   say "npm has a filedrawer scope. ✓"
@@ -541,13 +566,162 @@ else
   open_url "https://www.npmjs.com/org/create"
   step "Log in, or sign up and turn on two-factor authentication, then create"
   step "the organization 'filedrawer' on the free plan (unlimited public packages)."
-  note "npm counts an org that publishes nothing 'within a reasonable time' as squatting;"
-  note "a package of ours there, such as @filedrawer/cli, keeps it."
   pause "Press Enter once the org exists."
-  if [[ $(npm_scope_state) != exists ]]; then
-    note "npm shows a scope only once it has published, so a new, empty org still"
-    note "looks free from here: https://www.npmjs.com/settings/filedrawer/members shows it."
-    SKIPPED+=("npm: check https://www.npmjs.com/settings/filedrawer/members lists you")
+fi
+# Set when npm has every package with a trusted publisher, or none of them, so the
+# release's npm job can't fail on a package this stage left half done.
+npm_done=0
+if ! node_ready; then
+  warn "This stage runs npm 11 through npx, which needs node 20.17 or 22.9 or later."
+  say "Install a current node (https://nodejs.org, or nvm), then rerun ops/claim-names."
+  SKIPPED+=("npm: install node 22 or later, then rerun ops/claim-names")
+else
+  npm_dir=$(mktemp -d)
+  # In the order to publish them: the platform packages, then the launcher.
+  mapfile -t placeholders < <(node crates/cli/npm/pack.mjs placeholders "$npm_dir" || true)
+  absent=() unreleased=() npm_unknown=0
+  (( ${#placeholders[@]} )) || npm_unknown=2
+  for folder in "${placeholders[@]}"; do
+    package=${folder##*/}
+    case $(npm_package_state "$package") in
+      absent) absent+=("$package"); unreleased+=("$package") ;;
+      placeholder) unreleased+=("$package") ;;
+      released) ;;
+      *) npm_unknown=1 ;;
+    esac
+  done
+  if (( npm_unknown == 2 )); then
+    warn "crates/cli/npm/pack.mjs failed to write the placeholders; its message above says why."
+    SKIPPED+=("npm: the packages (pack.mjs placeholders failed)")
+  elif (( npm_unknown )); then
+    warn "npm didn't answer about the @filedrawer packages. Check your network, then rerun."
+    SKIPPED+=("npm: the packages not checked")
+  elif (( ${#unreleased[@]} == 0 )); then
+    say "npm has a release of each package, so their trusted publishers are set. ✓"
+    npm_done=1
+  else
+    say "npm sets up a trusted publisher, which lets the release publish with no token,"
+    say "only for a package it has, and drops one that publishes nothing within 2 days."
+    if (( ${#absent[@]} )); then
+      say "So this publishes a placeholder 0.0.0 of ${#absent[@]} package(s), which stays listed,"
+      say "and then sets up the trusted publisher of ${#unreleased[@]};"
+    else
+      say "So this sets up the trusted publisher of ${#unreleased[@]} package(s) afresh;"
+    fi
+    say "the next stage then starts the release, which publishes the real version."
+    note "npm asks for your second factor once a publish, and up to three times a trusted"
+    note "publisher (list, revoke, add); its browser login offers to skip that for 5 minutes."
+    npm_ok=0
+    if confirm "Go ahead with npm?"; then
+      npm_ok=1
+      if ! "${NPM[@]}" whoami >/dev/null 2>&1; then
+        step "Logging in to npm..."
+        "${NPM[@]}" login || npm_ok=0
+      fi
+      for package in "${absent[@]}"; do
+        (( npm_ok )) || break
+        "${NPM[@]}" publish "$npm_dir/$package" || npm_ok=0
+      done
+      for package in "${unreleased[@]}"; do
+        (( npm_ok )) || break
+        npm_trust "$package" || npm_ok=0
+      done
+      if (( npm_ok )); then
+        say "Each package is on npm, with its trusted publisher. ✓"
+        note "Start the release in the next stage: the trusted publishers lapse in 2 days."
+        npm_done=1
+      else
+        warn "npm refused; its message above says why. Fix that, then rerun."
+      fi
+    fi
+    (( npm_ok )) || SKIPPED+=("npm: the placeholders and trusted publishers (rerun ops/claim-names)")
+  fi
+  rm -rf "$npm_dir"
+fi
+pause
+
+stage "The release: PyPI and npm"
+if [[ $pypi == taken ]]; then
+  warn "Skipped: PyPI's filedrawer isn't this repo's."
+elif [[ -z $main_version ]] || ! git cat-file -e "origin/main:.github/workflows/$WORKFLOW" 2>/dev/null; then
+  warn "origin/main has no .github/workflows/$WORKFLOW yet, and the workflow runs from main."
+  say "Push main, then rerun ops/claim-names."
+  SKIPPED+=("release: push main, then rerun")
+elif [[ $(crate_state filedrawer "$main_version") != published ]]; then
+  warn "crates.io has no filedrawer $main_version, so the release waits for it, to keep"
+  warn "the three registries at one version. Publish it in stage 3, then rerun."
+  SKIPPED+=("release: publish filedrawer $main_version on crates.io first")
+elif (( !npm_done )) && [[ $(npm_package_state cli-linux-x64) != absent || $(npm_package_state cli) != absent ]]; then
+  # npm has some of the packages, so the run's npm job would fail on the rest.
+  warn "The npm stage didn't finish, so the release waits: its npm job would fail."
+  say "Rerun ops/claim-names once npm's message above is dealt with."
+  SKIPPED+=("release: finish the npm stage first (rerun ops/claim-names)")
+else
+  # npm gets the release once it has the launcher, here or in an earlier run.
+  need_pypi=0 need_npm=0
+  [[ $(pypi_state "$main_version") == published ]] || need_pypi=1
+  if [[ $(npm_package_state cli) =~ ^(placeholder|released)$ ]] && ! npm_has "$main_version"; then
+    need_npm=1
+  fi
+  # What the run is for; need_* clear as each registry lists the version.
+  for_pypi=$need_pypi for_npm=$need_npm
+  if (( !need_pypi && !need_npm )); then
+    say "PyPI has filedrawer $main_version, and npm has it or isn't set up. ✓"
+  else
+    if (( for_pypi && for_npm )); then registries="PyPI and npm"
+    elif (( for_pypi )); then registries=PyPI
+    else registries=npm
+    fi
+    say "This starts $WORKFLOW on main, which builds the binaries and publishes"
+    say "filedrawer $main_version, the version in main's crates/cli/Cargo.toml, to $registries."
+    if confirm "Publish filedrawer $main_version to $registries? A version can't be uploaded twice"; then
+      before=$(gh run list --repo "$REPO_SLUG" --workflow "$WORKFLOW" \
+        --event workflow_dispatch --branch main --limit 1 \
+        --json databaseId --jq '.[0].databaseId // ""')
+      gh workflow run "$WORKFLOW" --repo "$REPO_SLUG" --ref main -f "version=$main_version"
+      run=""
+      for ((poll = 0; poll < POLLS; poll++)); do
+        run=$(gh run list --repo "$REPO_SLUG" --workflow "$WORKFLOW" \
+          --event workflow_dispatch --branch main --limit 1 \
+          --json databaseId --jq '.[0].databaseId // ""')
+        [[ -n $run && $run != "$before" ]] && break
+        run=""
+        sleep "$POLL_SECONDS"
+      done
+      rerun="gh run rerun $run --repo $REPO_SLUG --failed"
+      if [[ -z $run ]]; then
+        warn "The run didn't show up. Look at $REPO_URL/actions/workflows/$WORKFLOW"
+        SKIPPED+=("release: check the $WORKFLOW run")
+      else
+        # Each registry the run was to publish to, checked until it lists the
+        # version; once, after a failed run, which may have published to one.
+        polls=$POLLS
+        if ! gh run watch "$run" --repo "$REPO_SLUG" --exit-status; then
+          warn "The run failed: gh run view $run --repo $REPO_SLUG --log-failed"
+          polls=1
+        fi
+        for ((poll = 0; poll < polls; poll++)); do
+          (( need_pypi )) && [[ $(pypi_state "$main_version") == published ]] && need_pypi=0
+          (( need_npm )) && npm_has "$main_version" && need_npm=0
+          (( need_pypi || need_npm )) || break
+          (( poll + 1 < polls )) && sleep "$POLL_SECONDS"
+        done
+        if (( for_pypi && !need_pypi )); then say "PyPI has filedrawer $main_version. ✓"; fi
+        if (( for_npm && !need_npm )); then say "npm has @filedrawer/cli $main_version. ✓"; fi
+        if (( need_pypi )); then
+          warn "PyPI doesn't list filedrawer $main_version. Once the cause is fixed: $rerun"
+          SKIPPED+=("release: filedrawer $main_version on PyPI ($rerun)")
+        fi
+        if (( need_npm )); then
+          warn "npm doesn't list @filedrawer/cli $main_version. Once the cause is fixed: $rerun"
+          note "npm's trusted publishers lapse 2 days after this wizard set them up; later,"
+          note "rerun ops/claim-names, which sets them up again, instead."
+          SKIPPED+=("release: @filedrawer/cli $main_version on npm ($rerun)")
+        fi
+      fi
+    else
+      SKIPPED+=("release: filedrawer $main_version (rerun ops/claim-names)")
+    fi
   fi
 fi
 pause

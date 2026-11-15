@@ -1144,7 +1144,9 @@ All three remove empty placeholders, so the names are held with a package that w
 - Each package carries the repository's `LICENSE`, since the AGPL asks that its text go with the program.
 - PyPI gets wheels that hold both binaries, built by maturin, so `uvx` runs it with no Rust installed.
   `.github/workflows/release-cli.yml` builds them for Linux (static, x86_64 and aarch64), macOS (arm64 and x86_64) and Windows (x86_64), and publishes only when started by hand, through PyPI's trusted publishing, so no token is stored.
-- crates.io's first publish of a crate needs a person's token, so the owner publishes the crates with `ops/claim-names`, which also starts the first PyPI release and walks through the npm org.
+- crates.io's first publish of a crate needs a person's token, so the owner publishes the crates with `ops/claim-names`, which also starts the first release to PyPI and npm, once crates.io has its version, so all three stay at one version (the owner, 2026-11-14).
+- npm sets up a trusted publisher only for a package it has, and drops one that publishes nothing within 2 days, so `ops/claim-names` publishes a placeholder 0.0.0 of each npm package, sets up each one's trusted publisher, and starts the release at once, which publishes the real version from CI (the owner, 2026-11-14; #84).
+  The 0.0.0s stay listed, and every real version carries npm's provenance.
 - npm gets the same Rust binary, not a JavaScript port, so every reader of an entry reads it with one analyzer (the owner, 2026-11-14; #84).
   `@filedrawer/cli` is a launcher whose optional dependencies are one package per platform, `@filedrawer/cli-<os>-<cpu>`, each holding one `filedrawer` binary; npm installs only the one for its machine, as esbuild and Biome do.
   Reason: no install script runs, so `--ignore-scripts` changes nothing, and each install fetches one binary rather than five.

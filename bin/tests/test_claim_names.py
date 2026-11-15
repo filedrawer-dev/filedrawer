@@ -1,13 +1,17 @@
 """Tests for ops/claim-names, the wizard the owner runs to publish entry-check as
-filedrawer on crates.io and PyPI and to claim the npm scope.
+filedrawer on crates.io and PyPI, and @filedrawer/cli on npm.
 
 It runs in a clone of a made-up repo whose origin is a local bare repo, against
-fakes of cargo, gh and curl that share one made-up registry state: `cargo publish`
-puts a crate on the fake crates.io, a `gh workflow run` of release-cli.yml puts the
-version on the fake PyPI, and curl answers the registries' APIs from that state.
-Every prompt gets the same answer line, which also serves as the crates.io token.
+fakes of cargo, gh, curl and npx that share one made-up registry state: `cargo
+publish` puts a crate on the fake crates.io, npx's `npm publish` a placeholder on
+the fake npm, a `gh workflow run` of release-cli.yml puts the version on the fake
+PyPI, and on npm when every package there has a trusted publisher, and curl answers
+the registries' APIs from that state. The clone holds the real
+crates/cli/npm/pack.mjs, which the real node runs. Every prompt gets the same
+answer line, which also serves as the crates.io token.
 """
 
+import json
 import os
 import shutil
 import subprocess
@@ -18,15 +22,25 @@ from conftest import opened_urls
 
 REPO = Path(__file__).resolve().parents[2]
 WIZARD = REPO / "ops/claim-names"
+NPM_PACKAGES = [
+    "cli-linux-x64",
+    "cli-linux-arm64",
+    "cli-darwin-arm64",
+    "cli-darwin-x64",
+    "cli-win32-x64",
+    "cli",
+]
+NPM = "--yes npm@11.21.2 "
 REPO_URL = "https://github.com/filedrawer-dev/filedrawer"
 # Starts with y, so every confirm says yes.
 TOKEN = "yes-cio_s3cret-token"
 
 FAKE = r'''#!/usr/bin/env python3
-"""cargo, gh or curl, by the name it was called with, against the state in $FAKE_STATE."""
+"""cargo, gh, curl or npx, by the name it was called with, against the state in $FAKE_STATE."""
 import json, os, re, sys
 from pathlib import Path
 
+NPM_PACKAGES = ["cli-linux-x64", "cli-linux-arm64", "cli-darwin-arm64", "cli-darwin-x64", "cli-win32-x64", "cli"]
 state = Path(os.environ["FAKE_STATE"])
 tool, args = Path(sys.argv[0]).name, sys.argv[1:]
 with (state / "log").open("a") as log:
@@ -53,6 +67,8 @@ if tool == "cargo":
     if args[0] == "login":
         (state / "cargo-token").write_text(sys.stdin.read())
     elif args[0] == "publish":
+        if os.environ.get("FAKE_CARGO_FAILS"):
+            sys.exit(101)
         name = args[args.index("-p") + 1]
         if name == "filedrawer" and not (state / "crates/filedrawer-analyzer").exists():
             print("error: no matching package named `filedrawer-analyzer` found", file=sys.stderr)
@@ -61,18 +77,53 @@ if tool == "cargo":
         put("crates", name, version(folder + "/Cargo.toml"), os.environ["FAKE_REPO_URL"])
     sys.exit(0)
 
+if tool == "npx":
+    assert args[:2] == ["--yes", "npm@11.21.2"], args
+    cmd = args[2:]
+    trust = state / "npm-trust"
+    trust.mkdir(exist_ok=True)
+    if cmd == ["whoami"]:
+        sys.exit(0 if (state / "npm-login").exists() else 1)
+    if cmd == ["login"]:
+        (state / "npm-login").touch()
+        sys.exit(0)
+    if cmd[0] == "publish":
+        package = json.loads((Path(cmd[1]) / "package.json").read_text())
+        if package["name"] == os.environ.get("FAKE_NPM_PUBLISH_REFUSES"):
+            sys.exit(1)
+        put("npm", package["name"].removeprefix("@filedrawer/"), package["version"], os.environ["FAKE_REPO_URL"])
+        sys.exit(0)
+    if cmd[:2] == ["trust", "list"]:
+        found = trust / cmd[2].removeprefix("@filedrawer/")
+        print(found.read_text() if found.exists() else "")
+        sys.exit(0)
+    if cmd[:2] == ["trust", "revoke"]:
+        found = trust / cmd[2].removeprefix("@filedrawer/")
+        assert f"--id={json.loads(found.read_text())['id']}" in cmd, cmd
+        found.unlink()
+        sys.exit(0)
+    if cmd[:2] == ["trust", "github"]:
+        found = trust / cmd[2].removeprefix("@filedrawer/")
+        if found.exists():
+            print("only one trust configuration per package", file=sys.stderr)
+            sys.exit(1)
+        found.write_text(json.dumps({"id": "new-" + found.name, "type": "github", "args": cmd[3:]}))
+        sys.exit(0)
+    sys.exit(2)
+
 if tool == "gh":
     joined = " ".join(args)
     runs = state / "runs"
     if args[:2] == ["auth", "status"]:
         sys.exit(0)
     if args[0] == "api" and "deployment-branch-policies" in joined:
-        (state / "pypi-env-policy").write_text(joined)
+        env = re.search(r"environments/(\w+)/", joined).group(1)
+        (state / f"{env}-env-policy").write_text(joined)
         sys.exit(0)
-    if args[0] == "api" and joined.endswith("environments/pypi"):
-        sys.exit(0 if (state / "pypi-env").exists() else 1)
-    if args[0] == "api" and "-X PUT" in joined and "environments/pypi" in joined:
-        (state / "pypi-env").write_text(sys.stdin.read())
+    if args[0] == "api" and (m := re.search(r"environments/(\w+)$", joined)) and "-X" not in args:
+        sys.exit(0 if (state / f"{m.group(1)}-env").exists() else 1)
+    if args[0] == "api" and "-X PUT" in joined and (m := re.search(r"environments/(\w+) ", joined)):
+        (state / f"{m.group(1)}-env").write_text(sys.stdin.read())
         sys.exit(0)
     if args[:2] == ["run", "list"]:
         # Only the release's own runs: a pull request's run of the workflow isn't one.
@@ -87,6 +138,16 @@ if tool == "gh":
         ver = joined.split("version=")[1].split()[0]
         if not os.environ.get("FAKE_RUN_FAILS"):
             put("pypi", "filedrawer", ver, os.environ["FAKE_REPO_URL"])
+        # As release-cli.yml's npm job, once npm has every package, each with a
+        # trusted publisher: one set up here, or one a release has used.
+        def trusted(p):
+            versions = state / "npm" / p / "versions"
+            released = versions.exists() and {v.name for v in versions.iterdir()} - {"0.0.0"}
+            return (state / "npm-trust" / p).exists() or bool(released)
+        failed = os.environ.get("FAKE_RUN_FAILS") or os.environ.get("FAKE_NPM_FAILS")
+        if all(trusted(p) for p in NPM_PACKAGES) and not failed:
+            for p in NPM_PACKAGES:
+                put("npm", p, ver, os.environ["FAKE_REPO_URL"])
         sys.exit(0)
     if args[:2] == ["run", "watch"]:
         sys.exit(1 if os.environ.get("FAKE_RUN_FAILS") else 0)
@@ -107,6 +168,12 @@ if tool == "curl":
         if (state / "npm-scope").exists():
             answer("{}", 200)
         answer('{"error":"Scope not found"}', 404)
+    elif m := re.fullmatch(r"https://registry\.npmjs\.org/@filedrawer/([^/]+)(?:/([^/]+))?", url):
+        if os.environ.get("FAKE_NPM_DOWN"):
+            answer("", 503)
+        registry, name, ver = "npm", m.group(1), m.group(2)
+        folder = state / "npm" / name
+        body = lambda repo: json.dumps({"versions": {v.name: {} for v in (folder / "versions").iterdir()}})
     else:
         sys.exit(6)
     folder = state / registry / name
@@ -135,7 +202,7 @@ class Box:
         (self.state / "log").touch()
         fakes = root / "fakes"
         fakes.mkdir()
-        for tool in ("cargo", "gh", "curl"):
+        for tool in ("cargo", "gh", "curl", "npx"):
             (fakes / tool).write_text(FAKE)
             (fakes / tool).chmod(0o755)
         self.env = {
@@ -154,6 +221,9 @@ class Box:
             (self.clone / f"crates/{crate}/Cargo.toml").write_text(
                 f'[package]\nname = "x"\nversion = "{ver}"\n'
             )
+        (self.clone / "crates/cli/npm").mkdir()
+        shutil.copy(REPO / "crates/cli/npm/pack.mjs", self.clone / "crates/cli/npm")
+        shutil.copy(REPO / "crates/cli/LICENSE", self.clone / "crates/cli")
         if workflow_on_main:
             (self.clone / ".github/workflows").mkdir(parents=True)
             (self.clone / ".github/workflows/release-cli.yml").write_text("name: x\n")
@@ -190,6 +260,34 @@ class Box:
     def has(self, registry: str, name: str, version: str) -> bool:
         return (self.state / registry / name / "versions" / version).exists()
 
+    def seed_npm(self, *versions: str, packages=NPM_PACKAGES):
+        for package in packages:
+            for version in versions:
+                self.seed("npm", package, version)
+
+    def npm_calls(self, command: str) -> list[str]:
+        """npx's npm commands that start with COMMAND, without the npx pin."""
+        return [
+            c.removeprefix(NPM)
+            for c in self.calls("npx")
+            if c.removeprefix(NPM).startswith(command)
+        ]
+
+    def environments_made(self) -> set[str]:
+        return {p.name.removesuffix("-env") for p in self.state.glob("*-env")}
+
+
+needs_node = pytest.mark.skipif(
+    not shutil.which("node") and not os.environ.get("CI"), reason="needs node"
+)
+
+
+def trust_github(package: str) -> str:
+    return (
+        f"trust github @filedrawer/{package} --file release-cli.yml"
+        " --repo filedrawer-dev/filedrawer --env npm --allow-publish --yes"
+    )
+
 
 @pytest.fixture
 def box(tmp_path):
@@ -206,6 +304,7 @@ def test_help_says_what_it_claims():
         assert registry in done.stdout
 
 
+@needs_node
 def test_a_first_run_publishes_the_library_then_the_cli_then_starts_the_release(box):
     done = box.run()
     assert done.returncode == 0, done.stdout + done.stderr
@@ -220,9 +319,13 @@ def test_a_first_run_publishes_the_library_then_the_cli_then_starts_the_release(
     assert (box.state / "cargo-token").read_text() == TOKEN + "\n"
     assert TOKEN not in done.stdout + done.stderr
     assert not any(TOKEN in call for call in box.calls("cargo"))
-    # The pypi environment, open to main only, then the release of main's version.
-    assert '"custom_branch_policies": true' in (box.state / "pypi-env").read_text()
-    assert "-f name=main" in (box.state / "pypi-env-policy").read_text()
+    # The pypi and npm environments, open to main only, then the release of main's
+    # version.
+    for env in ("pypi", "npm"):
+        assert (
+            '"custom_branch_policies": true' in (box.state / f"{env}-env").read_text()
+        )
+        assert "-f name=main" in (box.state / f"{env}-env-policy").read_text()
     assert (
         box.calls("gh").count(
             "workflow run release-cli.yml --repo filedrawer-dev/filedrawer --ref main -f version=0.2.0"
@@ -230,6 +333,21 @@ def test_a_first_run_publishes_the_library_then_the_cli_then_starts_the_release(
         == 1
     )
     assert box.has("pypi", "filedrawer", "0.2.0")
+    # npm: a login, a placeholder of each package, platforms first, then a trusted
+    # publisher for each, all before the release, which publishes the real version.
+    assert box.npm_calls("login") == ["login"]
+    published = [Path(c.split()[1]).name for c in box.npm_calls("publish")]
+    assert published == NPM_PACKAGES
+    for package in NPM_PACKAGES:
+        assert box.has("npm", package, "0.0.0")
+        assert box.has("npm", package, "0.2.0")
+    assert box.npm_calls("trust github") == [trust_github(p) for p in NPM_PACKAGES]
+    log = (box.state / "log").read_text().splitlines()
+    last_trust = max(i for i, line in enumerate(log) if " trust github " in line)
+    release = next(
+        i for i, line in enumerate(log) if line.startswith("gh workflow run")
+    )
+    assert last_trust < release
     # The trusted publisher's form, as PyPI names its fields.
     for line in (
         "PyPI Project Name: filedrawer",
@@ -242,19 +360,20 @@ def test_a_first_run_publishes_the_library_then_the_cli_then_starts_the_release(
     opened = opened_urls().read_text().split()
     assert "https://pypi.org/manage/account/publishing/" in opened
     assert "https://www.npmjs.com/org/create" in opened
-    # An empty org looks free from outside, so the summary says how to check it.
-    assert "settings/filedrawer/members" in done.stdout
 
 
 def test_a_rerun_once_everything_is_claimed_publishes_nothing(box):
     box.seed("crates", "filedrawer-analyzer", "0.3.0")
     box.seed("crates", "filedrawer", "0.2.0")
     box.seed("pypi", "filedrawer", "0.2.0")
+    box.seed_npm("0.0.0", "0.2.0")
     (box.state / "pypi-env").touch()
+    (box.state / "npm-env").touch()
     (box.state / "npm-scope").touch()
     done = box.run()
     assert done.returncode == 0, done.stdout + done.stderr
     assert box.calls("cargo") == []
+    assert box.calls("npx") == []
     assert not any(c.startswith(("workflow run", "api -X")) for c in box.calls("gh")), (
         box.calls("gh")
     )
@@ -267,13 +386,19 @@ def test_a_new_version_publishes_only_what_is_missing(box):
     box.seed("crates", "filedrawer-analyzer", "0.3.0")
     box.seed("crates", "filedrawer", "0.1.0")
     box.seed("pypi", "filedrawer", "0.1.0")
+    box.seed_npm("0.0.0", "0.1.0")
     (box.state / "pypi-env").touch()
+    (box.state / "npm-env").touch()
+    (box.state / "npm-scope").touch()
     done = box.run()
     assert done.returncode == 0, done.stdout + done.stderr
     assert [c for c in box.calls("cargo") if c.startswith("publish")] == [
         "publish --locked -p filedrawer"
     ]
     assert box.has("pypi", "filedrawer", "0.2.0")
+    # A released package's trusted publisher has been used, so it stays as it is.
+    assert box.calls("npx") == []
+    assert box.has("npm", "cli", "0.2.0")
     assert "https://pypi.org/manage/account/publishing/" not in (
         opened_urls().read_text() if opened_urls().exists() else ""
     )
@@ -350,6 +475,83 @@ def test_without_cargo_it_says_how_to_get_it(box):
     assert done.returncode == 1
     assert "https://rustup.rs" in done.stdout
     assert box.calls("gh") == ["auth status"]
+
+
+@needs_node
+def test_a_rerun_publishes_only_the_placeholders_npm_lacks(box):
+    box.seed_npm("0.0.0", packages=NPM_PACKAGES[:3])
+    (box.state / "npm-login").touch()
+    done = box.run()
+    assert done.returncode == 0, done.stdout + done.stderr
+    published = [Path(c.split()[1]).name for c in box.npm_calls("publish")]
+    assert published == NPM_PACKAGES[3:]
+    # Each package still holds only a placeholder, so each gets its trusted publisher.
+    assert box.npm_calls("trust github") == [trust_github(p) for p in NPM_PACKAGES]
+    assert box.npm_calls("login") == []
+
+
+@needs_node
+def test_a_placeholders_old_trusted_publisher_is_made_again_before_the_release(box):
+    """npm drops a trusted publisher that publishes nothing within 2 days, and
+    `npm trust list` doesn't say whether it has, so a package never released gets
+    its trusted publisher afresh."""
+    box.seed_npm("0.0.0")
+    (box.state / "npm-login").touch()
+    (box.state / "npm-trust").mkdir()
+    (box.state / "npm-trust/cli-darwin-x64").write_text(json.dumps({"id": "old-1"}))
+    done = box.run()
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert box.npm_calls("publish") == []
+    assert box.npm_calls("trust revoke") == [
+        "trust revoke @filedrawer/cli-darwin-x64 --id=old-1"
+    ]
+    assert box.npm_calls("trust github") == [trust_github(p) for p in NPM_PACKAGES]
+    assert box.has("npm", "cli", "0.2.0")
+
+
+def test_without_crates_io_at_mains_version_the_release_waits(box):
+    """The three registries stay at one version."""
+    done = box.run(env={"FAKE_CARGO_FAILS": "1"})
+    assert not any(c.startswith("workflow run") for c in box.calls("gh"))
+    assert "crates.io has no filedrawer 0.2.0" in done.stdout
+
+
+def test_with_an_old_node_npm_is_left_for_later_and_pypi_still_releases(box):
+    fakes = Path(box.env["PATH"].split(os.pathsep)[0])
+    (fakes / "node").write_text("#!/bin/sh\necho 18.19.1\n")
+    (fakes / "node").chmod(0o755)
+    done = box.run()
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert box.calls("npx") == []
+    assert "https://nodejs.org" in done.stdout
+    assert box.has("pypi", "filedrawer", "0.2.0")
+
+
+@needs_node
+def test_when_npm_does_not_answer_nothing_is_published_there(box):
+    done = box.run(env={"FAKE_NPM_DOWN": "1"})
+    assert box.npm_calls("publish") == []
+    assert box.npm_calls("trust") == []
+    assert "npm didn't answer" in done.stdout
+
+
+@needs_node
+def test_after_npm_refused_a_placeholder_the_release_waits_for_a_rerun(box):
+    """npm then has some packages and not others, so the release's npm job would
+    fail: the wizard starts no run until npm has them all."""
+    done = box.run(env={"FAKE_NPM_PUBLISH_REFUSES": "@filedrawer/cli-darwin-arm64"})
+    assert box.has("npm", "cli-linux-x64", "0.0.0")
+    assert not any(c.startswith("workflow run") for c in box.calls("gh"))
+    assert "rerun ops/claim-names" in done.stdout
+
+
+@needs_node
+def test_a_release_npm_refused_says_how_to_rerun_it(box):
+    done = box.run(env={"FAKE_NPM_FAILS": "1"})
+    assert box.has("pypi", "filedrawer", "0.2.0")
+    assert not box.has("npm", "cli", "0.2.0")
+    assert "npm doesn't list @filedrawer/cli 0.2.0" in done.stdout
+    assert "gh run rerun" in done.stdout
 
 
 def test_it_refuses_a_clone_without_crates_cli(box):
