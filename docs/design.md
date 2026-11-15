@@ -1132,7 +1132,7 @@ Python is fine for scripts and internal tools.
 
 ## Distribution
 
-The offline checker is published as the package `filedrawer` on crates.io and PyPI, and the npm scope `@filedrawer` is held for later (the owner, 2026-11-13; #73, section 6; #74).
+The offline checker is published as the package `filedrawer` on crates.io and PyPI (the owner, 2026-11-13; #73, section 6; #74), and as `@filedrawer/cli` on npm, since npm's unscoped name is taken (the owner, 2026-11-14; #84).
 Reason: none of the three registries hands a name back from a reachable owner, and npm's unscoped `filedrawer` went to an unrelated app in October 2026.
 All three remove empty placeholders, so the names are held with a package that works.
 
@@ -1145,8 +1145,11 @@ All three remove empty placeholders, so the names are held with a package that w
 - PyPI gets wheels that hold both binaries, built by maturin, so `uvx` runs it with no Rust installed.
   `.github/workflows/release-cli.yml` builds them for Linux (static, x86_64 and aarch64), macOS (arm64 and x86_64) and Windows (x86_64), and publishes only when started by hand, through PyPI's trusted publishing, so no token is stored.
 - crates.io's first publish of a crate needs a person's token, so the owner publishes the crates with `ops/claim-names`, which also starts the first PyPI release and walks through the npm org.
-- Nothing is published to npm yet.
-  npm counts an org that publishes nothing "within a reasonable time" as squatting, so a package such as `@filedrawer/cli` should follow.
+- npm gets the same Rust binary, not a JavaScript port, so every reader of an entry reads it with one analyzer (the owner, 2026-11-14; #84).
+  `@filedrawer/cli` is a launcher whose optional dependencies are one package per platform, `@filedrawer/cli-<os>-<cpu>`, each holding one `filedrawer` binary; npm installs only the one for its machine, as esbuild and Biome do.
+  Reason: no install script runs, so `--ignore-scripts` changes nothing, and each install fetches one binary rather than five.
+  Only `filedrawer` is installed; `entry-check` stays a cargo and PyPI name.
+  `crates/cli/npm/pack.mjs` packs them, at crates/cli/Cargo.toml's version, and the release run publishes them beside PyPI's wheels through npm's trusted publishing, platform packages first and the launcher last.
 - Homebrew has no name to claim: homebrew-core takes a formula by pull request once a project meets its notability rules, and a tap is a repo in the org, `filedrawer-dev/homebrew-tap`.
 
 ## Licences

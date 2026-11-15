@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# Publishes the npm packages of the `filedrawer` command at one version, from the
+# tarballs crates/cli/npm/pack.mjs packed (#84). release-cli.yml's npm job runs it.
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+usage: bin/npm-release DIR VERSION
+
+Publishes the tarballs in DIR, @filedrawer/cli and the platform packages its
+optionalDependencies name, at VERSION, through npm's trusted publishing. DIR must
+hold exactly those packages, each at VERSION, or nothing is published.
+
+npm sets up a trusted publisher only for a package it has, so ops/claim-names
+first publishes a 0.0.0 of each. While npm has none of them, this publishes
+nothing and passes; while it has some but not all, it fails, since a launcher
+must never name a package nobody published. A package npm has at VERSION already
+is skipped, so a rerun finishes a release. The platform packages go first and
+the launcher last. Only npm's 404 counts as absent: any other answer fails.
+USAGE
+}
+
+case ${1:-} in
+  -h | --help) usage; exit 0 ;;
+esac
+if (( $# != 2 )); then usage >&2; exit 2; fi
+dir=$1 version=$2
+NPM=(npx --yes npm@11.21.2)
+
+fail() { echo "::error::$1"; exit 1; }
+
+launcher="$dir/filedrawer-cli-$version.tgz"
+[[ -f $launcher ]] || fail "no filedrawer-cli-$version.tgz in $dir"
+# The launcher's optionalDependencies name the platform packages, each at VERSION.
+platforms=$(tar -xzOf "$launcher" package/package.json | python3 -c '
+import json, sys
+version = sys.argv[1]
+deps = json.load(sys.stdin).get("optionalDependencies") or {}
+for name, wanted in deps.items():
+    if wanted != version:
+        sys.exit(f"the launcher wants {name} {wanted}, not {version}")
+    print(name.removeprefix("@filedrawer/"))
+' "$version") || fail "the launcher in $launcher doesn't name its platforms at $version"
+mapfile -t packages < <(printf '%s\ncli\n' "$platforms")
+
+for package in "${packages[@]}"; do
+  [[ -f "$dir/filedrawer-$package-$version.tgz" ]] || fail "no filedrawer-$package-$version.tgz in $dir"
+done
+for file in "$dir"/*; do
+  name=${file##*/}
+  known=0
+  for package in "${packages[@]}"; do
+    [[ $name == "filedrawer-$package-$version.tgz" ]] && known=1
+  done
+  (( known )) || fail "$name isn't one of the packages at $version"
+done
+
+# status PATH: npm's HTTP status for https://registry.npmjs.org/@filedrawer/PATH.
+status() {
+  curl -sS --retry 3 --max-time 30 -o /dev/null -w '%{http_code}' \
+    "https://registry.npmjs.org/@filedrawer/$1" 2>/dev/null || true
+}
+
+absent=()
+for package in "${packages[@]}"; do
+  case $(status "$package") in
+    200) ;;
+    404) absent+=("$package") ;;
+    *) fail "npm didn't answer about @filedrawer/$package" ;;
+  esac
+done
+if (( ${#absent[@]} == ${#packages[@]} )); then
+  echo "::notice::npm has no @filedrawer packages yet: run ops/claim-names, which makes them, then rerun."
+  exit 0
+elif (( ${#absent[@]} )); then
+  fail "npm lacks @filedrawer/{$(IFS=,; echo "${absent[*]}")}: run ops/claim-names, then rerun."
+fi
+
+for package in "${packages[@]}"; do
+  case $(status "$package/$version") in
+    200) echo "npm has @filedrawer/$package $version already." ;;
+    404) "${NPM[@]}" publish "$dir/filedrawer-$package-$version.tgz" ;;
+    *) fail "npm didn't answer about @filedrawer/$package $version" ;;
+  esac
+done

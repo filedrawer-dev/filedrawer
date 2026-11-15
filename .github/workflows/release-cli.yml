@@ -1,9 +1,12 @@
 # Builds the PyPI package `filedrawer`, wheels that hold the filedrawer and entry-check
-# binaries and an sdist, from crates/cli/pyproject.toml (design.md, Distribution; #74). A pull
-# request that touches the package builds and tests them; starting the workflow by
-# hand with the version also publishes them, through PyPI's trusted publishing, so no
-# token is stored. ops/claim-names starts the first release. crates.io publishing is
-# by hand, in the same script.
+# binaries and an sdist, from crates/cli/pyproject.toml (design.md, Distribution; #74),
+# and the npm packages @filedrawer/cli and @filedrawer/cli-<os>-<cpu> around the same
+# filedrawer binaries, from crates/cli/npm/pack.mjs (#84). A pull request that touches
+# them builds and tests them; starting the workflow by hand with the version also
+# publishes them, through PyPI's and npm's trusted publishing, so no token is stored.
+# A registry that has the version already is skipped, so a rerun finishes the other.
+# ops/claim-names starts the first release, once it has made the npm packages, which
+# npm's trusted publishing needs. crates.io publishing is by hand, in the same script.
 name: Release CLI
 
 on:
@@ -72,6 +75,30 @@ jobs:
         with:
           name: wheel-${{ matrix.target }}
           path: dist/*.whl
+      # The npm package of this runner's platform, around the binary maturin built,
+      # installed beside the launcher and run through npx, as an agent's npx would.
+      # --offline: the launcher's other platform packages aren't fetched.
+      - name: Pack and run the npm packages
+        run: |
+          exe=target/${{ matrix.target }}/release/filedrawer
+          if [ "$RUNNER_OS" = Windows ]; then exe=$exe.exe; fi
+          mkdir npm-dist npm-launcher npx-run
+          node crates/cli/npm/pack.mjs platform ${{ matrix.target }} "$exe" npm-dist
+          node crates/cli/npm/pack.mjs launcher npm-launcher
+          cd npx-run
+          echo '{}' > package.json
+          npm install --offline --no-audit --no-fund ../npm-dist/*.tgz ../npm-launcher/*.tgz
+          npx --no-install filedrawer -h
+          npx --no-install filedrawer check ../crates/analyzer/tests/it/fixtures/example.md
+      - uses: actions/upload-artifact@v7
+        with:
+          name: npm-${{ matrix.target }}
+          path: npm-dist/*.tgz
+      - if: matrix.target == 'x86_64-unknown-linux-musl'
+        uses: actions/upload-artifact@v7
+        with:
+          name: npm-launcher
+          path: npm-launcher/*.tgz
 
   sdist:
     runs-on: ubuntu-latest
@@ -107,6 +134,7 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           path: dist
+          pattern: "{wheel-*,sdist}"
           merge-multiple: true
       # The files must all carry the version given, so a run started on a commit
       # whose version isn't the one meant uploads nothing.
@@ -120,5 +148,40 @@ jobs:
             echo "::error::not version $VERSION: $others"
             exit 1
           fi
+      # --check-url skips the files PyPI has already, so a rerun finishes a release.
       - name: Publish
-        run: pipx run uv==0.13.5 publish --trusted-publishing always dist/*
+        run: >-
+          pipx run uv==0.13.5 publish --trusted-publishing always
+          --check-url https://pypi.org/simple/ dist/*
+
+  # Runs no third-party action: the job can mint an npm publish token. The `npm`
+  # environment is the one each package's trusted publisher names (ops/claim-names).
+  # npm's trusted publishing needs npm 11.5.1 or later on node 22.14 or later.
+  npm:
+    needs: [wheel]
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: npm
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          sparse-checkout: bin/npm-release
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          pattern: npm-*
+          merge-multiple: true
+      # The files must be the packages at the version given, as for PyPI; while npm
+      # lacks the packages, which ops/claim-names makes, this publishes nothing.
+      - name: Publish
+        env:
+          VERSION: ${{ inputs.version }}
+        run: bin/npm-release dist "$VERSION"
