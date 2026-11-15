@@ -1,9 +1,12 @@
 # Builds the PyPI package `filedrawer`, wheels that hold the filedrawer and entry-check
-# binaries and an sdist, from crates/cli/pyproject.toml (design.md, Distribution; #74). A pull
-# request that touches the package builds and tests them; starting the workflow by
-# hand with the version also publishes them, through PyPI's trusted publishing, so no
-# token is stored. ops/claim-names starts the first release. crates.io publishing is
-# by hand, in the same script.
+# binaries and an sdist, from crates/cli/pyproject.toml (design.md, Distribution; #74),
+# and the npm packages @filedrawer/cli and @filedrawer/cli-<os>-<cpu> around the same
+# filedrawer binaries, from crates/cli/npm/pack.mjs (#84). A pull request that touches
+# them builds and tests them; starting the workflow by hand with the version also
+# publishes them, through PyPI's and npm's trusted publishing, so no token is stored.
+# A registry that has the version already is skipped, so a rerun finishes the other.
+# ops/claim-names starts the first release, once it has made the npm packages, which
+# npm's trusted publishing needs. crates.io publishing is by hand, in the same script.
 name: Release CLI
 
 on:
@@ -72,6 +75,30 @@ jobs:
         with:
           name: wheel-${{ matrix.target }}
           path: dist/*.whl
+      # The npm package of this runner's platform, around the binary maturin built,
+      # installed beside the launcher and run through npx, as an agent's npx would.
+      # --offline: the launcher's other platform packages aren't fetched.
+      - name: Pack and run the npm packages
+        run: |
+          exe=target/${{ matrix.target }}/release/filedrawer
+          if [ "$RUNNER_OS" = Windows ]; then exe=$exe.exe; fi
+          mkdir npm-dist npm-launcher npx-run
+          node crates/cli/npm/pack.mjs platform ${{ matrix.target }} "$exe" npm-dist
+          node crates/cli/npm/pack.mjs launcher npm-launcher
+          cd npx-run
+          echo '{}' > package.json
+          npm install --offline --no-audit --no-fund ../npm-dist/*.tgz ../npm-launcher/*.tgz
+          npx --no-install filedrawer -h
+          npx --no-install filedrawer check ../crates/analyzer/tests/it/fixtures/example.md
+      - uses: actions/upload-artifact@v7
+        with:
+          name: npm-${{ matrix.target }}
+          path: npm-dist/*.tgz
+      - if: matrix.target == 'x86_64-unknown-linux-musl'
+        uses: actions/upload-artifact@v7
+        with:
+          name: npm-launcher
+          path: npm-launcher/*.tgz
 
   sdist:
     runs-on: ubuntu-latest
@@ -107,6 +134,7 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           path: dist
+          pattern: "{wheel-*,sdist}"
           merge-multiple: true
       # The files must all carry the version given, so a run started on a commit
       # whose version isn't the one meant uploads nothing.
@@ -120,5 +148,80 @@ jobs:
             echo "::error::not version $VERSION: $others"
             exit 1
           fi
+      # --check-url skips the files PyPI has already, so a rerun finishes a release.
       - name: Publish
-        run: pipx run uv==0.13.5 publish --trusted-publishing always dist/*
+        run: >-
+          pipx run uv==0.13.5 publish --trusted-publishing always
+          --check-url https://pypi.org/simple/ dist/*
+
+  # Runs no third-party action: the job can mint an npm publish token. The `npm`
+  # environment is the one each package's trusted publisher names (ops/claim-names).
+  # npm's trusted publishing needs npm 11.5.1 or later on node 22.14 or later.
+  npm:
+    needs: [wheel]
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: npm
+    permissions:
+      id-token: write
+    env:
+      VERSION: ${{ inputs.version }}
+      # The platform packages first and the launcher last, so the launcher never
+      # names a package npm lacks.
+      PACKAGES: cli-linux-x64 cli-linux-arm64 cli-darwin-arm64 cli-darwin-x64 cli-win32-x64 cli
+    steps:
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          pattern: npm-*
+          merge-multiple: true
+      # As for PyPI: the files must be the six packages, each at the version given.
+      - name: Check the version
+        run: |
+          ls dist
+          for package in $PACKAGES; do
+            if [ ! -f "dist/filedrawer-$package-$VERSION.tgz" ]; then
+              echo "::error::no filedrawer-$package-$VERSION.tgz"
+              exit 1
+            fi
+          done
+          if [ "$(find dist -type f | wc -l)" -ne 6 ]; then
+            echo "::error::more files than the six packages"
+            exit 1
+          fi
+      # npm can set up a trusted publisher only for a package it has, so
+      # ops/claim-names first publishes a 0.0.0 of each. Until it has, this publishes
+      # nothing. Only npm's 404 counts as absent.
+      - name: Publish
+        working-directory: dist
+        run: |
+          status() {
+            curl -sS --retry 3 --max-time 30 -o /dev/null -w '%{http_code}' \
+              "https://registry.npmjs.org/@filedrawer/$1" || true
+          }
+          absent=""
+          for package in $PACKAGES; do
+            case $(status "$package") in
+              200) ;;
+              404) absent="$absent $package" ;;
+              *) echo "::error::npm didn't answer about @filedrawer/$package"; exit 1 ;;
+            esac
+          done
+          if [ "$absent" = " $PACKAGES" ]; then
+            echo "::notice::npm has no @filedrawer packages yet: run ops/claim-names, which makes them, then rerun."
+            exit 0
+          elif [ -n "$absent" ]; then
+            echo "::error::npm lacks these @filedrawer packages:$absent. Run ops/claim-names, then rerun."
+            exit 1
+          fi
+          for package in $PACKAGES; do
+            case $(status "$package/$VERSION") in
+              200) echo "npm has @filedrawer/$package $VERSION already." ;;
+              404) npx --yes npm@11.21.2 publish "filedrawer-$package-$VERSION.tgz" ;;
+              *) echo "::error::npm didn't answer about @filedrawer/$package $VERSION"; exit 1 ;;
+            esac
+          done

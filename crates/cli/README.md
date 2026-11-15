@@ -14,6 +14,12 @@ Run it without installing, with [uv](https://docs.astral.sh/uv/):
 uvx filedrawer check ENTRY.md
 ```
 
+Or with npm:
+
+```
+npx @filedrawer/cli check ENTRY.md
+```
+
 Or install it, from PyPI or crates.io:
 
 ```
@@ -21,7 +27,7 @@ uv tool install filedrawer
 cargo install filedrawer --locked
 ```
 
-Both install `filedrawer`, and `entry-check`, an older name for `filedrawer check`.
+Both install `filedrawer`, and `entry-check`, an older name for `filedrawer check`; npm's package installs only `filedrawer`.
 The check exits 0 when every entry would be accepted, 1 when any would be refused, and 2 when a file can't be read.
 `filedrawer check -h` says more.
 
