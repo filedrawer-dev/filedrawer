@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# Publishes the crates of the `filedrawer` command to crates.io through its trusted
+# publishing (#84). release-cli.yml's crates job runs it.
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+usage: bin/crates-release [--analyzer] [--cli]
+
+Publishes filedrawer-analyzer (--analyzer), then filedrawer (--cli), from this
+checkout, with `cargo publish --locked --no-verify`, which builds nothing: CI's
+check job built the commit. It trades the job's GitHub OIDC token,
+audience crates.io, for a crates.io token at
+https://crates.io/api/v1/trusted_publishing/tokens, which matches it against the
+trusted publisher each crate's settings name (release-cli.yml, environment
+crates-io), and revokes that token when it ends, whatever happened. Neither token
+is printed or put on a command line. The job needs `id-token: write`.
+USAGE
+}
+
+analyzer=0 cli=0
+for arg in "$@"; do
+  case $arg in
+    -h | --help) usage; exit 0 ;;
+    --analyzer) analyzer=1 ;;
+    --cli) cli=1 ;;
+    *) usage >&2; exit 2 ;;
+  esac
+done
+if (( !analyzer && !cli )); then usage >&2; exit 2; fi
+
+TOKENS=https://crates.io/api/v1/trusted_publishing/tokens
+USER_AGENT="filedrawer-release (https://github.com/filedrawer-dev/filedrawer)"
+fail() { echo "::error::$1"; exit 1; }
+
+if [[ -z ${ACTIONS_ID_TOKEN_REQUEST_URL:-} || -z ${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-} ]]; then
+  fail "no GitHub OIDC token here: the job needs \`permissions: id-token: write\`"
+fi
+
+# Secrets go to curl in files and on stdin, never in its arguments.
+secrets=$(mktemp -d)
+trap 'rm -rf "$secrets"' EXIT
+printf 'Authorization: Bearer %s\n' "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" > "$secrets/github"
+json_field() { python3 -c 'import json, sys; print(json.load(sys.stdin)[sys.argv[1]])' "$1"; }
+
+jwt=$(curl -sS --fail --retry 3 --max-time 30 -H "@$secrets/github" \
+  "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=crates.io" | json_field value) \
+  || fail "GitHub gave the job no OIDC token"
+
+if ! reply=$(printf '{"jwt": "%s"}' "$jwt" | curl -sS --fail-with-body --retry 3 --max-time 30 \
+    -A "$USER_AGENT" -H 'Content-Type: application/json' --data-binary @- "$TOKENS"); then
+  fail "crates.io gave the job no token ($reply); when it says no trusted publisher matches, add one on each crate's settings page: release-cli.yml, environment crates-io"
+fi
+CARGO_REGISTRY_TOKEN=$(json_field token <<<"$reply") || fail "crates.io's answer held no token"
+export CARGO_REGISTRY_TOKEN
+printf 'Authorization: Bearer %s\n' "$CARGO_REGISTRY_TOKEN" > "$secrets/crates"
+
+revoke() {
+  if ! curl -sS --fail --retry 3 --max-time 30 -A "$USER_AGENT" -X DELETE \
+      -H "@$secrets/crates" "$TOKENS" >/dev/null; then
+    echo "::warning::crates.io didn't revoke the release's token; it lapses on its own."
+  fi
+  rm -rf "$secrets"
+}
+trap revoke EXIT
+
+# cargo only packs: CI's check job built and tested this commit already, and a build
+# here would run every dependency's build script beside the token. Nor can anything
+# cargo starts ask GitHub for another token.
+unset ACTIONS_ID_TOKEN_REQUEST_URL ACTIONS_ID_TOKEN_REQUEST_TOKEN
+
+# The analyzer first: filedrawer requires it at exactly its version. cargo waits
+# for crates.io's index to list it before it returns.
+if (( analyzer )); then cargo publish --locked --no-verify -p filedrawer-analyzer; fi
+if (( cli )); then cargo publish --locked --no-verify -p filedrawer; fi

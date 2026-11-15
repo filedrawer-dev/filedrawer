@@ -1,0 +1,304 @@
+#!/usr/bin/env python3
+"""What a release of the `filedrawer` command publishes, for .github/workflows/release-cli.yml
+(design.md, Distribution; #84).
+
+    bin/release-plan gate --repo OWNER/NAME --run ID --sha SHA
+    bin/release-plan gate --repo OWNER/NAME --dispatch
+    bin/release-plan plan [--version X.Y.Z]
+
+A push to main that bumps crates/cli/Cargo.toml's version is a release: once CI's
+`check` job passes on it, the workflow publishes that version to each registry
+that lacks it.
+
+`gate` says whether a CI run may release, and from which commit, as `go=` and `sha=`
+lines: a run may when its `check` job passed and its commit is still main's tip
+(a later commit's run releases instead). The rest of CI, such as staging's deploy
+and smoke runs, doesn't hold a release back. With `--dispatch`, for a run started
+by hand, the commit is main's tip, and it fails unless a CI run's `check` passed
+on it. It reads GitHub through gh.
+
+`plan`, run at the repo root of that commit, prints `key=value` lines for
+$GITHUB_OUTPUT: cli_version and analyzer_version; crates_analyzer, crates_cli, pypi
+and npm, each `true` when that registry lacks that version; and build, when PyPI or
+npm needs the binaries. A version
+below the highest one a registry has fails, so an old commit never publishes
+backwards. When the CLI's version is new anywhere, the analyzer it requires must
+be published first or be unchanged:
+
+  - crates/cli/Cargo.toml requires filedrawer-analyzer at exactly its version
+    (`version = "=X"`), so `cargo install filedrawer` builds with the analyzer the
+    binaries hold;
+  - if crates.io has the analyzer at that version, the crate `cargo package` makes
+    of it must hold the same files as crates.io's, Cargo.toml.orig included and the
+    Cargo.toml cargo writes left out, since cargo versions write it differently.
+    A difference fails, naming the files: bump crates/analyzer's version and the
+    CLI's requirement. A yanked version fails too.
+
+Between releases nothing checks the analyzer. Only a registry's 404 counts as
+absent; any other answer fails. --version, a dispatch's input, must be the CLI's.
+"""
+
+import argparse
+import io
+import json
+import re
+import subprocess
+import sys
+import tarfile
+import tempfile
+import tomllib
+from pathlib import Path
+
+USER_AGENT = "filedrawer-release (https://github.com/filedrawer-dev/filedrawer)"
+CI_WORKFLOW = "CI"
+
+
+class Refused(Exception):
+    """A reason to stop, printed as a GitHub error."""
+
+
+def get(url: str) -> bytes | None:
+    """URL's body, or None for a 404; any other answer is Refused."""
+    with tempfile.NamedTemporaryFile() as out:
+        done = subprocess.run(
+            [
+                "curl",
+                "-sS",
+                "--retry",
+                "3",
+                "--max-time",
+                "60",
+                "-A",
+                USER_AGENT,
+                "-o",
+                out.name,
+                "-w",
+                "%{http_code}",
+                url,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        status = done.stdout.strip()
+        if status == "404":
+            return None
+        if status != "200":
+            raise Refused(
+                f"{url} answered {status or done.stderr.strip()}; rerun once it answers"
+            )
+        return Path(out.name).read_bytes()
+
+
+def get_json(url: str) -> dict | None:
+    body = get(url)
+    if body is None:
+        return None
+    try:
+        return json.loads(body)
+    except json.JSONDecodeError:
+        raise Refused(
+            f"{url} answered something that isn't JSON; rerun once it answers"
+        ) from None
+
+
+def version_numbers(version: str) -> tuple[int, ...] | None:
+    """A version as numbers, or None for a pre-release, such as npm's 0.0.0-stage."""
+    if not re.fullmatch(r"\d+\.\d+\.\d+", version):
+        return None
+    return tuple(int(n) for n in version.split("."))
+
+
+def manifest(path: str) -> dict:
+    try:
+        return tomllib.loads(Path(path).read_text())
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        raise Refused(f"can't read {path}: {error}") from None
+
+
+def release_version(path: str) -> str:
+    """The package version in the manifest at PATH, which a release needs as X.Y.Z."""
+    version = manifest(path).get("package", {}).get("version", "")
+    if version_numbers(version) is None:
+        raise Refused(f"{path} has version {version!r}; a release takes X.Y.Z")
+    return version
+
+
+def crate_versions(name: str) -> dict[str, bool]:
+    """crates.io's versions of NAME, each with whether it is yanked."""
+    found = get_json(f"https://crates.io/api/v1/crates/{name}")
+    return {} if found is None else {v["num"]: v["yanked"] for v in found["versions"]}
+
+
+def lacks(registry: str, versions, version: str) -> bool:
+    """Whether VERSIONS lack VERSION; Refused when one of them is higher."""
+    if version in versions:
+        return False
+    ours = version_numbers(version)
+    higher = sorted(v for v in versions if (n := version_numbers(v)) and n > ours)
+    if higher:
+        raise Refused(
+            f"{registry} has {higher[-1]}, above {version}: a release never goes backwards"
+        )
+    return True
+
+
+def crate_files(data: bytes) -> dict[str, bytes]:
+    """A .crate's files, by path inside it, without the parts cargo writes itself."""
+    files = {}
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
+        for member in tar.getmembers():
+            if member.isfile():
+                path = member.name.split("/", 1)[1]
+                if path not in ("Cargo.toml", "Cargo.lock", ".cargo_vcs_info.json"):
+                    files[path] = tar.extractfile(member).read()
+    return files
+
+
+def check_analyzer(version: str, yanked: bool) -> None:
+    """Refused unless the repo's analyzer packs to crates.io's VERSION, file for file."""
+    if yanked:
+        raise Refused(
+            f"crates.io's filedrawer-analyzer {version} is yanked: bump crates/analyzer's version and crates/cli's requirement"
+        )
+    name = "filedrawer-analyzer"
+    published = get(f"https://static.crates.io/crates/{name}/{name}-{version}.crate")
+    if published is None:
+        raise Refused(
+            f"crates.io lists {name} {version} but doesn't serve it yet; rerun in a few minutes"
+        )
+    packed = subprocess.run(
+        ["cargo", "package", "-p", name, "--no-verify", "--allow-dirty", "--quiet"],
+        check=False,
+    )
+    if packed.returncode != 0:
+        raise Refused(f"cargo package -p {name} failed; its message above says why")
+    ours = crate_files(Path(f"target/package/{name}-{version}.crate").read_bytes())
+    theirs = crate_files(published)
+    differ = sorted(
+        p for p in ours.keys() | theirs.keys() if ours.get(p) != theirs.get(p)
+    )
+    if differ:
+        raise Refused(
+            f"crates/analyzer differs from crates.io's {name} {version} in {', '.join(differ)}: "
+            "bump crates/analyzer's version and crates/cli's requirement on it (=X)"
+        )
+
+
+def plan(dispatched: str | None) -> dict[str, str]:
+    cli = release_version("crates/cli/Cargo.toml")
+    analyzer = release_version("crates/analyzer/Cargo.toml")
+    if dispatched and dispatched != cli:
+        raise Refused(
+            f"the version given, {dispatched}, isn't crates/cli/Cargo.toml's {cli}"
+        )
+    pypi = get_json("https://pypi.org/pypi/filedrawer/json")
+    npm = get_json("https://registry.npmjs.org/@filedrawer/cli")
+    lacking = {
+        "crates_cli": lacks("crates.io", crate_versions("filedrawer"), cli),
+        "pypi": lacks("PyPI", (pypi or {}).get("releases", {}), cli),
+        "npm": lacks("npm", (npm or {}).get("versions", {}), cli),
+    }
+    crates_analyzer = False
+    if any(lacking.values()):
+        dependency = (
+            manifest("crates/cli/Cargo.toml")
+            .get("dependencies", {})
+            .get("filedrawer-analyzer", {})
+        )
+        if (
+            not isinstance(dependency, dict)
+            or dependency.get("version") != f"={analyzer}"
+        ):
+            raise Refused(
+                f'crates/cli/Cargo.toml must require filedrawer-analyzer at version = "={analyzer}", its version'
+            )
+        analyzers = crate_versions("filedrawer-analyzer")
+        crates_analyzer = lacks("crates.io", analyzers, analyzer)
+        if not crates_analyzer:
+            check_analyzer(analyzer, analyzers[analyzer])
+    flags = {"crates_analyzer": crates_analyzer, **lacking}
+    flags["build"] = lacking["pypi"] or lacking["npm"]
+    return {"cli_version": cli, "analyzer_version": analyzer} | {
+        k: str(v).lower() for k, v in flags.items()
+    }
+
+
+def gh(path: str) -> dict:
+    done = subprocess.run(
+        ["gh", "api", path], capture_output=True, text=True, check=False
+    )
+    if done.returncode != 0:
+        raise Refused(f"GitHub didn't answer {path}: {done.stderr.strip()}")
+    return json.loads(done.stdout)
+
+
+def check_passed(repo: str, run: int) -> bool:
+    """Whether CI's check job passed in RUN."""
+    jobs = gh(f"repos/{repo}/actions/runs/{run}/jobs")["jobs"]
+    return any(j["name"] == "check" and j["conclusion"] == "success" for j in jobs)
+
+
+def gate(repo: str, run: int | None, sha: str | None) -> dict[str, str]:
+    tip = gh(f"repos/{repo}/commits/main")["sha"]
+    if run is None:
+        runs = gh(f"repos/{repo}/actions/runs?head_sha={tip}&event=push")[
+            "workflow_runs"
+        ]
+        if not any(
+            r["name"] == CI_WORKFLOW and check_passed(repo, r["id"]) for r in runs
+        ):
+            raise Refused(
+                f"CI's check hasn't passed on main's tip, {tip}: wait for it, then start the release again"
+            )
+        return {"go": "true", "sha": tip}
+    if sha != tip:
+        print(
+            f"::notice::main has moved on from {sha} to {tip}; that commit's CI run releases instead."
+        )
+        return {"go": "false", "sha": sha}
+    if not check_passed(repo, run):
+        print(f"::notice::CI's check didn't pass on {sha}, so nothing is released.")
+        return {"go": "false", "sha": sha}
+    return {"go": "true", "sha": sha}
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        prog="bin/release-plan",
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    commands = parser.add_subparsers(dest="command", required=True)
+    g = commands.add_parser(
+        "gate", help="whether a CI run may release, and from which commit"
+    )
+    g.add_argument("--repo", required=True)
+    g.add_argument("--run", type=int)
+    g.add_argument("--sha")
+    g.add_argument("--dispatch", action="store_true")
+    p = commands.add_parser(
+        "plan", help="what each registry lacks, after the analyzer rule"
+    )
+    p.add_argument(
+        "--version", help="the version a dispatch was given, which must be the CLI's"
+    )
+    args = parser.parse_args()
+    try:
+        if args.command == "gate":
+            by_run = args.run is not None and args.sha is not None
+            if args.dispatch == by_run or (not by_run and (args.run or args.sha)):
+                parser.error("gate takes --run and --sha, or --dispatch")
+            found = gate(args.repo, None if args.dispatch else args.run, args.sha)
+        else:
+            found = plan(args.version)
+    except Refused as refused:
+        print(f"::error::{refused}")
+        return 1
+    for key, value in found.items():
+        print(f"{key}={value}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

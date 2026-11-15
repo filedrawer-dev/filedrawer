@@ -739,6 +739,12 @@ The owner settled the email's sections and the rules in design.md's Admin sectio
   `ops/claim-names` makes the `pypi` and `npm` environments open to main only, and the workflow refuses files whose version isn't the one typed in.
 - Against: a release from a branch would let a fix go out before it lands.
 
+#### What a release on push checks
+
+- Options: release once CI's `check` job passes, or once the whole CI run does; compare the analyzer with crates.io's crate file by file, or by git tags of each release; pin the CLI's requirement on the analyzer with `=`, or with a caret.
+- Chosen: once `check` passes and the commit is still main's tip, so staging's deploy and smoke runs, which can fail for reasons of their own, don't hold a release back; file by file against crates.io (`Cargo.toml.orig` in, the Cargo.toml cargo writes out), since CI can't push tags without a deploy key; `=`, so `cargo install filedrawer` builds with the analyzer the binaries hold, `--locked` or not (`bin/release-plan`; #84).
+- Against: a release can go out from a commit staging never ran; a workspace-level change (`edition`, `license`) shows only in the Cargo.toml cargo writes, so it slips past the comparison; and `=` makes every analyzer bump a CLI edit too.
+
 #### npm's trusted publishers, set up again on each run
 
 - Options: for a package npm has only as the 0.0.0 placeholder, set up its trusted publisher afresh on each run of `ops/claim-names` (revoke any, then add); add one only where `npm trust list` shows none; or ask the owner to look at the package's settings page.

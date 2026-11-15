@@ -25,4 +25,4 @@ name = "entry-check"
 path = "src/bin/entry-check.rs"
 
 [dependencies]
-filedrawer-analyzer = { version = "0.1.0", path = "../analyzer" }
+filedrawer-analyzer = { version = "=0.1.0", path = "../analyzer" }

@@ -1143,8 +1143,12 @@ All three remove empty placeholders, so the names are held with a package that w
   The binary `entry-check` stays, doing what `filedrawer check` does, because the submit skill tells agents to run `cargo run -q --bin entry-check -- FILE`.
 - Each package carries the repository's `LICENSE`, since the AGPL asks that its text go with the program.
 - PyPI gets wheels that hold both binaries, built by maturin, so `uvx` runs it with no Rust installed.
-  `.github/workflows/release-cli.yml` builds them for Linux (static, x86_64 and aarch64), macOS (arm64 and x86_64) and Windows (x86_64), and publishes only when started by hand, through PyPI's trusted publishing, so no token is stored.
-- crates.io's first publish of a crate needs a person's token, so the owner publishes the crates with `ops/claim-names`, which also starts the first release to PyPI and npm, once crates.io has its version, so all three stay at one version (the owner, 2026-11-14).
+  `.github/workflows/release-cli.yml` builds them for Linux (static, x86_64 and aarch64), macOS (arm64 and x86_64) and Windows (x86_64), and publishes them in a release (below), through PyPI's trusted publishing, so no token is stored.
+- crates.io's first publish of a crate needs a person's token, so the owner published the crates with `ops/claim-names`, which also started the first release to PyPI and npm, once crates.io had its version, so all three stay at one version (the owner, 2026-11-14).
+- A release is a push: once CI's `check` passes on a push to main whose `crates/cli/Cargo.toml` names a version a registry lacks, `release-cli.yml` publishes it there, crates.io included, all through trusted publishing (the owner, 2026-11-14; #84).
+  Reason: releasing then needs nothing but a version-bump commit, which an agent can prepare, as a push to main already deploys staging; manual dispatch reruns one.
+  crates.io goes first, and PyPI and npm wait for it, so a failed crates.io publish leaves no registry a version ahead.
+  The analyzer keeps its own version and is published with a release when it changed, and a release stops when its analyzer differs from crates.io's at the same version (the owner, 2026-11-14), checked then and not on each push, so analyzer changes land freely between releases.
 - npm sets up a trusted publisher only for a package it has, and drops one that publishes nothing within 2 days, so `ops/claim-names` publishes a placeholder 0.0.0 of each npm package, sets up each one's trusted publisher, and starts the release at once, which publishes the real version from CI (the owner, 2026-11-14; #84).
   The 0.0.0s stay listed, and every real version carries npm's provenance.
 - npm gets the same Rust binary, not a JavaScript port, so every reader of an entry reads it with one analyzer (the owner, 2026-11-14; #84).
