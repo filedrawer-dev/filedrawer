@@ -94,9 +94,10 @@ class Box:
             optionalDependencies={f"@filedrawer/{p}": VERSION for p in PLATFORMS},
         )
 
-    def run(self, version: str = VERSION, **env: str):
+    def run(self, version: str = VERSION, dist: str | None = None, **env: str):
         return subprocess.run(
-            [str(SCRIPT), str(self.dist), version],
+            [str(SCRIPT), dist or str(self.dist), version],
+            cwd=self.dist.parent,
             env={**self.env, **env},
             capture_output=True,
             text=True,
@@ -122,6 +123,22 @@ def test_it_publishes_the_platform_packages_then_the_launcher(tmp_path):
         *(f"filedrawer-{p}-{VERSION}.tgz" for p in PLATFORMS),
         f"filedrawer-cli-{VERSION}.tgz",
     ]
+
+
+def test_a_relative_dir_reaches_npm_as_a_path_not_a_github_repository(tmp_path):
+    """npm reads `dist/x.tgz` as the GitHub repository dist/x.tgz, as release
+    run 43669677567 found; a path that starts with / is a file."""
+    box = Box(tmp_path, ALL_PLACEHOLDERS)
+    done = box.run(dist="dist")
+    assert done.returncode == 0, done.stdout + done.stderr
+    tarballs = [
+        line.split()[-1]
+        for line in (box.state / "log").read_text().splitlines()
+        if line.startswith("npx") and " publish " in line
+    ]
+    assert len(tarballs) == 6
+    for tarball in tarballs:
+        assert Path(tarball).is_absolute() and Path(tarball).is_file(), tarball
 
 
 def test_a_rerun_publishes_only_what_npm_lacks(tmp_path):

@@ -24,10 +24,13 @@ case ${1:-} in
   -h | --help) usage; exit 0 ;;
 esac
 if (( $# != 2 )); then usage >&2; exit 2; fi
-dir=$1 version=$2
 NPM=(npx --yes npm@11.21.2)
 
 fail() { echo "::error::$1"; exit 1; }
+
+# Absolute, since npm reads a relative `dist/x.tgz` as the GitHub repository dist/x.tgz.
+dir=$(CDPATH='' cd -- "$1" >/dev/null && pwd) || fail "no folder $1"
+version=$2
 
 launcher="$dir/filedrawer-cli-$version.tgz"
 [[ -f $launcher ]] || fail "no filedrawer-cli-$version.tgz in $dir"
