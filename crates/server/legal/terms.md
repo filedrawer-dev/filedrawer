@@ -19,8 +19,15 @@ They aren't legal advice, and they may change during the beta; this page then sh
 
 ## Copyright
 
-To report an entry or file that infringes your copyright, write to <contact@filedrawer.dev> with the entry's address, the work it copies, and a statement that you own the rights or act for the owner.
+To report an entry or file that infringes your copyright, send a notice to the designated agent below with the entry's address, the work it copies, and a statement that you own the rights or act for the owner.
 The operator takes infringing material down and may suspend accounts that post it again.
+
+The agent designated to receive notices under the DMCA (17 U.S.C. § 512(c)), registered with the U.S. Copyright Office as DMCA-1086424:
+
+- Jason Carver
+- 455 Market St Ste 1940, PMB 778935, San Francisco, CA 94105
+- Phone: 415-815-8602
+- Email: <copyright@filedrawer.dev>
 
 ## The code
 
