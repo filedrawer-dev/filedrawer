@@ -227,7 +227,9 @@ def link_from_imap(mail: dict, address: str) -> str | None:
     """The verification link in the newest mail to exactly `address`, from INBOX or
     Junk; the message is deleted once read. Purelymail's IMAP SEARCH matches no
     header text (TO, SUBJECT and FROM all find nothing), so the server narrows by
-    date only and the headers are checked here."""
+    date only and the headers are checked here. Messages go by UID: the runs of a
+    batch share the mailbox, and a sequence number changes when another run deletes
+    its mail."""
     since = (datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=1)).strftime(
         "%d-%b-%Y"
     )
@@ -236,12 +238,16 @@ def link_from_imap(mail: dict, address: str) -> str | None:
         for folder in ("INBOX", "Junk"):
             if imap.select(folder)[0] != "OK":
                 continue
-            status, data = imap.search(None, "SINCE", since)
-            for number in reversed((data[0] or b"").split() if status == "OK" else []):
-                status, parts = imap.fetch(number, "(RFC822)")
-                if status != "OK":
+            status, data = imap.uid("SEARCH", "SINCE", since)
+            for uid in reversed((data[0] or b"").split() if status == "OK" else []):
+                status, parts = imap.uid("FETCH", uid, "(RFC822)")
+                # The message is the answer's one tuple; lines about other mail's
+                # flags may come before it. None: another run deleted it since the
+                # search.
+                found = [part for part in parts if isinstance(part, tuple)]
+                if status != "OK" or not found:
                     continue
-                message = message_from_bytes(parts[0][1])
+                message = message_from_bytes(found[0][1])
                 subject = str(make_header(decode_header(message.get("Subject", ""))))
                 if subject != SUBJECT:
                     continue
@@ -257,7 +263,7 @@ def link_from_imap(mail: dict, address: str) -> str | None:
                     )
                 link = re.search(rb"/verify\?token=([A-Za-z0-9_-]+)", body)
                 if link:
-                    imap.store(number, "+FLAGS", "\\Deleted")
+                    imap.uid("STORE", uid, "+FLAGS", "\\Deleted")
                     imap.expunge()
                     return link[1].decode()
     return None
