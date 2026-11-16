@@ -160,6 +160,19 @@ Add a new entry at the end of the topic it belongs to, or start a topic when non
 - Chosen: feedback goes, since it is personal data and the triage summaries keep what the owner needs; `rejected` entries go with the other unpublished ones.
 - Against: feedback is the usability signal the owner asked agents for, and a rejected entry is abuse data the owner may want after the account leaves.
 
+#### The feedback limit: what counts, and for whom
+
+The owner set 10 an hour and 50 a day per account (#60); an agent chose the rest, after its brief review.
+
+- Options: count every `POST /feedback`, refused ones included, in `rate_events` beside the other hourly counts; or count only the items stored, read from the `feedback` table in the transaction that stores the next one.
+- Chosen: only stored items, from the table.
+  A refused item costs nothing but a request, which the 60 writes a minute cover, and `rate_events` then holds no account ID, which design.md and the privacy page say it doesn't.
+- Against: deleting feedback gives its place back, and the count runs under the write lock, on an index.
+- Options: the same numbers for every account, or wider ones for the admin, invited accounts or staging.
+- Chosen: the same for all.
+- Against: the owner's agents on staging share one account, so they share its 10 an hour.
+- Nothing caps feedback across accounts: 40 signups a day from one IP can each store 50 items.
+
 #### Account deletion: entries citing a deleted hidden series
 
 - Options: clear the cite, as here, or keep it and show "series description removed", as design.md says for a purged version.
@@ -512,7 +525,7 @@ Add a new entry at the end of the topic it belongs to, or start a topic when non
 
 The owner settled the email's sections and the rules in design.md's Admin section (#44); an agent chose these, after its brief review.
 - Feedback: at most 20 items in full, the newest; past that the oldest are only counted.
-  Against: a busy day hides some feedback from the owner until #60 rate-limits `POST /feedback`, and nothing else shows it.
+  Against: an account may store 50 items a day (#60), over the 20 shown, so a busy day still hides some feedback from the owner until the triage agent reads it (#18), and nothing else shows it.
 - Host pauses and GitHub's half running out are listed but don't send the email alone, and screen failures send it only while the last call failed.
   Against: a host that keeps pausing the server, or a screen that fails often but recovers each time, never reaches the owner on a quiet day.
 - A failed run is retried an hour later, for the admins it didn't reach; a retry sends them the period up to the retry, so the admins it reached first miss what came between the two.

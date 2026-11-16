@@ -549,6 +549,8 @@ async fn a_backups_folder_the_server_cant_read_is_reported() {
 #[tokio::test]
 async fn past_twenty_feedback_items_the_rest_are_counted() {
     let (app, _) = app_in(Environment::Dev, true).await;
+    // Over the site's 10 feedback items an hour, which a day's 50 can pass.
+    let app = app.with_limits(common::through_caddy::wide());
     for n in 0..23 {
         feedback(&app, &format!("experiment {n}"), "w", "x").await;
     }

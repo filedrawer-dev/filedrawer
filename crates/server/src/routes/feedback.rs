@@ -11,7 +11,8 @@ use serde_json::json;
 use crate::auth::TokenAccount;
 use crate::error::AppError;
 use crate::respond::Format;
-use crate::{AppState, ids, time::now};
+use crate::time::{now_utc, stamp};
+use crate::{AppState, db, ids, limits};
 
 /// The most text one field may hold.
 const MAX_FIELD_CHARS: usize = 10_000;
@@ -66,8 +67,17 @@ pub async fn feedback(
     if !reasons.is_empty() {
         return Err(refuse(reasons));
     }
+    // The count and the insert share a write transaction, so only stored feedback
+    // counts and two requests can't both take a window's last place.
+    let at = now_utc();
+    let mut tx = db::write_tx(&state.pool).await?;
+    if let Some(refusal) =
+        limits::full_feedback_window(&mut tx, &state.rate_limits.limits, &account.id, at).await?
+    {
+        return Err(refusal);
+    }
     let id = ids::new_id();
-    let created_at = now();
+    let created_at = stamp(at);
     sqlx::query!(
         "INSERT INTO feedback (id, account_id, experiment, wanted, workaround, created_at)
          VALUES (?, ?, ?, ?, ?, ?)",
@@ -78,8 +88,9 @@ pub async fn feedback(
         workaround,
         created_at
     )
-    .execute(&state.pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(format.reply(
         StatusCode::CREATED,
         format!("feedback received: {id}\n"),

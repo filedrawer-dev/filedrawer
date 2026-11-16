@@ -102,6 +102,9 @@ The owner expects little abuse and prefers limits to login friction.
   Password reset stays open under its own limits.
   Reason (the owner's decision, 2026-11-06): the per-IP limit alone let each address guess 300 passwords a minute, and a client with many addresses guess without bound.
   The cost: a stranger can lock an account's browser login for an hour; its API tokens keep working.
+- `POST /feedback` stores at most 10 items an hour and 50 a day per account (the owner, 2026-11-14; #60).
+  Reason: with no limit, one account could store thousands of items a day, which buries real feedback in the owner's daily email and fills the database.
+  It bounds one account, not the table: many accounts can still fill it.
 - Each limit answers with a 429, a reason, and `Retry-After` in seconds.
   The per-minute limits count in memory, as token buckets, so a restart forgets at most a minute's requests; the hourly and daily ones count in SQLite, so a deploy doesn't reset them.
   The client's IP is the connection's peer, or, when the peer is loopback, which is Caddy on the same host, the last address in `X-Forwarded-For`, the one Caddy saw.

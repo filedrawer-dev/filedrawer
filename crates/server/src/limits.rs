@@ -1,8 +1,8 @@
 //! Rate limits (design.md, Limits and abuse; issue #14): every request per client IP,
 //! token-authenticated writes per account, and signups and account emails per IP
-//! and per address. The per-minute limits keep their counts in memory, where a
-//! restart forgets at most a minute's; the hourly and daily ones keep theirs in
-//! SQLite, so a deploy doesn't reset them.
+//! and per address, and stored feedback per account (#60). The per-minute limits
+//! keep their counts in memory, where a restart forgets at most a minute's; the
+//! hourly and daily ones keep theirs in SQLite, so a deploy doesn't reset them.
 
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
@@ -50,6 +50,8 @@ pub struct Limits {
     pub emails_per_ip: Vec<Window>,
     /// Failed logins per email address, whether or not an account uses it.
     pub failed_logins_per_address: Vec<Window>,
+    /// Feedback items stored per account (#60).
+    pub feedback_per_account: Vec<Window>,
 }
 
 impl Limits {
@@ -62,6 +64,7 @@ impl Limits {
             emails_per_address: vec![hourly(5), daily(20)],
             emails_per_ip: vec![hourly(20), daily(60)],
             failed_logins_per_address: vec![hourly(10)],
+            feedback_per_account: vec![hourly(10), daily(50)],
         }
     }
 }
@@ -359,7 +362,7 @@ async fn full_window(
     counts: &[Counted<'_>],
     now: OffsetDateTime,
 ) -> Result<Option<AppError>, sqlx::Error> {
-    let mut refusal: Option<(&str, i64)> = None;
+    let mut refusal: Option<(&str, u64)> = None;
     for counted in counts {
         for window in counted.windows {
             let since = stamp(now - time::Duration::seconds(window.seconds));
@@ -371,24 +374,59 @@ async fn full_window(
             )
             .fetch_one(&mut *conn)
             .await?;
-            if row.count < window.count {
+            let Some(back) = wait_for_room(*window, row.count, row.oldest, now) else {
                 continue;
-            }
-            // Room comes back when the oldest event in the window leaves it; at
-            // the window's edge that is under a second, which still waits one.
-            let oldest = row
-                .oldest
-                .and_then(|at| crate::time::parse(&at))
-                .unwrap_or(now);
-            let back = (oldest + time::Duration::seconds(window.seconds) - now)
-                .whole_seconds()
-                .max(1);
+            };
             if refusal.is_none_or(|(_, wait)| back > wait) {
                 refusal = Some((counted.what, back));
             }
         }
     }
-    Ok(refusal.map(|(what, wait)| too_many(what, Duration::from_secs(wait.unsigned_abs()))))
+    Ok(refusal.map(|(what, wait)| too_many(what, Duration::from_secs(wait))))
+}
+
+/// The seconds until `window` has room again, when `count` events fill it, the
+/// oldest of them at `oldest`; `None` while it has room.
+fn wait_for_room(
+    window: Window,
+    count: i64,
+    oldest: Option<String>,
+    now: OffsetDateTime,
+) -> Option<u64> {
+    if count < window.count {
+        return None;
+    }
+    // Room comes back when the oldest event in the window leaves it; at the
+    // window's edge that is under a second, which still waits one.
+    let oldest = oldest.and_then(|at| crate::time::parse(&at)).unwrap_or(now);
+    let back = (oldest + time::Duration::seconds(window.seconds) - now).whole_seconds();
+    Some(back.max(1).unsigned_abs())
+}
+
+/// The refusal when `account_id` has stored as much feedback as a window of
+/// `limits` allows, naming the one that frees up last. The count is the account's
+/// rows in `feedback`, so only stored items count, and the caller inserts in the
+/// transaction `conn` belongs to, so two requests can't both take the last place.
+pub async fn full_feedback_window(
+    conn: &mut sqlx::SqliteConnection,
+    limits: &Limits,
+    account_id: &str,
+    now: OffsetDateTime,
+) -> Result<Option<AppError>, sqlx::Error> {
+    let mut longest: Option<u64> = None;
+    for window in &limits.feedback_per_account {
+        let since = stamp(now - time::Duration::seconds(window.seconds));
+        let row = sqlx::query!(
+            r#"SELECT COUNT(*) AS "count!: i64", MIN(created_at) AS "oldest?: String"
+               FROM feedback WHERE account_id = ? AND created_at > ?"#,
+            account_id,
+            since
+        )
+        .fetch_one(&mut *conn)
+        .await?;
+        longest = longest.max(wait_for_room(*window, row.count, row.oldest, now));
+    }
+    Ok(longest.map(|wait| too_many("this account's feedback", Duration::from_secs(wait))))
 }
 
 async fn insert(

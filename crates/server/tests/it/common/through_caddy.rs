@@ -37,6 +37,7 @@ pub fn wide() -> Limits {
         emails_per_address: hourly(10_000),
         emails_per_ip: hourly(10_000),
         failed_logins_per_address: hourly(10_000),
+        feedback_per_account: hourly(10_000),
     }
 }
 
