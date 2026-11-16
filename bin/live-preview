@@ -3,12 +3,13 @@
 # requires-python = ">=3.11"
 # dependencies = ["jinja2==3.1.6"]
 # ///
-"""Preview the home page live while drafting its text.
+"""Preview the home page, and the documents agents read, live while drafting their text.
 
     bin/live-preview                 build the server, start it with seed entries,
                                      and serve the preview on port 8090
     bin/live-preview --no-build      start the server as last built
     bin/live-preview --upstream URL  preview against a server already running
+    bin/live-preview --print PATH    print one of the documents and exit
 
 Askama compiles the templates into the binary, so seeing a template edit otherwise
 means a rebuild that waits in heavy's queue. Here a browser's GET / is rendered on
@@ -17,8 +18,19 @@ askama, and the drawer of entries taken from a dev server's own home page. The
 stylesheet and copy.js come from disk, at URLs that change with them, on every page.
 The page reloads itself when one of the four files changes, though a save on the
 host can reach the sandbox too late for that; reloading by hand always shows the
-latest save. Every other request (other pages, forms, an agent's GET /) goes to the
-dev server unchanged, so other pages' markup is what it was built with.
+latest save.
+
+The documents agents read come from the checkout too, on each request, whoever asks:
+/skill.md from crates/server/install.md, /install.sh from crates/server/install.sh,
+and /skills/NAME/FILE from skills/, each filled in for the preview's address as the
+server would fill it (a test holds the two to the same text). They are served as
+plain text, which a browser shows where it would download markdown, so the page
+can't reload itself: reload by hand. /skill.md carries the skills' versions in X-Filedrawer-Skills, as the server's does.
+The start prints a link to each. --print PATH
+writes one to stdout and starts nothing, for --public-url URL when given.
+
+Every other request (other pages, forms, an agent's GET /) goes to the dev server
+unchanged, so other pages' markup is what it was built with.
 
 The dev server is `filedrawer-server serve` in the dev environment, built first with
 `heavy --share -- cargo build --bin filedrawer-server` (plain cargo without heavy), on
@@ -88,6 +100,91 @@ SEED_ENTRIES = (
 )
 
 
+# The site the skills' files and the installer name, which a deployment elsewhere
+# rewrites to its own address (crates/server/src/skills.rs).
+PRODUCTION = "https://filedrawer.dev"
+
+
+class Documents:
+    """The documents agents read, /skill.md, /install.sh and each skill's files, as
+    the server at `public_url` would serve the checkout's copies: the fill-in rules
+    of crates/server/src/routes/docs.rs and skills.rs, copied here, which a test in
+    crates/server/tests/it/skill.rs holds to the server's."""
+
+    def __init__(self, root: Path, public_url: str) -> None:
+        self.server = root / "crates/server"
+        self.skills = root / "skills"
+        self.public_url = public_url
+        self.host = public_url.split("://", 1)[-1].split("/", 1)[0]
+
+    def names(self) -> list[str]:
+        """The skills, in the server's order."""
+        return sorted(p.parent.name for p in self.skills.glob("*/SKILL.md"))
+
+    def version(self, name: str) -> str:
+        text = (self.skills / name / "SKILL.md").read_text()
+        found = re.search(r'^  version: "(\d+)"$', text, re.MULTILINE)
+        if found is None:
+            raise ValueError(f"{name}'s SKILL.md has no metadata.version")
+        return found.group(1)
+
+    def for_site(self, text: str) -> str:
+        return text.replace(PRODUCTION, self.public_url).replace(
+            "/filedrawer.dev.header", f"/{self.host}.header"
+        )
+
+    def versions(self) -> list[tuple[str, str]]:
+        """Each skill with its version, as /skill.md's X-Filedrawer-Skills names them."""
+        return [(name, self.version(name)) for name in self.names()]
+
+    def skill_md(self) -> str:
+        versions = self.versions()
+        tags = " and ".join(
+            f"`https://github.com/filedrawer-dev/filedrawer/tree/skill-{name}-v{n}/skills/{name}`"
+            for name, n in versions
+        )
+        curl = "curl -fsSL"
+        if self.public_url != PRODUCTION:
+            curl += (
+                f' -H @"$(ls ~/.config/filedrawer/{self.host}.header 2>/dev/null'
+                ' || echo /dev/null)"'
+            )
+        text = (self.server / "install.md").read_text()
+        for placeholder, value in (
+            ("{{BASE}}", self.public_url),
+            ("{{HOST}}", self.host),
+            ("{{SKILLS}}", " ".join(f"{name}/{n}" for name, n in versions)),
+            ("{{TAG_URLS}}", tags),
+            ("{{CURL}}", curl),
+        ):
+            text = text.replace(placeholder, value)
+        return text
+
+    def get(self, path: str) -> str | None:
+        """The document at `path`, or None when it is none of them."""
+        if path == "/skill.md":
+            return self.skill_md()
+        if path == "/install.sh":
+            return self.for_site((self.server / "install.sh").read_text())
+        parts = path.split("/")
+        if len(parts) < 4 or parts[:2] != ["", "skills"] or ".." in parts:
+            return None
+        folder = self.skills / parts[2]
+        file = folder.joinpath(*parts[3:])
+        if not (folder / "SKILL.md").is_file() or not file.is_file():
+            return None
+        return self.for_site(file.read_text())
+
+    def links(self) -> list[str]:
+        """Each page a start lists: the home page, /skill.md and each skill's
+        SKILL.md."""
+        return [
+            "/",
+            "/skill.md",
+            *(f"/skills/{name}/SKILL.md" for name in self.names()),
+        ]
+
+
 class NoRedirects(urllib.request.HTTPRedirectHandler):
     """Hands a redirect back to the browser instead of following it."""
 
@@ -126,6 +223,7 @@ class Preview:
         ]
         self.upstream = upstream
         self.public_url = public_url
+        self.documents = Documents(root, public_url)
         # LIVE_PREVIEW_KEEP_CACHES, set by its tests, whose scratch folders can sit on
         # the host mount too, keeps them.
         self.drops_caches = on_virtiofs(root) and not os.environ.get(
@@ -282,9 +380,43 @@ def handler_for(preview: Preview) -> type[http.server.BaseHTTPRequestHandler]:
             if path == "/static/copy.js":
                 script = (preview.static / "copy.js").read_bytes()
                 return self.reply(200, script, "text/javascript; charset=utf-8")
-            self.answer()
+            if not self.document():
+                self.answer()
 
-        do_HEAD = do_POST = do_PUT = do_DELETE = answer
+        def document(self) -> bool:
+            """Answers with the checkout's copy of a document agents read, as plain
+            text, which a browser shows; says whether the path was one. /skill.md
+            names the skills' versions in X-Filedrawer-Skills, as the server's
+            does, which the skills' upgrade check reads from a HEAD."""
+            path = self.path.split("?", 1)[0]
+            if path not in ("/skill.md", "/install.sh") and not path.startswith(
+                "/skills/"
+            ):
+                return False
+            preview.drop_caches()
+            headers = [
+                ("Content-Type", "text/plain; charset=utf-8"),
+                ("Cache-Control", "no-store"),
+            ]
+            try:
+                text = preview.documents.get(path)
+                if path == "/skill.md":
+                    versions = preview.documents.versions()
+                    listed = ", ".join(f"{name}/{n}" for name, n in versions)
+                    headers.append(("X-Filedrawer-Skills", listed))
+            except (OSError, ValueError) as error:
+                self.send(500, headers, f"live-preview: {error}\n".encode())
+                return True
+            if text is None:
+                return False
+            self.send(200, headers, text.encode())
+            return True
+
+        def do_HEAD(self) -> None:
+            if not self.document():
+                self.answer()
+
+        do_POST = do_PUT = do_DELETE = answer
 
         def log_message(self, format, *args) -> None:
             pass
@@ -458,7 +590,32 @@ def main() -> int:
     parser.add_argument(
         "--no-build", action="store_true", help="start the dev server as last built"
     )
+    parser.add_argument(
+        "--print",
+        metavar="PATH",
+        help="print /skill.md, /install.sh or /skills/NAME/FILE as the preview"
+        " would serve it, and exit",
+    )
+    parser.add_argument(
+        "--public-url",
+        help="with --print, the site the document names (default: the preview's)",
+    )
     args = parser.parse_args()
+    if args.public_url and not args.print:
+        sys.exit("live-preview: --public-url goes with --print")
+    if args.print:
+        site = args.public_url or f"http://localhost:{args.port}"
+        try:
+            text = Documents(args.root.resolve(), site).get(args.print)
+        except (OSError, ValueError) as error:
+            sys.exit(f"live-preview: {error}")
+        if text is None:
+            sys.exit(
+                f"live-preview: {args.print} isn't /skill.md, /install.sh or a file"
+                " of a skill"
+            )
+        sys.stdout.write(text)
+        return 0
     if "HEAVY_SLOT" in os.environ:
         sys.exit(
             "live-preview: run it without heavy: it runs until stopped, so inside a"
@@ -488,14 +645,15 @@ def main() -> int:
                     server.build()
                 server.start(cleanup)
                 upstream = server.url
-            listener.RequestHandlerClass = handler_for(
-                Preview(root, upstream, public_url)
-            )
+            preview = Preview(root, upstream, public_url)
+            listener.RequestHandlerClass = handler_for(preview)
             print(
                 f"live-preview: http://127.0.0.1:{listener.server_port}/ previews {root}; "
                 f"from the host, {public_url}",
-                flush=True,
             )
+            for path in preview.documents.links():
+                print(f"live-preview: {public_url}{path}")
+            sys.stdout.flush()
             listener.serve_forever()
         except KeyboardInterrupt:
             pass

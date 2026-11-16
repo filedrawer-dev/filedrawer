@@ -493,6 +493,193 @@ def test_help_names_the_options():
     help_text = subprocess.run(
         [SCRIPT, "-h"], capture_output=True, text=True, check=True
     ).stdout
-    for option in ("--root", "--port", "--server-port", "--upstream", "--no-build"):
+    for option in (
+        "--root",
+        "--port",
+        "--server-port",
+        "--upstream",
+        "--no-build",
+        "--print",
+        "--public-url",
+    ):
         assert option in help_text, help_text
     assert "sbx ports" in help_text, help_text
+
+
+# The documents agents read, from the checkout
+
+
+INSTALL_MD = """# File Drawer
+
+Read {{BASE}}/skills/<name>/SKILL.md, or install {{SKILLS}} from {{TAG_URLS}}.
+Download with `{{CURL}} -o install.sh {{BASE}}/install.sh`; the token goes in
+`~/.config/filedrawer/{{HOST}}.header`.
+"""
+
+
+def copy_documents(root: Path) -> None:
+    """A made-up installer page, installer and two skills under `root`, in the
+    repo's layout. The repo's own files are checked against the server's by
+    crates/server/tests/it/skill.rs."""
+    server = root / "crates/server"
+    server.mkdir(parents=True, exist_ok=True)
+    (server / "install.md").write_text(INSTALL_MD)
+    (server / "install.sh").write_text("main() {\n  base=https://filedrawer.dev\n}\n")
+    for name, version in (("filedrawer-search", 8), ("filedrawer-submit", 11)):
+        folder = root / "skills" / name / "references"
+        folder.mkdir(parents=True)
+        (folder.parent / "SKILL.md").write_text(
+            f'---\nname: {name}\nmetadata:\n  version: "{version}"\n---\n\n'
+            '`curl -H @"$HOME/.config/filedrawer/filedrawer.dev.header"'
+            " https://filedrawer.dev/tags`\n"
+        )
+        (folder / "upgrade.md").write_text(
+            "# Upgrade\n\nFrom https://filedrawer.dev.\n"
+        )
+    (root / "skills/versions.txt").write_text("not a skill's file\n")
+
+
+@pytest.fixture
+def documents(preview):
+    copy_documents(preview.root)
+    return preview
+
+
+def site(preview) -> str:
+    """The address the preview names itself by: localhost and its port."""
+    return "http://localhost:" + preview.url.rsplit(":", 1)[1]
+
+
+@pytest.mark.parametrize("browser", [True, False])
+def test_skill_md_comes_from_the_checkout_filled_in_for_the_preview(documents, browser):
+    status, headers, text = documents.get("/skill.md", browser=browser)
+    assert status == 200
+    assert headers["Content-Type"] == "text/plain; charset=utf-8"
+    here = site(documents)
+    host = here.split("://")[1]
+    tag = "https://github.com/filedrawer-dev/filedrawer/tree/skill-filedrawer"
+    assert text == (
+        "# File Drawer\n\n"
+        f"Read {here}/skills/<name>/SKILL.md, or install filedrawer-search/8 "
+        f"filedrawer-submit/11 from `{tag}-search-v8/skills/filedrawer-search` and "
+        f"`{tag}-submit-v11/skills/filedrawer-submit`.\n"
+        f'Download with `curl -fsSL -H @"$(ls ~/.config/filedrawer/{host}.header '
+        f'2>/dev/null || echo /dev/null)" -o install.sh {here}/install.sh`; the token '
+        f"goes in\n`~/.config/filedrawer/{host}.header`.\n"
+    )
+    assert not documents.server.requests
+
+
+def test_an_edit_to_install_md_shows_on_the_next_request(documents):
+    page = documents.root / "crates/server/install.md"
+    page.write_text(page.read_text() + "\nA line drafted just now, at {{BASE}}.\n")
+    _, _, text = documents.get("/skill.md")
+    assert f"A line drafted just now, at {site(documents)}." in text
+
+
+def test_a_skills_file_and_the_installer_come_from_the_checkout_naming_the_preview(
+    documents,
+):
+    skill = documents.root / "skills/filedrawer-search/SKILL.md"
+    skill.write_text(skill.read_text() + "\nDrafted: https://filedrawer.dev/tags\n")
+    status, headers, text = documents.get("/skills/filedrawer-search/SKILL.md")
+    assert status == 200
+    assert headers["Content-Type"] == "text/plain; charset=utf-8"
+    assert f"Drafted: {site(documents)}/tags" in text
+    host = site(documents).split("://")[1]
+    assert f"/{host}.header" in text and "/filedrawer.dev.header" not in text
+    _, _, upgrade = documents.get("/skills/filedrawer-submit/references/upgrade.md")
+    assert upgrade.startswith("# ") and "https://filedrawer.dev" not in upgrade
+    _, _, installer = documents.get("/install.sh")
+    assert f"  base={site(documents)}\n" in installer
+    assert not documents.server.requests
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/skills/filedrawer-search/nothing.md",
+        "/skills/no-such-skill/SKILL.md",
+        "/skills/filedrawer-search/../../crates/server/install.sh",
+        "/skills/filedrawer-search/references",
+        "/skills/versions.txt",
+    ],
+)
+def test_a_path_that_is_no_file_of_a_skill_goes_to_the_dev_server(documents, path):
+    _, _, text = documents.get(path)
+    assert text == f"server GET {path}"
+
+
+def test_print_writes_one_document_and_starts_nothing(tmp_path):
+    copy_documents(tmp_path)
+    done = subprocess.run(
+        [SCRIPT, "--root", tmp_path, "--print", "/skill.md"]
+        + ["--public-url", "https://staging.example"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert done.returncode == 0, done.stderr
+    assert "https://staging.example/skills/<name>/SKILL.md" in done.stdout
+    assert "/staging.example.header" in done.stdout and "{{" not in done.stdout
+    missing = subprocess.run(
+        [SCRIPT, "--root", tmp_path, "--print", "/tags"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert missing.returncode == 1 and missing.stdout == ""
+    assert missing.stderr.count("\n") == 1 and "/tags" in missing.stderr
+
+
+def test_the_start_lists_a_link_to_each_page_it_previews(tmp_path):
+    copy_pages(tmp_path)
+    copy_documents(tmp_path)
+    process, url, printed = start(
+        "--root", tmp_path, "--upstream", "http://127.0.0.1:9"
+    )
+    try:
+        for line in process.stdout:
+            printed.append(line)
+            if "filedrawer-submit/SKILL.md" in line:
+                break
+    finally:
+        stop(process)
+    port = url.rsplit(":", 1)[1]
+    listed = "".join(printed)
+    for path in (
+        "/",
+        "/skill.md",
+        "/skills/filedrawer-search/SKILL.md",
+        "/skills/filedrawer-submit/SKILL.md",
+    ):
+        assert f"http://localhost:{port}{path}\n" in listed, listed
+
+
+def test_a_head_of_skill_md_names_each_skills_version_as_the_server_does(documents):
+    """The skills' upgrade check reads X-Filedrawer-Skills from a HEAD of /skill.md."""
+    for method in ("HEAD", "GET"):
+        status, headers, _ = documents.get("/skill.md", browser=False, method=method)
+        assert status == 200, method
+        versions = dict(
+            pair.split("/") for pair in headers["X-Filedrawer-Skills"].split(", ")
+        )
+        assert versions == {"filedrawer-search": "8", "filedrawer-submit": "11"}, method
+    status, headers, text = documents.get(
+        "/skills/filedrawer-search/SKILL.md", method="HEAD"
+    )
+    assert (status, text) == (200, "") and "X-Filedrawer-Skills" not in headers
+    assert not documents.server.requests
+
+
+def test_a_document_the_checkout_cant_give_is_a_500_that_says_why(documents):
+    (documents.root / "crates/server/install.md").unlink()
+    status, _, text = documents.get("/skill.md")
+    assert status == 500
+    assert text.startswith("live-preview: ") and "install.md" in text
+    assert text.count("\n") == 1
+
+
+def test_public_url_without_print_is_refused_in_one_line(tmp_path):
+    message = fails_in_one_line("--root", tmp_path, "--public-url", "https://x.example")
+    assert "--print" in message

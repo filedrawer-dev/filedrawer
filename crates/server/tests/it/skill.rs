@@ -1656,3 +1656,36 @@ async fn skill_md_names_the_commit_the_binary_was_built_from() {
         assert_eq!(reply.headers["x-filedrawer-commit"], built_from, "{method}");
     }
 }
+
+/// What `bin/live-preview --print` writes for `path`, for a site at `PUBLIC_URL`.
+fn previewed(path: &str) -> String {
+    let script = concat!(env!("CARGO_MANIFEST_DIR"), "/../../bin/live-preview");
+    let output = std::process::Command::new(script)
+        .args(["--print", path, "--public-url", PUBLIC_URL])
+        .output()
+        .unwrap_or_else(|e| panic!("{script}: {e}"));
+    assert!(
+        output.status.success(),
+        "{path}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap()
+}
+
+/// bin/live-preview serves these from the checkout with its own copy of the
+/// fill-in rules, so the owner sees an edit without a rebuild (#71).
+#[tokio::test]
+async fn the_live_preview_fills_in_each_document_as_the_server_does() {
+    let app = test_app().await;
+    let mut paths = vec!["/skill.md".to_string(), "/install.sh".to_string()];
+    for name in NAMES {
+        for file in files(name) {
+            paths.push(format!("/skills/{name}/{file}"));
+        }
+    }
+    for path in paths {
+        let reply = app.get(&path).await;
+        assert_eq!(reply.status, StatusCode::OK, "{path}");
+        assert_eq!(previewed(&path), reply.body, "{path}");
+    }
+}
