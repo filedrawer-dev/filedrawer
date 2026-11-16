@@ -752,6 +752,18 @@ The owner settled the email's sections and the rules in design.md's Admin sectio
   `ops/claim-names` makes the `pypi` and `npm` environments open to main only, and the workflow refuses files whose version isn't the one typed in.
 - Against: a release from a branch would let a fix go out before it lands.
 
+#### Finishing a partial PyPI upload
+
+An agent chose these with #87's fix, after its brief review.
+
+- Options: when PyPI has some of a version's files, upload the rest from whichever commit the rerun builds; or first compare PyPI's sdist with the rerun's and refuse a difference.
+- Chosen: upload the rest.
+  A release already fills in a registry that lacks the version from main's tip, so a later push with no version bump can finish what an earlier commit's run began; the sdist goes first, in an upload of its own, so it is the file least likely to be the one missing.
+- Against: one version's wheels can then come from two commits, and nothing says so.
+- A version PyPI can never complete, such as one with a file deleted there, fails in the publish job on every push until the version is bumped; before, it passed with the files missing.
+- A file PyPI has that the run didn't build is a warning, since no run can remove it.
+  The plan counts it among the version's files, so with one such file and one missing, the plan calls the version whole and nothing uploads the missing one.
+
 #### What a release on push checks
 
 - Options: release once CI's `check` job passes, or once the whole CI run does; compare the analyzer with crates.io's crate file by file, or by git tags of each release; pin the CLI's requirement on the analyzer with `=`, or with a caret.

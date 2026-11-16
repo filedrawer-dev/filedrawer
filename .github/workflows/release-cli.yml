@@ -93,6 +93,7 @@ jobs:
       crates_analyzer: ${{ steps.plan.outputs.crates_analyzer }}
       crates_cli: ${{ steps.plan.outputs.crates_cli }}
       pypi: ${{ steps.plan.outputs.pypi }}
+      pypi_files: ${{ steps.plan.outputs.pypi_files }}
       npm: ${{ steps.plan.outputs.npm }}
       build: ${{ steps.plan.outputs.build }}
     steps:
@@ -260,36 +261,26 @@ jobs:
     permissions:
       id-token: write
     steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          ref: ${{ needs.plan.outputs.sha }}
+          sparse-checkout: bin/pypi-release
+          sparse-checkout-cone-mode: false
       - uses: actions/download-artifact@v8
         with:
           path: dist
           pattern: "{wheel-*,sdist}"
           merge-multiple: true
-      # The files must all carry the plan's version.
-      - name: Check the version
-        env:
-          VERSION: ${{ needs.plan.outputs.cli_version }}
-        run: |
-          ls dist
-          others=$(find dist -type f ! -name "filedrawer-$VERSION-*.whl" ! -name "filedrawer-$VERSION.tar.gz")
-          if [ -n "$others" ]; then
-            echo "::error::not version $VERSION: $others"
-            exit 1
-          fi
-      # A version PyPI has already is skipped whole, so a rerun can finish npm: a
+      # The files must be the whole release at the plan's version. Those PyPI has
+      # already are skipped, so a rerun finishes a release that stopped partway: a
       # rebuilt wheel isn't byte for byte the one PyPI holds, which it refuses
-      # (run 43669677567).
+      # (run 43669677567; #87).
       - name: Publish
         env:
           VERSION: ${{ needs.plan.outputs.cli_version }}
-        run: |
-          status=$(curl -sS --retry 3 --max-time 30 -o /dev/null -w '%{http_code}' \
-            "https://pypi.org/pypi/filedrawer/$VERSION/json" || true)
-          case $status in
-            200) echo "::notice::PyPI has filedrawer $VERSION already, so nothing is uploaded." ;;
-            404) pipx run uv==0.13.5 publish --trusted-publishing always dist/* ;;
-            *) echo "::error::PyPI didn't answer about filedrawer $VERSION"; exit 1 ;;
-          esac
+          FILES: ${{ needs.plan.outputs.pypi_files }}
+        run: bin/pypi-release dist "$VERSION" "$FILES"
 
   # Runs no third-party action: the job can mint an npm publish token. The `npm`
   # environment is the one each package's trusted publisher names (ops/claim-names).

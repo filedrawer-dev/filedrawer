@@ -1152,6 +1152,7 @@ All three remove empty placeholders, so the names are held with a package that w
 - A release is a push: once CI's `check` passes on a push to main whose `crates/cli/Cargo.toml` names a version a registry lacks, `release-cli.yml` publishes it there, crates.io included, all through trusted publishing (the owner, 2026-11-14; #84).
   Reason: releasing then needs nothing but a version-bump commit, which an agent can prepare, as a push to main already deploys staging; manual dispatch reruns one.
   crates.io goes first, and PyPI and npm wait for it, so a failed crates.io publish leaves no registry a version ahead.
+  PyPI also counts as lacking a version while it holds fewer files than a release makes, and `bin/pypi-release` uploads only the ones it lacks, so a rerun finishes a release whose upload stopped partway (#87).
   The analyzer keeps its own version and is published with a release when it changed, and a release stops when its analyzer differs from crates.io's at the same version (the owner, 2026-11-14), checked then and not on each push, so analyzer changes land freely between releases.
 - npm sets up a trusted publisher only for a package it has, and drops one that publishes nothing within 2 days, so `ops/claim-names` publishes a placeholder 0.0.0 of each npm package, sets up each one's trusted publisher, and starts the release at once, which publishes the real version from CI (the owner, 2026-11-14; #84).
   The 0.0.0s stay listed, and every real version carries npm's provenance.

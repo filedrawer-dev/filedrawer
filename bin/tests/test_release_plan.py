@@ -69,6 +69,12 @@ if tool == "curl":
     elif url == "https://pypi.org/pypi/filedrawer/json":
         if registries["pypi"]:
             body = json.dumps({"releases": {v: [] for v in registries["pypi"]}})
+    elif m := re.fullmatch(r"https://pypi\.org/pypi/filedrawer/([^/]+)/json", url):
+        if m.group(1) in registries["pypi"]:
+            files = registries.get("pypi_files", {}).get(m.group(1), 6)
+            body = os.environ.get("FAKE_PYPI_VERSION") or json.dumps(
+                {"urls": [{"filename": f"file-{n}"} for n in range(files)]}
+            )
     elif url == "https://registry.npmjs.org/@filedrawer/cli":
         if registries["npm"]:
             body = json.dumps({"versions": {v: {} for v in registries["npm"]}})
@@ -246,6 +252,7 @@ def test_a_new_cli_version_goes_to_every_registry_and_an_unchanged_analyzer_to_n
         "crates_analyzer": "false",
         "crates_cli": "true",
         "pypi": "true",
+        "pypi_files": "6",
         "npm": "true",
         "build": "true",
     }
@@ -369,6 +376,42 @@ def test_npms_placeholders_and_staged_versions_arent_a_higher_version(tmp_path):
     box.registries["npm"] = ["0.0.0", "0.0.0-stage"]
     box.save()
     assert outputs(box.plan())["npm"] == "true"
+
+
+def test_a_version_pypi_has_only_some_files_of_is_released_there_again(tmp_path):
+    """A run that uploaded some wheels and then failed (#87): bin/pypi-release
+    uploads the rest."""
+    box = Box(tmp_path, cli="0.1.0")
+    box.released("0.1.0")
+    box.registries["pypi_files"] = {"0.1.0": 5}
+    box.save()
+    plan = outputs(box.plan())
+    assert (plan["crates_cli"], plan["pypi"], plan["npm"], plan["build"]) == (
+        "false",
+        "true",
+        "false",
+        "true",
+    )
+
+
+@pytest.mark.parametrize("body", ["<html>", "{}", "[1]", '{"urls": 6}'])
+def test_a_list_of_pypis_files_in_another_shape_stops_the_plan(tmp_path, body):
+    box = Box(tmp_path, cli="0.1.0")
+    box.released("0.1.0")
+    done = box.plan(FAKE_PYPI_VERSION=body)
+    assert done.returncode == 1, done.stdout + done.stderr
+    assert "::error::" in done.stdout and "Traceback" not in done.stderr
+
+
+def test_the_plans_count_of_pypi_files_is_the_workflows_wheels_and_the_sdist(tmp_path):
+    workflow = (REPO / ".github/workflows/release-cli.yml").read_text()
+    wheel_job = workflow.split("\n  wheel:\n")[1].split("\n  sdist:\n")[0]
+    targets = [
+        line for line in wheel_job.splitlines() if line.strip().startswith("target: ")
+    ]
+    box = Box(tmp_path)
+    box.released("0.1.0")
+    assert outputs(box.plan())["pypi_files"] == str(len(targets) + 1)
 
 
 @pytest.mark.parametrize(

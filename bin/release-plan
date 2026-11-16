@@ -19,8 +19,10 @@ on it. It reads GitHub through gh.
 
 `plan`, run at the repo root of that commit, prints `key=value` lines for
 $GITHUB_OUTPUT: cli_version and analyzer_version; crates_analyzer, crates_cli, pypi
-and npm, each `true` when that registry lacks that version; and build, when PyPI or
-npm needs the binaries. A version
+and npm, each `true` when that registry lacks that version; pypi_files, how many
+files a release puts on PyPI; and build, when PyPI or npm needs the binaries. pypi
+is also `true` when PyPI has the version with fewer files than that, as after a run
+that uploaded some and then failed: bin/pypi-release uploads the rest (#87). A version
 below the highest one a registry has fails, so an old commit never publishes
 backwards. When the CLI's version is new anywhere, the analyzer it requires must
 be published first or be unchanged:
@@ -51,6 +53,9 @@ from pathlib import Path
 
 USER_AGENT = "filedrawer-release (https://github.com/filedrawer-dev/filedrawer)"
 CI_WORKFLOW = "CI"
+# The files a release puts on PyPI: a wheel for each target of release-cli.yml's
+# wheel job, and the sdist. bin/tests/test_release_plan.py counts the targets.
+PYPI_FILES = 6
 
 
 class Refused(Exception):
@@ -143,6 +148,19 @@ def lacks(registry: str, versions, version: str) -> bool:
     return True
 
 
+def pypi_lacks(version: str) -> bool:
+    """Whether PyPI lacks VERSION, or any of the files a release puts there."""
+    pypi = get_json("https://pypi.org/pypi/filedrawer/json")
+    if lacks("PyPI", (pypi or {}).get("releases", {}), version):
+        return True
+    url = f"https://pypi.org/pypi/filedrawer/{version}/json"
+    answer = get_json(url)
+    files = answer.get("urls") if isinstance(answer, dict) else None
+    if not isinstance(files, list):
+        raise Refused(f"{url} didn't answer with a list of files; rerun once it does")
+    return len(files) < PYPI_FILES
+
+
 def crate_files(data: bytes) -> dict[str, bytes]:
     """A .crate's files, by path inside it, without the parts cargo writes itself."""
     files = {}
@@ -192,11 +210,10 @@ def plan(dispatched: str | None) -> dict[str, str]:
         raise Refused(
             f"the version given, {dispatched}, isn't crates/cli/Cargo.toml's {cli}"
         )
-    pypi = get_json("https://pypi.org/pypi/filedrawer/json")
     npm = get_json("https://registry.npmjs.org/@filedrawer/cli")
     lacking = {
         "crates_cli": lacks("crates.io", crate_versions("filedrawer"), cli),
-        "pypi": lacks("PyPI", (pypi or {}).get("releases", {}), cli),
+        "pypi": pypi_lacks(cli),
         "npm": lacks("npm", (npm or {}).get("versions", {}), cli),
     }
     crates_analyzer = False
@@ -219,9 +236,11 @@ def plan(dispatched: str | None) -> dict[str, str]:
             check_analyzer(analyzer, analyzers[analyzer])
     flags = {"crates_analyzer": crates_analyzer, **lacking}
     flags["build"] = lacking["pypi"] or lacking["npm"]
-    return {"cli_version": cli, "analyzer_version": analyzer} | {
-        k: str(v).lower() for k, v in flags.items()
-    }
+    return {
+        "cli_version": cli,
+        "analyzer_version": analyzer,
+        "pypi_files": str(PYPI_FILES),
+    } | {k: str(v).lower() for k, v in flags.items()}
 
 
 def gh(path: str) -> dict:

@@ -1,0 +1,147 @@
+#!/usr/bin/env python3
+"""Uploads to PyPI the files of one version of the `filedrawer` package that PyPI lacks
+(#87). release-cli.yml's publish job runs it.
+
+    bin/pypi-release DIR VERSION COUNT
+
+DIR must hold exactly the COUNT files of a release, filedrawer-VERSION.tar.gz and
+COUNT-1 wheels named filedrawer-VERSION-*.whl, or nothing is uploaded; COUNT is
+`bin/release-plan plan`'s pypi_files.
+
+It asks PyPI which files it has for VERSION and uploads the others through trusted
+publishing, the sdist first and in a call of its own, since uv sorts one call's
+files by name, which would put it last. So a rerun after a run that uploaded some files and
+then failed finishes the release, and one that finds them all there passes. PyPI
+never takes a second file of a name it has, and a rebuilt wheel isn't byte for
+byte the first, so a file PyPI has is never sent again. A file PyPI has that DIR
+lacks is a warning.
+
+Only PyPI's 404 counts as a version it lacks: any other answer fails, and so does a
+200 that isn't a list of file names. PyPI caches that answer for up to 15 minutes,
+so a rerun straight after an upload may send a file again, which PyPI refuses:
+rerun later. A file PyPI refuses for good, such as one deleted there, means a
+version that can't be finished: bump crates/cli's version.
+
+Exit status: 0 done, 1 refused or failed, 2 usage.
+"""
+
+import json
+import re
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+USER_AGENT = "filedrawer-release (https://github.com/filedrawer-dev/filedrawer)"
+PUBLISH = ["pipx", "run", "uv==0.13.5", "publish", "--trusted-publishing", "always"]
+
+
+class Refused(Exception):
+    """A reason to stop, printed as a GitHub error."""
+
+
+def release_files(folder: Path, version: str, count: int) -> list[Path]:
+    """FOLDER's files, the sdist first, when they are one release of VERSION."""
+    sdist = folder / f"filedrawer-{version}.tar.gz"
+    if not folder.is_dir():
+        raise Refused(f"no folder {folder}")
+    files = sorted(folder.iterdir())
+    others = [
+        f.name
+        for f in files
+        if f != sdist and not f.match(f"filedrawer-{version}-*.whl")
+    ]
+    if others:
+        raise Refused(
+            f"not files of filedrawer {version}: {', '.join(others)}; nothing is uploaded"
+        )
+    if sdist not in files:
+        raise Refused(f"no {sdist.name} in {folder}; nothing is uploaded")
+    if len(files) != count:
+        raise Refused(
+            f"{folder} holds {len(files)} files of filedrawer {version}, "
+            f"and a release has {count}; nothing is uploaded"
+        )
+    return [sdist, *(f for f in files if f != sdist)]
+
+
+def on_pypi(version: str) -> set[str]:
+    """The names of the files PyPI has for VERSION; none when it lacks the version."""
+    url = f"https://pypi.org/pypi/filedrawer/{version}/json"
+    with tempfile.NamedTemporaryFile() as out:
+        done = subprocess.run(
+            ["curl", "-sS", "--retry", "3", "--max-time", "30", "-A", USER_AGENT]
+            + ["-o", out.name, "-w", "%{http_code}", url],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        status = done.stdout.strip()
+        if status == "404":
+            return set()
+        if status != "200":
+            raise Refused(
+                f"PyPI answered {status or done.stderr.strip()} about filedrawer "
+                f"{version}; rerun once it answers"
+            )
+        body = Path(out.name).read_bytes()
+    try:
+        answer = json.loads(body)
+    except ValueError:
+        answer = None
+    urls = answer.get("urls") if isinstance(answer, dict) else None
+    if not isinstance(urls, list) or not all(
+        isinstance(file, dict) and isinstance(file.get("filename"), str)
+        for file in urls
+    ):
+        raise Refused(f"{url} didn't answer with a list of files; nothing is uploaded")
+    return {file["filename"] for file in urls}
+
+
+def release(folder: Path, version: str, count: int) -> None:
+    files = release_files(folder, version, count)
+    there = on_pypi(version)
+    strays = sorted(there - {f.name for f in files})
+    if strays:
+        print(
+            f"::warning::PyPI has files of filedrawer {version} this run didn't build: "
+            + ", ".join(strays)
+        )
+    missing = [f for f in files if f.name not in there]
+    if not missing:
+        print(
+            f"::notice::PyPI has every file of filedrawer {version} already, so nothing is uploaded."
+        )
+        return
+    for file in files:
+        print(f"{file.name}: {'to upload' if file in missing else 'on PyPI already'}")
+    sys.stdout.flush()
+    for call in (missing[:1], missing[1:]) if missing[0] == files[0] else (missing,):
+        if call and subprocess.run([*PUBLISH, *map(str, call)], check=False).returncode:
+            raise Refused(
+                "the upload failed; uv's message above says why. PyPI answers what it "
+                "has from a cache of up to 15 minutes, so if it refused a file it "
+                "already had, rerun later; if it refuses a file for good, bump "
+                "crates/cli's version"
+            )
+
+
+def main(args: list[str]) -> int:
+    if args and args[0] in ("-h", "--help"):
+        print(__doc__.strip())
+        return 0
+    if len(args) != 3 or not re.fullmatch(r"[0-9]+", args[2]) or int(args[2]) < 2:
+        print(
+            "usage: bin/pypi-release DIR VERSION COUNT (-h for more)", file=sys.stderr
+        )
+        return 2
+    try:
+        release(Path(args[0]).resolve(), args[1], int(args[2]))
+    except Refused as refused:
+        print(f"::error::{refused}")
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
