@@ -15,8 +15,9 @@ name and the first path that needs it:
     skills     bin/skills sync --check, which needs no build
     routes     at a commit, the test that every route is named for agents or
                listed in NOT_FOR_AGENTS (the full check's nextest holds it)
-    py-rules   at a commit, bin/tests/test_no_wall_clock_limits.py, which needs no
-               build (the full check's bin-tests holds it)
+    py-rules   at a commit, bin/tests/test_no_wall_clock_limits.py and
+               bin/tests/test_checks_needed.py, which need no build (the full
+               check's bin-tests holds them)
     test-mods  at a commit, bin/test-modules, which needs no build (the full
                check's nextest holds the Rust test it stands in for)
     caddy      at a commit, the bin tests marked real_caddy, which run Caddy (the

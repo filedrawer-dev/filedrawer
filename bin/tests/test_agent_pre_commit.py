@@ -122,6 +122,8 @@ def template(tmp_path_factory) -> Path:
         REPO / "bin/tests/test_no_wall_clock_limits.py",
         root / "bin/tests/test_no_wall_clock_limits.py",
     )
+    # And the one it runs beside it, here only a name the fake uvx is handed.
+    (root / "bin/tests/test_checks_needed.py").write_text("")
     git(root, "init", "-q")
     # Its own identity, since CI's runner has no global one.
     git(root, "config", "user.name", "t")
@@ -303,6 +305,7 @@ def test_the_checks_a_change_to_each_reference_needs(template, path, checks):
 
 
 RULE_TEST = "bin/tests/test_no_wall_clock_limits.py"
+NEEDED_TEST = "bin/tests/test_checks_needed.py"
 
 
 def uvx_calls(repo: Path) -> list[str]:
@@ -313,15 +316,28 @@ def uvx_calls(repo: Path) -> list[str]:
     ]
 
 
-def test_the_commit_check_runs_the_wall_clock_rule_for_a_bin_tests_change(repo):
+def test_the_commit_check_runs_the_two_source_rules_for_a_bin_tests_change(repo):
     change(repo, "bin/tests/test_tool.py", "def test_tool():\n    pass\n")
 
     hook(repo, env=QUEUE_EXIT, script="agent-commit-check")
 
     calls = uvx_calls(repo)
     assert len(calls) == 1, calls
-    assert calls[0].endswith(f"-n0 {RULE_TEST}"), calls
+    # Both read bin/tests' sources and take seconds: the wall-clock rule, and the
+    # table of which checks a path needs, which a new test's reads can change.
+    assert calls[0].endswith(f"-n0 {RULE_TEST} {NEEDED_TEST}"), calls
     assert "pytest@9.2.0" in calls[0]
+
+
+def test_a_tree_without_the_checks_needed_test_runs_the_wall_clock_rule_alone(repo):
+    """As a tree checked out at a commit older than that test is."""
+    git(repo, "rm", "-q", NEEDED_TEST)
+    change(repo, "bin/tests/test_tool.py", "def test_tool():\n    pass\n")
+
+    hook(repo, env=QUEUE_EXIT, script="agent-commit-check")
+
+    (call,) = uvx_calls(repo)
+    assert call.endswith(f"-n0 {RULE_TEST}"), call
 
 
 def test_the_rule_runs_only_with_rules_and_only_for_a_bin_tests_change(repo):
