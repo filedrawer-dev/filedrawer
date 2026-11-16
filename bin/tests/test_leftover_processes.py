@@ -54,10 +54,23 @@ def orphan(args, cwd="/", env=None):
     )
     pid = int(started.stdout)
     note(pid)
-    cmdline = Path(f"/proc/{{pid}}/cmdline")
-    while cmdline.read_bytes().startswith(b"bash\\0"):
+    while not execed(pid):
         time.sleep(0.01)
     return pid
+
+
+def execed(pid):
+    \"\"\"Whether exec has finished in process `pid`, which bash started: partway
+    through it the process has no command line, then a command line but no
+    environment yet, and a watch that reads it then finds no tag. The command must
+    be given an environment that isn't empty.\"\"\"
+    proc = Path(f"/proc/{{pid}}")
+    cmdline = (proc / "cmdline").read_bytes()
+    return bool(
+        cmdline
+        and not cmdline.startswith(b"bash\\0")
+        and (proc / "environ").read_bytes()
+    )
 
 
 def wait_for(path):
@@ -238,7 +251,8 @@ def test_a_pytest_run_inside_a_test_that_dies_leaves_its_orphans_to_the_test(sui
     result = suite.run(
         """
 INNER = '''
-import os, signal, subprocess
+import os, signal, subprocess, time
+from pathlib import Path
 
 def test_orphans_then_dies():
     started = subprocess.run(
@@ -247,6 +261,13 @@ def test_orphans_then_dies():
     )
     with open(os.environ["NOTED_PIDS"], "a") as noted:
         noted.write(started.stdout)
+    # Until its exec has finished, the orphan shows the watch no tag.
+    proc = Path("/proc") / started.stdout.strip()
+    while not (
+        (proc / "cmdline").read_bytes().startswith(b"sleep")
+        and (proc / "environ").read_bytes()
+    ):
+        time.sleep(0.01)
     os.kill(os.getpid(), signal.SIGKILL)
 '''
 
