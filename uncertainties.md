@@ -550,7 +550,13 @@ The owner settled the email's sections and the rules in design.md's Admin sectio
   Entries of every status count, since an agent adds a field before it knows what screening will say; a deleted entry's fields go with it.
 - Against: names that differ only in case or spelling (`seed`, `seeds`, `Seed`) are separate rows, so a field can look rarer than it is.
   Past 200 fields the page says so and shows no more, and has no way to see the rest.
-  Nothing caps how many unknown fields one entry stores, so one account can make the report's query slow (#80).
+
+#### The unknown-field report: how many fields an entry adds to it
+
+- Options, for #80: cap the fields the report counts per entry in the analyzer, with a warning past the cap, or where the server stores them, saying nothing; refuse an entry past the cap, or accept it.
+- Chosen: the server stores an entry's first 50 unknown field names, each cut to 100 characters, and the reply is as before, a warning for every unknown field.
+  The entry's text keeps every field, so the cap changes nothing its author can see, and a misspelt field past the 50th still gets its warning.
+- Against: a field past an entry's 50th never reaches the report, and two long names that share their first 100 characters count as one.
 
 ### Storage
 

@@ -145,27 +145,26 @@ async fn a_fields_name_is_escaped_and_a_long_one_cut() {
     assert!(names.contains(&format!("{}…", "x".repeat(80))), "{names:?}");
 }
 
-/// An entry with `count` unknown fields, `field_000` and up.
-fn with_fields(count: usize) -> String {
-    let front: String = (0..count).map(|n| format!("field_{n:03}: 1\n")).collect();
-    entry("Many", &front)
+/// The front matter of the unknown fields `field_<n>` for each `n` of `numbers`.
+fn fields(numbers: std::ops::Range<usize>) -> String {
+    numbers.map(|n| format!("field_{n:03}: 1\n")).collect()
 }
 
 #[tokio::test]
 async fn the_report_lists_200_fields_and_says_when_there_are_more() {
     let app = test_app().await;
     let cookie = owner(&app).await;
-    let held = app.submit_held(&with_fields(200)).await;
+    // An entry stores at most 50 of them.
+    for first in [0, 50, 100, 150] {
+        submit_as(&app, &app.token, "Many", &fields(first..first + 50)).await;
+    }
 
     let all = app.page(REPORT, Some(&cookie)).await;
 
     assert_eq!(rows(&all).len(), 200);
     assert!(!all.has_class("cut"), "{}", all.body);
 
-    let replaced = app
-        .put_as(&format!("/e/{held}"), &app.token, with_fields(201))
-        .await;
-    assert_eq!(replaced.status, StatusCode::OK, "{}", replaced.body);
+    submit_as(&app, &app.token, "One more", &fields(200..201)).await;
     let cut = app.page(REPORT, Some(&cookie)).await;
 
     assert_eq!(rows(&cut).len(), 200);
@@ -201,4 +200,40 @@ async fn only_the_owner_reaches_the_report_and_the_queue_links_to_it() {
         "{}",
         queue.body
     );
+}
+
+#[tokio::test]
+async fn an_entry_stores_its_first_50_unknown_fields() {
+    let app = test_app().await;
+    let cookie = owner(&app).await;
+    submit_as(&app, &app.token, "Many", &fields(0..60)).await;
+
+    let names: Vec<String> = rows(&app.page(REPORT, Some(&cookie)).await)
+        .into_iter()
+        .map(|row| row.0)
+        .collect();
+
+    let first_50: Vec<String> = (0..50).map(|n| format!("field_{n:03}")).collect();
+    assert_eq!(names, first_50);
+}
+
+#[tokio::test]
+async fn a_stored_name_is_cut_to_100_characters() {
+    let app = test_app().await;
+    let cookie = owner(&app).await;
+    // Names that differ only past the cut are stored as one name.
+    for (title, end) in [("A", "a"), ("B", "b")] {
+        let name = format!("{}{end}", "y".repeat(100));
+        submit_as(&app, &app.token, title, &format!("{name}: 1\n")).await;
+    }
+    // One that differs at the 100th character is another field.
+    let other = format!("{}z", "y".repeat(99));
+    submit_as(&app, &app.token, "C", &format!("{other}: 1\n")).await;
+
+    let entries: Vec<String> = rows(&app.page(REPORT, Some(&cookie)).await)
+        .into_iter()
+        .map(|row| row.2)
+        .collect();
+
+    assert_eq!(entries, ["2", "1"]);
 }

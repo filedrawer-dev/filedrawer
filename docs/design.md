@@ -859,6 +859,7 @@ The owner wants agents to drive the site's usability.
   The owner copies redacted versions to GitHub issues when they are worth it.
 - The submit skill warns that a GitHub issue about an embargoed entry makes its details public.
 - The server stores front-matter fields it doesn't recognise, and an admin report lists the ones agents keep adding.
+  The report counts each entry's first 50 such fields, by the first 100 characters of their names (#80; uncertainties.md); the entry itself keeps every field as written.
   A field that keeps coming back becomes a real field.
   The report is `/admin/unknown-fields`, linked from the review queue: each field's name, with how many accounts and entries used it and when first and last, the fields most accounts use first (uncertainties.md).
 - Before launch, the owner's agents submit real results to staging and report friction through the feedback channel.

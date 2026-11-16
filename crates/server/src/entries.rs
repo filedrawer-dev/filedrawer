@@ -368,7 +368,16 @@ pub async fn replace_on(
     Ok(true)
 }
 
-/// Stores the models, tags, rows and unknown field names read from an entry.
+/// The most unknown field names stored for one entry: they feed the owner's report,
+/// which one account could otherwise fill with thousands of rows an entry (#80).
+/// The entry's text keeps every field.
+const MAX_UNKNOWN_FIELDS: usize = 50;
+/// The most characters of an unknown field's name that are stored.
+const MAX_UNKNOWN_FIELD_CHARS: usize = 100;
+
+/// Stores the models, tags, rows and unknown field names read from an entry: of
+/// the names, the first [`MAX_UNKNOWN_FIELDS`], each cut to
+/// [`MAX_UNKNOWN_FIELD_CHARS`] characters.
 /// A version that points to a paper and has no Results table of its own carries the
 /// rows of the version before it, which carried its own predecessor's, so search
 /// still finds the chain's newest numbers (design.md, Entry lifecycle).
@@ -433,7 +442,8 @@ async fn write_derived(
         .execute(&mut *transaction)
         .await?;
     }
-    for name in &analysis.unrecognised_fields {
+    for name in analysis.unrecognised_fields.iter().take(MAX_UNKNOWN_FIELDS) {
+        let name: String = name.chars().take(MAX_UNKNOWN_FIELD_CHARS).collect();
         sqlx::query!(
             "INSERT INTO entry_unknown_fields (entry_seq, name) VALUES (?, ?)",
             seq,
