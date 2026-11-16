@@ -66,6 +66,7 @@ A usability run has Claude Code or Codex, in its own TUI, follow a scripted huma
 - To read runs, start with `ops/usability-run report RUN_DIR...`: at most 15 lines a run, with keys and tokens blanked, saying how `/skill.md` was fetched, what got installed, the upgrade mode, the site and installer commands, and any write to the site or call naming production.
   `drive-agent digest RUN_DIR --calls` lists each human turn and tool call on one line, and `drive-agent digest RUN_DIR` adds the agent's text; both blank keys and tokens by default.
   `ops/usability-run headers RUN_DIR` lists a run's fetches of the site, each with its User-Agent, its skill header and whether it sent the header file.
+  The run folder's own files, its transcripts and `screen-NN.txt`, hold the field-test key as the agent saw it, so read them only through `report` and `digest`.
 
 ## Reports
 

@@ -188,6 +188,23 @@ def test_report_says_what_a_run_never_did(tmp_path):
     assert "  site writes: none" in out
 
 
-def test_report_of_a_folder_with_no_run_is_refused(tmp_path):
-    done = report(tmp_path, tmp_path)
-    assert done.returncode == 2 and "run.json" in done.stderr
+def test_report_says_a_folder_holds_no_run_and_goes_on_to_the_next(tmp_path):
+    """A run that died before its agent started leaves a folder with no run.json: in a
+    batch's report it is one line, and the runs after it are still reported."""
+    usability, run = make_run(tmp_path, {"gated": [], "turns": ["install"]})
+    died = run.parent / "jason9-claude"
+    died.mkdir()
+    (died / "account.txt").write_text("a-1\n")
+    cut = run.parent / "jason8-claude"
+    cut.mkdir()
+    (cut / "run.json").write_text('{"harness": "cla')
+    done = report(usability, died, run, cut, run.parent / "jason7-claude")
+    assert done.returncode == 1, done.stderr
+    blocks = done.stdout.rstrip("\n").split("\n\n")
+    assert blocks[0] == "jason9-claude: no run.json, so no run to report"
+    assert blocks[1].startswith(f"{run.name}: ")
+    assert blocks[2:] == [
+        "jason8-claude: its run.json can't be read as JSON",
+        "jason7-claude: no such folder",
+    ]
+    assert done.stderr == ""

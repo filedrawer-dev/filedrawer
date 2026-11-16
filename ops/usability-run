@@ -35,7 +35,9 @@ NAME given twice, since each is a system user, or a run folder that exists, befo
 starting any run. Stopped, it
 stops each run, which deletes its account. Its exit status is 0 when every run's is.
 
-`report` reads each run folder, with no model, and prints at most 15 lines a run:
+`report` reads each run folder, with no model, and prints at most 15 lines a run,
+or one line for a folder with no run.json, as a run that died before its agent
+started leaves it (exit status 1 then, after every folder is reported):
 the scenario (the file in scenarios/ equal to the run's scenario.json, else ?), the
 harness and its version, run.json's outcome; the tool that first fetched /skill.md
 (a shell tool, saying whether through curl, or a fetch tool by name; whether a fetch
@@ -906,11 +908,21 @@ def scenario_name(folder: Path) -> str:
     return "?"
 
 
+class NoRun(Exception):
+    """Why a folder holds no run to report, in a few words."""
+
+
 def report_run(folder: Path) -> list[str]:
+    """The report's lines for the run in `folder`; NoRun when it holds none, as a
+    run that died before its agent started leaves it."""
+    if not folder.is_dir():
+        raise NoRun("no such folder")
     try:
         record = json.loads((folder / "run.json").read_text())
+    except FileNotFoundError:
+        raise NoRun("no run.json, so no run to report") from None
     except (OSError, ValueError):
-        raise Usage(f"{folder} has no run.json: is it a run folder?") from None
+        raise NoRun("its run.json can't be read as JSON") from None
     number = re.search(r"\d+(?:\.\d+)+", record.get("version") or "")
     version = number.group(0) if number else "?"
     lines = [
@@ -985,10 +997,15 @@ def report_run(folder: Path) -> list[str]:
 
 
 def report(args) -> int:
+    missing = False
     for n, run_dir in enumerate(args.run_dirs):
-        lines = report_run(Path(run_dir))
+        try:
+            lines = report_run(Path(run_dir))
+        except NoRun as why:
+            missing = True
+            lines = [f"{Path(run_dir).name}: {why}"]
         print(("\n" if n else "") + "\n".join(lines))
-    return 0
+    return 1 if missing else 0
 
 
 # ---------------------------------------------------------------- main
