@@ -49,7 +49,7 @@ Python goes in `bin/` and only for scripts and tools, never in the server's requ
 ### SQL
 
 - SQL goes only through sqlx's checked macros, `query!`, `query_as!` and `query_scalar!`, so a column rename fails the build.
-  The exception is a `PRAGMA` that names no table or column and that the macros can't type, as `db::trim_log`'s checkpoint is; a comment at the call says so.
+  The exception is a `PRAGMA` that names no table or column and that the macros can't type; a comment at the call says so.
   Commit the `.sqlx` offline data so CI builds without a database.
 - No SQL built by string formatting.
   A query with optional filters, such as search's, writes each filter as `(? IS NULL OR column = ?)` or builds with `QueryBuilder` and binds every value.

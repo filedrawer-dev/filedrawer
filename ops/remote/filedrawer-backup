@@ -12,9 +12,9 @@
 #
 # First it deletes the copies ops/remote/filedrawer-install takes before each
 # production deploy (deploy-*.db) once they are 13 days old, even when the night's
-# copy then fails: with Hetzner's 7 days of server backups, deleted data leaves every
-# copy within 21 (#42). It shares one lock with the install, flock on backups/ itself,
-# and waits up to 10 minutes for a deploy to let go of it.
+# copy then fails, so old copies don't pile up. It shares one lock with the
+# install, flock on backups/ itself, and waits up to 10 minutes for a deploy to
+# let go of it.
 #
 # Anyone holding the ping URL can report the job healthy, so it reaches curl on stdin
 # and no message prints it.

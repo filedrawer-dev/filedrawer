@@ -252,8 +252,7 @@ def deploy_copy(job, name: str, days_old: float) -> Path:
 
 
 def test_deploy_copies_go_after_13_days_even_when_the_copy_fails(job):
-    """Deleted data must leave every copy within 21 days, and Hetzner keeps a
-    server's backups 7 more (design.md, Hosting and operations)."""
+    """Deploy copies don't pile up when the nightly copy keeps failing."""
     deploy_copy(job, "deploy-20261027T120000Z.db", days_old=13.1)
     deploy_copy(job, "deploy-20261029T120000Z.db", days_old=12.5)
     job.database.unlink()

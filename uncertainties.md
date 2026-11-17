@@ -560,18 +560,6 @@ The owner settled the email's sections and the rules in design.md's Admin sectio
 
 ### Storage
 
-#### Deleted text in the database's files
-
-- Options: turn `secure_delete` on for a purge alone, as design.md first said, or on every connection; empty the write-ahead log after each deletion, on a timer, or leave it to SQLite's own checkpoints.
-- Chosen: on every connection, and the log emptied (`PRAGMA wal_checkpoint(TRUNCATE)`) each hour with the other tidying (#65).
-  Reason: the rows deleted today, a pending entry and an account's data, are the ones the privacy page promises gone, and no purge exists yet.
-  A test found the deleted text in the log first and in the database file second: SQLite's own checkpoints copy the log into the file but leave the log's old pages on disk until later writes run over them.
-- Against: text deleted stays in the log for up to an hour, and longer when a reader holds an older view of the database at that moment, such as the nightly copy: the checkpoint then waits out the 5 s busy timeout, holding up writes meanwhile, logs a warning and gives up until the next hour.
-  A truncated log's blocks also stay on the disk until reused or trimmed (#65's `fstrim` item).
-  The search index's `secure-delete` option isn't set: only public entries are indexed and nothing deletes one yet, so it belongs with the purge.
-  Once a row is deleted with it set, the index can't be read by SQLite before 3.42, which matters if the server's `sqlite3` command is older (check `sqlite3 --version` on the VPS).
-  Litestream (#4) manages checkpoints itself, so the hourly one needs checking against it then.
-
 #### When the reference keys are rebuilt
 
 - Options: at startup when `REFERENCE_KEYS_VERSION` differs from the stored one, or at every startup.

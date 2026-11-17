@@ -16,7 +16,6 @@ mod cli;
 mod common;
 mod config;
 mod daily_email;
-mod deleted_text;
 mod deletion;
 mod embargo;
 mod embargo_limit;
