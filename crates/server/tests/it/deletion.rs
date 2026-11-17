@@ -4,8 +4,8 @@
 use crate::common;
 
 use axum::http::StatusCode;
-use common::series::{citing, create, make_public, submit_with};
-use common::{DELIMITER, PASSWORD, TestApp, account_id, browser_account, date_in, entry, test_app};
+use common::series::{citing, create, submit_with};
+use common::{DELIMITER, PASSWORD, TestApp, account_id, browser_account, entry, test_app};
 
 const EMAIL: &str = "grace@example.com";
 
@@ -19,12 +19,10 @@ async fn deleting_an_account_keeps_its_public_entries_without_its_name() {
     let app = test_app().await;
     let (cookie, token) = browser_account(&app, EMAIL).await;
     let public = submit_with(&app, &token, &entry("Public result", "")).await;
-    let embargoed = submit_with(
-        &app,
-        &token,
-        &entry("Held result", &format!("embargo_until: {}\n", date_in(30))),
-    )
-    .await;
+    let held = app
+        .post_as("/entries", Some(&token), entry("Held result", ""))
+        .await;
+    let held = common::id_in(&held.body);
     let pending = app
         .post_as("/entries", Some(&token), entry("Draft", ""))
         .await;
@@ -50,7 +48,7 @@ async fn deleting_an_account_keeps_its_public_entries_without_its_name() {
         StatusCode::OK
     );
     assert_eq!(
-        app.get_with_token(&format!("/e/{embargoed}"), &token)
+        app.get_with_token(&format!("/e/{held}"), &token)
             .await
             .status,
         StatusCode::OK,
@@ -134,51 +132,103 @@ async fn deleting_needs_a_browser_session() {
 }
 
 #[tokio::test]
-async fn deletion_waits_while_a_hidden_series_holds_another_accounts_entries() {
+async fn deletion_takes_the_series_no_one_can_read_unless_another_accounts_entry_cites_it() {
+    // The owner's decision, 2026-11-17.
     let app = test_app().await;
     let (cookie, token) = browser_account(&app, EMAIL).await;
-    let (series, key) = create(&app, &token).await;
-    let (empty, _) = create(&app, &token).await;
+    let (unread, _) = create(&app, &token).await;
+    let (theirs_cite, key) = create(&app, &token).await;
     let other = app.other_token().await;
-    app.post_as(&format!("/series/{series}/join"), Some(&other), key)
+    app.post_as(&format!("/series/{theirs_cite}/join"), Some(&other), key)
         .await;
-    let theirs = submit_with(&app, &other, &citing("Theirs", &format!("{series}@1"), "")).await;
+    let pending = app
+        .post_as(
+            "/entries",
+            Some(&other),
+            citing("Theirs", &format!("{theirs_cite}@1"), ""),
+        )
+        .await;
+    assert_eq!(pending.status, StatusCode::CREATED, "{}", pending.body);
+    assert_eq!(
+        app.get(&format!("/series/{unread}")).await.status,
+        StatusCode::OK,
+        "every series is public"
+    );
 
-    let page = app.page("/account/delete", Some(&cookie)).await;
-    assert!(page.body.contains(&series), "{}", page.body);
-    let refused = delete(&app, &cookie, PASSWORD).await;
-    assert_eq!(refused.status, StatusCode::CONFLICT, "{}", refused.body);
-    assert!(refused.body.contains(&series), "{}", refused.body);
-    assert!(!refused.body.contains(&empty), "{}", refused.body);
-
-    app.post_as(
-        &format!("/series/{series}/entries/{theirs}/remove"),
-        Some(&token),
-        "",
-    )
-    .await;
     let done = delete(&app, &cookie, PASSWORD).await;
     assert_eq!(done.status, StatusCode::OK, "{}", done.body);
-    // Its hidden series went with it; the other account's entry stays, out of it.
     assert_eq!(
-        app.get_with_token(&format!("/series/{series}"), &other)
-            .await
-            .status,
-        StatusCode::NOT_FOUND
+        app.get(&format!("/series/{unread}")).await.status,
+        StatusCode::NOT_FOUND,
+        "a series no one could read outlived its creator"
     );
-    assert_eq!(
-        app.get(&format!("/e/{theirs}")).await.status,
-        StatusCode::OK
+    // The one another account's entry cites stays, for that entry.
+    let kept = app
+        .get_with_token(&format!("/series/{theirs_cite}"), &other)
+        .await;
+    assert_eq!(kept.status, StatusCode::OK, "{}", kept.body);
+    assert!(
+        kept.body.contains("judge-b scores each reply"),
+        "{}",
+        kept.body
+    );
+    let theirs = common::id_in(&pending.body);
+    let read = app.get_with_token(&format!("/e/{theirs}"), &other).await;
+    assert!(
+        read.body.contains(&format!("series: {theirs_cite}@1")),
+        "{}",
+        read.body
     );
 }
 
 #[tokio::test]
-async fn a_public_series_outlives_its_creator() {
+async fn another_accounts_entry_rejected_in_the_last_60_days_keeps_the_series() {
+    // The owner's decision, 2026-11-17: a rejection may be the owner's mistake, and
+    // its author fixes the entry and resubmits, so the series it cites stays.
+    for (days_ago, kept) in [(59, true), (61, false)] {
+        let app = test_app().await;
+        let (cookie, token) = browser_account(&app, EMAIL).await;
+        let (series, key) = create(&app, &token).await;
+        let other = app.other_token().await;
+        app.post_as(&format!("/series/{series}/join"), Some(&other), key)
+            .await;
+        let cited = app
+            .post_as(
+                "/entries",
+                Some(&other),
+                citing("Theirs", &format!("{series}@1"), ""),
+            )
+            .await;
+        assert_eq!(cited.status, StatusCode::CREATED, "{}", cited.body);
+        sqlx::query(
+            "UPDATE entries SET status = 'rejected',
+                 submitted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?)
+             WHERE id = ?",
+        )
+        .bind(format!("-{days_ago} days"))
+        .bind(common::id_in(&cited.body))
+        .execute(&app.pool)
+        .await
+        .unwrap();
+
+        let done = delete(&app, &cookie, PASSWORD).await;
+        assert_eq!(done.status, StatusCode::OK, "{}", done.body);
+        let status = app.get(&format!("/series/{series}")).await.status;
+        let expected = if kept {
+            StatusCode::OK
+        } else {
+            StatusCode::NOT_FOUND
+        };
+        assert_eq!(status, expected, "rejected {days_ago} days ago");
+    }
+}
+
+#[tokio::test]
+async fn a_readable_series_outlives_its_creator() {
     let app = test_app().await;
     let (cookie, token) = browser_account(&app, EMAIL).await;
     let (series, _) = create(&app, &token).await;
     let id = submit_with(&app, &token, &citing("Cites", &format!("{series}@1"), "")).await;
-    make_public(&app, &cookie, &series).await;
     let done = delete(&app, &cookie, PASSWORD).await;
     assert_eq!(done.status, StatusCode::OK, "{}", done.body);
     let page = app.get(&format!("/series/{series}")).await;
@@ -197,22 +247,19 @@ async fn a_public_series_outlives_its_creator() {
 #[tokio::test]
 async fn deleting_an_account_frees_a_version_only_its_entries_held_back() {
     let app = test_app().await;
-    let (owner_cookie, owner) = browser_account(&app, "ada@example.com").await;
+    let (_, owner) = browser_account(&app, "ada@example.com").await;
     let (series, key) = create(&app, &owner).await;
-    make_public(&app, &owner_cookie, &series).await;
     let (cookie, token) = browser_account(&app, EMAIL).await;
     app.post_as(&format!("/series/{series}/join"), Some(&token), key)
         .await;
-    submit_with(
-        &app,
-        &token,
-        &citing(
-            "Held",
-            &format!("{series}@1"),
-            &format!("embargo_until: {}\n", date_in(30)),
-        ),
-    )
-    .await;
+    let held = app
+        .post_as(
+            "/entries",
+            Some(&token),
+            citing("Held", &format!("{series}@1"), ""),
+        )
+        .await;
+    assert_eq!(held.status, StatusCode::CREATED, "{}", held.body);
     submit_with(&app, &owner, &citing("Public", &format!("{series}@1"), "")).await;
     let before = app.get(&format!("/series/{series}@1")).await;
     assert!(!before.body.contains("judge-b"), "{}", before.body);

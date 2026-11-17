@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT seq AS \"seq!: i64\" FROM series\n           WHERE account_id = ? AND public_at IS NULL AND removed_at IS NULL",
+  "query": "INSERT INTO series (id, account_id, key_hash, created_at)\n           VALUES (?, ?, ?, ?)\n           RETURNING seq AS \"seq!: i64\"",
   "describe": {
     "columns": [
       {
@@ -16,11 +16,11 @@
       }
     ],
     "parameters": {
-      "Right": 1
+      "Right": 4
     },
     "nullable": [
-      false
+      null
     ]
   },
-  "hash": "a7cf99e4c3cc90e8a696dd366f3cef532b3e3365a9cb2f22615434b088e44c7b"
+  "hash": "86b88f4a93a9fe50d7dc3dc529bc0194cae7b73cb57f3f53a10689e5403afefc"
 }

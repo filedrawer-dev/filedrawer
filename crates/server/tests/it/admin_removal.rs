@@ -7,8 +7,8 @@ use crate::common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use common::series::{citing, create, make_public, submit_with};
-use common::{Reply, TestApp, browser_account, date_in, entry, field, id_in, owner, test_app};
+use common::series::{citing, create, submit_with};
+use common::{Reply, TestApp, browser_account, entry, field, id_in, owner, test_app};
 use filedrawer_server::jobs::publish_due;
 use serde_json::json;
 use time::OffsetDateTime;
@@ -328,24 +328,21 @@ async fn the_author_withdraws_the_rest_of_a_batch_but_not_through_its_removed_me
 async fn removing_the_entry_that_held_a_series_version_back_makes_it_readable() {
     let app = test_app().await;
     let cookie = owner(&app).await;
-    let (author, token) = browser_account(&app, "grace@example.com").await;
+    let (_, token) = browser_account(&app, "grace@example.com").await;
     let (series, _) = create(&app, &token).await;
-    make_public(&app, &author, &series).await;
-    let embargoed = submit_with(
-        &app,
-        &token,
-        &citing(
-            "Held",
-            &format!("{series}@1"),
-            &format!("embargo_until: {}\n", date_in(30)),
-        ),
-    )
-    .await;
+    let held = app
+        .post_as(
+            "/entries",
+            Some(&token),
+            citing("Held", &format!("{series}@1"), ""),
+        )
+        .await;
+    let held = id_in(&held.body);
     submit_with(&app, &token, &citing("Public", &format!("{series}@1"), "")).await;
     let page = app.get(&format!("/series/{series}@1")).await;
     assert_eq!(field(&page.body, "description"), Some("not public"));
 
-    done(remove(&app, &cookie, &embargoed).await, &embargoed).await;
+    done(remove(&app, &cookie, &held).await, &held).await;
     let page = app.get(&format!("/series/{series}@1")).await;
     assert!(
         page.body.contains("judge-b scores each reply"),
@@ -411,9 +408,8 @@ async fn a_removed_batch_member_offers_no_restore() {
 async fn a_series_page_leaves_out_a_removed_entry() {
     let app = test_app().await;
     let cookie = owner(&app).await;
-    let (author, token) = browser_account(&app, "grace@example.com").await;
+    let (_, token) = browser_account(&app, "grace@example.com").await;
     let (series, _) = create(&app, &token).await;
-    make_public(&app, &author, &series).await;
     let gone = submit_with(&app, &token, &citing("Gone", &format!("{series}@1"), "")).await;
     let kept = submit_with(&app, &token, &citing("Kept", &format!("{series}@1"), "")).await;
     assert!(

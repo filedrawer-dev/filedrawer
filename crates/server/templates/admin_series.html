@@ -4,14 +4,14 @@
 {% block content %}
 <p><a href="/admin">Review queue</a></p>
 <h1>Series <code>{{ view.series.id }}</code></h1>
-<p>Made by <a href="/admin/accounts/{{ view.series.creator }}"><code>{{ view.series.creator }}</code></a>; {% if view.series.public %}public{% else %}hidden{% endif %}.</p>
+<p>Made by <a href="/admin/accounts/{{ view.series.creator }}"><code>{{ view.series.creator }}</code></a>.</p>
 {% if let Some(at) = view.series.removed_at %}
 <p>You removed it at {{ at }}, so the site serves it nowhere.</p>
 {% endif %}
 {% match view.standing %}
 {% when SeriesStanding::Removable %}
 <form method="post" action="/admin/series/{{ view.series.id }}/remove"><button type="submit">Remove</button></form>
-<p>Removing stops the site serving it, to its creator and members too, and its title and description show on no entry, with no public notice. Its entries stay as they are, and entries waiting on it while hidden go on. It stays in the database, and you can restore it.</p>
+<p>Removing stops the site serving it, to its creator and members too, and its title and description show on no entry, with no public notice. Its entries stay as they are. It stays in the database, and you can restore it.</p>
 {% when SeriesStanding::Restorable %}
 <form method="post" action="/admin/series/{{ view.series.id }}/restore"><button type="submit">Restore</button></form>
 {% when SeriesStanding::Refused %}

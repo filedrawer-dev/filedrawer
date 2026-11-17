@@ -71,8 +71,6 @@ pub struct Fields {
     pub attachments: Option<String>,
     /// Each agent that wrote the entry.
     pub written_by: Vec<Writer>,
-    /// A release date; the archive takes none for now (design.md, Embargo).
-    pub embargo_until: Option<String>,
 }
 
 impl Fields {

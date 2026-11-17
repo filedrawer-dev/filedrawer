@@ -17,7 +17,7 @@ use filedrawer_server::file_store::FileStore;
 use filedrawer_server::limits::{Limits, RateLimits};
 use filedrawer_server::mail::{Email, Mailer, Sending};
 use filedrawer_server::request_log::RequestLog;
-use filedrawer_server::{AppState, Embargoes, Screener, admin, app, db};
+use filedrawer_server::{AppState, Screener, admin, app, db};
 
 /// A mailer that keeps every email it is sent, for tests to read back.
 #[derive(Clone, Default)]
@@ -65,10 +65,8 @@ const SINGLE_KEYS: &[&str] = &[
     "rows",
     "publish_at",
     "screen_from",
-    "release",
     "note",
     "url",
-    "embargo_until",
     "publish",
     "series",
     "version",
@@ -229,7 +227,6 @@ pub fn state(pool: sqlx::SqlitePool, outbox: &Outbox, files_dir: &std::path::Pat
         environment: filedrawer_server::config::Environment::Dev,
         screening_health: Default::default(),
         link_checker: fake_web::FakeWeb::default().checker(5000),
-        embargoes: Embargoes::Open,
         pinger: None,
         backups_dir: files_dir.join("backups"),
         started_at: time::OffsetDateTime::UNIX_EPOCH,
@@ -425,13 +422,6 @@ impl TestApp {
         self
     }
 
-    /// The same app as deployed: embargoes and hidden series paused.
-    pub fn paused(mut self) -> TestApp {
-        self.state.embargoes = Embargoes::Paused;
-        self.router = app(self.state.clone());
-        self
-    }
-
     /// The app with these rate limits, and its counts so far forgotten.
     pub fn with_limits(mut self, limits: Limits) -> TestApp {
         self.state.rate_limits = Arc::new(RateLimits::new(limits));
@@ -475,7 +465,7 @@ impl TestApp {
         id_in(&reply.body)
     }
 
-    /// Submits `entry` and ends its hold at once, so it is public (or embargoed).
+    /// Submits `entry` and ends its hold at once, so it is public.
     pub async fn submit(&self, entry: &str) -> String {
         let id = self.submit_held(entry).await;
         let reply = self.post(&format!("/e/{id}/publish"), "").await;

@@ -26,7 +26,6 @@ const NOT_FOR_AGENTS: &[&str] = &[
     "/account/tokens",
     "/account/tokens/{id}/revoke",
     "/account/verify-email",
-    "/account/series/{id}/publish",
     "/account/delete",
     "/account/e/{id}/withdraw",
     "/admin",
@@ -38,7 +37,6 @@ const NOT_FOR_AGENTS: &[&str] = &[
     "/admin/e/{id}/publish",
     "/admin/e/{id}/hold",
     "/admin/e/{id}/reject",
-    "/admin/e/{id}/reject-chain",
     "/admin/e/{id}/doubt-seen",
     "/admin/e/{id}/remove",
     "/admin/e/{id}/restore",
@@ -1617,22 +1615,18 @@ async fn searching_sends_the_header_file_when_there_is_one() {
 }
 
 #[tokio::test]
-async fn the_documents_offer_no_embargo_or_hidden_series_while_they_are_paused() {
-    // design.md, Embargo (paused, 2026-11-08): the documents name an embargo only to
-    // say it is refused, or for entries embargoed before the pause.
+async fn the_documents_name_an_embargo_only_to_say_it_is_refused() {
+    // design.md, Rejected (embargoes, retired 2026-11-17).
     let text = every_document().await;
     for line in text
         .lines()
         .filter(|line| line.to_lowercase().contains("embargo"))
     {
-        assert!(
-            ["paused", "no release dates", "before 2026-11-08"]
-                .iter()
-                .any(|allowed| line.contains(allowed)),
-            "{line}"
-        );
+        assert!(line.contains("refuse"), "{line}");
     }
-    assert!(!text.contains("waiting_on_series"));
+    for retired in ["waiting_on_series", "hidden series", "embargoed"] {
+        assert!(!text.contains(retired), "{retired}");
+    }
 }
 
 #[tokio::test]

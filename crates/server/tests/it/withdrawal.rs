@@ -10,10 +10,10 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use common::deletion::state_of;
 use common::fake_models::FakeModels;
-use common::series::{citing, create, make_public, submit_with};
+use common::series::{citing, create, submit_with};
 use common::{
-    PUBLIC_URL, Reply, TestApp, author_status, batch_member_ids, browser_account, date_in, entry,
-    id_in, owner, test_app, test_app_with,
+    PUBLIC_URL, Reply, TestApp, author_status, batch_member_ids, browser_account, entry, id_in,
+    owner, test_app, test_app_with,
 };
 use filedrawer_server::jobs::publish_due;
 use serde_json::{Value, json};
@@ -23,8 +23,11 @@ const EMAIL: &str = "grace@example.com";
 const HAZARD: &str = "FAKE-HAZARD FAKE-SONNET-HAZARD";
 const DOLLAR: i64 = 1_000_000_000;
 
-fn embargo() -> String {
-    format!("embargo_until: {}\n", date_in(30))
+/// Submits `text` with `token` and leaves it in its hour's hold; returns its ID.
+async fn pending(app: &TestApp, token: &str, text: &str) -> String {
+    let reply = app.post_as("/entries", Some(token), text.to_string()).await;
+    assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
+    id_in(&reply.body)
 }
 
 async fn models_app(models: &FakeModels) -> TestApp {
@@ -55,19 +58,13 @@ fn offers(page: &str, id: &str) -> bool {
     page.contains(&format!("action=\"/account/e/{id}/withdraw\""))
 }
 
-/// Whether the account page says version `id`, the newest of its chain, waits on the
-/// archive's owner.
-fn with_owner(page: &str, id: &str) -> bool {
-    page.contains(&format!(r#"<code class="with-owner">{id}</code>"#))
-}
-
 async fn status(app: &TestApp, token: &str, id: &str) -> String {
     author_status(app, token, id).await.unwrap_or_default()
 }
 
-/// Submits the batch `body` with `token` and ends its hold; returns the batch's ID
-/// and its members' IDs.
-async fn published_batch(app: &TestApp, token: &str, body: Value) -> (String, Vec<String>) {
+/// Submits the batch `body` with `token` and leaves it in its hold; returns the
+/// batch's ID and its members' IDs.
+async fn pending_batch(app: &TestApp, token: &str, body: Value) -> (String, Vec<String>) {
     let reply = app
         .send(
             Request::post("/entries/batch")
@@ -80,27 +77,21 @@ async fn published_batch(app: &TestApp, token: &str, body: Value) -> (String, Ve
         .await;
     assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
     let reply: Value = serde_json::from_str(&reply.body).unwrap();
-    let id = reply["id"].as_str().unwrap().to_string();
+    (
+        reply["id"].as_str().unwrap().to_string(),
+        batch_member_ids(&reply),
+    )
+}
+
+/// Submits the batch `body` with `token` and ends its hold; returns the batch's ID
+/// and its members' IDs.
+async fn published_batch(app: &TestApp, token: &str, body: Value) -> (String, Vec<String>) {
+    let (id, members) = pending_batch(app, token, body).await;
     let published = app
         .post_as(&format!("/batches/{id}/publish"), Some(token), "")
         .await;
     assert_eq!(published.status, StatusCode::OK, "{}", published.body);
-    (id, batch_member_ids(&reply))
-}
-
-/// Posts a new version of `id` with `token` and ends its hold when `publish`;
-/// returns the version's ID.
-async fn version_of(app: &TestApp, token: &str, id: &str, text: &str, publish: bool) -> String {
-    let reply = app
-        .post_as(&format!("/e/{id}/versions"), Some(token), text.to_string())
-        .await;
-    assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
-    let version = id_in(&reply.body);
-    if publish {
-        app.post_as(&format!("/e/{version}/publish"), Some(token), "")
-            .await;
-    }
-    version
+    (id, members)
 }
 
 #[tokio::test]
@@ -108,23 +99,15 @@ async fn the_account_page_offers_to_withdraw_only_entries_that_were_never_public
     let models = FakeModels::default();
     let app = models_app(&models).await;
     let (cookie, token) = browser_account(&app, EMAIL).await;
-    let pending = app
-        .post_as("/entries", Some(&token), entry("Pending one", ""))
-        .await;
-    let pending = id_in(&pending.body);
-    let embargoed = submit_with(&app, &token, &entry("Embargoed one", &embargo())).await;
+    let pending = pending(&app, &token, &entry("Pending one", "")).await;
     // A model outage leaves an entry in screening.
     let screening = submit_with(&app, &token, &entry("Steering FAKE-ERROR", "")).await;
-    let (series, _) = create(&app, &token).await;
-    let waiting = submit_with(&app, &token, &citing("Waits", &format!("{series}@1"), "")).await;
     let public = submit_with(&app, &token, &entry("Public one", "")).await;
     let rejected = submit_with(&app, &token, &entry("Steering FAKE-OFFTOPIC", "")).await;
     let review = submit_with(&app, &token, &entry(&format!("Steering {HAZARD}"), "")).await;
     for (id, expected) in [
         (&pending, "pending"),
-        (&embargoed, "embargoed"),
         (&screening, "screening"),
-        (&waiting, "waiting_on_series"),
         (&public, "public"),
         (&rejected, "rejected"),
         (&review, "review"),
@@ -134,20 +117,20 @@ async fn the_account_page_offers_to_withdraw_only_entries_that_were_never_public
 
     let page = app.page("/account", Some(&cookie)).await;
     assert_eq!(page.status, StatusCode::OK, "{}", page.body);
-    for id in [&pending, &embargoed, &screening, &waiting] {
+    for id in [&pending, &screening] {
         assert!(offers(&page.body, id), "{id}: {}", page.body);
     }
     for id in [&public, &rejected, &review] {
         assert!(!offers(&page.body, id), "{id}: {}", page.body);
     }
-    assert!(page.body.contains("Embargoed one"), "{}", page.body);
+    assert!(page.body.contains("Pending one"), "{}", page.body);
 }
 
 #[tokio::test]
 async fn withdrawing_from_the_confirm_page_deletes_the_entry() {
     let app = test_app().await;
     let (cookie, token) = browser_account(&app, EMAIL).await;
-    let id = submit_with(&app, &token, &entry("Held back", &embargo())).await;
+    let id = pending(&app, &token, &entry("Held back", "")).await;
     let path = format!("/account/e/{id}/withdraw");
     let confirm = app.page(&path, Some(&cookie)).await;
     assert_eq!(confirm.status, StatusCode::OK, "{}", confirm.body);
@@ -287,71 +270,6 @@ async fn entries_with_the_owner_or_past_screening_are_not_withdrawn() {
 }
 
 #[tokio::test]
-async fn only_the_latest_version_is_withdrawn() {
-    let models = FakeModels::default();
-    let app = models_app(&models).await;
-    let (cookie, token) = browser_account(&app, EMAIL).await;
-    let first = submit_with(&app, &token, &entry("First", &embargo())).await;
-    let second = version_of(&app, &token, &first, &entry("Second", ""), true).await;
-    assert_eq!(status(&app, &token, &second).await, "embargoed");
-    let page = app.page("/account", Some(&cookie)).await;
-    assert!(offers(&page.body, &second), "{}", page.body);
-    assert!(!offers(&page.body, &first), "{}", page.body);
-    let reply = refused(&app, &cookie, &first, &[&first, &second]).await;
-    assert!(reply.body.contains(&second), "{}", reply.body);
-
-    // Once the newest version waits on the owner, the page says to ask the owner.
-    let third = version_of(
-        &app,
-        &token,
-        &second,
-        &entry(&format!("Third {HAZARD}"), ""),
-        true,
-    )
-    .await;
-    assert_eq!(status(&app, &token, &third).await, "review");
-    let page = app.page("/account", Some(&cookie)).await;
-    assert!(!offers(&page.body, &second), "{}", page.body);
-    assert!(with_owner(&page.body, &third), "{}", page.body);
-    let reply = refused(&app, &cookie, &second, &[&first, &second, &third]).await;
-    assert!(reply.body.contains("owner"), "{}", reply.body);
-}
-
-#[tokio::test]
-async fn a_newest_version_with_the_owners_verdict_is_with_the_owner_too() {
-    let models = FakeModels::default();
-    let app = models_app(&models).await;
-    let (cookie, token) = browser_account(&app, EMAIL).await;
-    let first = submit_with(&app, &token, &entry("First", &embargo())).await;
-    let second = version_of(
-        &app,
-        &token,
-        &first,
-        &entry(&format!("Second {HAZARD}"), ""),
-        true,
-    )
-    .await;
-    assert_eq!(status(&app, &token, &second).await, "review");
-    // As the owner's pass leaves it until the queue places it.
-    sqlx::query("UPDATE entries SET status = 'screening', screen_verdict = 'pass' WHERE id = ?")
-        .bind(&second)
-        .execute(&app.pool)
-        .await
-        .unwrap();
-    let page = app.page("/account", Some(&cookie)).await;
-    assert!(!offers(&page.body, &first), "{}", page.body);
-    assert!(!offers(&page.body, &second), "{}", page.body);
-    assert!(with_owner(&page.body, &second), "{}", page.body);
-    let reply = refused(&app, &cookie, &first, &[&first, &second]).await;
-    assert!(reply.body.contains("owner"), "{}", reply.body);
-    assert!(
-        !reply.body.contains("withdraw that first"),
-        "{}",
-        reply.body
-    );
-}
-
-#[tokio::test]
 async fn a_batch_waits_whole_while_a_member_is_with_the_owner() {
     let models = FakeModels::default();
     let app = models_app(&models).await;
@@ -377,11 +295,11 @@ async fn a_batch_member_is_withdrawn_with_its_whole_batch() {
     let (cookie, token) = browser_account(&app, EMAIL).await;
     let two = |a: &str, b: &str| {
         json!({"entries": [
-            entry(&format!("Member {a}"), &format!("slug: {a}\n{}", embargo())),
-            entry(&format!("Member {b}"), &format!("slug: {b}\n{}", embargo())),
+            entry(&format!("Member {a}"), &format!("slug: {a}\n")),
+            entry(&format!("Member {b}"), &format!("slug: {b}\n")),
         ]})
     };
-    let (batch, members) = published_batch(&app, &token, two("a", "b")).await;
+    let (batch, members) = pending_batch(&app, &token, two("a", "b")).await;
     let confirm = app
         .page(
             &format!("/account/e/{}/withdraw", members[0]),
@@ -399,20 +317,6 @@ async fn a_batch_member_is_withdrawn_with_its_whole_batch() {
         let read = app.get_with_token(&format!("/e/{member}"), &token).await;
         assert_eq!(read.status, StatusCode::GONE, "{}", read.body);
     }
-
-    // A member with a later version holds the batch back, naming that version.
-    let (_, members) = published_batch(&app, &token, two("c", "d")).await;
-    let later = version_of(
-        &app,
-        &token,
-        &members[0],
-        &entry("Member c, again", ""),
-        false,
-    )
-    .await;
-    let all = [members[0].as_str(), members[1].as_str(), later.as_str()];
-    let reply = refused(&app, &cookie, &members[1], &all).await;
-    assert!(reply.body.contains(&later), "{}", reply.body);
 }
 
 #[tokio::test]
@@ -429,20 +333,11 @@ async fn the_confirm_page_names_text_the_withdrawal_would_make_public() {
         json!({"runs": [run], "entries": [entry("Public", "slug: a\nuses_runs: [r-1]\n")]}),
     )
     .await;
-    let run_user = submit_with(
-        &app,
-        &token,
-        &entry("Run user", &format!("uses_runs: [r-1]\n{}", embargo())),
-    )
-    .await;
+    let run_user = pending(&app, &token, &entry("Run user", "uses_runs: [r-1]\n")).await;
     let (series, _) = create(&app, &token).await;
-    make_public(&app, &cookie, &series).await;
     let cite = format!("{series}@1");
-    let series_user = submit_with(&app, &token, &citing("Series user", &cite, &embargo())).await;
+    let series_user = pending(&app, &token, &citing("Series user", &cite, "")).await;
     submit_with(&app, &token, &citing("Cites it too", &cite, "")).await;
-    for id in [&run_user, &series_user] {
-        assert_eq!(status(&app, &token, id).await, "embargoed");
-    }
 
     let confirm = app
         .page(&format!("/account/e/{run_user}/withdraw"), Some(&cookie))
@@ -541,50 +436,4 @@ async fn the_account_page_lists_only_the_accounts_own_entries() {
     assert!(offers(&page.body, &mine), "{}", page.body);
     assert!(!offers(&page.body, &theirs), "{}", page.body);
     assert!(!page.body.contains("Zettel-draft-41"), "{}", page.body);
-}
-
-#[tokio::test]
-async fn a_chain_of_three_whose_newest_is_with_the_owner_is_named_once() {
-    let models = FakeModels::default();
-    let app = models_app(&models).await;
-    let (cookie, token) = browser_account(&app, EMAIL).await;
-    let first = submit_with(&app, &token, &entry("First", &embargo())).await;
-    let second = version_of(&app, &token, &first, &entry("Second", ""), true).await;
-    let third = version_of(
-        &app,
-        &token,
-        &second,
-        &entry(&format!("Third {HAZARD}"), ""),
-        true,
-    )
-    .await;
-    assert_eq!(status(&app, &token, &third).await, "review");
-
-    let page = app.page("/account", Some(&cookie)).await;
-
-    assert!(with_owner(&page.body, &third), "{}", page.body);
-    assert_eq!(
-        page.body.matches(r#"<code class="with-owner">"#).count(),
-        1,
-        "{}",
-        page.body
-    );
-}
-
-#[tokio::test]
-async fn withdrawing_an_older_version_names_its_own_chains_later_one() {
-    let app = test_app().await;
-    let (cookie, token) = browser_account(&app, EMAIL).await;
-    let first = submit_with(&app, &token, &entry("First", &embargo())).await;
-    let second = version_of(&app, &token, &first, &entry("Second", ""), true).await;
-    // Another account's chain, made later: its newest version is the table's newest.
-    let (_, other) = browser_account(&app, "author@example.com").await;
-    let other_first = submit_with(&app, &other, &entry("Other first", &embargo())).await;
-    let other_second =
-        version_of(&app, &other, &other_first, &entry("Other second", ""), true).await;
-
-    let reply = refused(&app, &cookie, &first, &[&first, &second]).await;
-
-    assert!(reply.body.contains(&second), "{}", reply.body);
-    assert!(!reply.body.contains(&other_second), "{}", reply.body);
 }

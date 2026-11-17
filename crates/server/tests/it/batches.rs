@@ -5,7 +5,7 @@ use crate::common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use common::{Reply, TestApp, date_in, entry, field, test_app};
+use common::{Reply, TestApp, entry, field, test_app};
 use filedrawer_server::jobs::publish_due;
 use serde_json::{Value, json};
 use time::Duration;
@@ -191,26 +191,6 @@ async fn a_runs_description_waits_until_every_entry_using_it_is_public() {
 }
 
 #[tokio::test]
-async fn a_public_member_may_not_refer_to_an_embargoed_one() {
-    let app = test_app().await;
-    let reply = batch(
-        &app,
-        json!({"entries": [
-            member("open", "Open", "replicates: slug:secret\n"),
-            member("secret", "Secret", &format!("embargo_until: {}\n", date_in(30))),
-        ]}),
-    )
-    .await;
-    assert_eq!(
-        reply.status,
-        StatusCode::UNPROCESSABLE_ENTITY,
-        "{}",
-        reply.body
-    );
-    assert!(reply.body.contains("embargoed"), "{}", reply.body);
-}
-
-#[tokio::test]
 async fn a_put_on_one_member_restarts_the_whole_batch_hold_and_the_hour_publishes_it() {
     let app = test_app().await;
     let body = json(
@@ -314,26 +294,25 @@ async fn a_slug_or_run_id_with_odd_characters_is_refused() {
 #[tokio::test]
 async fn a_put_runs_the_link_checks() {
     let app = test_app().await;
-    app.submit(&member(
-        "secret",
-        "Secret",
-        &format!("embargo_until: {}\n", date_in(30)),
-    ))
-    .await;
     let body = json(&batch(&app, json!({"entries": [member("open", "Open", "")]})).await);
     let open = id_of(&body, "open");
-    let refers = app
+    let renamed = app
         .put_as(
             &format!("/e/{open}"),
             &app.token,
-            member("open", "Open", "replicates: slug:secret\n"),
+            member("renamed", "Open", ""),
         )
         .await;
     assert_eq!(
-        refers.status,
+        renamed.status,
         StatusCode::UNPROCESSABLE_ENTITY,
         "{}",
-        refers.body
+        renamed.body
+    );
+    assert!(
+        renamed.body.contains("keeps the entry's slug"),
+        "{}",
+        renamed.body
     );
     let unknown_run = app
         .put_as(
@@ -347,36 +326,6 @@ async fn a_put_runs_the_link_checks() {
         StatusCode::UNPROCESSABLE_ENTITY,
         "{}",
         unknown_run.body
-    );
-}
-
-#[tokio::test]
-async fn an_entry_cant_take_an_embargo_while_an_earlier_public_entry_refers_to_it() {
-    let app = test_app().await;
-    let target = app.submit_held(&member("target", "Target", "")).await;
-    app.submit_held(&member("referrer", "Referrer", "replicates: slug:target\n"))
-        .await;
-    let embargoed = app
-        .put_as(
-            &format!("/e/{target}"),
-            &app.token,
-            member(
-                "target",
-                "Target",
-                &format!("embargo_until: {}\n", date_in(30)),
-            ),
-        )
-        .await;
-    assert_eq!(
-        embargoed.status,
-        StatusCode::UNPROCESSABLE_ENTITY,
-        "{}",
-        embargoed.body
-    );
-    assert!(
-        embargoed.body.contains("refers to it"),
-        "{}",
-        embargoed.body
     );
 }
 

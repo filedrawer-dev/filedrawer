@@ -18,7 +18,7 @@
 {% else %}
 <ul>
 {% for one in series %}
-<li><a href="/admin/series/{{ one.id }}"><code>{{ one.id }}</code></a>, {{ one.title }}{% if one.removed %}, removed{% else if one.public %}, public{% else %}, hidden{% endif %}</li>
+<li><a href="/admin/series/{{ one.id }}"><code>{{ one.id }}</code></a>, {{ one.title }}{% if one.removed %}, removed{% endif %}</li>
 {% endfor %}
 </ul>
 {% endif %}

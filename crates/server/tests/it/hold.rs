@@ -4,7 +4,7 @@
 use crate::common;
 
 use axum::http::StatusCode;
-use common::{date_in, entry, field, id_in, test_app};
+use common::{entry, field, id_in, test_app};
 use filedrawer_server::jobs::publish_due;
 use time::format_description::well_known::Rfc3339;
 use time::{Duration, OffsetDateTime};
@@ -146,29 +146,6 @@ async fn a_public_entry_takes_no_put_and_no_second_publish() {
 }
 
 #[tokio::test]
-async fn publishing_an_embargoed_entry_embargoes_it_and_its_author_sees_the_release_date() {
-    let app = test_app().await;
-    let id = app
-        .submit_held(&entry("T", &format!("embargo_until: {}\n", date_in(30))))
-        .await;
-    let reply = app.post(&format!("/e/{id}/publish"), "").await;
-    assert_eq!(
-        field(&reply.body, "status"),
-        Some("embargoed"),
-        "{}",
-        reply.body
-    );
-    assert_eq!(
-        app.get(&format!("/e/{id}")).await.status,
-        StatusCode::NOT_FOUND
-    );
-    let mine = app.get_as_author(&format!("/e/{id}")).await;
-    assert_eq!(mine.status, StatusCode::OK);
-    assert_eq!(field(&mine.body, "status"), Some("embargoed"));
-    assert_eq!(field(&mine.body, "release"), Some(date_in(30).as_str()));
-}
-
-#[tokio::test]
 async fn the_hour_running_out_publishes_the_entry_by_itself() {
     let app = test_app().await;
     let id = app.submit_held(&entry("Unattended", "")).await;
@@ -197,85 +174,4 @@ async fn the_hour_running_out_publishes_the_entry_by_itself() {
             .unwrap(),
         0
     );
-}
-
-#[tokio::test]
-async fn a_draft_may_drop_or_shorten_its_own_embargo() {
-    // Nothing has been held back yet, so a first submission's draft may move or drop
-    // its own embargo (the owner's decision, 2026-11-05).
-    let app = test_app().await;
-    let id = app
-        .submit_held(&entry("T", &format!("embargo_until: {}\n", date_in(30))))
-        .await;
-    let url = format!("/e/{id}");
-    let sooner = app
-        .put_as(
-            &url,
-            &app.token,
-            entry("T", &format!("embargo_until: {}\n", date_in(2))),
-        )
-        .await;
-    assert_eq!(sooner.status, StatusCode::OK, "{}", sooner.body);
-    let dropped = app.put_as(&url, &app.token, entry("T", "")).await;
-    assert_eq!(dropped.status, StatusCode::OK, "{}", dropped.body);
-    let published = app.post(&format!("{url}/publish"), "").await;
-    assert_eq!(
-        field(&published.body, "status"),
-        Some("public"),
-        "{}",
-        published.body
-    );
-}
-
-#[tokio::test]
-async fn a_pending_version_of_an_embargoed_entry_keeps_its_embargo_and_lists_every_reason() {
-    // design.md, Agent interface: "resubmit without the embargo" would otherwise be
-    // an early release by token.
-    let app = test_app().await;
-    let embargoed = app
-        .submit(&entry("T", &format!("embargo_until: {}\n", date_in(30))))
-        .await;
-    let version = id_in(
-        &app.post(
-            &format!("/e/{embargoed}/versions"),
-            entry("U", &format!("embargo_until: {}\n", date_in(30))),
-        )
-        .await
-        .body,
-    );
-    let url = format!("/e/{version}");
-    // A version keeps its chain's date (design.md, Embargo): another date, earlier or
-    // later, is refused with the chain's date.
-    for other in [date_in(10), date_in(60)] {
-        let reply = app
-            .put_as(
-                &url,
-                &app.token,
-                entry("U", &format!("embargo_until: {other}\n")),
-            )
-            .await;
-        assert_eq!(
-            reply.status,
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "{other}: {}",
-            reply.body
-        );
-        assert!(reply.body.contains(&date_in(30)), "{other}: {}", reply.body);
-    }
-    let text = entry("U", &format!("embargo_until: {}\n", date_in(3))).replace("title: U\n", "");
-    let both = app.put_as(&url, &app.token, text).await;
-    assert_eq!(both.status, StatusCode::UNPROCESSABLE_ENTITY);
-    assert!(both.body.contains("`title` is missing"), "{}", both.body);
-    assert!(both.body.contains(&date_in(30)), "{}", both.body);
-    // Leaving the date out keeps it; so does repeating it.
-    for kept in [String::new(), format!("embargo_until: {}\n", date_in(30))] {
-        let reply = app.put_as(&url, &app.token, entry("U", &kept)).await;
-        assert_eq!(reply.status, StatusCode::OK, "{kept}: {}", reply.body);
-        assert_eq!(
-            field(&reply.body, "embargo_until"),
-            Some(date_in(30).as_str()),
-            "{}",
-            reply.body
-        );
-    }
 }

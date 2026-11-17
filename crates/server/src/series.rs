@@ -10,9 +10,8 @@ use crate::{ids, time::now};
 pub struct Series {
     pub seq: i64,
     pub id: String,
-    /// The account that made it, which alone makes versions and makes it public.
+    /// The account that made it, which alone makes versions.
     pub creator: String,
-    pub public: bool,
     /// The newest version's number.
     pub latest: i64,
 }
@@ -23,7 +22,6 @@ pub struct Version {
     pub title: String,
     pub description: String,
     /// Whether anyone may read it (see `mark_readable`).
-    /// version is.
     pub readable: bool,
 }
 
@@ -35,28 +33,25 @@ pub struct Cited {
     pub section: Option<String>,
 }
 
-/// A new series: its ID and the join key, which is shown once.
+/// A new series, public from the start: its ID and the join key, which is shown once.
 pub async fn create(
     pool: &SqlitePool,
     account_id: &str,
     text: &SeriesText,
-    public: bool,
 ) -> Result<(String, String), sqlx::Error> {
     let id = format!("s-{}", ids::new_id());
     let key = ids::new_join_key();
     let hash = ids::token_hash(&key);
     let created_at = now();
-    let public_at = public.then_some(created_at.as_str());
     let mut transaction = crate::db::write_tx(pool).await?;
     let seq = sqlx::query_scalar!(
-        r#"INSERT INTO series (id, account_id, key_hash, created_at, public_at)
-           VALUES (?, ?, ?, ?, ?)
+        r#"INSERT INTO series (id, account_id, key_hash, created_at)
+           VALUES (?, ?, ?, ?)
            RETURNING seq AS "seq!: i64""#,
         id,
         account_id,
         hash,
-        created_at,
-        public_at
+        created_at
     )
     .fetch_one(&mut *transaction)
     .await?;
@@ -119,7 +114,6 @@ pub async fn find(pool: &SqlitePool, id: &str) -> Result<Option<Series>, sqlx::E
     sqlx::query_as!(
         Series,
         r#"SELECT s.seq AS "seq!: i64", s.id, s.account_id AS creator,
-                  s.public_at IS NOT NULL AS "public!: bool",
                   (SELECT MAX(version) FROM series_versions v WHERE v.series_seq = s.seq) AS "latest!: i64"
            FROM series s WHERE s.id = ? AND s.removed_at IS NULL"#,
         id
@@ -204,12 +198,11 @@ pub async fn latest_readable(pool: &SqlitePool, seq: i64) -> Result<Option<Versi
     .await
 }
 
-/// Makes readable, for good, every version whose series is public, that a public
-/// entry cites, and that no entry still on its way to public cites (design.md,
-/// Series: a new version "stays unreadable ... until every entry citing it is
-/// public"). An entry taken out of the series counts neither way, and a removed
-/// series' versions stay as they are. Run whenever an entry becomes public, leaves a
-/// series, or a series becomes public or is restored.
+/// Makes readable, for good, every version that a public entry cites and that no
+/// entry still on its way to public cites (design.md, Series: a new version "stays
+/// unreadable ... until every entry citing it is public"). An entry taken out of the
+/// series counts neither way, and a removed series' versions stay as they are. Run
+/// whenever an entry becomes public, leaves a series, or a series is restored.
 pub async fn mark_readable(connection: &mut sqlx::SqliteConnection) -> Result<(), sqlx::Error> {
     let readable_at = now();
     sqlx::query!(
@@ -217,7 +210,7 @@ pub async fn mark_readable(connection: &mut sqlx::SqliteConnection) -> Result<()
          WHERE readable_at IS NULL
            AND EXISTS (
                SELECT 1 FROM series s WHERE s.seq = series_versions.series_seq
-                 AND s.public_at IS NOT NULL AND s.removed_at IS NULL)
+                 AND s.removed_at IS NULL)
            AND EXISTS (
                SELECT 1 FROM entries x
                WHERE x.series_seq = series_versions.series_seq
@@ -335,23 +328,6 @@ pub async fn entry_cite(pool: &SqlitePool, seq: i64) -> Result<Option<EntryCite>
     .await
 }
 
-/// Whether entry `seq` must wait for a series: its own, or one that another live
-/// member of its batch cites, is still hidden. A removed series holds nothing back.
-pub async fn waits(pool: &SqlitePool, seq: i64) -> Result<bool, sqlx::Error> {
-    sqlx::query_scalar!(
-        r#"SELECT EXISTS (
-               SELECT 1 FROM entries m JOIN series s ON s.seq = m.series_seq
-               WHERE s.public_at IS NULL AND s.removed_at IS NULL
-                 AND m.series_removed_at IS NULL
-                 AND m.status NOT IN ('rejected', 'withdrawn', 'removed')
-                 AND (m.seq = ?1 OR m.batch_seq = (SELECT batch_seq FROM entries WHERE seq = ?1))
-           ) AS "waits!: bool""#,
-        seq
-    )
-    .fetch_one(pool)
-    .await
-}
-
 /// Gives series `seq` a new join key and returns it; the old key stops working.
 pub async fn rotate_key(pool: &SqlitePool, seq: i64) -> Result<String, sqlx::Error> {
     let key = ids::new_join_key();
@@ -426,7 +402,6 @@ pub async fn remove_entry(
 pub struct Owned {
     pub id: String,
     pub title: String,
-    pub public: bool,
     /// The owner removed it.
     pub removed: bool,
 }
@@ -435,8 +410,7 @@ pub struct Owned {
 pub async fn created_by(pool: &SqlitePool, account_id: &str) -> Result<Vec<Owned>, sqlx::Error> {
     sqlx::query_as!(
         Owned,
-        r#"SELECT s.id, v.title, s.public_at IS NOT NULL AS "public!: bool",
-                  s.removed_at IS NOT NULL AS "removed!: bool"
+        r#"SELECT s.id, v.title, s.removed_at IS NOT NULL AS "removed!: bool"
            FROM series s JOIN series_versions v ON v.series_seq = s.seq
            WHERE s.account_id = ?
              AND v.version = (SELECT MAX(version) FROM series_versions WHERE series_seq = s.seq)
@@ -445,30 +419,6 @@ pub async fn created_by(pool: &SqlitePool, account_id: &str) -> Result<Vec<Owned
     )
     .fetch_all(pool)
     .await
-}
-
-/// Makes series `id` public if `account_id` made it. False when it didn't. Making a
-/// public series public again changes nothing.
-pub async fn make_public(
-    pool: &SqlitePool,
-    id: &str,
-    account_id: &str,
-) -> Result<bool, sqlx::Error> {
-    let public_at = now();
-    let mut transaction = crate::db::write_tx(pool).await?;
-    let found = sqlx::query_scalar!(
-        r#"UPDATE series SET public_at = COALESCE(public_at, ?)
-           WHERE id = ? AND account_id = ? AND removed_at IS NULL
-           RETURNING seq AS "seq!: i64""#,
-        public_at,
-        id,
-        account_id
-    )
-    .fetch_optional(&mut *transaction)
-    .await?;
-    mark_readable(&mut transaction).await?;
-    transaction.commit().await?;
-    Ok(found.is_some())
 }
 
 /// A series the screen refused as a likely hazard, waiting for the owner.

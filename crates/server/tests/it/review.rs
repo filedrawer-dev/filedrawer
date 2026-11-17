@@ -7,7 +7,7 @@ use crate::common;
 
 use axum::http::StatusCode;
 use common::fake_models::FakeModels;
-use common::{TestApp, browser_account, date_in, entry, field, id_in, owner, test_app_with};
+use common::{TestApp, browser_account, entry, field, id_in, owner, test_app_with};
 use filedrawer_server::jobs::publish_due;
 use time::OffsetDateTime;
 
@@ -125,10 +125,6 @@ async fn publishing_from_review_places_the_entry_as_a_pass_would() {
         app.get(&format!("/e/{public}")).await.status,
         StatusCode::OK
     );
-
-    let later = in_review(&app, &format!("embargo_until: {}\n", date_in(30))).await;
-    decide(&app, &cookie, &format!("/admin/e/{later}/publish"), &[]).await;
-    assert_eq!(author_status(&app, &later).await, "embargoed");
 
     let queue = app.page("/admin", Some(&cookie)).await;
     assert!(
@@ -333,7 +329,6 @@ async fn every_admin_write_refuses_a_token_and_another_accounts_session() {
         format!("/admin/e/{id}/publish"),
         format!("/admin/e/{id}/hold"),
         format!("/admin/e/{id}/reject"),
-        format!("/admin/e/{id}/reject-chain"),
         format!("/admin/e/{id}/doubt-seen"),
         format!("/admin/accounts/{}/clear-guard", app.account),
     ] {

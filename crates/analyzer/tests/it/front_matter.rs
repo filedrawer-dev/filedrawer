@@ -502,51 +502,38 @@ fn stored_text_strips_quoted_keys_and_after_a_byte_order_mark() {
 }
 
 #[test]
-fn an_embargo_that_isnt_a_date_is_refused() {
-    for value in [
-        "[2026-12-20]",
-        "\n  date: 2026-12-20",
-        "next spring",
-        "2026-13-40",
-        "2026-1-5",
+fn any_field_asking_for_an_embargo_is_refused_as_retired() {
+    // design.md, Rejected (embargoes, retired 2026-11-17): an author who writes one
+    // meant to hold the entry, so the server refuses it rather than publish it,
+    // whatever the value, an empty one included.
+    for (field, value) in [
+        ("embargo_until", " 2026-12-20"),
+        ("embargo_until", ""),
+        ("embargo_until", " null"),
+        ("embargo_until", " next spring"),
+        ("embargo_until", " [2026-12-20]"),
+        ("embargo", " 2026-12-20"),
+        ("embargo_date", " 2026-12-20"),
+        ("Embargoed_until", " 2026-12-20"),
     ] {
-        let analysis = analyze(&entry(&format!("embargo_until: {value}\n"), ""));
-        assert!(
-            analysis
-                .refusals
-                .iter()
-                .any(|r| matches!(r, Refusal::EmbargoUnreadable(_))),
-            "{value:?}: {:?}",
-            analysis.refusals
+        let analysis = analyze(&entry(&format!("{field}:{value}\n"), ""));
+        assert_eq!(
+            analysis.refusals,
+            vec![Refusal::EmbargoRetired {
+                field: field.into()
+            }],
+            "{field}:{value}"
         );
     }
-    // A date is read, and refused only because embargoes are paused.
-    let date = analyze(&entry("embargo_until: 2026-12-20\n", ""));
-    assert_eq!(
-        date.refusals,
-        vec![Refusal::EmbargoPaused {
-            field: "embargo_until".into()
-        }]
-    );
-    assert_eq!(date.fields.embargo_until.as_deref(), Some("2026-12-20"));
 }
 
 #[test]
-fn any_field_asking_for_an_embargo_is_refused_while_embargoes_are_paused() {
-    // design.md, Embargo (paused, 2026-11-08): a near-miss name would otherwise be
-    // stored as written and published, though its author meant to hold the entry.
-    for field in ["embargo", "embargo_date", "Embargoed_until"] {
-        let analysis = analyze(&entry(&format!("{field}: 2026-12-20\n"), ""));
-        assert_eq!(
-            analysis.refusals,
-            vec![Refusal::EmbargoPaused {
-                field: field.into()
-            }],
-            "{field}"
-        );
-    }
-    let empty = analyze(&entry("embargo_until:\n", ""));
-    assert_eq!(empty.refusals, vec![]);
+fn the_embargo_refusal_says_to_remove_the_field_and_submit_when_ready() {
+    let analysis = analyze(&entry("embargo_until: 2026-12-20\n", ""));
+    let reason = analysis.refusals[0].to_string();
+    assert!(reason.contains("no longer"), "{reason}");
+    assert!(reason.contains("Remove `embargo_until`"), "{reason}");
+    assert!(!reason.contains("paused"), "{reason}");
 }
 
 #[test]

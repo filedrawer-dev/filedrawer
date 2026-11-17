@@ -2,7 +2,7 @@
 
 use axum::http::StatusCode;
 
-use super::{Reply, TestApp, entry, field, id_in};
+use super::{TestApp, entry, field, id_in};
 
 pub const DESCRIPTION: &str = "Shared setup for the sweep.
 
@@ -40,11 +40,6 @@ pub async fn create(app: &TestApp, token: &str) -> (String, String) {
 /// An entry citing `cite` in its `series` field.
 pub fn citing(title: &str, cite: &str, front: &str) -> String {
     entry(title, &format!("series: {cite}\n{front}"))
-}
-
-pub async fn make_public(app: &TestApp, cookie: &str, id: &str) -> Reply {
-    app.form(&format!("/account/series/{id}/publish"), &[], Some(cookie))
-        .await
 }
 
 /// A third verified account's token, beside the test app's own and `other_token`'s.

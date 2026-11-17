@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT seq AS \"seq!: i64\", id, status, source, hold_until, embargo_until,\n                  first_submitted_at,\n                  (SELECT p.id FROM entries p WHERE p.seq = entries.previous_seq) AS \"previous_id?\",\n                  batch_seq, rejection_reasons\n           FROM entries WHERE id = ? AND account_id = ?",
+  "query": "SELECT seq AS \"seq!: i64\", id, status, source, hold_until,\n                  first_submitted_at,\n                  (SELECT p.id FROM entries p WHERE p.seq = entries.previous_seq) AS \"previous_id?\",\n                  batch_seq, rejection_reasons\n           FROM entries WHERE id = ? AND account_id = ?",
   "describe": {
     "columns": [
       {
@@ -59,19 +59,8 @@
         }
       },
       {
-        "name": "embargo_until",
-        "ordinal": 5,
-        "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "entries",
-            "name": "embargo_until"
-          }
-        }
-      },
-      {
         "name": "first_submitted_at",
-        "ordinal": 6,
+        "ordinal": 5,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -82,7 +71,7 @@
       },
       {
         "name": "previous_id?",
-        "ordinal": 7,
+        "ordinal": 6,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -93,7 +82,7 @@
       },
       {
         "name": "batch_seq",
-        "ordinal": 8,
+        "ordinal": 7,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -104,7 +93,7 @@
       },
       {
         "name": "rejection_reasons",
-        "ordinal": 9,
+        "ordinal": 8,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -123,12 +112,11 @@
       false,
       false,
       true,
-      true,
       false,
       true,
       true,
       true
     ]
   },
-  "hash": "c95eb0b889e2bdc01cb49b04746adf839b211cd111c53b03a11618594193b988"
+  "hash": "421b1a9e9c7e0e0bac8f9e79ebcf371e98711fe3ea57b97586b82a6945a322aa"
 }

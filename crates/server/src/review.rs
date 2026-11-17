@@ -1,9 +1,6 @@
 //! The owner's review queue (design.md, Admin; Entry status): the owner publishes,
 //! holds or rejects an entry in `review`, and publishes or rejects a `held` one.
 
-use time::OffsetDateTime;
-
-use crate::entries::Earlier;
 use crate::{AppState, attachments, entries, queue};
 
 /// The one reason the author reads for a rejection in review. The author already saw
@@ -21,9 +18,6 @@ pub enum Decision {
     Publish,
     Hold,
     Reject,
-    /// Rejects an entry in review or held with the earlier versions of its chain
-    /// that are held back with it.
-    RejectChain,
     /// A frozen entry goes back to screening.
     Release,
 }
@@ -33,7 +27,7 @@ pub enum Decided {
     Done,
     NoEntry,
     /// The entry isn't waiting on this decision: publish needs `review` or `held`,
-    /// reject those or `frozen`, reject-chain `review` or `held`, hold needs
+    /// reject those or `frozen`, hold needs
     /// `review`, and release `frozen`.
     NotWaiting,
 }
@@ -44,7 +38,6 @@ pub async fn decide(
     state: &AppState,
     id: &str,
     decision: Decision,
-    now: OffsetDateTime,
 ) -> Result<Decided, sqlx::Error> {
     let Some(seq) = entries::seq_of(&state.pool, id).await? else {
         return Ok(Decided::NoEntry);
@@ -60,11 +53,8 @@ pub async fn decide(
         }
         Decision::Reject => {
             let reasons = rejected_in_review();
-            entries::owner_reject(&state.pool, seq, &reasons, Earlier::Keep).await?
+            entries::owner_reject(&state.pool, seq, &reasons).await?
                 || entries::reject_frozen(&state.pool, seq, &reasons).await?
-        }
-        Decision::RejectChain => {
-            entries::owner_reject(&state.pool, seq, &rejected_in_review(), Earlier::Reject).await?
         }
         Decision::Release => entries::release_frozen(&state.pool, seq).await?,
     };
@@ -75,7 +65,7 @@ pub async fn decide(
     // in `screening` with a verdict, which the worker's `settle_screened` places on its
     // next run. A held or released entry has nothing to place yet.
     if !matches!(decision, Decision::Hold | Decision::Release) {
-        queue::settle_decided(state, seq, now).await?;
+        queue::settle_decided(state, seq).await?;
     }
     Ok(Decided::Done)
 }

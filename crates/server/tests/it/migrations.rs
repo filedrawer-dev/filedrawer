@@ -65,6 +65,9 @@ async fn migration_3_keeps_every_entry_and_its_rows_and_allows_pending() {
 
 #[tokio::test]
 async fn migration_6_keeps_versions_and_batches_and_allows_waiting_on_series() {
+    // Up to migration 32: 33 retires `waiting_on_series` again.
+    let mut first_six = sqlx::migrate!("./migrations");
+    first_six.migrations = Cow::Owned(first_six.migrations[..6].to_vec());
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(
@@ -89,7 +92,7 @@ async fn migration_6_keeps_versions_and_batches_and_allows_waiting_on_series() {
         sqlx::query(statement).execute(&pool).await.unwrap();
     }
 
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    first_six.run(&pool).await.unwrap();
 
     let kept: (i64, Option<i64>, Option<i64>) =
         sqlx::query_as("SELECT seq, previous_seq, batch_seq FROM entries WHERE id = 'e2'")
@@ -482,4 +485,314 @@ async fn a_known_migration_whose_text_changed_is_refused() {
     .await;
     let error = filedrawer_server::db::open(&path).await.unwrap_err();
     assert!(error.to_string().contains("modified"), "{error}");
+}
+
+/// A database migrated to 32 that holds what migration 33 retires, as staging's may:
+/// entries 2 (embargoed, with what was read from it) and 3 (waiting on hidden series
+/// s-1), each followed or cited by kept entries, and entries the owner removed from
+/// each status.
+async fn held_entries_at_32() -> sqlx::SqlitePool {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            SqliteConnectOptions::from_str("sqlite::memory:")
+                .unwrap()
+                .foreign_keys(true),
+        )
+        .await
+        .unwrap();
+    let mut first = sqlx::migrate!("./migrations");
+    first.migrations = Cow::Owned(first.migrations[..32].to_vec());
+    first.run(&pool).await.unwrap();
+    for statement in [
+        "INSERT INTO accounts (id, display_name, created_at) VALUES ('a-1', 'Ada', 't'), ('a-2', 'Bo', 't')",
+        // s-1 hidden and unread, s-2 hidden but read, s-3 public, s-4 hidden and
+        // removed by the owner.
+        "INSERT INTO series (seq, id, account_id, key_hash, created_at, public_at, removed_at) VALUES
+             (1, 's-1', 'a-1', x'01', 't', NULL, NULL), (2, 's-2', 'a-1', x'02', 't', NULL, NULL),
+             (3, 's-3', 'a-1', x'03', 't', 't', NULL), (4, 's-4', 'a-1', x'04', 't', NULL, 't')",
+        "INSERT INTO series_versions (series_seq, version, title, description, created_at, readable_at) VALUES
+             (1, 1, 'S1', 'd', 't', NULL), (2, 1, 'S2', 'd', 't', 't'),
+             (3, 1, 'S3', 'd', 't', NULL), (4, 1, 'S4', 'd', 't', NULL)",
+        "INSERT INTO series_members (series_seq, account_id, joined_at) VALUES
+             (1, 'a-1', 't'), (1, 'a-2', 't'), (2, 'a-1', 't')",
+        "INSERT INTO batches (seq, id, account_id, created_at) VALUES (5, 'b-held', 'a-1', 't')",
+        "INSERT INTO runs (account_id, id, declaration) VALUES ('a-1', 'r-held', '{}')",
+        "INSERT INTO entries (seq, id, account_id, status, source, submitted_at, first_submitted_at,
+             embargo_until, published_at, analyzer_version, outcome, kind, batch_seq, series_seq,
+             series_version, removed_from, removed_at, skill, user_agent) VALUES
+             (1, 'e-public', 'a-1', 'public', 'public text', 't1', 't0', NULL, 't2', 1, 'no_effect',
+              'experiment', NULL, 2, 1, NULL, NULL, 'submit@1', 'agent/1'),
+             (2, 'e-embargoed', 'a-1', 'embargoed', 'held text', 't', 't', '2026-12-20', NULL, 1,
+              NULL, NULL, 5, NULL, NULL, NULL, NULL, NULL, NULL),
+             (3, 'e-waiting', 'a-2', 'waiting_on_series', 'waiting text', 't', 't', NULL, NULL, 1,
+              NULL, NULL, NULL, 1, 1, NULL, NULL, NULL, NULL),
+             (4, 'e-removed-embargoed', 'a-1', 'removed', 'x', 't', 't', '2026-12-20', NULL, 1,
+              NULL, NULL, NULL, NULL, NULL, 'embargoed', 't', NULL, NULL),
+             (5, 'e-removed-waiting', 'a-1', 'removed', 'x', 't', 't', NULL, NULL, 1,
+              NULL, NULL, NULL, NULL, NULL, 'waiting_on_series', 't', NULL, NULL),
+             (6, 'e-removed-public', 'a-1', 'removed', 'x', 't', 't', NULL, 't', 1,
+              NULL, NULL, NULL, NULL, NULL, 'public', 't', NULL, NULL),
+             (8, 'e-rejected', 'a-2', 'rejected', 'x', 't', 't', NULL, NULL, 1,
+              NULL, NULL, NULL, 1, 1, NULL, NULL, NULL, NULL)",
+        // A pending new version of the embargoed entry.
+        "INSERT INTO entries (seq, id, account_id, status, source, submitted_at, first_submitted_at,
+             analyzer_version, hold_until, previous_seq) VALUES
+             (7, 'e-next', 'a-1', 'pending', 'next text', 't', 't', 1, 't', 2)",
+        "INSERT INTO entry_models (entry_seq, name, role) VALUES (1, 'm', 'subject'), (2, 'm', 'subject')",
+        "INSERT INTO entry_tags (entry_seq, tag) VALUES (1, 'kept'), (2, 'held'), (3, 'waiting')",
+        "INSERT INTO entry_rows (entry_seq, position, model, claim) VALUES (1, 1, 'm', NULL), (2, 1, 'm', NULL)",
+        "INSERT INTO entry_unknown_fields (entry_seq, name) VALUES (2, 'odd')",
+        "INSERT INTO entry_references (entry_seq, relation, position, key) VALUES (2, 'replicates', 1, 'k')",
+        "INSERT INTO entry_runs (entry_seq, account_id, run_id) VALUES (2, 'a-1', 'r-held')",
+        "INSERT INTO slugs (account_id, slug, entry_seq) VALUES ('a-1', 'held', 2), ('a-1', 'kept', 1)",
+        "INSERT INTO link_checks (entry_seq, field, url, reach, checked_at) VALUES (2, 'code', 'u', 'live', 't')",
+        "INSERT INTO allowance_units (account_id, day, entry_seq) VALUES ('a-1', 'd', 2), ('a-1', 'd', 1)",
+        "INSERT INTO screenings (entry_seq, account_id, model, input_tokens, output_tokens, cost_nano_usd, at)
+             VALUES (2, 'a-1', 'm', 1, 1, 5, 't')",
+        "INSERT INTO entries_fts (rowid, title, hypothesis, safety_motivation, body)
+             VALUES (1, 'Kept', 'H', 'S', 'public text')",
+    ] {
+        sqlx::query(statement).execute(&pool).await.unwrap();
+    }
+    pool
+}
+
+/// The one number `query`, a test's own SQL, counts.
+async fn count(pool: &sqlx::SqlitePool, query: &str) -> i64 {
+    sqlx::query_scalar(sqlx::AssertSqlSafe(query.to_string()))
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn migration_33_deletes_held_entries_and_unread_hidden_series_and_keeps_the_rest() {
+    let pool = held_entries_at_32().await;
+
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+
+    let ids: Vec<(String,)> = sqlx::query_as("SELECT id FROM entries ORDER BY seq")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    let ids: Vec<&str> = ids.iter().map(|(id,)| id.as_str()).collect();
+    assert_eq!(
+        ids,
+        [
+            "e-public",
+            "e-removed-embargoed",
+            "e-removed-waiting",
+            "e-removed-public",
+            "e-rejected"
+        ]
+    );
+    for (table, column) in [
+        ("entry_models", "entry_seq"),
+        ("entry_tags", "entry_seq"),
+        ("entry_rows", "entry_seq"),
+        ("entry_unknown_fields", "entry_seq"),
+        ("entry_references", "entry_seq"),
+        ("entry_runs", "entry_seq"),
+        ("slugs", "entry_seq"),
+        ("link_checks", "entry_seq"),
+        ("allowance_units", "entry_seq"),
+        ("screenings", "entry_seq"),
+    ] {
+        let held = count(
+            &pool,
+            &format!("SELECT COUNT(*) FROM {table} WHERE {column} IN (2, 3)"),
+        )
+        .await;
+        assert_eq!(held, 0, "{table} still names a held entry");
+    }
+    // The spend and the allowance unit stay, with no entry, as a deletion keeps them.
+    assert_eq!(
+        count(
+            &pool,
+            "SELECT COUNT(*) FROM screenings WHERE entry_seq IS NULL"
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        count(&pool, "SELECT COUNT(*) FROM allowance_units").await,
+        2
+    );
+    // What only the held entry used goes with it.
+    assert_eq!(count(&pool, "SELECT COUNT(*) FROM batches").await, 0);
+    assert_eq!(count(&pool, "SELECT COUNT(*) FROM runs").await, 0);
+    // The public entry keeps everything read from it.
+    assert_eq!(
+        count(&pool, "SELECT COUNT(*) FROM entry_tags WHERE entry_seq = 1").await,
+        1
+    );
+    assert_eq!(
+        count(&pool, "SELECT COUNT(*) FROM slugs WHERE entry_seq = 1").await,
+        1
+    );
+    assert_eq!(
+        count(
+            &pool,
+            "SELECT COUNT(*) FROM entries_fts WHERE entries_fts MATCH 'kept'"
+        )
+        .await,
+        1
+    );
+    let public: (
+        String,
+        String,
+        String,
+        Option<String>,
+        i64,
+        i64,
+        String,
+        String,
+    ) = sqlx::query_as(
+        "SELECT source, submitted_at, first_submitted_at, published_at, series_seq,
+                    series_version, skill, user_agent
+             FROM entries WHERE seq = 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        public,
+        (
+            "public text".into(),
+            "t1".into(),
+            "t0".into(),
+            Some("t2".into()),
+            2,
+            1,
+            "submit@1".into(),
+            "agent/1".into()
+        )
+    );
+    let removed_from: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT id, removed_from FROM entries WHERE status = 'removed' ORDER BY seq",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        removed_from,
+        vec![
+            ("e-removed-embargoed".into(), Some("withdrawn".into())),
+            ("e-removed-waiting".into(), Some("withdrawn".into())),
+            ("e-removed-public".into(), Some("public".into())),
+        ]
+    );
+    // Only the hidden series no one could read goes, and the entries citing it lose
+    // the cite; one the owner removed stays, as removed data does.
+    let series: Vec<(String,)> = sqlx::query_as("SELECT id FROM series ORDER BY seq")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    let series: Vec<&str> = series.iter().map(|(id,)| id.as_str()).collect();
+    assert_eq!(series, ["s-2", "s-3", "s-4"]);
+    assert_eq!(
+        count(
+            &pool,
+            "SELECT COUNT(*) FROM series_versions WHERE series_seq = 1"
+        )
+        .await,
+        0
+    );
+    assert_eq!(
+        count(
+            &pool,
+            "SELECT COUNT(*) FROM series_members WHERE series_seq = 1"
+        )
+        .await,
+        0
+    );
+    let rejected: (Option<i64>, Option<i64>) =
+        sqlx::query_as("SELECT series_seq, series_version FROM entries WHERE id = 'e-rejected'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(rejected, (None, None));
+    let violations: Vec<(String,)> =
+        sqlx::query_as("SELECT \"table\" FROM pragma_foreign_key_check")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(violations, vec![]);
+    let fk_on: i64 = count(&pool, "PRAGMA foreign_keys").await;
+    assert_eq!(fk_on, 1, "the migration left foreign keys off");
+}
+
+#[tokio::test]
+async fn migration_33_rebuilds_entries_without_embargoes_and_keeps_its_rules() {
+    let pool = held_entries_at_32().await;
+
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+
+    for (table, column) in [("entries", "embargo_until"), ("series", "public_at")] {
+        let found = count(
+            &pool,
+            &format!("SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = '{column}'"),
+        )
+        .await;
+        assert_eq!(found, 0, "{table}.{column} is still there");
+    }
+    for index in [
+        "entries_status",
+        "entries_hold",
+        "entries_one_successor",
+        "entries_series",
+    ] {
+        let found = count(
+            &pool,
+            &format!(
+                "SELECT COUNT(*) FROM sqlite_schema WHERE type = 'index' AND name = '{index}'"
+            ),
+        )
+        .await;
+        assert_eq!(found, 1, "index {index} is gone");
+    }
+    let insert = |id: &'static str, account: &'static str, status: &'static str| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query(
+                "INSERT INTO entries (id, account_id, status, source, submitted_at,
+                     first_submitted_at, analyzer_version) VALUES (?, ?, ?, 'x', 't', 't', 1)",
+            )
+            .bind(id)
+            .bind(account)
+            .bind(status)
+            .execute(&pool)
+            .await
+        }
+    };
+    for retired in ["embargoed", "waiting_on_series"] {
+        assert!(insert("e-new", "a-1", retired).await.is_err(), "{retired}");
+    }
+    insert("e-new", "a-1", "pending").await.unwrap();
+    // One live successor per entry still holds.
+    sqlx::query(
+        "INSERT INTO entries (id, account_id, status, source, submitted_at, first_submitted_at,
+             analyzer_version, previous_seq) VALUES ('e-v2', 'a-1', 'pending', 'x', 't', 't', 1, 1),
+             ('e-v2b', 'a-1', 'rejected', 'x', 't', 't', 1, 1)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let second = sqlx::query(
+        "INSERT INTO entries (id, account_id, status, source, submitted_at, first_submitted_at,
+             analyzer_version, previous_seq) VALUES ('e-v3', 'a-1', 'pending', 'x', 't', 't', 1, 1)",
+    )
+    .execute(&pool)
+    .await;
+    assert!(second.is_err(), "a second live successor was let in");
+    // A foreign key still holds.
+    assert!(insert("e-nobody", "a-none", "pending").await.is_err());
+    // The suspended account's trigger (migration 26) still refuses.
+    sqlx::query("UPDATE accounts SET suspended_at = 't' WHERE id = 'a-2'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let error = insert("e-suspended", "a-2", "pending").await.unwrap_err();
+    assert!(error.to_string().contains("suspended"), "{error}");
 }

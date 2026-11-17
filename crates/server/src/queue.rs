@@ -9,7 +9,7 @@ use time::OffsetDateTime;
 
 use crate::screening::{Call, MAX_ATTEMPTS, ModelError, Subject, Verdict};
 use crate::{
-    AppState, accounts, allowance, attachments, entries, removed_files, series, time::stamp, unpack,
+    AppState, accounts, allowance, attachments, entries, removed_files, time::stamp, unpack,
 };
 
 /// The share of the day's cap one account may spend (design.md: 10%).
@@ -85,7 +85,7 @@ async fn screen_waiting(
             Files::Wait => return Ok(()),
             Files::Decided(verdict) => {
                 entries::store_verdict(&state.pool, waiting.seq, &verdict).await?;
-                return settle(state, waiting.seq, now).await;
+                return settle(state, waiting.seq).await;
             }
         }
     }
@@ -126,7 +126,7 @@ async fn screen_waiting(
         verdict => verdict,
     };
     entries::store_verdict(&state.pool, waiting.seq, &verdict).await?;
-    settle(state, waiting.seq, now).await
+    settle(state, waiting.seq).await
 }
 
 /// What the screen reads for an entry: its text, then the declaration of every run it
@@ -467,7 +467,7 @@ struct Member {
 /// batch is screened and published as a unit"): one member rejected rejects every
 /// member still in screening; a member in review goes to review and the passed ones
 /// wait; when every member passed, all are placed.
-async fn settle(state: &AppState, seq: i64, now: OffsetDateTime) -> Result<(), sqlx::Error> {
+async fn settle(state: &AppState, seq: i64) -> Result<(), sqlx::Error> {
     let members = sqlx::query_as!(
         Member,
         r#"SELECT m.seq AS "seq!: i64", m.id, m.status, m.screen_verdict
@@ -515,14 +515,13 @@ async fn settle(state: &AppState, seq: i64, now: OffsetDateTime) -> Result<(), s
         return Ok(());
     }
     for member in members.iter().filter(in_screening) {
-        place_passed(state, member.seq, now).await?;
+        place_passed(state, member.seq).await?;
     }
     Ok(())
 }
 
-/// Places an entry that passed: embargoed while its date is ahead, waiting while a
-/// series it or its batch cites is hidden, otherwise public.
-async fn place_passed(state: &AppState, seq: i64, now: OffsetDateTime) -> Result<(), sqlx::Error> {
+/// Places an entry that passed: it becomes public.
+async fn place_passed(state: &AppState, seq: i64) -> Result<(), sqlx::Error> {
     let Some(source) = sqlx::query_scalar!(
         "SELECT source FROM entries WHERE seq = ? AND status = 'screening'",
         seq
@@ -532,32 +531,20 @@ async fn place_passed(state: &AppState, seq: i64, now: OffsetDateTime) -> Result
     else {
         return Ok(());
     };
-    let analysis = analyze(&source);
-    // The chain's date, which a browser may have moved since this text was written.
-    if entries::chain_date(&state.pool, seq).await?.holds(now) {
-        entries::embargo(&state.pool, seq).await?;
-    } else if series::waits(&state.pool, seq).await? {
-        entries::wait_on_series(&state.pool, seq).await?;
-    } else {
-        entries::publish(&state.pool, seq, &analysis).await?;
-    }
+    entries::publish(&state.pool, seq, &analyze(&source)).await?;
     Ok(())
 }
 
 /// Places entry `seq`, or decides its batch, once the owner has given it a verdict.
-pub async fn settle_decided(
-    state: &AppState,
-    seq: i64,
-    now: OffsetDateTime,
-) -> Result<(), sqlx::Error> {
+pub async fn settle_decided(state: &AppState, seq: i64) -> Result<(), sqlx::Error> {
     let _turn = state.screening_lock.lock().await;
-    settle(state, seq, now).await
+    settle(state, seq).await
 }
 
 /// Places every entry left in `screening` with a verdict, as a crash between storing
 /// the verdict and placing it would leave one, or a batch whose member in review
 /// has been decided since.
-pub async fn settle_screened(state: &AppState, now: OffsetDateTime) -> Result<(), sqlx::Error> {
+pub async fn settle_screened(state: &AppState) -> Result<(), sqlx::Error> {
     let _turn = state.screening_lock.lock().await;
     let screened = sqlx::query_scalar!(
         r#"SELECT seq AS "seq!: i64" FROM entries
@@ -566,7 +553,7 @@ pub async fn settle_screened(state: &AppState, now: OffsetDateTime) -> Result<()
     .fetch_all(&state.pool)
     .await?;
     for seq in screened {
-        settle(state, seq, now).await?;
+        settle(state, seq).await?;
     }
     Ok(())
 }

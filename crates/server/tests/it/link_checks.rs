@@ -904,47 +904,6 @@ async fn a_recheck_that_finds_a_commit_on_no_branch_flags_the_card_and_never_rej
 }
 
 #[tokio::test]
-async fn a_recheck_that_finds_a_commit_on_no_branch_leaves_an_embargoed_entry_embargoed() {
-    let app = test_app().await;
-    app.web.api_fails(&compare_path("HEAD", SHA));
-    let text = entry(
-        "Linked",
-        &format!(
-            "code: {}\nembargo_until: {}\n",
-            github_code(),
-            common::date_in(30)
-        ),
-    );
-    let id = app.submit(&text).await;
-    not_on_default(&app, 0);
-    assert_eq!(recheck(&app, 8).await, 1);
-    assert_eq!(
-        common::author_status(&app, &app.token, &id)
-            .await
-            .as_deref(),
-        Some("embargoed")
-    );
-    let own = app.get_as_author(&format!("/e/{id}")).await;
-    assert!(
-        flags(&own.body).ends_with("; commit on no branch"),
-        "{}",
-        own.body
-    );
-    assert!(
-        warnings(&own.body).contains(
-            &format!(
-                "`code: {}`: commit {SHA} is on no branch or tag of ada/steering{}",
-                github_code(),
-                no_branch_advice()
-            )
-            .as_str()
-        ),
-        "{}",
-        own.body
-    );
-}
-
-#[tokio::test]
 async fn a_recheck_spends_no_account_share() {
     // 60 calls an hour, of which an account may spend 3; the server's own rechecks
     // spend none of it.

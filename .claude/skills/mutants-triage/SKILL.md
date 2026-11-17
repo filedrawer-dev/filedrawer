@@ -55,7 +55,7 @@ Each shard's whole `mutants.out`, with every mutant's diff and log, is the artif
 Read the code at each candidate's lines at the run's commit (`git show SHA:path`), then rank by **consequence**: what breaks if that line were wrong, in this order.
 
 1. A guard between a request and the filesystem, the database or a secret (a name check before a path, an auth check).
-2. A decision the owner settled in `docs/design.md`: limits, windows, caps (the embargo's 3 months, the attachment cap).
+2. A decision the owner settled in `docs/design.md`: limits, windows, caps (the hour's hold, the attachment cap).
 3. Abuse resistance: rate limits, screening, queue fairness.
 4. Validation and messages.
 

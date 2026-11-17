@@ -15,7 +15,6 @@ pub struct OwnersSeries {
     pub id: String,
     /// The account that made it.
     pub creator: String,
-    pub public: bool,
     /// When the owner removed it, while it is removed.
     pub removed_at: Option<String>,
 }
@@ -58,7 +57,6 @@ struct Row {
 async fn row(connection: &mut SqliteConnection, id: &str) -> Result<Option<Row>, sqlx::Error> {
     let found = sqlx::query!(
         r#"SELECT s.seq AS "seq!: i64", s.id, s.account_id, s.removed_at,
-                  s.public_at IS NOT NULL AS "public!: bool",
                   a.suspended_at IS NOT NULL AS "suspended!: bool"
            FROM series s JOIN accounts a ON a.id = s.account_id
            WHERE s.id = ?"#,
@@ -71,7 +69,6 @@ async fn row(connection: &mut SqliteConnection, id: &str) -> Result<Option<Row>,
         series: OwnersSeries {
             id: found.id,
             creator: found.account_id,
-            public: found.public,
             removed_at: found.removed_at,
         },
         creator_suspended: found.suspended,

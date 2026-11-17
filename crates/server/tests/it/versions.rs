@@ -3,7 +3,7 @@
 use crate::common;
 
 use axum::http::StatusCode;
-use common::{date_in, entry, field, id_in, test_app};
+use common::{entry, field, id_in, test_app};
 
 const WITHOUT_TABLE: &str = "---
 title: Now part of a paper
@@ -142,93 +142,6 @@ async fn a_paper_version_without_a_table_keeps_the_chains_numbers_in_search() {
 }
 
 #[tokio::test]
-async fn a_version_of_an_embargoed_entry_that_leaves_the_date_out_keeps_it() {
-    // design.md, Embargo (the owner's decision, 2026-11-07): a new version keeps its
-    // chain's date, and leaving `embargo_until` out never drops an embargo.
-    let app = test_app().await;
-    let date = date_in(30);
-    let old = app
-        .submit(&entry("T", &format!("embargo_until: {date}\n")))
-        .await;
-    let held = app
-        .post(&format!("/e/{old}/versions"), entry("U", ""))
-        .await;
-    assert_eq!(held.status, StatusCode::CREATED, "{}", held.body);
-    assert_eq!(field(&held.body, "embargo_until"), Some(date.as_str()));
-    let new = id_in(&held.body);
-    let placed = app.post(&format!("/e/{new}/publish"), "").await;
-    assert_eq!(
-        field(&placed.body, "status"),
-        Some("embargoed"),
-        "{}",
-        placed.body
-    );
-    assert_eq!(field(&placed.body, "release"), Some(date.as_str()));
-    let own = app.get_as_author(&format!("/e/{new}")).await;
-    assert_eq!(
-        field(&own.body, "release"),
-        Some(date.as_str()),
-        "{}",
-        own.body
-    );
-}
-
-#[tokio::test]
-async fn a_version_of_an_embargoed_entry_naming_another_date_is_refused() {
-    let app = test_app().await;
-    let date = date_in(30);
-    let old = app
-        .submit(&entry("T", &format!("embargo_until: {date}\n")))
-        .await;
-    for other in [date_in(20), date_in(40)] {
-        let reply = app
-            .post(
-                &format!("/e/{old}/versions"),
-                entry("U", &format!("embargo_until: {other}\n")),
-            )
-            .await;
-        assert_eq!(
-            reply.status,
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "{other}: {}",
-            reply.body
-        );
-        assert!(reply.body.contains(&date), "{other}: {}", reply.body);
-    }
-    let repeated = app
-        .post(
-            &format!("/e/{old}/versions"),
-            entry("U", &format!("embargo_until: {date}\n")),
-        )
-        .await;
-    assert_eq!(repeated.status, StatusCode::CREATED, "{}", repeated.body);
-}
-
-#[tokio::test]
-async fn a_version_may_repeat_a_chain_date_past_three_months_from_the_first_submission() {
-    // The browser page (build 2b) can extend a chain to 3 months from the day it
-    // moves it; until then the test writes the moved date itself.
-    let app = test_app().await;
-    let old = app
-        .submit(&entry("T", &format!("embargo_until: {}\n", date_in(30))))
-        .await;
-    let moved = date_in(120);
-    sqlx::query("UPDATE entries SET embargo_until = ? WHERE id = ?")
-        .bind(&moved)
-        .bind(&old)
-        .execute(&app.pool)
-        .await
-        .unwrap();
-    let reply = app
-        .post(
-            &format!("/e/{old}/versions"),
-            entry("U", &format!("embargo_until: {moved}\n")),
-        )
-        .await;
-    assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
-}
-
-#[tokio::test]
 async fn a_paper_version_whose_table_cant_be_read_carries_no_old_numbers() {
     // It has a Results section of its own, so it doesn't inherit the chain's rows,
     // and a version that retracts its numbers stops showing them.
@@ -316,30 +229,4 @@ async fn tags_count_each_chain_once() {
     );
     app.post(&format!("/e/{new}/publish"), "").await;
     assert_eq!(app.get("/tags").await.body, "refusal 1\nsteering 1\n");
-}
-
-#[tokio::test]
-async fn a_version_that_leaves_its_date_out_may_refer_to_entries_held_as_long() {
-    // The reference rule (design.md, Agent interface) compares the date the version
-    // keeps, not the empty field.
-    let app = test_app().await;
-    let date = date_in(30);
-    app.submit(&entry(
-        "Target",
-        &format!("slug: target\nembargo_until: {date}\n"),
-    ))
-    .await;
-    let old = app
-        .submit(&entry(
-            "Referrer",
-            &format!("embargo_until: {date}\nreplicates: slug:target\n"),
-        ))
-        .await;
-    let reply = app
-        .post(
-            &format!("/e/{old}/versions"),
-            entry("Referrer, corrected", "replicates: slug:target\n"),
-        )
-        .await;
-    assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
 }

@@ -6,7 +6,6 @@ use analyzer::{
 };
 use sqlx::SqlitePool;
 
-use crate::embargo::ChainDate;
 use crate::link_checks::{self, LinkFlags};
 use crate::provenance::Provenance;
 use crate::screening::Verdict;
@@ -64,15 +63,6 @@ pub fn own_card_context(
         code_attached: analysis.fields.attachments.is_some(),
         ..card_context(id, account_id, Some(display_name))
     }
-}
-
-/// Where screening sent an entry that passed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Placed {
-    Public,
-    Embargoed,
-    /// Passed, but its series, or one another member of its batch cites, is hidden.
-    WaitingOnSeries,
 }
 
 impl PublicEntry {
@@ -190,17 +180,16 @@ pub async fn insert_on(
     let (series_seq, series_version, series_section) = series_columns(series);
     let seq = sqlx::query_scalar!(
         r#"INSERT INTO entries (id, account_id, status, source, submitted_at, first_submitted_at,
-               embargo_until, analyzer_version, outcome, kind, stage, hold_until, previous_seq,
+               analyzer_version, outcome, kind, stage, hold_until, previous_seq,
                batch_seq, series_seq, series_version, series_section, attachment_set_seq,
                token_id, skill, user_agent)
-           VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            RETURNING seq AS "seq!: i64""#,
         id,
         account_id,
         source,
         submitted_at,
         first_submitted_at,
-        analysis.fields.embargo_until,
         columns.version,
         columns.outcome,
         columns.kind,
@@ -302,14 +291,13 @@ pub async fn replace_on(
     let columns = columns(analysis);
     let (series_seq, series_version, series_section) = series_columns(series);
     let done = sqlx::query!(
-        "UPDATE entries SET source = ?, submitted_at = ?, embargo_until = ?,
+        "UPDATE entries SET source = ?, submitted_at = ?,
              analyzer_version = ?, outcome = ?, kind = ?, stage = ?, hold_until = ?,
              series_seq = ?, series_version = ?, series_section = ?, series_removed_at = NULL,
              attachment_set_seq = ?, token_id = ?, skill = ?, user_agent = ?
          WHERE seq = ? AND status = 'pending'",
         source,
         submitted_at,
-        analysis.fields.embargo_until,
         columns.version,
         columns.outcome,
         columns.kind,
@@ -554,8 +542,7 @@ pub struct OwnEntry {
     pub status: String,
     pub source: String,
     pub hold_until: Option<String>,
-    pub embargo_until: Option<String>,
-    /// The embargo cap counts from here (design.md, Entry lifecycle).
+    /// When its chain's first version came in.
     pub first_submitted_at: String,
     /// The version this one replaced.
     pub previous_id: Option<String>,
@@ -573,7 +560,7 @@ pub async fn own_entry(
 ) -> Result<Option<OwnEntry>, sqlx::Error> {
     sqlx::query_as!(
         OwnEntry,
-        r#"SELECT seq AS "seq!: i64", id, status, source, hold_until, embargo_until,
+        r#"SELECT seq AS "seq!: i64", id, status, source, hold_until,
                   first_submitted_at,
                   (SELECT p.id FROM entries p WHERE p.seq = entries.previous_seq) AS "previous_id?",
                   batch_seq, rejection_reasons
@@ -622,32 +609,6 @@ async fn to_screening(
     .await
 }
 
-/// Entries with `status` and their text: those in `screening`, which with the
-/// pass-all screen are there only when placing them failed, and those in
-/// `waiting_on_series`.
-pub async fn in_status(pool: &SqlitePool, status: &str) -> Result<Vec<(i64, String)>, sqlx::Error> {
-    let rows = sqlx::query!(
-        r#"SELECT seq AS "seq!: i64", source FROM entries WHERE status = ?"#,
-        status
-    )
-    .fetch_all(pool)
-    .await?;
-    Ok(rows.into_iter().map(|row| (row.seq, row.source)).collect())
-}
-
-/// Moves a screened entry to `waiting_on_series`.
-/// `None` if the entry was no longer in `screening`: something else placed it.
-pub async fn wait_on_series(pool: &SqlitePool, seq: i64) -> Result<Option<Placed>, sqlx::Error> {
-    let done = sqlx::query!(
-        "UPDATE entries SET status = 'waiting_on_series'
-         WHERE seq = ? AND status = 'screening' AND screen_verdict = 'pass'",
-        seq
-    )
-    .execute(pool)
-    .await?;
-    Ok((done.rows_affected() == 1).then_some(Placed::WaitingOnSeries))
-}
-
 /// The pending entries whose hold ends at or before `now`.
 pub async fn due(pool: &SqlitePool, now: &str) -> Result<Vec<i64>, sqlx::Error> {
     sqlx::query_scalar!(
@@ -659,34 +620,20 @@ pub async fn due(pool: &SqlitePool, now: &str) -> Result<Vec<i64>, sqlx::Error> 
     .await
 }
 
-/// Moves a screened entry to `embargoed`.
-/// `None` if the entry was no longer in `screening`: something else placed it.
-pub async fn embargo(pool: &SqlitePool, seq: i64) -> Result<Option<Placed>, sqlx::Error> {
-    let done = sqlx::query!(
-        "UPDATE entries SET status = 'embargoed'
-         WHERE seq = ? AND status = 'screening' AND screen_verdict = 'pass'",
-        seq
-    )
-    .execute(pool)
-    .await?;
-    Ok((done.rows_affected() == 1).then_some(Placed::Embargoed))
-}
-
-/// Makes a screened entry, or one that waited on its series, public and adds it to
-/// the search index.
+/// Makes a screened entry public and adds it to the search index. False if it was no
+/// longer in `screening`: something else placed it.
 pub async fn publish(
     pool: &SqlitePool,
     seq: i64,
     analysis: &Analysis,
-) -> Result<Option<Placed>, sqlx::Error> {
+) -> Result<bool, sqlx::Error> {
     let published_at = now();
     let fields = &analysis.fields;
     let mut transaction = crate::db::write_tx(pool).await?;
-    // Only from `screening` or `waiting_on_series`, so an entry placed twice is
-    // indexed once.
+    // Only from `screening`, so an entry placed twice is indexed once.
     let Some(source) = sqlx::query_scalar!(
         "UPDATE entries SET status = 'public', published_at = ?
-         WHERE seq = ? AND screen_verdict = 'pass' AND status IN ('screening', 'waiting_on_series')
+         WHERE seq = ? AND screen_verdict = 'pass' AND status = 'screening'
          RETURNING source",
         published_at,
         seq
@@ -694,12 +641,12 @@ pub async fn publish(
     .fetch_optional(&mut *transaction)
     .await?
     else {
-        return Ok(None);
+        return Ok(false);
     };
     index(&mut transaction, seq, fields, &source).await?;
     crate::series::mark_readable(&mut transaction).await?;
     transaction.commit().await?;
-    Ok(Some(Placed::Public))
+    Ok(true)
 }
 
 /// Adds public entry `seq` to the search index.
@@ -721,253 +668,6 @@ async fn index(
     .execute(&mut *connection)
     .await?;
     Ok(())
-}
-
-/// An entry held back that a release may move (design.md, Embargo; Series).
-pub struct HeldBack {
-    pub seq: i64,
-    /// `embargoed` or `waiting_on_series`.
-    pub status: String,
-    /// The 12-month cap counts from here.
-    pub first_submitted_at: String,
-    /// The date its chain releases on ([`chain_date`]).
-    pub chain_date: ChainDate,
-    /// A later version of its chain still waits for a verdict ([`chain_undecided`]).
-    pub chain_undecided: bool,
-}
-
-/// Why a held-back entry is due for release.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Due {
-    /// Its chain's date has come.
-    Embargo,
-    /// The 12-month cap from its first submission has come, which releases it even
-    /// while a hidden series holds it back (design.md, Series).
-    Cap,
-}
-
-impl HeldBack {
-    /// Why it is due at `now`, if it is. Never while a later version of its chain
-    /// waits for a verdict, even at the cap: the versions release together, and an
-    /// owner's hold beats the author's cap (the owner's decision, 2026-11-08).
-    pub fn due(&self, now: time::OffsetDateTime) -> Option<Due> {
-        if self.chain_undecided {
-            return None;
-        }
-        let at_cap = crate::time::parse(&self.first_submitted_at)
-            .is_some_and(|first| now >= crate::embargo::cap_time(first));
-        let embargo_over = self.status == "embargoed" && !self.chain_date.holds(now);
-        if at_cap {
-            Some(Due::Cap)
-        } else {
-            embargo_over.then_some(Due::Embargo)
-        }
-    }
-
-    /// Whether it is embargoed under a stored date that isn't one, which holds it
-    /// until the 12-month cap.
-    pub fn date_unreadable(&self) -> bool {
-        self.status == "embargoed" && self.chain_date == ChainDate::Unreadable
-    }
-}
-
-/// Every entry in `embargoed` or `waiting_on_series`, oldest first.
-pub async fn held_back(pool: &SqlitePool) -> Result<Vec<HeldBack>, sqlx::Error> {
-    let seqs = sqlx::query_scalar!(
-        r#"SELECT seq AS "seq!: i64" FROM entries
-           WHERE status IN ('embargoed', 'waiting_on_series') ORDER BY seq"#
-    )
-    .fetch_all(pool)
-    .await?;
-    let mut connection = pool.acquire().await?;
-    let mut held = Vec::with_capacity(seqs.len());
-    for seq in seqs {
-        held.extend(held_back_one(&mut connection, seq).await?);
-    }
-    Ok(held)
-}
-
-/// Entry `seq`, if it is `embargoed` or `waiting_on_series`.
-async fn held_back_one(
-    connection: &mut sqlx::SqliteConnection,
-    seq: i64,
-) -> Result<Option<HeldBack>, sqlx::Error> {
-    let Some(row) = sqlx::query!(
-        "SELECT status, first_submitted_at FROM entries
-         WHERE seq = ? AND status IN ('embargoed', 'waiting_on_series')",
-        seq
-    )
-    .fetch_optional(&mut *connection)
-    .await?
-    else {
-        return Ok(None);
-    };
-    Ok(Some(HeldBack {
-        seq,
-        status: row.status,
-        first_submitted_at: row.first_submitted_at,
-        chain_date: chain_date(&mut *connection, seq).await?,
-        chain_undecided: chain_undecided(&mut *connection, seq).await?,
-    }))
-}
-
-/// Whether a later version of entry `seq`'s chain is still pending, being screened,
-/// or with the owner (`review`, `held`, `frozen`).
-async fn chain_undecided(
-    connection: &mut sqlx::SqliteConnection,
-    seq: i64,
-) -> Result<bool, sqlx::Error> {
-    sqlx::query_scalar!(
-        r#"WITH RECURSIVE later(seq) AS (
-               SELECT seq FROM entries WHERE previous_seq = ?1
-               UNION ALL
-               SELECT n.seq FROM entries n JOIN later l ON n.previous_seq = l.seq
-           )
-           SELECT EXISTS (
-               SELECT 1 FROM entries e JOIN later l ON l.seq = e.seq
-               WHERE e.status IN ('pending', 'screening', 'review', 'held', 'frozen')
-           ) AS "undecided!: bool""#,
-        seq
-    )
-    .fetch_one(&mut *connection)
-    .await
-}
-
-/// An earlier version of a chain, held back while a later one is decided.
-pub struct EarlierVersion {
-    pub seq: i64,
-    pub id: String,
-    pub status: String,
-}
-
-/// The earlier versions of entry `seq`'s chain that are `embargoed` or
-/// `waiting_on_series`, oldest first: the ones that wait on its verdict, which the
-/// owner's "reject the chain" rejects with it.
-pub async fn held_back_before<'e>(
-    executor: impl sqlx::SqliteExecutor<'e>,
-    seq: i64,
-) -> Result<Vec<EarlierVersion>, sqlx::Error> {
-    sqlx::query_as!(
-        EarlierVersion,
-        r#"WITH RECURSIVE earlier(seq) AS (
-               SELECT previous_seq FROM entries WHERE seq = ?1 AND previous_seq IS NOT NULL
-               UNION ALL
-               SELECT e.previous_seq FROM entries e JOIN earlier p ON e.seq = p.seq
-               WHERE e.previous_seq IS NOT NULL
-           )
-           SELECT e.seq AS "seq!: i64", e.id, e.status FROM entries e JOIN earlier p ON p.seq = e.seq
-           WHERE e.status IN ('embargoed', 'waiting_on_series')
-           ORDER BY e.seq"#,
-        seq
-    )
-    .fetch_all(executor)
-    .await
-}
-
-/// Entry `seq`'s chain's release date ([`chain_embargo`]), read.
-pub async fn chain_date<'e>(
-    executor: impl sqlx::SqliteExecutor<'e>,
-    seq: i64,
-) -> Result<ChainDate, sqlx::Error> {
-    Ok(ChainDate::read(
-        chain_embargo(executor, seq).await?.as_deref(),
-    ))
-}
-
-/// The date entry `seq`'s chain releases on (design.md, Entry lifecycle: the
-/// versions "release together"): the `embargo_until` of the latest version reached
-/// from it through versions that aren't rejected, withdrawn or removed.
-pub async fn chain_embargo<'e>(
-    executor: impl sqlx::SqliteExecutor<'e>,
-    seq: i64,
-) -> Result<Option<String>, sqlx::Error> {
-    let date = sqlx::query_scalar!(
-        r#"WITH RECURSIVE chain(seq) AS (
-               SELECT ?1
-               UNION ALL
-               SELECT n.seq FROM entries n JOIN chain c ON n.previous_seq = c.seq
-               WHERE n.status NOT IN ('rejected', 'withdrawn', 'removed')
-           )
-           SELECT embargo_until AS "embargo_until?: String" FROM entries
-           WHERE seq = (SELECT MAX(seq) FROM chain)"#,
-        seq
-    )
-    .fetch_optional(executor)
-    .await?;
-    Ok(date.flatten())
-}
-
-/// Where a release moves an entry.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Released {
-    Public,
-    /// Its embargo is over, but a series it waits for is hidden.
-    WaitingOnSeries,
-}
-
-/// Moves each entry in `releases` that is still due at `now` from `embargoed` or
-/// `waiting_on_series` to where it says, all in one transaction, so no read sees one
-/// version of a chain public while another is held back. Every stored link of each
-/// is due for a recheck at `now` (design.md, Embargo: "At release the server checks
-/// the `code` and `logs` links again"). Returns how many it moved.
-pub async fn release(
-    pool: &SqlitePool,
-    releases: &[(i64, Released)],
-    now: time::OffsetDateTime,
-) -> Result<usize, sqlx::Error> {
-    // Nothing is due most minutes: don't take the write lock for nothing.
-    if releases.is_empty() {
-        return Ok(0);
-    }
-    let at = crate::time::stamp(now);
-    let mut transaction = crate::db::write_tx(pool).await?;
-    let mut moved = 0;
-    for (seq, to) in releases {
-        // Read again under the write lock: a date moved since the caller read it wins.
-        let still_due = held_back_one(&mut transaction, *seq)
-            .await?
-            .and_then(|held| held.due(now))
-            .is_some();
-        if !still_due {
-            continue;
-        }
-        let moved_now = match to {
-            Released::Public => {
-                let source = sqlx::query_scalar!(
-                    "UPDATE entries SET status = 'public', published_at = ?
-                     WHERE seq = ? AND status IN ('embargoed', 'waiting_on_series')
-                     RETURNING source",
-                    at,
-                    seq
-                )
-                .fetch_optional(&mut *transaction)
-                .await?;
-                if let Some(source) = &source {
-                    let fields = analyze(source).fields;
-                    index(&mut transaction, *seq, &fields, source).await?;
-                }
-                source.is_some()
-            }
-            Released::WaitingOnSeries => {
-                sqlx::query!(
-                    "UPDATE entries SET status = 'waiting_on_series'
-                     WHERE seq = ? AND status = 'embargoed'",
-                    seq
-                )
-                .execute(&mut *transaction)
-                .await?
-                .rows_affected()
-                    == 1
-            }
-        };
-        if moved_now {
-            link_checks::make_due(&mut transaction, *seq, now).await?;
-            moved += 1;
-        }
-    }
-    crate::series::mark_readable(&mut transaction).await?;
-    transaction.commit().await?;
-    Ok(moved)
 }
 
 /// A public entry by ID.
@@ -1250,30 +950,6 @@ pub async fn slug_taken(
     Ok(found.is_some())
 }
 
-/// The embargo date of the chain a slug names, if its latest version is held back:
-/// for the rule that a public entry may not refer to an embargoed one.
-pub async fn slug_embargo(
-    pool: &SqlitePool,
-    account_id: &str,
-    slug: &str,
-) -> Result<Option<String>, sqlx::Error> {
-    let row = sqlx::query!(
-        r#"WITH RECURSIVE chain(seq) AS (
-               SELECT entry_seq FROM slugs WHERE account_id = ?1 AND slug = ?2
-               UNION ALL
-               SELECT e.seq FROM entries e JOIN chain c ON e.previous_seq = c.seq
-           )
-           SELECT e.embargo_until FROM entries e JOIN chain c ON c.seq = e.seq
-           WHERE e.status IN ('pending', 'screening', 'embargoed')
-           ORDER BY e.seq DESC LIMIT 1"#,
-        account_id,
-        slug
-    )
-    .fetch_optional(pool)
-    .await?;
-    Ok(row.and_then(|row| row.embargo_until))
-}
-
 /// Whether `account_id` has declared run `run_id`.
 pub async fn run_declared(
     pool: &SqlitePool,
@@ -1447,30 +1123,6 @@ pub async fn chain_slug(pool: &SqlitePool, seq: i64) -> Result<Option<String>, s
     )
     .fetch_optional(pool)
     .await
-}
-
-/// The account's entries, not yet withdrawn, whose text refers to `slug:<slug>`, with
-/// their embargo dates.
-pub async fn referrers(
-    pool: &SqlitePool,
-    account_id: &str,
-    slug: &str,
-) -> Result<Vec<(i64, String, Option<String>)>, sqlx::Error> {
-    let pattern = format!("%slug:{slug}%");
-    let rows = sqlx::query!(
-        r#"SELECT seq AS "seq!: i64", id, embargo_until, source FROM entries
-           WHERE account_id = ? AND source LIKE ?
-             AND status IN ('pending', 'screening', 'embargoed', 'public')"#,
-        account_id,
-        pattern
-    )
-    .fetch_all(pool)
-    .await?;
-    Ok(rows
-        .into_iter()
-        .filter(|row| analyzer::slug_references(&row.source).contains(slug))
-        .map(|row| (row.seq, row.id, row.embargo_until))
-        .collect())
 }
 
 /// The ID and declaration (a JSON object, as its batch sent it) of each run entry
@@ -1680,12 +1332,7 @@ pub async fn owner_pass(pool: &SqlitePool, seq: i64) -> Result<bool, sqlx::Error
 /// The owner fails an entry in review or held with `reasons` (a JSON array): it goes
 /// back to `screening` with a rejection, for the queue to send its whole batch back,
 /// and its account is guarded. False if it was in neither.
-pub async fn owner_reject(
-    pool: &SqlitePool,
-    seq: i64,
-    reasons: &str,
-    earlier: Earlier,
-) -> Result<bool, sqlx::Error> {
+pub async fn owner_reject(pool: &SqlitePool, seq: i64, reasons: &str) -> Result<bool, sqlx::Error> {
     let mut transaction = crate::db::write_tx(pool).await?;
     let done = sqlx::query!(
         "UPDATE entries SET status = 'screening', screen_verdict = 'reject',
@@ -1700,36 +1347,8 @@ pub async fn owner_reject(
         return Ok(false);
     }
     guard_author(&mut transaction, seq).await?;
-    if earlier == Earlier::Reject {
-        for version in held_back_before(&mut *transaction, seq).await? {
-            sqlx::query!(
-                "UPDATE entries SET status = 'rejected', rejection_reasons = ?
-                 WHERE seq = ? AND status IN ('embargoed', 'waiting_on_series')",
-                reasons,
-                version.seq
-            )
-            .execute(&mut *transaction)
-            .await?;
-            // As any rejection does, so its author can submit again with the slug.
-            sqlx::query!("DELETE FROM slugs WHERE entry_seq = ?", version.seq)
-                .execute(&mut *transaction)
-                .await?;
-        }
-        // A rejected version no longer holds back the series version it cites.
-        crate::series::mark_readable(&mut transaction).await?;
-    }
     transaction.commit().await?;
     Ok(true)
-}
-
-/// What the owner's reject of a version does to the earlier versions of its chain
-/// that are held back with it ([`held_back_before`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Earlier {
-    /// They release once it is decided, on their date.
-    Keep,
-    /// They are rejected with it (the owner's "reject the chain", 2026-11-08).
-    Reject,
 }
 
 /// An entry that passed although the screen doubted it holds a hazard.

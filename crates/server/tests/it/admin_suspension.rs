@@ -5,7 +5,7 @@
 use crate::common;
 
 use axum::http::StatusCode;
-use common::series::{create, make_public};
+use common::series::create;
 use common::{Reply, TestApp, browser_account, entry, field, owner, test_app};
 use filedrawer_server::jobs::publish_due;
 use filedrawer_server::limits::{Limits, Rate};
@@ -162,21 +162,6 @@ async fn lifting_a_suspension_lets_the_account_write_but_restores_nothing() {
 }
 
 #[tokio::test]
-async fn a_suspended_account_cant_make_its_series_public() {
-    let app = test_app().await;
-    let cookie = owner(&app).await;
-    let (author, token) = browser_account(&app, "grace@example.com").await;
-    let (series, _) = create(&app, &token).await;
-    let account = common::account_id(&app, &author).await;
-    done(&suspend(&app, &cookie, &account).await, &account);
-
-    let reply = make_public(&app, &author, &series).await;
-    refused(&reply);
-    let page = app.get(&format!("/series/{series}")).await;
-    assert_eq!(page.status, StatusCode::NOT_FOUND, "{}", page.body);
-}
-
-#[tokio::test]
 async fn an_entrys_admin_page_links_its_accounts_page() {
     let app = test_app().await;
     let cookie = owner(&app).await;
@@ -319,7 +304,6 @@ async fn suspending_removes_the_series_the_account_made_and_lifting_restores_non
     let cookie = owner(&app).await;
     let (author, token) = browser_account(&app, "grace@example.com").await;
     let (series, key) = create(&app, &token).await;
-    make_public(&app, &author, &series).await;
     // Another member's entry cites it, and stays up.
     let member = app.other_token().await;
     app.post_as(&format!("/series/{series}/join"), Some(&member), key)
@@ -359,29 +343,4 @@ async fn suspending_removes_the_series_the_account_made_and_lifting_restores_non
         app.get(&format!("/series/{series}")).await.status,
         StatusCode::OK
     );
-}
-
-#[tokio::test]
-async fn an_entry_waiting_on_a_suspended_accounts_hidden_series_goes_on() {
-    let app = test_app().await;
-    let cookie = owner(&app).await;
-    let (author, token) = browser_account(&app, "grace@example.com").await;
-    let (series, key) = create(&app, &token).await;
-    let member = app.other_token().await;
-    app.post_as(&format!("/series/{series}/join"), Some(&member), key)
-        .await;
-    let entry = common::series::submit_with(
-        &app,
-        &member,
-        &common::series::citing("Member's", &format!("{series}@1"), ""),
-    )
-    .await;
-    assert_eq!(
-        app.get(&format!("/e/{entry}")).await.status,
-        StatusCode::NOT_FOUND
-    );
-    let account = common::account_id(&app, &author).await;
-
-    done(&suspend(&app, &cookie, &account).await, &account);
-    assert_eq!(app.get(&format!("/e/{entry}")).await.status, StatusCode::OK);
 }

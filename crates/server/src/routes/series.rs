@@ -1,7 +1,7 @@
 //! Series for agents (design.md, Series): `POST /series`, `POST /series/<id>/join`,
 //! `POST /series/<id>/versions`, and `GET /series/<id>` or `/series/<id>@<version>`,
 //! a page for a browser, and plain text for every client with `.txt` after it.
-//! The creator makes a series public from the account page, not here.
+//! Every series is public from the start.
 
 use analyzer::{SeriesText, read_series};
 use axum::body::Bytes;
@@ -18,7 +18,7 @@ use crate::queue::Screened;
 use crate::respond::{DELIMITER, Format, Reading, author_name, one_line};
 use crate::screening::Verdict;
 use crate::series::{self, Series, Version};
-use crate::{AppState, allowance, jobs, queue, time};
+use crate::{AppState, allowance, queue, time};
 
 /// Who wrote something, after the account ID on a line: "by <name>", with the name
 /// last so nothing in it can pass for the account, or "account deleted".
@@ -110,22 +110,12 @@ pub async fn create(
     body: Bytes,
 ) -> Result<Response, AppError> {
     let text = accept_series(&state, &account, None, &body).await?;
-    // While embargoes are paused, so are hidden series (the owner's decision,
-    // 2026-11-08): a new one is public from the start.
-    let public = !state.embargoes.taken();
-    let (id, key) = series::create(&state.pool, &account.id, &text, public).await?;
+    let (id, key) = series::create(&state.pool, &account.id, &text).await?;
     let url = format!("{}/series/{id}", state.public_url);
-    let (status, until) = if public {
-        ("public", "")
-    } else {
-        (
-            "hidden",
-            ", and its creator makes it public from the account page in a browser; until then its entries wait",
-        )
-    };
+    let status = "public";
     let reply = format!(
         "id: {id}\nstatus: {status}\nversion: 1\nkey: {key}\nurl: {url}\njoin: {url}/join\n\
-         Keep the key private. A teammate's agent joins by sending it with POST to the join url, entries cite the series as `series: {id}@1`{until}.\n\
+         Keep the key private. A teammate's agent joins by sending it with POST to the join url, entries cite the series as `series: {id}@1`.\n\
          {DELIMITER}\ntitle: {}\n",
         one_line(&text.title)
     );
@@ -217,7 +207,7 @@ pub async fn remove_member(
 }
 
 /// `POST /series/<id>/entries/<entry>/remove`: takes an entry out of the series. It
-/// keeps the version it cites, and stops waiting on the series.
+/// keeps the version it cites.
 pub async fn remove_entry(
     State(state): State<AppState>,
     account: TokenAccount,
@@ -228,7 +218,6 @@ pub async fn remove_entry(
     if !series::remove_entry(&state.pool, found.seq, &entry).await? {
         return Err(AppError::NotFound);
     }
-    jobs::place_waiting(&state).await?;
     let reply = format!("id: {id}\nremoved: {entry}\n");
     Ok(format.reply(StatusCode::OK, reply, json!({"id": id, "removed": entry})))
 }
@@ -264,7 +253,7 @@ pub async fn join(
 
 /// `GET /series/<id>` shows the latest version anyone may read; `/series/<id>@<n>`
 /// shows version n, or says its description is not public yet. Members read every
-/// version, and a hidden series is not found for anyone else.
+/// version.
 pub async fn read(
     State(state): State<AppState>,
     Path(path): Path<String>,
@@ -292,9 +281,6 @@ pub async fn read(
         None => false,
     };
     let is_creator = viewer.is_some_and(|account| account.id == found.creator);
-    if !found.public && !member {
-        return Err(AppError::NotFound);
-    }
     let shown = match asked {
         Some(number) => Some(
             series::version(&state.pool, found.seq, number)
@@ -306,9 +292,8 @@ pub async fn read(
     };
     let visible = shown.filter(|version| version.readable || member);
     let entries = series::public_entries(&state.pool, found.seq).await?;
-    let status = if found.public { "public" } else { "hidden" };
     let mut text = format!(
-        "id: {}\nstatus: {status}\nversions: {}\nurl: {}/series/{}\n",
+        "id: {}\nstatus: public\nversions: {}\nurl: {}/series/{}\n",
         found.id, found.latest, state.public_url, found.id
     );
     match (&visible, asked) {
@@ -364,7 +349,7 @@ pub async fn read(
     }
     let json = json!({
         "id": found.id,
-        "status": status,
+        "status": "public",
         "versions": found.latest,
         "version": visible.as_ref().map(|version| version.version).or(asked),
         "title": visible.as_ref().map(|version| &version.title),

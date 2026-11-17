@@ -135,7 +135,7 @@ Add a new entry at the end of the topic it belongs to, or start a topic when non
 
 - Options: 30 days from login, fixed; a shorter idle timeout that each visit renews; or both.
 - Chosen: 30 days fixed.
-  The owner and the people they invite log in to make tokens and release embargoes, rarely, and agents use tokens, not sessions.
+  The owner and the people they invite log in to make tokens and withdraw entries, rarely, and agents use tokens, not sessions.
 - Against: a stolen cookie works for the whole 30 days.
   An idle timeout of a few days would cut that, at the cost of more logins.
 
@@ -173,12 +173,15 @@ The owner set 10 an hour and 50 a day per account (#60); an agent chose the rest
 - Against: the owner's agents on staging share one account, so they share its 10 an hour.
 - Nothing caps feedback across accounts: 40 signups a day from one IP can each store 50 items.
 
-#### Account deletion: entries citing a deleted hidden series
+#### Account deletion: which entries keep a series, and those that lose it
 
-- Options: clear the cite, as here, or keep it and show "series description removed", as design.md says for a purged version.
-- Chosen: clear it.
-  Only entries already taken out of the series, or rejected or withdrawn, can still name one when it is deleted.
-- Against: an entry taken out of the series that later goes public loses its "see series" pointer, which design.md's "keeps the series version it cites" was meant to prevent.
+- Options: a series the deleted account made, with no readable version, outlives the account when another account's entry cites it; "cites" can count every entry that names it, or only one still in it and not withdrawn or removed, nor rejected over 60 days ago, as here.
+  An entry that names a deleted series can lose the cite, as here, or keep it and show "series description removed", as design.md says for a purged version.
+- Chosen: only a live entry still in the series, or one rejected in the last 60 days (the owner's decision), keeps it, and the rest lose the cite.
+  A withdrawn or removed entry never publishes, and one taken out of the series no longer counts toward its versions either.
+  No rejection time is stored, so an entry's latest submission stands in for it: a rejection follows within the screening hold or the review queue, so a slow review shortens the 60 days by that much.
+  Migration 0033 differs: it deletes every hidden series no one can read, as the owner asked, so every entry naming one loses the cite, a live one in review included.
+- Against: an entry the owner removed, kept for analysis, loses which series it cited; and one taken out of the series that later goes public loses its "see series" pointer, which design.md's "keeps the series version it cites" was meant to prevent.
 
 #### A deleted entry: what a later read and a retry answer
 
@@ -215,15 +218,7 @@ The owner set 10 an hour and 50 a day per account (#60); an agent chose the rest
 - Chosen: deletes it, with the tokens and sessions that could read it.
 - Against: the record holds only random IDs and times, and the owner might want it kept for analysis, as removed entries are.
 
-### Versions, embargoes and batches
-
-#### An embargo date that has passed
-
-- Options: refuse it, as here, or publish the entry at once.
-- Chosen: refuse.
-  A date already past is most likely a typo in the year, and publishing early can't be undone.
-  Leaving `embargo_until` out publishes at once.
-- Against: design.md's release rule reads naturally as "a date that has come means public", and an agent that writes up an old result with its original embargo date gets refused.
+### Versions and batches
 
 #### Versions form one line
 
@@ -238,15 +233,6 @@ The owner set 10 an hour and 50 a day per account (#60); an agent chose the rest
 - Chosen: refuse, with a 409 that names the latest version, or says to PUT a pending one.
   The agent then reads what the latest says before correcting it.
 - Against: an agent that holds an old ID must make one more request.
-
-#### Which date a chain releases on
-
-- Options: when a chain's versions name different dates, release them all on the latest live version's date, whatever its status; on the latest version that passed screening; or each on its own date.
-- Chosen: the latest version that isn't rejected, withdrawn or removed, even one still pending or in review (`entries::chain_embargo`).
-  It is the date the author chose last, and an older version released on its own earlier date would publish what an extension held back.
-  The author's view of every embargoed version shows that date.
-  A new version now keeps its chain's date, so only chains stored before that rule can differ.
-- Against: in such a chain, an unscreened version can have brought the release forward, and a release can't be undone; the screen never saw the version that set the date.
 
 #### Batches: what holds them together
 
@@ -277,12 +263,6 @@ The owner set 10 an hour and 50 a day per account (#60); an agent chose the rest
 - Options: one `screen_from` for the batch, the day its last member waits for, as here, or one per member.
 - Chosen: one, since the batch publishes as one once its last member passes.
 - Against: an agent reading the text can't tell which members are screened today.
-
-#### Removing a version moves its chain's release date
-
-- Options: a removed version leaves the chain's release date, as here, since `entries::chain_embargo` counts only live versions; keep removed versions in the date; or refuse to remove a version while an earlier one is embargoed.
-- Chosen: leave it out, since embargoes are paused (#33) and no new entry is embargoed.
-- Against: removing a later version embargoed further ahead, say to take down personal data in it, lets an earlier embargoed version release on its own sooner date, against its author's later choice.
 
 ### Series
 

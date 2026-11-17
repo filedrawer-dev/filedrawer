@@ -1,10 +1,14 @@
 //! Seam: the router, for `POST /entries` (design.md, Submission and screening; Entry
-//! status; Embargo).
+//! status).
 
 use crate::common;
 
 use axum::http::StatusCode;
 use common::{date_in, entry, test_app};
+
+/// The reason every route gives for a field asking for an embargo (design.md,
+/// Rejected: embargoes, retired 2026-11-17).
+const RETIRED: &str = "the archive no longer offers embargoes";
 
 #[tokio::test]
 async fn a_valid_entry_is_held_and_the_response_shows_its_card() {
@@ -106,62 +110,6 @@ async fn warnings_come_back_and_point_to_feedback() {
 }
 
 #[tokio::test]
-async fn an_embargoed_entry_is_held_and_invisible() {
-    let app = test_app().await;
-    let text = entry(
-        "Secret steering result",
-        &format!("embargo_until: {}\ntags: [hidden-tag]\n", date_in(30)),
-    )
-    .replace("tags: [steering, refusal]\n", "");
-    let id = app.submit_held(&text).await;
-    let reply = app.post(&format!("/e/{id}/publish"), "").await;
-    assert!(reply.body.contains("status: embargoed\n"), "{}", reply.body);
-    assert!(
-        reply.body.contains(&format!("release: {}", date_in(30))),
-        "{}",
-        reply.body
-    );
-    let id = id.as_str();
-    assert_eq!(
-        app.get(&format!("/e/{id}")).await.status,
-        StatusCode::NOT_FOUND
-    );
-    assert!(!app.get("/search?q=secret").await.body.contains(id));
-    assert!(!app.get("/cards.txt").await.body.contains(id));
-    assert!(!app.get("/tags").await.body.contains("hidden-tag"));
-}
-
-#[tokio::test]
-async fn an_embargo_holds_through_its_date_and_one_already_past_is_refused() {
-    // Release comes at 23:59 at UTC-12 on the date (design.md, Embargo), so an
-    // embargo dated today is still held. One whose release time has passed is
-    // refused: it is most likely a typo, and publishing early can't be undone.
-    let app = test_app().await;
-    let today = app
-        .submit_held(&entry("T", &format!("embargo_until: {}\n", date_in(0))))
-        .await;
-    let published = app.post(&format!("/e/{today}/publish"), "").await;
-    assert!(
-        published.body.contains("status: embargoed\n"),
-        "{}",
-        published.body
-    );
-    let past = app
-        .post(
-            "/entries",
-            entry("T", &format!("embargo_until: {}\n", date_in(-2))),
-        )
-        .await;
-    assert_eq!(
-        past.status,
-        StatusCode::UNPROCESSABLE_ENTITY,
-        "{}",
-        past.body
-    );
-    assert!(past.body.contains("has passed"), "{}", past.body);
-}
-
-#[tokio::test]
 async fn the_reply_gives_the_entrys_full_address() {
     let app = test_app().await;
     let id = app.submit(&entry("T", "")).await;
@@ -179,25 +127,67 @@ async fn the_reply_gives_the_entrys_full_address() {
 }
 
 #[tokio::test]
-async fn an_embargo_past_three_months_or_not_a_date_is_refused() {
+async fn any_field_asking_for_an_embargo_is_refused_as_retired_with_only_that_reason() {
     let app = test_app().await;
-    for value in [
-        date_in(100),
-        "next spring".to_string(),
-        "2026-13-40".to_string(),
-        format!("[{}]", date_in(30)),
-        format!("\n  date: {}", date_in(30)),
+    for front in [
+        format!("embargo_until: {}\n", date_in(30)),
+        "embargo_until: null\n".to_string(),
+        "embargo_until:\n".to_string(),
+        "embargo_until: next spring\n".to_string(),
+        format!("embargo: {}\n", date_in(100)),
     ] {
-        let reply = app
-            .post("/entries", entry("T", &format!("embargo_until: {value}\n")))
-            .await;
+        let reply = app.post("/entries", entry("T", &front)).await;
         assert_eq!(
             reply.status,
             StatusCode::UNPROCESSABLE_ENTITY,
-            "{value}: {}",
+            "{front}: {}",
             reply.body
         );
-        assert!(reply.body.contains("embargo_until"), "{}", reply.body);
+        assert!(reply.body.contains(RETIRED), "{front}: {}", reply.body);
+        assert_eq!(
+            reply.body.lines().filter(|l| l.starts_with("- ")).count(),
+            1,
+            "{front}: {}",
+            reply.body
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_put_a_new_version_or_a_batch_member_asking_for_an_embargo_is_refused() {
+    let app = test_app().await;
+    let asks = entry("T", "embargo_until: null\n");
+    let pending = app.submit_held(&entry("T", "")).await;
+    let put = app
+        .put_as(&format!("/e/{pending}"), &app.token, asks.clone())
+        .await;
+    let public = app.submit(&entry("P", "")).await;
+    let version = app
+        .post(&format!("/e/{public}/versions"), asks.clone())
+        .await;
+    let batch = app
+        .send(
+            axum::http::Request::post("/entries/batch")
+                .header("authorization", format!("Bearer {}", app.token))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    serde_json::json!({"entries": [
+                        entry("B", "slug: b\nembargo_until: null\n"),
+                        entry("C", "slug: c\n"),
+                    ]})
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await;
+    for (route, reply) in [("PUT", put), ("versions", version), ("batch", batch)] {
+        assert_eq!(
+            reply.status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{route}: {}",
+            reply.body
+        );
+        assert!(reply.body.contains(RETIRED), "{route}: {}", reply.body);
     }
 }
 

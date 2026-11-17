@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE entries SET source = ?, submitted_at = ?,\n             analyzer_version = ?, outcome = ?, kind = ?, stage = ?, hold_until = ?,\n             series_seq = ?, series_version = ?, series_section = ?, series_removed_at = NULL,\n             attachment_set_seq = ?, token_id = ?, skill = ?, user_agent = ?\n         WHERE seq = ? AND status = 'pending'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 15
+    },
+    "nullable": []
+  },
+  "hash": "72d930533568506e602652de38c68cec31b724c8a855a29d600c2c8312549047"
+}
