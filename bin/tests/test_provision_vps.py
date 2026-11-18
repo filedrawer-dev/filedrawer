@@ -483,6 +483,7 @@ def test_only_new_runs_a_stage_whose_settings_the_server_lacks(rerun):
 PROD_KEY = "sk-ant-api03-" + "p" * 40
 DAILY_PING = "https://hc-ping.com/aaaaaaaa-0000-4000-8000-000000000001"
 BACKUP_PING = "https://hc-ping.com/aaaaaaaa-0000-4000-8000-000000000002"
+CADDY_PING = "https://hc-ping.com/aaaaaaaa-0000-4000-8000-000000000003"
 SMTP_PASSWORD = "prod-mail-pw"
 
 
@@ -536,6 +537,10 @@ FULL_RUN = (
     + f"\n\n{PROD_KEY}\n{PROD_KEY}\n\n"
     + f"{GITHUB_TOKEN}\n{GITHUB_TOKEN}\n\n"
     + f"{DAILY_PING}\n{BACKUP_PING}\n"
+    # The pings stage's pause, the backup stage's, then the Caddy guard's address
+    # (Enter takes ops@filedrawer.dev), its ping URL, and yes, the test arrived.
+    + "\n\n"
+    + f"\n{CADDY_PING}\ny\n"
     + "\n" * 10
 )
 
@@ -566,8 +571,14 @@ def test_production_sends_each_script_for_production_in_order(production):
         at("github-token.sh"),
         at("ping.sh"),
         at("backup.sh"),
+        at("caddy-upgrades.sh"),
     ]
     assert order == sorted(order), order
+    # The units start the guard, so the program it runs is there first.
+    assert sent.index(script("caddy-upgrade-check")) < at("caddy-upgrades.sh")
+    assert calls.index("/usr/local/sbin/caddy-upgrade-check --test-mail") > at(
+        "caddy-upgrades.sh"
+    )
     # The timer starts with backup.sh, so the program it runs is there first.
     assert sent.index(script("filedrawer-backup")) < at("backup.sh")
     # loopback.sh names staging's user, so it must exist first.
@@ -587,13 +598,21 @@ def test_production_sends_each_secret_on_stdin_and_shows_or_saves_none(productio
     assert f"{PROD_KEY}\n" + script("screening.sh") in sent
     assert f"{GITHUB_TOKEN}\n" + script("github-token.sh") in sent
     assert f"{DAILY_PING}\t{BACKUP_PING}\n" + script("ping.sh") in sent
+    assert f"ops@filedrawer.dev\t{CADDY_PING}\n" + script("caddy-upgrades.sh") in sent
     shown = (
         production.log.read_text()
         + production.env_file.read_text()
         + result.stdout
         + result.stderr
     )
-    for secret in (SMTP_PASSWORD, PROD_KEY, GITHUB_TOKEN, DAILY_PING, BACKUP_PING):
+    for secret in (
+        SMTP_PASSWORD,
+        PROD_KEY,
+        GITHUB_TOKEN,
+        DAILY_PING,
+        BACKUP_PING,
+        CADDY_PING,
+    ):
         assert secret not in shown, secret
 
 
@@ -711,6 +730,7 @@ def rerun_production(production) -> subprocess.CompletedProcess:
         "production-screening.env",
         "production-ping.env",
         "github.env",
+        "caddy-upgrades.env",
     ):
         production.host.answer(f"test -f /etc/filedrawer/{path}")
     production.env_file.write_text(
@@ -735,6 +755,38 @@ def test_production_only_new_asks_for_nothing_the_server_has(production):
     for kept in ("mail.sh", "screening.sh", "github-token.sh", "ping.sh"):
         assert not any(s.endswith(script(kept)) for s in sent), kept
     assert "won't start" not in result.stdout
+    # The guard's program, apt file and units still go; its settings stay.
+    assert script("caddy-upgrade-check") in sent
+    assert "\n" + script("caddy-upgrades.sh") in sent
+    assert "--test-mail" not in " ".join(production.host.calls())
+
+
+def test_caddy_upgrades_alone_takes_an_address_and_a_ping_url(stage):
+    result = stage.run("caddy-upgrades", f"me@example.org\n{CADDY_PING}\ny\n\n")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert stage.sent(1) == script("caddy-upgrade-check")
+    assert stage.sent(2) == f"me@example.org\t{CADDY_PING}\n" + script(
+        "caddy-upgrades.sh"
+    )
+    assert "https://healthchecks.io/" in stage.opened.read_text()
+    for where in (stage.log.read_text(), stage.env_file.read_text(), result.stdout):
+        assert CADDY_PING not in where
+
+
+@pytest.mark.parametrize(
+    "answers",
+    [
+        "me@example.org\nhttps://example.com/x\n",
+        f"not an address\n{CADDY_PING}\n",
+    ],
+)
+def test_caddy_upgrades_refuses_what_it_cant_use_and_sends_no_settings(stage, answers):
+    result = stage.run("caddy-upgrades", answers + "\n" * 4)
+    assert result.returncode != 0
+    assert not any(
+        stage.sent(n + 1).endswith(script("caddy-upgrades.sh"))
+        for n in range(len(stage.host.calls()))
+    )
 
 
 # production account
@@ -843,11 +895,16 @@ INSTALLED = {
     "filedrawer-receive": "/usr/local/bin",
     "filedrawer-install": "/usr/local/sbin",
     "filedrawer-backup": "/usr/local/sbin",
+    "caddy-upgrade-check": "/usr/local/sbin",
 }
 
 # Each reason says when the script does reach the server.
 FIELD_TEST_KEY = (
     "The owner runs it through ops/field-test-key, to open or close a field-test key."
+)
+CADDY_GUARD = (
+    "Production's wizard sends it on every run, and ops/provision-vps caddy-upgrades: "
+    "the guard serves the one server's Caddy."
 )
 STAGING_ONLY_NEW_EXEMPT = {
     "deploy-facts.sh": "ops/deploy-production sends it, before each production deploy.",
@@ -870,6 +927,8 @@ STAGING_ONLY_NEW_EXEMPT = {
     "filedrawer-backup": "Production's wizard installs it on every run, for "
     "backup.sh's timer.",
     "field-test-key.sh": FIELD_TEST_KEY,
+    "caddy-upgrades.sh": CADDY_GUARD,
+    "caddy-upgrade-check": CADDY_GUARD,
 }
 PRODUCTION_ONLY_NEW_EXEMPT = {
     "base.sh": "Staging's wizard sends it; production shares staging's server.",

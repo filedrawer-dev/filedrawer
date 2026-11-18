@@ -1,0 +1,416 @@
+#!/usr/bin/env bash
+# The guard on the server's Caddy (#100; design.md, Hosting and operations). The
+# server follows Caddy's releases through unattended-upgrades, and Caddy ships its
+# security fixes beside breaking changes, so after each upgrade this checks that the
+# sites still work, and rolls back and holds Caddy when they don't.
+#
+#   caddy-upgrade-check              after a dpkg run (the apt hook): acts only when
+#                                    Caddy's version changed
+#   caddy-upgrade-check --daily      the timer's run: the same, then checks the
+#                                    running Caddy, a hold, and an upgrade stuck in
+#                                    apt, and pings healthchecks.io: success when all
+#                                    is well, /fail with the reason otherwise
+#   caddy-upgrade-check --test-mail  sends a test email and a test ping
+#
+# A check is `caddy validate` of the Caddyfile, then, for each environment whose site
+# file is in /etc/caddy/sites, requests through Caddy on 127.0.0.1:443: production's
+# /tags (200) and www (301 to filedrawer.dev); staging's robots.txt (200), and /tags
+# without the staging key (401) and with it (200). An environment whose server doesn't
+# answer on its own port, before or after a failed request, or whose staging key isn't
+# in its site file, can't be judged; that never causes a rollback.
+#
+# On an upgrade, to a version newer than the last that passed (caddy-guard/good in
+# /var/lib/filedrawer): restart Caddy and check. A failed check installs the version
+# before, holds Caddy (apt-mark hold, noted in caddy-guard/hold) and checks again. If
+# that fails too, the version wasn't the cause: the new one goes back, unheld, and
+# caddy-guard/failing names it, so later runs report it without rolling it back again
+# until a check passes. With no version known good, a passing check records one; a
+# downgrade is checked, never fought. A dpkg lock it can't get leaves
+# caddy-guard/rollback for a run 15 minutes later to finish. Each outcome is mailed.
+#
+# Settings: /etc/filedrawer/caddy-upgrades.env (ALERT_TO, PING), which
+# caddy-upgrades.sh writes, and the SMTP settings ops/remote/mail.sh wrote for
+# production, else staging. Secrets reach curl on stdin, never a command line, and
+# the staging key, the SMTP password and the ping URL are taken out of all it mails,
+# pings or prints. Runs as root. Exits 1 when anything needs the owner.
+set -uo pipefail
+
+# The overrides are for tests: a fake root, a fixed clock, and no waiting.
+root="${FILEDRAWER_ROOT:-}"
+now="${FILEDRAWER_NOW:-$(date +%s)}"
+tries="${FILEDRAWER_PROBE_TRIES:-12}"
+pause="${FILEDRAWER_PROBE_PAUSE:-5}"
+
+guard="$root/var/lib/filedrawer/caddy-guard"
+caddyfile="$root/etc/caddy/Caddyfile"
+sites="$root/etc/caddy/sites"
+settings="$root/etc/filedrawer/caddy-upgrades.env"
+day=86400
+
+mode=hook
+case "${1-}" in
+  "") ;;
+  --daily) mode=daily ;;
+  --test-mail) mode=test-mail ;;
+  -h | --help) sed -n '2,/^set -uo/{/^set -uo/d; s/^# \{0,1\}//; p}' "$0"; exit 0 ;;
+  *) echo "usage: caddy-upgrade-check [--daily | --test-mail]" >&2; exit 2 ;;
+esac
+
+# setting FILE NAME: NAME's value in a KEY=VALUE file, single quotes undone.
+setting() {
+  local value
+  value=$(sed -n "s/^$2=//p" "$1" 2>/dev/null | tail -n 1)
+  [[ "$value" == \'*\' ]] && value=${value:1:${#value}-2}
+  printf '%s' "$value"
+}
+
+alert_to=$(setting "$settings" ALERT_TO)
+ping_url=$(setting "$settings" PING)
+[[ "$ping_url" =~ ^https://hc-ping\.com/[A-Za-z0-9_./-]+$ ]] || ping_url=""
+mail_env="$root/etc/filedrawer/production-mail.env"
+[[ -f "$mail_env" ]] || mail_env="$root/etc/filedrawer/staging-mail.env"
+smtp_host=$(setting "$mail_env" FILEDRAWER_SMTP_HOST)
+smtp_port=$(setting "$mail_env" FILEDRAWER_SMTP_PORT)
+smtp_user=$(setting "$mail_env" FILEDRAWER_SMTP_USER)
+smtp_password=$(setting "$mail_env" FILEDRAWER_SMTP_PASSWORD)
+mail_from=$(setting "$mail_env" FILEDRAWER_MAIL_FROM)
+staging_key=$(sed -nE '/X-Staging-Key "[0-9a-f]{64}"/{s/.*X-Staging-Key "([0-9a-f]{64})".*/\1/p;q}' \
+  "$sites/staging.caddy" 2>/dev/null)
+
+# redact: stdin with the secrets taken out, by value and by shape.
+redact() {
+  local text secret
+  text=$(cat)
+  for secret in "$staging_key" "$smtp_password" "$ping_url"; do
+    [[ -n "$secret" ]] && text=${text//"$secret"/[redacted]}
+  done
+  # shellcheck disable=SC2016  # a bcrypt hash's literal dollar signs, not expansions
+  sed -E 's/[0-9a-f]{64}/[redacted]/g; s/\$2[aby]\$[0-9]{2}\$[./A-Za-z0-9]{53}/[redacted]/g' <<< "$text"
+}
+
+# say TEXT: to the journal, redacted.
+say() { redact <<< "caddy-upgrade-check: $*" >&2; }
+
+# quoted VALUE: VALUE as a double-quoted string for a curl config.
+quoted() {
+  local value=${1//\\/\\\\}
+  printf '"%s"' "${value//\"/\\\"}"
+}
+
+# send_mail SUBJECT BODY: sends to ALERT_TO through the SMTP settings; a mail it can't
+# send is a problem of its own.
+send_mail() {
+  if [[ -z "$alert_to" || -z "$smtp_host" ]]; then
+    say "no ALERT_TO or SMTP settings, so this went unmailed: $1"
+    problems+=("no ALERT_TO or SMTP settings, so a mail went unsent: $1")
+    return 1
+  fi
+  local message status=0
+  message=$(mktemp)
+  printf 'From: %s\r\nTo: %s\r\nSubject: Caddy guard: %s\r\nDate: %s\r\nMessage-ID: <caddy-guard.%s.%s@filedrawer.dev>\r\n\r\n%s\r\n' \
+    "$mail_from" "$alert_to" "$1" "$(date -R -d "@$now")" "$now" "$$" \
+    "$(redact <<< "$2" | sed 's/$/\r/')" > "$message"
+  printf 'user = %s\n' "$(quoted "$smtp_user:$smtp_password")" |
+    curl -sS -m 60 --ssl-reqd --url "smtps://$smtp_host:${smtp_port:-465}" \
+      --mail-from "$(sed -E 's/.*<(.*)>.*/\1/' <<< "$mail_from")" \
+      --mail-rcpt "$alert_to" -T "$message" -K - > /dev/null 2>&1 || status=1
+  rm -f "$message"
+  (( status == 0 )) || problems+=("the mail '$1' couldn't be sent")
+  return "$status"
+}
+
+# ping_check SUFFIX BODY: tells healthchecks.io, when a ping URL is set.
+ping_check() {
+  [[ -n "$ping_url" ]] || return 0
+  printf 'url = "%s%s"\n' "$ping_url" "$1" |
+    curl -fsS -m 10 --retry 5 --retry-all-errors --data-raw "$(redact <<< "$2")" -K - \
+      > /dev/null 2>&1 || say "the ping to healthchecks.io failed"
+}
+
+# through_caddy HOST PATH [KEY]: curl's "<code> <redirect>" for a request through Caddy.
+through_caddy() {
+  local host=$1 path=$2 key=${3-}
+  {
+    printf 'url = "https://%s%s"\n' "$host" "$path"
+    [[ -n "$key" ]] && printf 'header = "X-Staging-Key: %s"\n' "$key"
+  } | curl -s -o /dev/null -m 10 --resolve "$host:443:127.0.0.1" \
+    -w '%{http_code} %{redirect_url}' -K - 2>/dev/null
+}
+
+backend_up() {
+  [[ "$(curl -s -o /dev/null -m 5 -w '%{http_code}' "http://127.0.0.1:$1/tags" 2>/dev/null)" == 200 ]]
+}
+
+# expect HOST PATH WANT [KEY]: the request through Caddy answers WANT ("<code>
+# <redirect>"), within the tries; else notes what it got in $got.
+expect() {
+  local n
+  for (( n = 1; n <= tries; n++ )); do
+    got=$(through_caddy "$1" "$2" "${4-}")
+    [[ "${got% }" == "${3% }" ]] && return 0
+    (( n < tries )) && sleep "$pause"
+  done
+  got="https://$1$2 answered '${got% }', not '${3% }'"
+  return 1
+}
+
+# check_site ENV: appends to judged, unjudged or failed.
+check_site() {
+  local env=$1 port host got=""
+  [[ -f "$sites/$env.caddy" ]] || return 0
+  if [[ $env == production ]]; then port=8080; else port=8081; fi
+  if [[ $env == staging && -z "$staging_key" ]]; then
+    unjudged+=("$env can't be judged: no staging key found in its site file")
+    return 0
+  fi
+  if ! backend_up "$port"; then
+    unjudged+=("$env can't be judged: its server doesn't answer on 127.0.0.1:$port")
+    return 0
+  fi
+  if [[ $env == production ]]; then
+    expect filedrawer.dev /tags "200 " &&
+      expect www.filedrawer.dev / "301 https://filedrawer.dev/"
+  else
+    expect staging.filedrawer.dev /robots.txt "200 " &&
+      expect staging.filedrawer.dev /tags "401 " &&
+      expect staging.filedrawer.dev /tags "200 " "$staging_key"
+  fi || {
+    if backend_up "$port"; then
+      failed+=("$env: $got")
+    else
+      unjudged+=("$env can't be judged: its server stopped answering on 127.0.0.1:$port during the check")
+    fi
+    return 0
+  }
+  judged+=("$env")
+}
+
+# check [restart]: validate, optionally restart Caddy, and check each site. True
+# when nothing failed; the findings are in judged, unjudged and failed, as text in
+# $findings.
+check() {
+  local out
+  judged=() unjudged=() failed=()
+  if ! out=$(caddy validate --config "$caddyfile" --adapter caddyfile 2>&1); then
+    failed+=("caddy validate refused the Caddyfile:
+$(tail -n 20 <<< "$out")")
+  else
+    [[ "${1-}" == restart ]] && systemctl restart caddy
+    check_site production
+    check_site staging
+  fi
+  findings=""
+  (( ${#judged[@]} )) && findings+="Checked and passing: ${judged[*]}."$'\n'
+  local line
+  for line in ${unjudged[@]+"${unjudged[@]}"} ${failed[@]+"${failed[@]}"}; do
+    findings+="$line"$'\n'
+  done
+  (( ${#failed[@]} == 0 ))
+}
+
+installed() { dpkg-query -W -f='${Version}' caddy 2>/dev/null; }
+
+held() {
+  local out
+  out=$(apt-mark showhold caddy 2>/dev/null)
+  grep -qx caddy <<< "$out"
+}
+
+# install_caddy VERSION: 0 installed, 2 the dpkg lock was busy, 1 otherwise.
+install_caddy() {
+  local out deb
+  out=$(apt-get install -y -q --allow-downgrades --allow-change-held-packages \
+    -o DPkg::Lock::Timeout=900 \
+    -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
+    "caddy=$1" 2>&1) && return 0
+  grep -q 'Could not get lock' <<< "$out" && return 2
+  for deb in "$root/var/cache/apt/archives/caddy_$1"_*.deb; do
+    [[ -f "$deb" ]] || continue
+    dpkg --force-confdef --force-confold -i "$deb" > /dev/null 2>&1 && return 0
+  done
+  say "couldn't install caddy $1: $(tail -n 3 <<< "$out")"
+  return 1
+}
+
+problems=()
+
+clearing="To clear it: change ops/remote/caddy.sh so that both versions take its config (a breaking change mostly refuses a config that never did what it looked like, so the fix usually suits both), run its stage of ops/provision-vps, then on the server: apt-mark unhold caddy && apt-get install caddy. This guard checks the new version again. Once it passes, bump bin/caddy (its docstring says how). A fix only the new version takes needs the owner and an agent together."
+
+# roll_back OLD NEW WHY: puts OLD back and holds it; if OLD fails too, NEW goes back.
+roll_back() {
+  local old=$1 new=$2 why=$3 status=0
+  printf '%s %s\n' "$old" "$new" > "$guard/rollback"
+  install_caddy "$old" || status=$?
+  if (( status == 2 )); then
+    problems+=("caddy $new failed its check, and the rollback to $old waits for the dpkg lock; it runs again in 15 minutes")
+    systemd-run --on-active=15min --unit="caddy-upgrade-retry-$now" \
+      systemctl start caddy-upgrade-check.service > /dev/null 2>&1
+    return 1
+  fi
+  if (( status )); then
+    problems+=("caddy $new failed its check and the rollback to $old failed")
+    send_mail "the site may be down: Caddy $new failed and $old couldn't be put back" \
+      "Caddy $new, installed on the server, failed its check:
+$why
+Installing $old again failed too, so $new is running, and the site may be down. Look at the server: journalctl -u caddy-upgrade-check -u caddy."
+    return 1
+  fi
+  apt-mark hold caddy > /dev/null
+  printf '%s\n' "$new" > "$guard/hold"
+  rm -f "$guard/rollback"
+  if check restart; then
+    problems+=("caddy $new failed its check; $old is back and held")
+    send_mail "Caddy $new failed; rolled back to $old and held" \
+      "Caddy $new, installed on the server, failed its check:
+$why
+$old is back, held (apt-mark hold), and passes:
+$findings
+$old lacks whatever security fixes $new brought, so clear this soon.
+$clearing"
+    return 1
+  fi
+  # The old version fails as well, so the new one wasn't the cause: it goes back.
+  local after
+  problems+=("the check fails on both Caddy $old and $new")
+  apt-mark unhold caddy > /dev/null
+  rm -f "$guard/hold"
+  if install_caddy "$new"; then
+    systemctl restart caddy
+    printf '%s\n' "$new" > "$guard/failing"
+    after="So the upgrade wasn't the cause: $new is back, unheld."
+  else
+    after="So the upgrade wasn't the cause, but $new couldn't be put back: $old runs, unheld, and unattended-upgrades will offer $new again."
+  fi
+  send_mail "the check fails on both Caddy $old and $new" \
+    "Caddy $new failed its check:
+$why
+$old failed it as well:
+$findings
+$after Each daily run checks again and reports until the check passes."
+  return 1
+}
+
+# verdict VERSION [restart]: checks VERSION, never rolling back. A pass records it as
+# good, and is mailed when it is new or ends a failure; a failure is mailed once,
+# and caddy-guard/failing names the version so later runs don't mail or roll it back.
+verdict() {
+  local version=$1 before
+  before=$(cat "$guard/good" 2>/dev/null)
+  if check "${2-}"; then
+    printf '%s\n' "$version" > "$guard/good"
+    if [[ -f "$guard/failing" ]]; then
+      rm -f "$guard/failing"
+      send_mail "Caddy $version passes its check again" "$findings"
+    elif [[ "$before" != "$version" ]]; then
+      send_mail "Caddy $version passes its check" "The guard records Caddy $version as good:
+$findings"
+    fi
+    return 0
+  fi
+  problems+=("caddy $version fails its check: $findings")
+  if [[ "$(cat "$guard/failing" 2>/dev/null)" != "$version" ]]; then
+    printf '%s\n' "$version" > "$guard/failing"
+    send_mail "Caddy $version fails its check" "$findings"
+  fi
+  return 1
+}
+
+# on_change: what a change of Caddy's version calls for.
+on_change() {
+  local version good failing
+  version=$(installed)
+  good=$(cat "$guard/good" 2>/dev/null)
+  failing=$(cat "$guard/failing" 2>/dev/null)
+  if [[ -f "$guard/rollback" ]]; then
+    local old="" new=""
+    read -r old new < "$guard/rollback"
+    acted=1
+    if [[ -z "$old" || -z "$new" ]]; then
+      rm -f "$guard/rollback"
+    else
+      roll_back "$old" "$new" "(the first try at the rollback couldn't get the dpkg lock)"
+      return
+    fi
+  fi
+  [[ "$version" == "$good" ]] && return 0
+  acted=1
+  if [[ -n "$good" && "$version" != "$failing" ]] &&
+    dpkg --compare-versions "$version" gt "$good"; then
+    if check restart; then
+      printf '%s\n' "$version" > "$guard/good"
+      rm -f "$guard/failing"
+      send_mail "Caddy $good -> $version: checks passed" "unattended-upgrades or apt moved Caddy from $good to $version, and the checks passed:
+$findings
+Bump bin/caddy to $version (its docstring says how), so the real-Caddy tests run the version the server does."
+    else
+      roll_back "$good" "$version" "$findings"
+    fi
+    return
+  fi
+  # No version known good, a downgrade, or a version that failed on both: check,
+  # never roll back.
+  verdict "$version" restart
+}
+
+# daily: the running Caddy, a hold, an upgrade stuck in apt, and the ping.
+daily() {
+  local version candidate first="" stamp reminded=0 notes=()
+  version=$(installed)
+  # A run that acted on a change has checked already, and mailed what it found.
+  (( acted )) || verdict "$version"
+  if held; then
+    if [[ -f "$guard/hold" ]]; then
+      notes+=("Caddy is held on $version: the guard rolled back $(cat "$guard/hold"), whose check failed. $clearing")
+    else
+      notes+=("Caddy is held on $version, by hand (apt-mark hold), so it gets no security fixes.")
+    fi
+  else
+    candidate=$(apt-cache policy caddy 2>/dev/null | sed -n 's/^ *Candidate: //p')
+    if [[ -n "$candidate" ]] && dpkg --compare-versions "$candidate" gt "$version"; then
+      [[ -f "$guard/candidate" ]] && read -r _ first < "$guard/candidate"
+      [[ "$(cut -d' ' -f1 "$guard/candidate" 2>/dev/null)" == "$candidate" ]] || first=$now
+      printf '%s %s\n' "$candidate" "$first" > "$guard/candidate"
+      (( now - first >= 3 * day )) &&
+        notes+=("Caddy $candidate has waited in apt since $(date -u -d "@$first" +%F), but $version still runs: unattended-upgrades isn't taking it. Look at /var/log/unattended-upgrades/.")
+    fi
+    # apt's daily run touches this stamp only when every list updated, Caddy's too.
+    stamp=$(stat -c %Y "$root/var/lib/apt/periodic/update-success-stamp" 2>/dev/null || echo 0)
+    (( now - stamp < 3 * day )) ||
+      notes+=("apt's daily update hasn't succeeded for over 3 days (a repository failing, such as Caddy's with an expired key), so no Caddy upgrade can arrive.")
+  fi
+  [[ -n "$ping_url" ]] || notes+=("No healthchecks.io ping URL is set; run ops/provision-vps caddy-upgrades.")
+  if (( ${#notes[@]} )); then
+    problems+=("${notes[@]}")
+    reminded=$(cat "$guard/reminded" 2>/dev/null || echo 0)
+    if (( now - reminded >= 7 * day )); then
+      printf '%s\n' "$now" > "$guard/reminded"
+      # A run that acted has mailed already, a rollback's hold included.
+      (( acted )) || send_mail "Caddy needs a look" "$(printf '%s\n\n' "${notes[@]}")"
+    fi
+  else
+    rm -f "$guard/reminded"
+  fi
+}
+
+mkdir -p "$guard"
+exec 9> "$guard/lock"
+flock -w 1800 9 || { say "another run held the lock for 30 minutes"; exit 1; }
+# A hold the owner cleared leaves no marker to mistake a later hold for the guard's.
+held || rm -f "$guard/hold"
+
+if [[ $mode == test-mail ]]; then
+  send_mail "a test" "The guard on the server's Caddy can mail you." || exit 1
+  ping_check "" "a test from caddy-upgrade-check"
+  exit 0
+fi
+
+acted=0
+on_change || true
+[[ $mode == daily ]] && daily
+if (( ${#problems[@]} )); then
+  say "$(printf '%s\n' "${problems[@]}")"
+  ping_check /fail "$(printf '%s\n' "${problems[@]}")"
+  exit 1
+fi
+[[ $mode == daily ]] && ping_check "" "Caddy $(installed)"
+exit 0

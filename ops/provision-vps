@@ -239,7 +239,9 @@ run_wizard() {
 # `ops/provision-vps smoke` runs only the last stage, CI's two accounts (the smoke
 # test's and the screen check's) and their secrets, on a server the full wizard has
 # set up; `ops/provision-vps screening` only staging's API key and cap;
-# `ops/provision-vps github` only the GitHub token the link checks use; and
+# `ops/provision-vps github` only the GitHub token the link checks use;
+# `ops/provision-vps caddy-upgrades` only the guard on the server's Caddy (#100),
+# which production's run also sets up; and
 # `ops/provision-vps admin` only making your staging account the admin. `ops/provision-vps --only-new` reruns every stage, for
 # new stages and new logic, without asking for anything ops/.vps.env, the server or
 # GitHub already holds: no passwords or keys again, and no pauses.
@@ -777,6 +779,49 @@ production_backup_stage() {
   pause
 }
 
+# caddy_upgrades_stage: Caddy follows its releases, with a guard (#100): the server is
+# one, so this serves staging and production alike.
+caddy_upgrades_stage() {
+  stage "Caddy upgrades, with a guard that rolls back"
+  say "Caddy ships its security fixes beside breaking changes, so the server takes"
+  say "each Caddy release, and a guard checks the sites after each one: if they fail,"
+  say "it puts the version before back, holds it, and emails you."
+  # The program first: the units start it.
+  install_on_server caddy-upgrade-check /usr/local/sbin
+  if keep_existing "The guard's address and ping URL" /etc/filedrawer/caddy-upgrades.env; then
+    remote_with_secret caddy-upgrades.sh SETTINGS ""
+    pause
+    return 0
+  fi
+  ask CADDY_ALERT_TO "The address the guard emails [Enter for ops@filedrawer.dev]:" || CADDY_ALERT_TO=""
+  CADDY_ALERT_TO=${CADDY_ALERT_TO:-ops@filedrawer.dev}
+  if [[ ! "$CADDY_ALERT_TO" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]+$ ]]; then
+    warn "That isn't one email address. Rerun to try again."
+    exit 1
+  fi
+  write_env CADDY_ALERT_TO "$CADDY_ALERT_TO"
+  say "healthchecks.io tells you when the guard fails, or stops running, even when"
+  say "mail through Purelymail doesn't arrive."
+  open_url "https://healthchecks.io/"
+  step "Add a check named 'filedrawer caddy guard'. Period: 1 day. Grace: 2 hours."
+  step "Have its alerts go to an address that isn't at filedrawer.dev, since that mail"
+  step "goes through Purelymail too. Copy its ping URL (https://hc-ping.com/...)."
+  ask_secret CADDY_PING "The guard's ping URL:"
+  if ! ping_url "$CADDY_PING"; then
+    warn "That isn't a healthchecks.io ping URL (https://hc-ping.com/...). Rerun to try again."
+    exit 1
+  fi
+  remote_with_secret caddy-upgrades.sh SETTINGS "$CADDY_ALERT_TO"$'\t'"$CADDY_PING"
+  unset CADDY_PING
+  ssh -o BatchMode=yes "root@$VPS_HOST" "/usr/local/sbin/caddy-upgrade-check --test-mail" < /dev/null ||
+    warn "The test mail failed to send; what the server said is above."
+  if ! confirm "Did a 'Caddy guard: a test' email reach $CADDY_ALERT_TO, and does the check show a ping?"; then
+    warn "Check the address and the ping URL, then rerun: ops/provision-vps caddy-upgrades"
+    SKIPPED+=("Caddy guard: the test mail or ping didn't arrive")
+  fi
+  pause
+}
+
 production_check_stage() {
   stage "Check filedrawer.dev from outside"
   local tags www
@@ -870,7 +915,7 @@ production_account_stage() {
 production() {
   case "${1:-}" in
     "")
-      TOTAL_STAGES=10
+      TOTAL_STAGES=11
       banner "File Drawer VPS: production setup"
       production_preflight_stage
       production_dns_stage
@@ -881,6 +926,7 @@ production() {
       production_github_stage
       production_pings_stage
       production_backup_stage
+      caddy_upgrades_stage
       production_check_stage
       ;;
     account)
@@ -900,11 +946,11 @@ case "${1:-}" in
     shift
     production "$@"
     return 0 ;;
-  smoke | screening | admin | github)
+  smoke | screening | admin | github | caddy-upgrades)
     TOTAL_STAGES=1
     VPS_HOST=$(_existing VPS_HOST || true)
     [[ -n "$VPS_HOST" ]] || { warn "$ENV_FILE has no VPS_HOST. Run the whole wizard first."; exit 1; }
-    "${1}_stage"
+    "${1//-/_}_stage"
     finish
     return 0 ;;
 esac

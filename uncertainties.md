@@ -737,6 +737,24 @@ The owner settled the email's sections and the rules in design.md's Admin sectio
   The install's lock and copy and the nightly copy's matching lock must be on the server for the deploy to keep its promises.
 - Against: the deploy then changes more than the binary, through a path the wizard also owns.
 
+#### What the Caddy guard's check covers (#100)
+
+- Options: `caddy validate` alone; or that plus requests through Caddy to each site (chosen); or those plus the files hosts and a field-test key.
+- Chosen: validate, production's `/tags` and www's redirect, staging's `robots.txt` and its key gate both ways, since the breaking changes Caddy lists mostly refuse configs or change what requests get through.
+- Against: the files hosts and an open field-test key go unchecked, so a release that breaks only those stays installed.
+
+#### Clearing a rollback the guard made (#100)
+
+- Options: a config fix both versions take, then unhold and upgrade (chosen); or a mode of the guard that unholds, upgrades and rewrites the config in one checked step.
+- Chosen: the first, since a breaking change mostly refuses a config that never did what it looked like, so the fix usually suits both.
+- Against: a fix only the new version takes can't land while the old one is held, which `caddy.sh`'s validate refuses, and needs hands on the server.
+
+#### `--force-confold` for every package on the server (#100)
+
+- Options: set `Dpkg::Options` to keep an edited conffile, server-wide (chosen); or leave dpkg's default.
+- Chosen: server-wide, since unattended-upgrades skips a package whose conffile would prompt, and caddy.sh rewrites Caddy's packaged Caddyfile, so a Caddy release that changed it would never install.
+- Against: every package now keeps its edited conffile without a word, where before unattended-upgrades left such an upgrade for a person.
+
 ### Packages
 
 #### The analyzer's library name

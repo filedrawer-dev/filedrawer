@@ -18,8 +18,10 @@ To move to another Caddy release, change VERSION and every hash in PINS. Each re
 has a caddy_<version>_checksums.txt listing every asset's SHA-512, and GitHub's API
 lists each asset's SHA-256 digest. Download each archive, check that its sha512sum
 matches the checksums file and its sha256sum the API's digest, then copy the SHA-512
-here. Production's Caddy comes from Caddy's apt repository (ops/remote/caddy.sh), so
-pin the version it runs.
+here. The server takes each Caddy release from Caddy's apt repository, with a guard
+that rolls back one that breaks the sites (ops/remote/caddy-upgrade-check, #100), so
+the pin follows the server: bump it when the guard's email or CI's caddy-latest issue
+names a new version.
 
 Tests serve a fake archive by setting FILEDRAWER_CADDY_URL and FILEDRAWER_CADDY_SHA512,
 and shorten the time limit with FILEDRAWER_CADDY_MAX_TIME. An overridden URL alone is
