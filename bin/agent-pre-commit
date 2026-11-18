@@ -33,12 +33,17 @@
 # naming routes changed (bin/checks-needed's `routes`), so a new route nobody named
 # for agents or listed in NOT_FOR_AGENTS fails at its commit; the
 # gate gives each a CHECK_BASE of its own (`agent-commit-gate -h`). --rules, which the
-# commit check also passes, runs bin/tests/test_no_wall_clock_limits.py when a path
-# under bin/tests changed (bin/checks-needed's `py-rules`), since a test with a
-# wall-clock limit otherwise passes its commit and fails only the full check, and with
-# it bin/tests/test_checks_needed.py, since a test that began to read skills/ changed
-# which checks a skills edit needs and failed that table only when it landed. Neither
-# needs a build and both take seconds, so, like the skills check, they run outside
+# commit check also passes, runs the rule tests that read sources when a path they
+# read changed. For a path under bin/tests (bin/checks-needed's `py-rules`):
+# bin/tests/test_no_wall_clock_limits.py, since a test with a wall-clock limit
+# otherwise passes its commit and fails only the full check, and
+# bin/tests/test_checks_needed.py, since a test that began to read skills/ changed
+# which checks a skills edit needs and failed that table only when it landed. For a
+# path in bin/, ops/ or .github/workflows (`sh-rules`):
+# bin/tests/test_no_early_exit_readers.py, since a script's pipe into `grep -q` passed
+# its commit and only a review found it, and bin/tests/test_workflow_run_blocks.py,
+# since parsing in a workflow's YAML passed its commit and a review sent it back. None
+# needs a build and each takes seconds, so, like the skills check, they run outside
 # heavy's queue. So does --mods, which the commit check passes too: bin/test-modules, when a
 # path in a crate's tests/it changed (bin/checks-needed's `test-mods`), since a test
 # file with no `mod` line in tests/it/main.rs compiles nowhere and clippy passes it;
@@ -81,7 +86,7 @@ trap 'rm -rf "$tree" "$logs"' EXIT
 trap 'exit 130' INT TERM HUP
 git -C "$repo" checkout-index -a --prefix="$tree/"
 need_every_check() {
-  for check in rust bin-tests skills routes py-rules test-mods caddy; do
+  for check in rust bin-tests skills routes py-rules sh-rules test-mods caddy; do
     echo "$check $1"
   done >"$logs/needed"
 }
@@ -130,13 +135,23 @@ if needs skills && [ -x bin/skills ]; then
     echo "agent-pre-commit: couldn't check the skills (bin/skills exit $status), so that check was skipped" >&2
   fi
 fi
-# Outside the queue, as the skills check is: an ast read of bin/tests' sources, and,
-# when the tree has it, the table of which checks a path needs, which a bin test's
-# new read of a repo folder changes; both take seconds.
-if [ -n "$rules" ] && needs py-rules && [ -x bin/pytest ] && [ -f bin/tests/test_no_wall_clock_limits.py ]; then
-  needed_test=bin/tests/test_checks_needed.py
-  [ -f "$needed_test" ] || needed_test=
-  bin/pytest -n0 bin/tests/test_no_wall_clock_limits.py ${needed_test:+"$needed_test"} >"$logs/rules" 2>&1 || { cat "$logs/rules"; failed=1; }
+# Outside the queue, as the skills check is, and each in seconds: for py-rules, an
+# ast read of bin/tests' sources and, when the tree has it, the table of which checks
+# a path needs, which a bin test's new read of a repo folder changes; for sh-rules,
+# the scripts' early-exit pipes and the workflows' run blocks.
+if [ -n "$rules" ] && [ -x bin/pytest ]; then
+  names=
+  needs py-rules && names="no_wall_clock_limits checks_needed"
+  needs sh-rules && names="$names no_early_exit_readers workflow_run_blocks"
+  rule_tests=
+  # Those the tree has: one checked out at an older commit lacks the newer ones.
+  for name in $names; do
+    [ -f "bin/tests/test_$name.py" ] && rule_tests="$rule_tests bin/tests/test_$name.py"
+  done
+  if [ -n "$rule_tests" ]; then
+    # shellcheck disable=SC2086  # paths without spaces, one word each
+    bin/pytest -n0 $rule_tests >"$logs/rules" 2>&1 || { cat "$logs/rules"; failed=1; }
+  fi
 fi
 # Outside the queue too, and in milliseconds: the staged tests/it folders and their
 # main.rs. A refusal here ends the run, since the clippy that would follow passes the

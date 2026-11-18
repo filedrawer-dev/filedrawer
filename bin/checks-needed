@@ -18,6 +18,10 @@ name and the first path that needs it:
     py-rules   at a commit, bin/tests/test_no_wall_clock_limits.py and
                bin/tests/test_checks_needed.py, which need no build (the full
                check's bin-tests holds them)
+    sh-rules   at a commit, bin/tests/test_no_early_exit_readers.py and
+               bin/tests/test_workflow_run_blocks.py, which read the scripts and
+               the workflows in about a second (the full check's bin-tests holds
+               them)
     test-mods  at a commit, bin/test-modules, which needs no build (the full
                check's nextest holds the Rust test it stands in for)
     caddy      at a commit, the bin tests marked real_caddy, which run Caddy (the
@@ -66,6 +70,8 @@ A path needs routes when it is crates/server/src/lib.rs (the router),
 crates/server/install.md, crates/server/tests/it/skill.rs, or lies in skills/.
 
 A path needs py-rules when it lies in bin/tests/.
+
+A path needs sh-rules when it lies in bin/, ops/ or .github/workflows/.
 
 A path needs test-mods when it lies in a crate's tests/it/, or is bin/test-modules.
 
@@ -118,6 +124,9 @@ ROUTES_PATHS = (
 )
 # What bin/tests/test_no_wall_clock_limits.py reads: bin/tests' own sources.
 PY_RULES_PATHS = ("bin/tests",)
+# What the shell and workflow rules read: the scripts in bin/ and ops/ (their
+# early-exit pipes) and the workflows (their run blocks).
+SH_RULES_PATHS = ("bin", "ops", ".github/workflows")
 # What bin/test-modules reads, besides each crate's tests/it.
 TEST_MODS_PATHS = ("bin/test-modules",)
 # What the real-Caddy tests run, and the files they live in.
@@ -522,6 +531,15 @@ def main(argv: list[str]) -> int:
                 for ref in PY_RULES_PATHS
             },
             # The rule reads bin/tests' own sources, not what they reach.
+            follow=False,
+        ),
+        "sh-rules": Inputs(
+            tree,
+            {
+                ref: Step(f"{ref}: the shell and workflow rules read it")
+                for ref in SH_RULES_PATHS
+            },
+            # They read the files themselves, not what those reach.
             follow=False,
         ),
         "test-mods": Inputs(

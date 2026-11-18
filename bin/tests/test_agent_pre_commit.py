@@ -122,8 +122,9 @@ def template(tmp_path_factory) -> Path:
         REPO / "bin/tests/test_no_wall_clock_limits.py",
         root / "bin/tests/test_no_wall_clock_limits.py",
     )
-    # And the one it runs beside it, here only a name the fake uvx is handed.
-    (root / "bin/tests/test_checks_needed.py").write_text("")
+    # And the ones it runs beside it, here only names the fake uvx is handed.
+    for name in ("checks_needed", "no_early_exit_readers", "workflow_run_blocks"):
+        (root / f"bin/tests/test_{name}.py").write_text("")
     git(root, "init", "-q")
     # Its own identity, since CI's runner has no global one.
     git(root, "config", "user.name", "t")
@@ -261,13 +262,19 @@ def test_renaming_an_embedded_file_runs_the_cargo_checks(repo):
     "path, checks",
     [
         ("docs/format.md", {"rust"}),  # include_str!
-        ("ops/fixture.md", {"rust", "bin-tests"}),  # a crate's test reads it
-        ("bin/helper", {"rust", "bin-tests"}),  # the script that test runs runs it
+        (
+            "ops/fixture.md",
+            {"rust", "bin-tests", "sh-rules"},
+        ),  # a crate's test reads it
+        ("bin/helper", {"rust", "bin-tests", "sh-rules"}),  # that test's script runs it
         # ops/run reaches these, so they're bin/tests' inputs too: they run it.
         ("conf/settings.toml", {"rust", "bin-tests"}),  # through the script's $repo
         ("conf/source.toml", {"rust", "bin-tests"}),  # through ${0%/*}
         ("conf/bash-source.toml", {"rust", "bin-tests"}),  # through BASH_SOURCE
-        ("bin/sibling", {"rust", "bin-tests"}),  # a Python script's with_name
+        (
+            "bin/sibling",
+            {"rust", "bin-tests", "sh-rules"},
+        ),  # a Python script's with_name
         ("conf/joined.toml", {"rust", "bin-tests"}),  # its joinpath
         ("data/any.json", {"rust", "bin-tests"}),  # the folder before a built name
         ("Cargo.lock", {"rust"}),
@@ -275,29 +282,37 @@ def test_renaming_an_embedded_file_runs_the_cargo_checks(repo):
         (".gitattributes", {"rust", "bin-tests"}),
         ("crates/app/src/lib.rs", {"rust", "bin-tests"}),
         ("tool.toml", {"bin-tests"}),  # a bin test joins it onto the repo
-        ("bin/other", {"bin-tests"}),
+        ("bin/other", {"bin-tests", "sh-rules"}),
         ("docs/notes.md", set()),  # in prose and a scratch path only
         # The skills' record follows their folders and the format they copy.
         ("skills/demo/SKILL.md", {"skills", "routes"}),
         ("skills/versions.txt", {"skills", "routes"}),
         ("docs/entry-format.md", {"skills"}),
-        ("bin/skills", {"skills", "bin-tests"}),
-        # The rule tests read every file in bin/tests.
-        ("bin/tests/test_tool.py", {"bin-tests", "py-rules"}),
+        ("bin/skills", {"skills", "bin-tests", "sh-rules"}),
+        # The rule tests read every file in bin/tests, the scripts in bin/ and
+        # ops/, and the workflows.
+        ("bin/tests/test_tool.py", {"bin-tests", "py-rules", "sh-rules"}),
+        (".github/workflows/x.yml", {"sh-rules"}),
         # The module check reads every crate's tests/it, and its own script.
         ("crates/app/tests/it/one.rs", {"rust", "bin-tests", "test-mods"}),
         ("crates/app/tests/it/main.rs", {"rust", "bin-tests", "test-mods"}),
         ("crates/app/tests/it/fixtures/entry.md", {"rust", "bin-tests", "test-mods"}),
-        ("bin/test-modules", {"bin-tests", "test-mods"}),
+        ("bin/test-modules", {"bin-tests", "sh-rules", "test-mods"}),
         # The real-Caddy tests, their scripts and the files they live in.
-        ("ops/remote/caddy.sh", {"bin-tests", "caddy"}),
-        ("ops/remote/field-test-key.sh", {"bin-tests", "caddy"}),
-        ("bin/caddy", {"bin-tests", "caddy"}),
-        ("bin/tests/test_remote_environments.py", {"bin-tests", "py-rules", "caddy"}),
-        ("bin/tests/test_field_test_key.py", {"bin-tests", "py-rules", "caddy"}),
+        ("ops/remote/caddy.sh", {"bin-tests", "sh-rules", "caddy"}),
+        ("ops/remote/field-test-key.sh", {"bin-tests", "sh-rules", "caddy"}),
+        ("bin/caddy", {"bin-tests", "sh-rules", "caddy"}),
+        (
+            "bin/tests/test_remote_environments.py",
+            {"bin-tests", "py-rules", "sh-rules", "caddy"},
+        ),
+        (
+            "bin/tests/test_field_test_key.py",
+            {"bin-tests", "py-rules", "sh-rules", "caddy"},
+        ),
         # It holds the real_caddy fixture and the hook that marks its tests.
-        ("bin/tests/conftest.py", {"bin-tests", "py-rules", "caddy"}),
-        ("ops/remote/other.sh", {"bin-tests"}),
+        ("bin/tests/conftest.py", {"bin-tests", "py-rules", "sh-rules", "caddy"}),
+        ("ops/remote/other.sh", {"bin-tests", "sh-rules"}),
     ],
 )
 def test_the_checks_a_change_to_each_reference_needs(template, path, checks):
@@ -306,6 +321,9 @@ def test_the_checks_a_change_to_each_reference_needs(template, path, checks):
 
 RULE_TEST = "bin/tests/test_no_wall_clock_limits.py"
 NEEDED_TEST = "bin/tests/test_checks_needed.py"
+SH_RULE_TESTS = (
+    "bin/tests/test_no_early_exit_readers.py bin/tests/test_workflow_run_blocks.py"
+)
 
 
 def uvx_calls(repo: Path) -> list[str]:
@@ -316,20 +334,35 @@ def uvx_calls(repo: Path) -> list[str]:
     ]
 
 
-def test_the_commit_check_runs_the_two_source_rules_for_a_bin_tests_change(repo):
+def test_the_commit_check_runs_the_source_rules_for_a_bin_tests_change(repo):
     change(repo, "bin/tests/test_tool.py", "def test_tool():\n    pass\n")
 
     hook(repo, env=QUEUE_EXIT, script="agent-commit-check")
 
     calls = uvx_calls(repo)
     assert len(calls) == 1, calls
-    # Both read bin/tests' sources and take seconds: the wall-clock rule, and the
-    # table of which checks a path needs, which a new test's reads can change.
-    assert calls[0].endswith(f"-n0 {RULE_TEST} {NEEDED_TEST}"), calls
+    # Each reads sources and takes seconds: the wall-clock rule, the table of which
+    # checks a path needs, which a new test's reads can change, and, since bin/tests
+    # lies in bin/, the shell and workflow rules.
+    assert calls[0].endswith(f"-n0 {RULE_TEST} {NEEDED_TEST} {SH_RULE_TESTS}"), calls
     assert "pytest@9.2.0" in calls[0]
 
 
-def test_a_tree_without_the_checks_needed_test_runs_the_wall_clock_rule_alone(repo):
+@pytest.mark.parametrize(
+    "path", ["bin/other", "ops/remote/other.sh", ".github/workflows/x.yml"]
+)
+def test_a_script_or_workflow_change_runs_only_the_shell_and_workflow_rules(repo, path):
+    """A pipe into `grep -q` and parsing in a workflow's YAML once passed their
+    commits; the table of checks, which takes 9 s, stays with bin/tests changes."""
+    change(repo, path, "x\n")
+
+    hook(repo, env=QUEUE_EXIT, script="agent-commit-check")
+
+    (call,) = uvx_calls(repo)
+    assert call.endswith(f"-n0 {SH_RULE_TESTS}"), call
+
+
+def test_a_tree_without_the_checks_needed_test_runs_the_rest(repo):
     """As a tree checked out at a commit older than that test is."""
     git(repo, "rm", "-q", NEEDED_TEST)
     change(repo, "bin/tests/test_tool.py", "def test_tool():\n    pass\n")
@@ -337,10 +370,10 @@ def test_a_tree_without_the_checks_needed_test_runs_the_wall_clock_rule_alone(re
     hook(repo, env=QUEUE_EXIT, script="agent-commit-check")
 
     (call,) = uvx_calls(repo)
-    assert call.endswith(f"-n0 {RULE_TEST}"), call
+    assert call.endswith(f"-n0 {RULE_TEST} {SH_RULE_TESTS}"), call
 
 
-def test_the_rule_runs_only_with_rules_and_only_for_a_bin_tests_change(repo):
+def test_the_rules_run_only_with_rules_and_only_for_a_change_they_read(repo):
     change(repo, "bin/tests/test_tool.py", "def test_tool():\n    pass\n")
     hook(repo, "--quick", "--routes")
     assert uvx_calls(repo) == []
@@ -433,10 +466,11 @@ def test_the_commit_check_runs_the_real_caddy_tests_for_a_caddy_change(repo):
 
     hook(repo, script="agent-commit-check")
 
+    # The source rules first, as for any script; then the real-Caddy tests.
     calls = uvx_calls(repo)
-    assert len(calls) == 1, calls
-    assert calls[0].endswith(CADDY_RUN), calls
-    assert "pytest@9.2.0" in calls[0]
+    assert len(calls) == 2, calls
+    assert calls[1].endswith(CADDY_RUN), calls
+    assert "pytest@9.2.0" in calls[1]
 
 
 def test_outside_the_queue_the_real_caddy_tests_ask_for_it_first(repo):
@@ -444,7 +478,8 @@ def test_outside_the_queue_the_real_caddy_tests_ask_for_it_first(repo):
 
     _, done = hook(repo, env=QUEUE_EXIT, script="agent-commit-check", code=75)
 
-    assert uvx_calls(repo) == []
+    # Only the source rules, which need no queue, ran before it asked.
+    assert not any(call.endswith(CADDY_RUN) for call in uvx_calls(repo))
     assert "agent-pre-commit: needs heavy's queue for caddy bin/caddy" in done.stderr
 
 

@@ -68,16 +68,19 @@ def test_the_other_docs_need_no_check():
         ),
         # bin/test-modules reads each crate's tests/it
         ("crates/analyzer/tests/it/main.rs", {"rust", "bin-tests", "test-mods"}),
-        ("bin/test-modules", {"bin-tests", "test-mods"}),
+        ("bin/test-modules", {"bin-tests", "sh-rules", "test-mods"}),
         # crates/server/tests/it/smoke.rs runs it and reads these at run time
-        ("ops/smoke-staging", {"rust", "bin-tests"}),
-        ("ops/smoke-fixture.md", {"rust", "bin-tests"}),
-        ("ops/screen-eval/public/refusal-categories.md", {"rust", "bin-tests"}),
+        ("ops/smoke-staging", {"rust", "bin-tests", "sh-rules"}),
+        ("ops/smoke-fixture.md", {"rust", "bin-tests", "sh-rules"}),
+        (
+            "ops/screen-eval/public/refusal-categories.md",
+            {"rust", "bin-tests", "sh-rules"},
+        ),
         # which ops/smoke-staging runs
-        ("bin/field-test-batches", {"rust", "bin-tests"}),
-        ("bin/lychee", {"bin-tests"}),
+        ("bin/field-test-batches", {"rust", "bin-tests", "sh-rules"}),
+        ("bin/lychee", {"bin-tests", "sh-rules"}),
         # read by bin/tests/test_deploy.py
-        (".github/workflows/ci.yml", {"bin-tests"}),
+        (".github/workflows/ci.yml", {"bin-tests", "sh-rules"}),
         ("crates/server/src/config.rs", {"rust", "bin-tests"}),
         # crates/analyzer/src/file_mentions.rs names its own crate's folder with `../`
         ("crates/analyzer/src/lib.rs", {"rust", "bin-tests"}),
@@ -111,6 +114,7 @@ def test_nothing_staged_needs_every_check():
         "skills",
         "routes",
         "py-rules",
+        "sh-rules",
         "test-mods",
         "caddy",
     }
@@ -121,6 +125,7 @@ def test_each_check_names_the_first_path_that_needs_it():
     assert done.stdout.splitlines() == [
         "rust crates/server/src/main.rs",
         "bin-tests bin/lychee",
+        "sh-rules bin/lychee",
     ]
 
 
