@@ -621,11 +621,19 @@ def redact(text: str) -> str:
     return re.sub(r"key=[^&#\s'\"]+", "key=…", text)
 
 
+def transcripts(folder: Path) -> list[Path]:
+    """A run's sessions, in the order they ran. A print-mode run's folder holds its
+    one session twice, as the harness's transcript and as the stream it printed,
+    print-mode.jsonl, so the stream is read only when no transcript was saved."""
+    paths = sorted(
+        folder.glob("transcript-*.jsonl"), key=lambda p: (first_time(p), p.name)
+    )
+    return paths or sorted(folder.glob("print-mode.jsonl"))
+
+
 def headers(args) -> int:
     folder = Path(args.run_dir)
-    paths = sorted(folder.glob("transcript-*.jsonl")) + sorted(
-        folder.glob("print-mode.jsonl")
-    )
+    paths = transcripts(folder)
     if not paths:
         raise Usage(f"no transcript in {folder}")
     for path in paths:
@@ -813,11 +821,11 @@ def first_time(path: Path) -> str:
 
 def run_calls(folder: Path) -> list[tuple[str, str]]:
     """Each tool call of a run, (tool, input), in the order the sessions ran."""
-    paths = sorted(
-        folder.glob("transcript-*.jsonl"), key=lambda p: (first_time(p), p.name)
-    )
-    paths += sorted(folder.glob("print-mode.jsonl"))
-    return [(str(name), str(given)) for path in paths for name, given in commands(path)]
+    return [
+        (str(name), str(given))
+        for path in transcripts(folder)
+        for name, given in commands(path)
+    ]
 
 
 def site_writes(command: str) -> list[str]:
@@ -845,9 +853,10 @@ SHELL_PIECE = re.compile(r"""'[^']*'|"(?:[^"\\]|\\.)*"|[|;&\n]+|[^'"|;&\n]+|."""
 
 
 def shell_segments(command: str) -> list[str]:
-    """`command` cut at each pipe, `;`, `&`, `&&` and newline outside quotes."""
+    """`command` cut at each pipe, `;`, `&`, `&&` and newline outside quotes. A
+    line that ends in a backslash goes on in the next, as the shell reads it."""
     segments = [""]
-    for piece in SHELL_PIECE.findall(command):
+    for piece in SHELL_PIECE.findall(command.replace("\\\n", " ")):
         if re.fullmatch(r"[|;&\n]+", piece):
             segments.append("")
         else:

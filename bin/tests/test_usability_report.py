@@ -73,16 +73,20 @@ def make_run(tmp_path, scenario):
     return usability, run
 
 
-def report(usability, *runs):
+def usability_run(usability, command, *runs):
     env = {k: v for k, v in os.environ.items() if not k.startswith("FILEDRAWER_")}
     env["FILEDRAWER_USABILITY_DIR"] = str(usability)
     return subprocess.run(
-        [str(SCRIPT), "report", *map(str, runs)],
+        [str(SCRIPT), command, *map(str, runs)],
         env=env,
         capture_output=True,
         text=True,
         check=False,
     )
+
+
+def report(usability, *runs):
+    return usability_run(usability, "report", *runs)
 
 
 def test_report_sums_up_a_run_in_a_few_lines_without_its_secrets(tmp_path):
@@ -208,3 +212,55 @@ def test_report_says_a_folder_holds_no_run_and_goes_on_to_the_next(tmp_path):
         "jason7-claude: no such folder",
     ]
     assert done.stderr == ""
+
+
+def headers(usability, run):
+    return usability_run(usability, "headers", run)
+
+
+SUBMIT = (
+    'curl -i -H @"$HOME/.config/filedrawer/staging.filedrawer.dev.header" '
+    "--data-binary @entry.md https://staging.filedrawer.dev/entries"
+)
+
+
+def test_a_print_mode_session_saved_twice_is_counted_once(tmp_path):
+    """A print-mode run's folder holds the harness's transcript and the stream it
+    printed, print-mode.jsonl, which repeats each call."""
+    usability, run = make_run(tmp_path, {"gated": [], "turns": ["post it"]})
+    session = [bash("2026-11-13T23:25:00Z", SUBMIT)]
+    write_jsonl(run / "transcript-a.jsonl", session)
+    write_jsonl(run / "print-mode.jsonl", session)
+    result = report(usability, run)
+    assert result.returncode == 0, result.stderr
+    assert (
+        "  site writes: POST https://staging.filedrawer.dev/entries\n" in result.stdout
+    ), result.stdout
+    listed = headers(usability, run)
+    assert listed.returncode == 0, listed.stderr
+    assert listed.stdout.count("/entries") == 1, listed.stdout
+
+
+def test_a_print_mode_stream_is_read_when_the_harness_left_no_transcript(tmp_path):
+    usability, run = make_run(tmp_path, {"gated": [], "turns": ["post it"]})
+    write_jsonl(run / "print-mode.jsonl", [bash("2026-11-13T23:25:00Z", SUBMIT)])
+    result = report(usability, run)
+    assert result.returncode == 0, result.stderr
+    assert (
+        "  site writes: POST https://staging.filedrawer.dev/entries\n" in result.stdout
+    ), result.stdout
+
+
+def test_a_curl_continued_over_two_lines_is_one_request(tmp_path):
+    """The submit skill's own command breaks after a backslash, before the URL."""
+    usability, run = make_run(tmp_path, {"gated": [], "turns": ["post it"]})
+    command = (
+        'curl -i -H @"$HOME/.config/filedrawer/staging.filedrawer.dev.header" \\\n'
+        "  --data-binary @entry.md https://staging.filedrawer.dev/entries"
+    )
+    write_jsonl(run / "transcript-a.jsonl", [bash("2026-11-13T23:25:00Z", command)])
+    result = report(usability, run)
+    assert result.returncode == 0, result.stderr
+    assert (
+        "  site writes: POST https://staging.filedrawer.dev/entries\n" in result.stdout
+    ), result.stdout
