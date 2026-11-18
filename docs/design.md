@@ -726,6 +726,10 @@ Reason: the results that belong here are the ones nobody comes back to, so a req
 - On Yes to the question, the agent writes and submits the entry at the end of the current task.
 - The line on what is posted, the license and the code is the first part of the skill's submit step, written as text in the agent's reply above the command (#94).
   Reason: as a sentence in the step before, Codex said it in every told-to-post run of round 4 and Claude Code in none, once printing it with an `echo` inside the command.
+- Claude Code still submits before it says that line, and the owner accepts the gap (the owner's decision, 2026-11-17, #94).
+  It said nothing before the submit in 7 of its 8 told-to-post runs across round 4 and its rerun, under both wordings, while Codex said it first in each of the 7 of its runs that were read for it.
+  Claude Code states the license in its report, in the same turn, and the hour's hold is the safeguard.
+  Set aside: the server refusing an entry's first submit until the agent resends it with a header, since the server can't see the chat and every post would take two calls; and ending the turn on the line before submitting, which is the second question the owner decided against, and which a run nobody watches couldn't get past.
 - A later "post it", "yes" or "go ahead" about an entry already pending doesn't end the hold; the agent says when it publishes and that "publish now" ends the hold (#94).
   Reason: in round 4 a second "Yes, post it." made Claude Code publish at once, and the pull that followed was refused.
 - After a submit, the agent's report leads with the URL, the publish time and that "pull it" deletes the entry until then, repeats that it will be public for good under CC-BY 4.0, then shows the card and the account it posted as, and leaves the hour's hold to run.
