@@ -201,15 +201,24 @@ on_exit() {
 trap on_exit EXIT
 trap 'exit 1' HUP INT TERM
 
-# swap_in PATH TEXT: PATH holds TEXT, swapped in whole.
+# swap_in PATH TEXT [GROUP]: PATH holds TEXT, swapped in whole: readable by all, or,
+# with GROUP, by root and GROUP alone, set before the rename so no one else can read
+# it in between.
 swap_in() {
   local tmp
   tmp=$(mktemp "$(dirname "$1")/.caddy.XXXXXX")
   printf '%s\n' "$2" > "$tmp"
-  chmod 0644 "$tmp"
+  if [[ -n "${3-}" ]]; then
+    chown "root:$3" "$tmp"
+    chmod 0640 "$tmp"
+  else
+    chmod 0644 "$tmp"
+  fi
   mv "$tmp" "$1"
 }
-swap_in "$site" "$text"
+# Staging's holds the staging key and the basic-auth hash, which no other local user,
+# such as the one CI's binaries run as, may read (#101); Caddy reads it as `caddy`.
+swap_in "$site" "$text" caddy
 swap_in "$caddyfile" "# Written by ops/remote/caddy.sh; edits here are lost on the next run.
 # Each environment's sites are in a file of their own, which caddy.sh writes for that
 # environment alone.

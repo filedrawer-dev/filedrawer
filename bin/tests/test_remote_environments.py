@@ -464,6 +464,25 @@ def test_the_caddyfile_imports_each_environments_site_file(box, caddy):
     assert "filedrawer.dev {" not in caddyfile
 
 
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_a_site_file_is_caddys_group_alone_to_read(box, caddy, environment):
+    """Staging's holds the staging key and the basic-auth hash, which no other local
+    user, such as the one CI's binaries run as, may read (#101)."""
+    result = caddy.run(environment)
+    assert result.returncode == 0, result.stderr
+    site = caddy.dir / f"sites/{environment}.caddy"
+    assert mode(site) == 0o640
+    chowned = [
+        line for line in box.log.read_text().splitlines() if line.startswith("chown")
+    ]
+    # Owner and mode are set before the rename, on the temp file beside it.
+    assert any(
+        line.startswith("chown root:caddy ") and "/sites/.caddy." in line
+        for line in chowned
+    ), chowned
+    assert mode(caddy.dir / "Caddyfile") == 0o644
+
+
 def test_production_serves_the_apex_and_files_and_redirects_www(box, caddy):
     result = caddy.run("production")
     assert result.returncode == 0, result.stderr
