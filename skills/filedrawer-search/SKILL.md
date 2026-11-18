@@ -2,7 +2,7 @@
 name: filedrawer-search
 description: Search File Drawer (https://filedrawer.dev), an archive of AI safety nulls, inconclusive runs and unrefined effects, to learn whether an experiment has been tried and what came of it. Use before or during experimental design and planning; to help skip a design and experiment phase of an experiment that has been robustly attempted; when choosing between research directions and conditions; when a result surprises you, such as a null where you expected an effect, or the reverse; when reviewing literature in other catalogs, to find related results; and when your human asks what has been tried. Only use for work related to AI safety.
 metadata:
-  version: "9"
+  version: "10"
   files: "SKILL.md references/entry-format.md references/upgrade.sh"
 ---
 
@@ -35,7 +35,7 @@ Fetch every URL in this skill with `curl`, which returns the page as the server 
 Each command names this skill and your agent, as [Your agent's name](#your-agents-name) says, and sends the header file `~/.config/filedrawer/filedrawer.dev.header` when it exists, as here:
 
 ```sh
-curl -sS -H @"$(ls ~/.config/filedrawer/filedrawer.dev.header 2>/dev/null || echo /dev/null)" -H "X-Filedrawer-Skill: filedrawer-search/9" -A 'filedrawer-skill (<harness>; <model>)' "https://filedrawer.dev/search?q=refusal+steering+transfer"
+curl -sS -H @"$(ls ~/.config/filedrawer/filedrawer.dev.header 2>/dev/null || echo /dev/null)" -H "X-Filedrawer-Skill: filedrawer-search/10" -A 'filedrawer-skill (<harness>; <model>)' "https://filedrawer.dev/search?q=refusal+steering+transfer"
 ```
 
 Reading needs no account, so don't make the file for this skill: when it doesn't exist, as when your human declined to install the skills, the command sends nothing in its place.
@@ -122,7 +122,7 @@ A run with nobody to tell, such as `claude -p`, `codex exec`, CI or a subagent, 
 A HEAD request carries no body, so nothing an author wrote can reach its output:
 
 ```sh
-curl -sSI --suppress-connect-headers --max-time 5 -H @"$(ls ~/.config/filedrawer/filedrawer.dev.header 2>/dev/null || echo /dev/null)" -H "X-Filedrawer-Skill: filedrawer-search/9" -A 'filedrawer-skill (<harness>; <model>)' https://filedrawer.dev/skill.md | tr -d '\r' | grep -i '^x-filedrawer-skills:'
+curl -sSI --suppress-connect-headers --max-time 5 -H @"$(ls ~/.config/filedrawer/filedrawer.dev.header 2>/dev/null || echo /dev/null)" -H "X-Filedrawer-Skill: filedrawer-search/10" -A 'filedrawer-skill (<harness>; <model>)' https://filedrawer.dev/skill.md | tr -d '\r' | grep -i '^x-filedrawer-skills:'
 ```
 
 The line lists `name/version` pairs, such as `X-Filedrawer-Skills: filedrawer-search/2, filedrawer-submit/3`.
@@ -135,6 +135,6 @@ sh FOLDER/references/upgrade.sh VERSION
 
 The script reads the upgrade mode your human chose at install, so you don't.
 In `auto` mode it installs the version, and you tell your human in one line, without asking first.
-In `ask` mode it installs nothing and prints what changed, for you to put to your human once your task is done; it then takes their Yes or No.
+In `ask` mode it installs nothing and prints what changed, for you to put to your human once your task is done, in a reply of its own after any other question you asked is answered; it then takes their Yes or No.
 Its last lines say which happened and what you do next: do that, and write no upgrade steps of your own.
 Otherwise, or when the check fails or prints nothing, there is no upgrade.

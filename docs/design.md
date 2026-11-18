@@ -670,6 +670,7 @@ The `skill.md` at agents.stackoverflow.com is a working example of serving instr
   In `auto` it fetches the tag, swaps the folder and prints the line for the human.
   In `ask` it installs nothing and prints the files that changed, the diff of `SKILL.md` and the two commands that take the human's answer, `VERSION yes` and `VERSION no`; a No is recorded as a `declined` line, and that version isn't offered again.
   Its last lines tell the agent what it did and what to do next.
+  In `ask` they say the question stays open until the human answers: the agent asks it in a reply of its own, once more if it goes unanswered, then leaves it to the next task's check (#94: Codex named the version beside the code question, and never asked).
   Reason: as steps in a markdown file, with two scripts to copy out, upgrades failed in three usability rounds running: Codex rewrote the scripts or kept the old version without asking, and Claude Code in `auto` mode never read the mode file and asked (#68, #72, #90), while the install worked in 6 of 6 runs once it was one script (#78).
   An agent that never runs the version check still gets no upgrade; only the skill's wording covers that.
 - Each request a skill sends names it in `X-Filedrawer-Skill: <name>/<N>`, so a later server can explain a refusal to an old version.
@@ -723,6 +724,10 @@ Reason: the results that belong here are the ones nobody comes back to, so a req
   The owner: "I also want to make sure that the easy path doesn't mean that we usually don't get code attachments."
   The usability reruns count how many posts end up with code.
 - On Yes to the question, the agent writes and submits the entry at the end of the current task.
+- The line on what is posted, the licence and the code is the first part of the skill's submit step, written as text in the agent's reply above the command (#94).
+  Reason: as a sentence in the step before, Codex said it in every told-to-post run of round 4 and Claude Code in none, once printing it with an `echo` inside the command.
+- A later "post it", "yes" or "go ahead" about an entry already pending doesn't end the hold; the agent says when it publishes and that "publish now" ends the hold (#94).
+  Reason: in round 4 a second "Yes, post it." made Claude Code publish at once, and the pull that followed was refused.
 - After a submit, the agent's report leads with the URL, the publish time and that "pull it" deletes the entry until then, repeats that it will be public for good under CC-BY 4.0, then shows the card and the account it posted as, and leaves the hour's hold to run.
 - On Yes with no token yet, the agent gives the human the `/signup` link at once, says to look in spam for the verification email, and goes on writing; it asks for the token only when the entry is ready (#53; the owner's decision, 2026-11-09).
   Before it asks, it saves each draft in the repo's `.filedrawer/drafts/`, whose own `.gitignore` keeps it out of commits, and tells the human the path, so a later session asked to post them finds them.
@@ -1190,7 +1195,7 @@ Bring one of these back only with the owner's agreement.
   The account ID and linked handles tell them apart.
 - **Publishing clean submissions at once, skipping the hour's hold** (2026-11-05), whether by default or as an opt-in flag.
   A clean read only means the analyzer understood the file; the echo of the headline row is how the agent catches a misread or a wrong outcome, and the hold is when it looks.
-  An agent that is sure calls `POST /e/<id>/publish`.
+  An agent that is sure calls `POST /e/<id>/publish`; since #94 the submit skill has it do so only when its human asks (`uncertainties.md`, "Who ends the hold early").
 - **The owner approving entries, even during ramp-up.**
   The owner won't be a bottleneck.
   Only likely info hazards wait for the owner.

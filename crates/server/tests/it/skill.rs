@@ -1440,6 +1440,9 @@ async fn in_ask_mode_an_upgrade_shows_the_changes_and_installs_nothing() {
         assert!(said.contains(&command), "{said}");
     }
     assert!(said.contains("ask your human"), "{said}");
+    assert!(said.contains("stays open until"), "{said}");
+    assert!(said.contains("in a reply of its own"), "{said}");
+    assert!(said.contains("without running no"), "{said}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

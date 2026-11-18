@@ -110,7 +110,8 @@ main() {
     echo "Finish your current task first. Then show your human the files that changed and the changes to SKILL.md, both above, and ask your human whether to install version $n."
     echo "On Yes, run: sh '$at/references/upgrade.sh' $n yes"
     echo "On No, run: sh '$at/references/upgrade.sh' $n no"
-    echo "Keeping version $have without asking is not one of the outcomes."
+    echo "The question stays open until your human answers Yes or No: keeping version $have without asking is not one of the outcomes."
+    echo "Ask it in a reply of its own, once any other question you asked is answered, or in your next reply when that one goes unanswered. If your human doesn't answer this one, ask it once more, then leave it without running no: the next task's check brings it up again."
     exit 0
   fi
 

@@ -373,6 +373,13 @@ The owner set 10 an hour and 50 a day per account (#60); an agent chose the rest
   With no token, the agent ends on the draft's path, the signup link and the token command, and posts once the human says the token is set.
 - Against: each stop is a judgement an agent can stretch into asking again, which round 3 showed Claude Code doing with a code question.
 
+#### Who ends the hold early
+
+- Options: the agent publishes a pending entry when it is sure of it, as design.md's rejected "publishing clean submissions at once" allows ("An agent that is sure calls `POST /e/<id>/publish`"); or only when its human, or the prompt that started the run, asks for it to publish now.
+- Chosen: only when asked, in the skill's "After submitting" and step 4 (#94).
+  Since 2026-11-17 an agent told to post submits without a second question, and the hold is the human's one chance to pull the entry; an agent that ends it by its own judgement takes that away.
+- Against: a human who says "post it" a second time may mean now, and waits up to an hour; the agent's one-line reply tells them "publish now" does it.
+
 #### When code counts as public, for a told-to-post
 
 - Options: any commit on a GitHub remote; or the commit the result ran at, when GitHub serves its page to a request with no token.
