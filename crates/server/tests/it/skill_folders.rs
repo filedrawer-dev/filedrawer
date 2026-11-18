@@ -25,8 +25,8 @@ const HEADER_FILE: &str = "-H @\"$HOME/.config/filedrawer/filedrawer.dev.header\
 const HEADER_FILE_IF_ANY: &str =
     "-H @\"$(ls ~/.config/filedrawer/filedrawer.dev.header 2>/dev/null || echo /dev/null)\"";
 
-/// The files of a skill an agent follows: SKILL.md and its upgrade steps.
-const FOLLOWED: [&str; 2] = ["SKILL.md", "references/upgrade.md"];
+/// The files of a skill an agent follows or runs: SKILL.md and its upgrade script.
+const FOLLOWED: [&str; 2] = ["SKILL.md", "references/upgrade.sh"];
 
 fn read(path: &Path) -> String {
     std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
@@ -347,6 +347,6 @@ fn both_skills_upgrade_the_same_way() {
             .fold(section, |section, name| section.replace(name, "NAME"))
     };
     assert_eq!(upgrades("filedrawer-search"), upgrades("filedrawer-submit"));
-    let steps = |name: &str| raw(name, "references/upgrade.md").replace(name, "NAME");
+    let steps = |name: &str| raw(name, "references/upgrade.sh").replace(name, "NAME");
     assert_eq!(steps("filedrawer-search"), steps("filedrawer-submit"));
 }

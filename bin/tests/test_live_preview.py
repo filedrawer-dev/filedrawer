@@ -533,8 +533,8 @@ def copy_documents(root: Path) -> None:
             '`curl -H @"$HOME/.config/filedrawer/filedrawer.dev.header"'
             " https://filedrawer.dev/tags`\n"
         )
-        (folder / "upgrade.md").write_text(
-            "# Upgrade\n\nFrom https://filedrawer.dev.\n"
+        (folder / "upgrade.sh").write_text(
+            "#!/bin/sh\n# From https://filedrawer.dev.\n"
         )
     (root / "skills/versions.txt").write_text("not a skill's file\n")
 
@@ -588,8 +588,8 @@ def test_a_skills_file_and_the_installer_come_from_the_checkout_naming_the_previ
     assert f"Drafted: {site(documents)}/tags" in text
     host = site(documents).split("://")[1]
     assert f"/{host}.header" in text and "/filedrawer.dev.header" not in text
-    _, _, upgrade = documents.get("/skills/filedrawer-submit/references/upgrade.md")
-    assert upgrade.startswith("# ") and "https://filedrawer.dev" not in upgrade
+    _, _, upgrade = documents.get("/skills/filedrawer-submit/references/upgrade.sh")
+    assert upgrade.startswith("#!/bin/sh\n") and "https://filedrawer.dev" not in upgrade
     _, _, installer = documents.get("/install.sh")
     assert f"  base={site(documents)}\n" in installer
     assert not documents.server.requests

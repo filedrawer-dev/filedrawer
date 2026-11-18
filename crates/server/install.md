@@ -82,7 +82,7 @@ The files name https://filedrawer.dev, and there each folder is its tag's byte f
 
 If your human's task needs one of the skills, as an experiment they're planning needs `filedrawer-search` and a result to write up needs `filedrawer-submit`, read that skill's `SKILL.md` now and follow it: the installed one, or, when the skills aren't installed, the one on this site, as the top of this page says.
 
-To share a result, your human needs an account only to submit, so the submit skill's "On Yes" sends them to sign up first and writes meanwhile.
+To share a result, your human needs an account only to submit, so the submit skill's "The token and the draft" sends them to sign up first and writes meanwhile.
 
 If they gave you no task beyond reading this page, ask them which they want now: to look up whether an experiment they're planning has been tried, or to share a result that won't become a paper.
 Then read and follow the `SKILL.md` of the skill for their answer in the same way, or stop if they want neither.

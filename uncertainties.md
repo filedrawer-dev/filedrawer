@@ -363,6 +363,39 @@ The owner set 10 an hour and 50 a day per account (#60); an agent chose the rest
 - Chosen: as each day comes. design.md has the server check the account "each time an item leaves its queue for screening", and issue #8 is about one account flooding the owner's review page.
 - Against: "and so does everything it already has waiting" can read as all at once, and the owner then sees a guarded account's whole queue only over several days.
 
+#### What still stops a told-to-post
+
+- Options: nothing, since the owner's decision says the agent doesn't ask again; or a short list of stops.
+- Chosen: three stops, each ending in a statement, not a question, so a run nobody watches behaves the same.
+  A result that doesn't belong, such as work that isn't AI safety, isn't posted.
+  A part that isn't the human's to publish, such as a teammate's unpublished work or personal data, is left out and named, and when the entry can't stand without it the agent saves the draft and posts nothing.
+  A set the agent has to work out ("everything from this weekend I didn't use") is drafted and listed, and nothing is posted until the human names which, since they haven't seen which results it covers; "post the drafts" names its set, and the agent lists them and posts.
+  With no token, the agent ends on the draft's path, the signup link and the token command, and posts once the human says the token is set.
+- Against: each stop is a judgement an agent can stretch into asking again, which round 3 showed Claude Code doing with a code question.
+
+#### When code counts as public, for a told-to-post
+
+- Options: any commit on a GitHub remote; or the commit the result ran at, when GitHub serves its page to a request with no token.
+- Chosen: the run's commit, checked with an unauthenticated `curl` of its commit page.
+  A private remote also holds the commit, and a public repo may not hold the code that produced the result.
+  The agent pushes no branch to make code public.
+- Against: the check covers GitHub only; code on Hugging Face or Zenodo gets the question though it may be public.
+  The owner's decision named "code that isn't public or has no licence file"; a public repo with no licence file is linked without a question here, since a link licenses nothing and the MIT line only matters when code is attached.
+
+#### "Post it, and attach the code"
+
+- Options: the first submit still leaves non-public code out and asks after; or the message's own instruction to attach counts.
+- Chosen: it counts: the agent says that attaching licenses the code under MIT, then attaches it in the first submit.
+  A run nobody watches has no later turn in which to answer the question.
+- Against: the MIT line is said in the same turn as the submit, so the hold is the human's only chance to object.
+
+#### The upgrade script when the human answered Yes
+
+- Options: `upgrade.sh VERSION yes` fetches the tag again and installs it; or the first run keeps the folder it fetched and the second takes its path.
+- Chosen: fetch again, so the script keeps no state between runs and the agent passes no path.
+  A ruleset keeps a `skill-*` tag from moving, so the second fetch holds what the human saw.
+- Against: two fetches, and with the network down between them the Yes installs nothing.
+
 ### Attached code
 
 #### Status codes for refused attachment uploads
@@ -483,8 +516,8 @@ The owner set 10 an hour and 50 a day per account (#60); an agent chose the rest
 
 #### Skills installed by the human's own means don't upgrade themselves
 
-- Options: the upgrade steps stop and tell the human, in a line, that a version is out, for a copy outside `~/.agents/skills/` and `~/.claude/skills/`; or they try to put the new folder where the copy is.
-- Chosen: tell the human; their own tooling put the copy there, and the steps' swap assumes the installer's folders.
+- Options: the upgrade script stops and tells the human, in a line, that a version is out, for a copy outside `~/.agents/skills/` and `~/.claude/skills/`; or it tries to put the new folder where the copy is.
+- Chosen: tell the human; their own tooling put the copy there, and its swap assumes the installer's folders.
 - Against: the agent repeats the line once per task until the human upgrades.
 
 #### `/skill.md`'s download command off production

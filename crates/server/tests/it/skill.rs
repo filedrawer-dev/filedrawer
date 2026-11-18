@@ -397,20 +397,6 @@ async fn the_example_entry_is_entry_format_mds_example() {
 
 const RAW_GITHUB: &str = "https://raw.githubusercontent.com/filedrawer-dev/filedrawer";
 
-/// The `n`th `sh -eu <<'SH'` script after `heading` in `text`, through its `SH` line.
-fn script(text: &str, heading: &str, n: usize) -> String {
-    let after = &text[text.find(heading).expect(heading)..];
-    let start = after
-        .match_indices("\nsh -eu <<'SH'\n")
-        .nth(n)
-        .expect("a script")
-        .0
-        + 1;
-    let block = &after[start..];
-    let end = block.find("\nSH\n").expect("the script's end") + "\nSH\n".len();
-    block[..end].to_string()
-}
-
 /// The `n`th one-line `sh` block after `heading` in `text`.
 fn command(text: &str, heading: &str, n: usize) -> String {
     let after = &text[text.find(heading).expect(heading)..];
@@ -788,7 +774,7 @@ async fn the_installer_installs_neither_skill_when_a_tag_holds_another_version()
 #[tokio::test(flavor = "multi_thread")]
 async fn the_installer_refuses_a_tag_that_names_a_file_outside_its_folder() {
     let site = StandIn::with_tags(PUBLIC_URL, |name, file, text| {
-        let listed = "  files: \"SKILL.md references/entry-format.md references/upgrade.md\"";
+        let listed = "  files: \"SKILL.md references/entry-format.md references/upgrade.sh\"";
         if name == "filedrawer-submit" && file == "SKILL.md" {
             text.replace(listed, "  files: \"SKILL.md ../../escaped.md\"")
         } else {
@@ -1040,10 +1026,10 @@ async fn reinstall_home(site: &StandIn) -> PathBuf {
 async fn a_rerun_refuses_a_changed_file_and_writes_nothing() {
     let site = StandIn::at(STAGING).await;
     let home = reinstall_home(&site).await;
-    let skill = skill_folder(&home, "filedrawer-submit").join("references/upgrade.md");
+    let skill = skill_folder(&home, "filedrawer-submit").join("references/upgrade.sh");
     std::fs::write(&skill, read(&skill) + "my note\n").unwrap();
     std::fs::write(home.join(".config/filedrawer/upgrade"), "auto\n").unwrap();
-    assert_refused(&site, &home, "filedrawer-submit", "references/upgrade.md").await;
+    assert_refused(&site, &home, "filedrawer-submit", "references/upgrade.sh").await;
     let said = text(&site.install(&home, "auto").await);
     assert!(said.contains("move or remove"), "{said}");
 }
@@ -1271,116 +1257,347 @@ async fn skill_md_never_pipes_or_chains_a_download_into_a_shell() {
     }
 }
 
-/// A skill's `references/upgrade.md`, as the site serves it.
-async fn upgrade_steps(name: &str) -> String {
-    served(&format!("/skills/{name}/references/upgrade.md")).await
+// The upgrade script each skill carries, `references/upgrade.sh`.
+
+/// The version after the one the repo holds.
+fn next(name: &str) -> String {
+    (version(name).parse::<u32>().unwrap() + 1).to_string()
 }
 
-/// Step 2 of an upgrade, fetching `version` from the mirror: its output, and the
-/// folder it printed.
-async fn fetch_upgrade(name: &str, version: &str, home: &Path, mirror: &Path) -> (Output, PathBuf) {
-    let fetch = script(&upgrade_steps(name).await, "## 2. Fetch", 0)
-        .replace("N=VERSION\n", &format!("N={version}\n"));
-    let output = run(&fetch, home, mirror);
-    let folder = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
-    (output, folder)
+/// `name`'s current files as a tag at `version` would hold them, naming production.
+fn files_at(name: &str, version: &str) -> Vec<(String, String)> {
+    files(name)
+        .into_iter()
+        .map(|file| {
+            let text = raw(name, &file).replace(
+                &format!("  version: \"{}\"", self::version(name)),
+                &format!("  version: \"{version}\""),
+            );
+            (file, text)
+        })
+        .collect()
 }
 
-/// Step 5 of an upgrade, putting `new` in place.
-async fn put_in_place(name: &str, new: &Path, home: &Path) -> Output {
-    let swap = script(&upgrade_steps(name).await, "## 5. Put it in place", 0)
-        .replace("new=FOLDER\n", &format!("new={}\n", new.display()));
-    run(&swap, home, Path::new("/nowhere"))
+/// A home with both skills installed from `site`, whose GitHub now also holds the
+/// next version of each.
+async fn home_with_a_newer_tag(site: &StandIn) -> PathBuf {
+    let home = installed_home(site).await;
+    for name in NAMES {
+        add_tag(
+            &site.mirror,
+            name,
+            &next(name),
+            &files_at(name, &next(name)),
+        );
+    }
+    home
 }
 
-fn write_old_copy(home: &Path, name: &str) {
-    let skill = home.join(".agents/skills").join(name).join("SKILL.md");
-    std::fs::write(skill, "old\n").unwrap();
+/// Runs the installed copy of `name`'s upgrade script with `args`.
+fn upgrade(site: &StandIn, home: &Path, name: &str, args: &str) -> Output {
+    let script = skill_folder(home, name).join("references/upgrade.sh");
+    site.run(&format!("sh '{}' {args}", script.display()), home)
 }
 
-fn installed_text(home: &Path, name: &str) -> String {
-    std::fs::read_to_string(home.join(".agents/skills").join(name).join("SKILL.md")).unwrap()
+/// The version the installed copy of `name` gives.
+fn installed_version(home: &Path, name: &str) -> String {
+    let text = read(&skill_folder(home, name).join("SKILL.md"));
+    text.lines()
+        .find_map(|line| line.strip_prefix("  version: \""))
+        .and_then(|rest| rest.strip_suffix('"'))
+        .expect("a version")
+        .to_string()
+}
+
+/// Asserts `name` under `home` holds the next version's files, pointed at the test
+/// site, with nothing of the upgrade left beside it.
+fn assert_upgraded(home: &Path, name: &str) {
+    for (file, text) in files_at(name, &next(name)) {
+        let pointed = text
+            .replace(PRODUCTION, PUBLIC_URL)
+            .replace("/filedrawer.dev.header", "/localhost.header");
+        assert_eq!(
+            read(&skill_folder(home, name).join(&file)),
+            pointed,
+            "{name}/{file}"
+        );
+    }
+    let skills = home.join(".agents/skills");
+    for left in [format!(".{name}.lock"), format!(".{name}.old")] {
+        assert!(!skills.join(&left).exists(), "{left} is left");
+    }
+}
+
+/// Asserts `name` under `home` is still the version the repo holds.
+fn assert_not_upgraded(home: &Path, name: &str) {
+    assert_eq!(installed_version(home, name), version(name), "{name}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn an_upgrade_puts_the_tags_files_in_place() {
+async fn in_auto_mode_an_upgrade_installs_the_newer_tag_and_says_so() {
     let site = StandIn::at(PUBLIC_URL).await;
-    let home = installed_home(&site).await;
-    let mirror = site.mirror.clone();
+    let home = home_with_a_newer_tag(&site).await;
     for name in NAMES {
-        write_old_copy(&home, name);
-        let (output, new) = fetch_upgrade(name, &version(name), &home, &mirror).await;
-        assert!(output.status.success(), "{}", text(&output));
-        let output = put_in_place(name, &new, &home).await;
-        assert!(output.status.success(), "{}", text(&output));
-        assert!(
-            text(&output).contains(&format!("upgraded {name}")),
-            "{}",
-            text(&output)
+        let output = upgrade(&site, &home, name, &next(name));
+        let said = text(&output);
+        assert!(output.status.success(), "{said}");
+        let line = format!(
+            "upgraded {name} from version {} to {}",
+            version(name),
+            next(name)
         );
-        assert_installed(&site, &home, name).await;
-        let skills = home.join(".agents/skills");
+        assert!(said.contains(&line), "{said}");
+        assert!(said.contains("Tell your human"), "{said}");
         assert!(
-            !skills.join(format!(".{name}.lock")).exists(),
-            "{name}'s lock is left"
+            said.contains(&format!("{}/SKILL.md", skill_folder(&home, name).display())),
+            "{said}"
         );
-        assert!(
-            !skills.join(format!(".{name}.old")).exists(),
-            "{name}'s old copy is left"
+        assert_upgraded(&home, name);
+        let link = home.join(".claude/skills").join(name);
+        assert_eq!(
+            std::fs::read_link(&link).unwrap(),
+            skill_folder(&home, name)
         );
     }
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn with_no_mode_recorded_an_upgrade_installs_as_auto_does() {
+    let site = StandIn::at(PUBLIC_URL).await;
+    let home = home_with_a_newer_tag(&site).await;
+    std::fs::remove_file(home.join(".config/filedrawer/upgrade")).unwrap();
+    let name = "filedrawer-search";
+    let output = upgrade(&site, &home, name, &next(name));
+    assert!(output.status.success(), "{}", text(&output));
+    assert_upgraded(&home, name);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_upgrade_run_through_claude_codes_link_installs_too() {
+    let site = StandIn::at(PUBLIC_URL).await;
+    let home = home_with_a_newer_tag(&site).await;
+    let name = "filedrawer-submit";
+    let script = home
+        .join(".claude/skills")
+        .join(name)
+        .join("references/upgrade.sh");
+    let output = site.run(&format!("sh '{}' {}", script.display(), next(name)), &home);
+    assert!(output.status.success(), "{}", text(&output));
+    assert_upgraded(&home, name);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn an_upgrade_replaces_a_copy_where_claude_codes_link_would_be() {
     let site = StandIn::at(PUBLIC_URL).await;
-    let home = installed_home(&site).await;
-    let mirror = site.mirror.clone();
+    let home = home_with_a_newer_tag(&site).await;
     let name = "filedrawer-submit";
     let link = home.join(".claude/skills").join(name);
     std::fs::remove_file(&link).unwrap();
     std::fs::create_dir_all(&link).unwrap();
     std::fs::write(link.join("SKILL.md"), "old\n").unwrap();
-    let (_, new) = fetch_upgrade(name, &version(name), &home, &mirror).await;
-    let output = put_in_place(name, &new, &home).await;
+    let output = upgrade(&site, &home, name, &next(name));
     assert!(output.status.success(), "{}", text(&output));
-    assert_installed(&site, &home, name).await;
+    assert_upgraded(&home, name);
+    assert_eq!(
+        std::fs::read_link(&link).unwrap(),
+        skill_folder(&home, name)
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_upgrade_links_the_skill_for_claude_code_when_its_folder_is_new() {
     let site = StandIn::at(PUBLIC_URL).await;
-    let home = installed_home(&site).await;
-    let mirror = site.mirror.clone();
+    let home = home_with_a_newer_tag(&site).await;
     std::fs::remove_dir_all(home.join(".claude/skills")).unwrap();
     let name = "filedrawer-search";
-    let (_, new) = fetch_upgrade(name, &version(name), &home, &mirror).await;
-    let output = put_in_place(name, &new, &home).await;
+    let output = upgrade(&site, &home, name, &next(name));
     assert!(output.status.success(), "{}", text(&output));
-    assert_installed(&site, &home, name).await;
+    assert_upgraded(&home, name);
+    let link = home.join(".claude/skills").join(name);
+    assert_eq!(
+        std::fs::read_link(&link).unwrap(),
+        skill_folder(&home, name)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn in_ask_mode_an_upgrade_shows_the_changes_and_installs_nothing() {
+    let site = StandIn::at(PUBLIC_URL).await;
+    let home = home_with_a_newer_tag(&site).await;
+    std::fs::write(home.join(".config/filedrawer/upgrade"), "ask\n").unwrap();
+    let name = "filedrawer-submit";
+    let output = upgrade(&site, &home, name, &next(name));
+    let said = text(&output);
+    assert!(output.status.success(), "{said}");
+    assert_not_upgraded(&home, name);
+    assert!(
+        said.contains(&format!("+  version: \"{}\"", next(name))),
+        "{said}"
+    );
+    let script = skill_folder(&home, name).join("references/upgrade.sh");
+    for answer in ["yes", "no"] {
+        let command = format!("sh '{}' {} {answer}", script.display(), next(name));
+        assert!(said.contains(&command), "{said}");
+    }
+    assert!(said.contains("ask your human"), "{said}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn in_ask_mode_a_yes_installs_the_version() {
+    let site = StandIn::at(PUBLIC_URL).await;
+    let home = home_with_a_newer_tag(&site).await;
+    std::fs::write(home.join(".config/filedrawer/upgrade"), "ask\n").unwrap();
+    let name = "filedrawer-search";
+    let output = upgrade(&site, &home, name, &format!("{} yes", next(name)));
+    assert!(output.status.success(), "{}", text(&output));
+    assert_upgraded(&home, name);
+    assert_eq!(read(&home.join(".config/filedrawer/upgrade")), "ask\n");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn in_ask_mode_a_no_is_recorded_and_the_version_isnt_offered_again() {
+    let site = StandIn::at(PUBLIC_URL).await;
+    let home = home_with_a_newer_tag(&site).await;
+    let mode = home.join(".config/filedrawer/upgrade");
+    std::fs::write(&mode, "ask\n").unwrap();
+    let name = "filedrawer-search";
+    let output = upgrade(&site, &home, name, &format!("{} no", next(name)));
+    assert!(output.status.success(), "{}", text(&output));
+    let declined = format!("ask\ndeclined {name} {}\n", next(name));
+    assert_eq!(read(&mode), declined);
+    let output = upgrade(&site, &home, name, &next(name));
+    let said = text(&output);
+    assert!(output.status.success(), "{said}");
+    assert!(said.contains("declined"), "{said}");
+    assert!(!said.contains("ask your human"), "{said}");
+    assert_not_upgraded(&home, name);
+    assert_eq!(read(&mode), declined);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_no_is_recorded_on_a_line_of_its_own_after_a_mode_with_no_line_end() {
+    let site = StandIn::at(PUBLIC_URL).await;
+    let home = home_with_a_newer_tag(&site).await;
+    let mode = home.join(".config/filedrawer/upgrade");
+    std::fs::write(&mode, "ask").unwrap();
+    let name = "filedrawer-search";
+    let output = upgrade(&site, &home, name, &format!("{} no", next(name)));
+    assert!(output.status.success(), "{}", text(&output));
+    assert_eq!(
+        read(&mode),
+        format!("ask\ndeclined {name} {}\n", next(name))
+    );
+    let said = text(&upgrade(&site, &home, name, &next(name)));
+    assert!(!said.contains("ask your human"), "{said}");
+}
+
+/// The new folder is fetched beside the installed one, so putting it in place is a
+/// rename, which can't stop halfway as a copy from another disk can.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_upgrade_fetches_beside_the_installed_folder_not_into_the_temp_folder() {
+    let site = StandIn::at(PUBLIC_URL).await;
+    let home = home_with_a_newer_tag(&site).await;
+    let name = "filedrawer-search";
+    let script = skill_folder(&home, name).join("references/upgrade.sh");
+    let command = format!(
+        "TMPDIR=/nonexistent sh '{}' {}",
+        script.display(),
+        next(name)
+    );
+    let output = site.run(&command, &home);
+    assert!(output.status.success(), "{}", text(&output));
+    assert_upgraded(&home, name);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_upgrade_that_cant_replace_claude_codes_copy_still_says_it_upgraded() {
+    let site = StandIn::at(PUBLIC_URL).await;
+    let home = home_with_a_newer_tag(&site).await;
+    let name = "filedrawer-submit";
+    let claude_skills = home.join(".claude/skills");
+    std::fs::remove_dir_all(&claude_skills).unwrap();
+    std::fs::write(&claude_skills, "a file in the way\n").unwrap();
+    let output = upgrade(&site, &home, name, &next(name));
+    let said = text(&output);
+    assert!(output.status.success(), "{said}");
+    assert!(
+        said.contains(&format!("upgraded {name} from version")),
+        "{said}"
+    );
+    assert!(said.contains("Claude Code"), "{said}");
+    assert_upgraded(&home, name);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn in_auto_mode_a_no_is_refused_and_records_nothing() {
+    let site = StandIn::at(PUBLIC_URL).await;
+    let home = home_with_a_newer_tag(&site).await;
+    let name = "filedrawer-search";
+    let output = upgrade(&site, &home, name, &format!("{} no", next(name)));
+    assert!(!output.status.success(), "{}", text(&output));
+    assert_eq!(read(&home.join(".config/filedrawer/upgrade")), "auto\n");
+    assert_not_upgraded(&home, name);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_upgrade_to_the_version_in_place_changes_nothing() {
+    let site = StandIn::at(PUBLIC_URL).await;
+    let home = home_with_a_newer_tag(&site).await;
+    let name = "filedrawer-search";
+    let before = snapshot(&home);
+    let output = upgrade(&site, &home, name, &version(name));
+    let said = text(&output);
+    assert!(output.status.success(), "{said}");
+    assert!(said.contains("already"), "{said}");
+    assert_eq!(snapshot(&home), before);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_copy_the_installer_didnt_place_is_told_where_the_version_is() {
+    let site = StandIn::at(PUBLIC_URL).await;
+    let home = home_with_a_newer_tag(&site).await;
+    let name = "filedrawer-search";
+    let own = home.join("my-skills").join(name);
+    std::fs::create_dir_all(own.parent().unwrap()).unwrap();
+    let copied = Command::new("cp")
+        .arg("-R")
+        .arg(skill_folder(&home, name))
+        .arg(&own)
+        .status()
+        .unwrap();
+    assert!(copied.success());
+    let before = snapshot(&home);
+    let script = own.join("references/upgrade.sh");
+    let output = site.run(&format!("sh '{}' {}", script.display(), next(name)), &home);
+    let said = text(&output);
+    assert!(output.status.success(), "{said}");
+    let tag = format!(
+        "https://github.com/filedrawer-dev/filedrawer/tree/skill-{name}-v{}/skills/{name}",
+        next(name)
+    );
+    assert!(said.contains(&tag), "{said}");
+    assert_eq!(snapshot(&home), before);
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_upgrade_leaves_the_skill_to_a_session_holding_its_lock() {
     let site = StandIn::at(PUBLIC_URL).await;
-    let home = installed_home(&site).await;
-    let mirror = site.mirror.clone();
+    let home = home_with_a_newer_tag(&site).await;
     let name = "filedrawer-search";
     let lock = home.join(".agents/skills").join(format!(".{name}.lock"));
     std::fs::create_dir(&lock).unwrap();
-    write_old_copy(&home, name);
-    let (_, new) = fetch_upgrade(name, &version(name), &home, &mirror).await;
-    let output = put_in_place(name, &new, &home).await;
-    assert!(!output.status.success(), "{}", text(&output));
-    assert_eq!(installed_text(&home, name), "old\n");
+    let output = upgrade(&site, &home, name, &next(name));
+    let said = text(&output);
+    assert!(!output.status.success(), "{said}");
+    assert!(said.contains("another session is upgrading"), "{said}");
+    assert_not_upgraded(&home, name);
     assert!(lock.exists(), "the other session's lock was removed");
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_upgrade_clears_a_lock_a_dead_session_left() {
     let site = StandIn::at(PUBLIC_URL).await;
-    let home = installed_home(&site).await;
-    let mirror = site.mirror.clone();
+    let home = home_with_a_newer_tag(&site).await;
     let name = "filedrawer-search";
     let lock = home.join(".agents/skills").join(format!(".{name}.lock"));
     std::fs::create_dir(&lock).unwrap();
@@ -1390,62 +1607,78 @@ async fn an_upgrade_clears_a_lock_a_dead_session_left() {
         .status()
         .unwrap();
     assert!(aged.success());
-    let (_, new) = fetch_upgrade(name, &version(name), &home, &mirror).await;
-    let output = put_in_place(name, &new, &home).await;
+    let output = upgrade(&site, &home, name, &next(name));
     assert!(output.status.success(), "{}", text(&output));
-    assert_installed(&site, &home, name).await;
+    assert_upgraded(&home, name);
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn an_upgrade_left_unfilled_changes_nothing() {
+async fn an_upgrade_given_no_version_changes_nothing() {
     let site = StandIn::at(PUBLIC_URL).await;
-    let home = installed_home(&site).await;
-    let mirror = site.mirror.clone();
+    let home = home_with_a_newer_tag(&site).await;
     let name = "filedrawer-search";
-    let (output, _) = fetch_upgrade(name, "VERSION", &home, &mirror).await;
-    assert!(!output.status.success(), "{}", text(&output));
-    assert!(text(&output).contains("not a version"), "{}", text(&output));
-    write_old_copy(&home, name);
-    let output = put_in_place(name, Path::new("FOLDER"), &home).await;
-    assert!(!output.status.success(), "{}", text(&output));
-    assert_eq!(installed_text(&home, name), "old\n");
+    let before = snapshot(&home);
+    for args in ["", "VERSION", "<version>", "12 maybe", "99999999999"] {
+        let output = upgrade(&site, &home, name, &format!("'{args}'"));
+        let said = text(&output);
+        assert!(!output.status.success(), "{args}: {said}");
+        assert!(said.contains("changed nothing"), "{args}: {said}");
+    }
+    assert_eq!(snapshot(&home), before);
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_upgrade_names_the_url_it_couldnt_fetch() {
     let site = StandIn::at(PUBLIC_URL).await;
-    let home = installed_home(&site).await;
-    let mirror = site.mirror.clone();
-    let (output, _) = fetch_upgrade("filedrawer-search", "99", &home, &mirror).await;
-    assert!(!output.status.success(), "{}", text(&output));
-    assert!(output.stdout.is_empty(), "{}", text(&output));
-    let url = format!(
-        "couldn't fetch file://{}/refs/tags/skill-filedrawer-search-v99/skills/filedrawer-search/SKILL.md",
-        mirror.display()
-    );
-    assert!(text(&output).contains(&url), "{}", text(&output));
+    let home = home_with_a_newer_tag(&site).await;
+    let name = "filedrawer-search";
+    let before = snapshot(&home);
+    let output = upgrade(&site, &home, name, "99");
+    let said = text(&output);
+    assert!(!output.status.success(), "{said}");
+    let url =
+        format!("couldn't fetch {RAW_GITHUB}/refs/tags/skill-{name}-v99/skills/{name}/SKILL.md");
+    assert!(said.contains(&url), "{said}");
+    assert!(said.contains("changed nothing"), "{said}");
+    assert_eq!(snapshot(&home), before);
 }
 
-#[tokio::test]
-async fn an_upgrade_refuses_a_tag_that_names_a_file_outside_its_folder() {
-    let root = tempfile::tempdir().unwrap();
-    let mirror = tags_mirror(&root.path().join("mirror"), |name, file, text| {
-        let listed = "  files: \"SKILL.md references/entry-format.md references/upgrade.md\"";
-        if name == "filedrawer-search" && file == "SKILL.md" {
-            text.replace(listed, "  files: \"SKILL.md ../../escaped.md\"")
-        } else {
-            text
-        }
-    });
-    let home = root.path().join("home");
+#[tokio::test(flavor = "multi_thread")]
+async fn an_upgrade_refuses_a_tag_that_holds_another_version() {
+    let site = StandIn::at(PUBLIC_URL).await;
+    let home = home_with_a_newer_tag(&site).await;
     let name = "filedrawer-search";
-    let (output, _) = fetch_upgrade(name, &version(name), &home, &mirror).await;
-    assert!(!output.status.success(), "{}", text(&output));
+    let other = (next(name).parse::<u32>().unwrap() + 1).to_string();
+    add_tag(&site.mirror, name, &other, &files_at(name, &next(name)));
+    let output = upgrade(&site, &home, name, &other);
+    let said = text(&output);
+    assert!(!output.status.success(), "{said}");
     assert!(
-        text(&output).contains("refused path: ../../escaped.md"),
-        "{}",
-        text(&output)
+        said.contains(&format!("isn't {name} version {other}")),
+        "{said}"
     );
+    assert_not_upgraded(&home, name);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_upgrade_refuses_a_tag_that_names_a_file_outside_its_folder() {
+    let site = StandIn::at(PUBLIC_URL).await;
+    let home = home_with_a_newer_tag(&site).await;
+    let name = "filedrawer-search";
+    let listed = "  files: \"SKILL.md references/entry-format.md references/upgrade.sh\"";
+    let escaping: Vec<_> = files_at(name, &next(name))
+        .into_iter()
+        .map(|(file, text)| {
+            let text = text.replace(listed, "  files: \"SKILL.md ../../escaped.md\"");
+            (file, text)
+        })
+        .collect();
+    add_tag(&site.mirror, name, &next(name), &escaping);
+    let output = upgrade(&site, &home, name, &next(name));
+    let said = text(&output);
+    assert!(!output.status.success(), "{said}");
+    assert!(said.contains("refused path: ../../escaped.md"), "{said}");
+    assert_not_upgraded(&home, name);
 }
 
 // The submit skill's token commands.
