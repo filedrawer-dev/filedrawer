@@ -1006,3 +1006,16 @@ def test_production_only_new_sends_every_remote_script_or_exempts_it(production)
     result = rerun_production(production)
     assert result.returncode == 0, result.stdout + result.stderr
     assert_every_script_sent_or_exempt(production.host, PRODUCTION_ONLY_NEW_EXEMPT)
+
+
+@pytest.mark.parametrize("args", [["screenng"], ["--only-new", "caddy-upgrade"]])
+def test_an_argument_it_doesnt_know_is_refused_before_any_stage(stage, args):
+    """A typo once ran the whole staging setup, as a test of a stage not yet written
+    found when it hung there."""
+    result = run_wizard(
+        *args, cwd=stage.env_file.parent.parent, answers="", env=stage.host.env
+    )
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert args[-1] in result.stdout + result.stderr
+    assert "caddy-upgrades" in result.stdout + result.stderr
+    assert stage.host.calls() == []

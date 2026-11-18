@@ -942,6 +942,7 @@ production() {
 }
 
 case "${1:-}" in
+  "") ;;
   production)
     shift
     production "$@"
@@ -953,6 +954,12 @@ case "${1:-}" in
     "${1//-/_}_stage"
     finish
     return 0 ;;
+  *)
+    # A typo would otherwise run the whole staging setup.
+    warn "ops/provision-vps doesn't know '$1'. It takes, after an optional --only-new:"
+    warn "  nothing (staging's setup), production [account], or one stage alone:"
+    warn "  smoke, screening, admin, github or caddy-upgrades."
+    exit 2 ;;
 esac
 
 banner "File Drawer VPS: staging setup"
