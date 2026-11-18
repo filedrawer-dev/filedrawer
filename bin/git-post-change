@@ -5,4 +5,4 @@
 # without a .env or without sqlx (the owner's host), and never fails the git command.
 command -v python3 >/dev/null 2>&1 || exit 0
 repo=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
-python3 "$repo/bin/sqlx-refresh" --repo "$repo" --if-stale || true
+python3 "$repo/bin/sqlx-refresh" --repo "$repo" --if-stale --quiet || true

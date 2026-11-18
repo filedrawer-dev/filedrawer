@@ -1,5 +1,5 @@
 """Tests for bin/git-post-change, the post-merge, post-checkout and post-rewrite hook
-that runs `sqlx-refresh --if-stale`. It runs in a scratch repo whose hooks point at
+that runs `sqlx-refresh --if-stale --quiet`. It runs in a scratch repo whose hooks point at
 it, with a stand-in bin/sqlx-refresh that logs how it was called."""
 
 import os
@@ -49,7 +49,7 @@ def test_a_checkout_runs_sqlx_refresh_if_stale_for_the_repo(repo):
     stand_in(root, log)
     done = git(root, "checkout", "-q", "-b", "other")
     assert done.returncode == 0, done.stderr
-    assert log.read_text() == f"--repo {root} --if-stale\n"
+    assert log.read_text() == f"--repo {root} --if-stale --quiet\n"
 
 
 def test_a_refresh_that_fails_never_fails_the_git_command(repo):
