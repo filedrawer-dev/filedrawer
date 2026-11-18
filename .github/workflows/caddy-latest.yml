@@ -1,0 +1,77 @@
+# Caddy's latest release against the real-Caddy tests, daily (#100). The server takes
+# each Caddy release from Caddy's apt repository, with a guard that rolls back one that
+# breaks the sites (ops/remote/caddy-upgrade-check), so bin/caddy's pin, which the
+# tests run, follows the server rather than holding it back.
+#
+# When Caddy's latest GitHub release is newer than the pin, the `test` job downloads
+# it, checks its hashes, and runs the real-Caddy tests with it; the `report` job opens
+# an issue for that release, or comments on the open one when the verdict changed.
+# bin/caddy-latest (-h) does each step. The new Caddy runs only in `test`, which holds
+# no token that can write. A release whose tag, asset or digest isn't where it should
+# be fails the run red.
+name: Caddy latest
+
+on:
+  schedule:
+    # Daily at 09:41 UTC, off the hour's busy minute.
+    - cron: "41 9 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A manual run beside the scheduled one would open the same issue twice.
+concurrency:
+  group: caddy-latest
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      latest: ${{ steps.versions.outputs.latest }}
+      pinned: ${{ steps.versions.outputs.pinned }}
+      needed: ${{ steps.versions.outputs.needed }}
+      verdict: ${{ steps.tests.outputs.verdict }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - id: versions
+        run: bin/caddy-latest versions >> "$GITHUB_OUTPUT"
+      - if: steps.versions.outputs.needed == 'true'
+        env:
+          LATEST: ${{ steps.versions.outputs.latest }}
+        run: echo "FILEDRAWER_TEST_CADDY=$(bin/caddy-latest fetch "$LATEST" "$RUNNER_TEMP/caddy")" >> "$GITHUB_ENV"
+      - if: steps.versions.outputs.needed == 'true'
+        uses: astral-sh/setup-uv@v10.3.3
+      - id: tests
+        if: steps.versions.outputs.needed == 'true'
+        run: |
+          if bin/pytest -m real_caddy bin/tests; then verdict=passed; else verdict=failed; fi
+          echo "verdict=$verdict" >> "$GITHUB_OUTPUT"
+          [[ $verdict == passed ]]
+
+  report:
+    needs: test
+    if: always() && needs.test.outputs.needed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      LATEST: ${{ needs.test.outputs.latest }}
+      PINNED: ${{ needs.test.outputs.pinned }}
+      VERDICT: ${{ needs.test.outputs.verdict }}
+      RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - run: bin/caddy-latest report "$LATEST" "$PINNED" "$VERDICT" "$RUN"

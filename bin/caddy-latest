@@ -1,0 +1,172 @@
+#!/usr/bin/env python3
+"""Caddy's latest release against the real-Caddy tests (#100), for
+.github/workflows/caddy-latest.yml. Run it from the repo root.
+
+    bin/caddy-latest versions
+        prints latest=, pinned= and needed= lines for $GITHUB_OUTPUT: Caddy's latest
+        GitHub release, the version bin/caddy pins, and whether the latest is newer.
+        Fails on a tag that isn't vX.Y.Z or a pin it can't read.
+    bin/caddy-latest fetch VERSION DIR
+        downloads VERSION's linux_amd64 archive, checks its SHA-512 against the
+        release's checksums file and its SHA-256 against GitHub's API digest, and
+        extracts caddy into DIR, printing its path. Fails, extracting nothing, on any
+        mismatch, a missing digest or a missing asset.
+    bin/caddy-latest report LATEST PINNED VERDICT RUN_URL
+        opens the issue "Caddy LATEST is out; bin/caddy pins PINNED", saying whether
+        the real-Caddy tests passed or failed against it (VERDICT; anything else means
+        they didn't finish), and links the run. When an open issue has that title, it
+        comments only if the verdict changed; a closed one is left closed.
+
+It reaches GitHub through gh, with GH_TOKEN, and downloads with curl.
+"""
+
+import hashlib
+import json
+import re
+import subprocess
+import sys
+import tarfile
+import tempfile
+from pathlib import Path
+
+CADDY = "repos/caddyserver/caddy"
+DOWNLOADS = "https://github.com/caddyserver/caddy/releases/download"
+VERSION = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
+
+
+def fail(message: str) -> None:
+    print(f"caddy-latest: {message}", file=sys.stderr)
+    sys.exit(1)
+
+
+def gh(*args: str) -> str:
+    done = subprocess.run(["gh", *args], capture_output=True, text=True, check=False)
+    if done.returncode != 0:
+        fail(f"gh {' '.join(args[:2])} failed: {done.stderr.strip()}")
+    return done.stdout
+
+
+def key(version: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in version.split("."))
+
+
+def versions() -> None:
+    tag = json.loads(gh("api", f"{CADDY}/releases/latest")).get("tag_name", "")
+    if not (tag.startswith("v") and VERSION.match(tag[1:])):
+        fail(f"Caddy's latest release is tagged '{tag}', not vX.Y.Z")
+    latest = tag[1:]
+    found = re.search(r'^VERSION = "(.*)"$', Path("bin/caddy").read_text(), re.M)
+    if not (found and VERSION.match(found.group(1))):
+        fail("can't read the VERSION bin/caddy pins")
+    pinned = found.group(1)
+    needed = "true" if key(latest) > key(pinned) else "false"
+    print(f"latest={latest}\npinned={pinned}\nneeded={needed}")
+
+
+def download(url: str, out: Path) -> None:
+    done = subprocess.run(
+        ["curl", "-fsSL", "--retry", "3", "--retry-all-errors", "-o", str(out), url],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if done.returncode != 0:
+        fail(f"couldn't download {url}: {done.stderr.strip()}")
+
+
+def fetch(version: str, dest: Path) -> None:
+    asset = f"caddy_{version}_linux_amd64.tar.gz"
+    sums = f"caddy_{version}_checksums.txt"
+    with tempfile.TemporaryDirectory() as tmp:
+        archive, checksums = Path(tmp) / asset, Path(tmp) / sums
+        download(f"{DOWNLOADS}/v{version}/{asset}", archive)
+        download(f"{DOWNLOADS}/v{version}/{sums}", checksums)
+        data = archive.read_bytes()
+        listed = f"{hashlib.sha512(data).hexdigest()}  {asset}"
+        if listed not in checksums.read_text().splitlines():
+            fail(f"{asset}'s SHA-512 isn't the one {sums} lists")
+        release = json.loads(gh("api", f"{CADDY}/releases/tags/v{version}"))
+        digests = [
+            a.get("digest") for a in release.get("assets", []) if a.get("name") == asset
+        ]
+        if digests != [f"sha256:{hashlib.sha256(data).hexdigest()}"]:
+            fail(f"{asset}'s SHA-256 isn't GitHub's digest ({digests})")
+        with tarfile.open(archive) as tar:
+            member = tar.getmember("caddy")
+            dest.mkdir(parents=True, exist_ok=True)
+            tar.extract(member, dest, filter="data")
+    print(dest / "caddy")
+
+
+def verdict_line(latest: str, verdict: str, run: str) -> str:
+    if verdict in ("passed", "failed"):
+        return f"The real-Caddy tests {verdict} against Caddy {latest} ({run})."
+    return f"The real-Caddy tests didn't finish against Caddy {latest} ({run})."
+
+
+def report(latest: str, pinned: str, verdict: str, run: str) -> None:
+    title = f"Caddy {latest} is out; bin/caddy pins {pinned}"
+    line = verdict_line(latest, verdict, run)
+    issues = json.loads(
+        gh(
+            "issue",
+            "list",
+            "--state",
+            "all",
+            "--limit",
+            "500",
+            "--json",
+            "number,title,state",
+        )
+    )
+    same = [i for i in issues if i["title"] == title]
+    if not same:
+        body = (
+            f"{line}\n\n"
+            "The server takes Caddy's releases from Caddy's apt repository, which can lead "
+            "or lag GitHub's releases by hours, and ops/remote/caddy-upgrade-check rolls "
+            "back one that breaks the sites (#100).\n"
+            f"Bump bin/caddy to {latest} (its docstring says how), so the real-Caddy tests "
+            "run the version the server does; when they fail, the fix goes in "
+            "ops/remote/caddy.sh, in a form both versions take."
+        )
+        gh("issue", "create", "--title", title, "--body", body)
+        print(f"opened: {title}")
+        return
+    issue = same[0]
+    if issue["state"] != "OPEN":
+        print(f"#{issue['number']} is closed; leaving it.")
+        return
+    thread = json.loads(
+        gh("issue", "view", str(issue["number"]), "--json", "body,comments")
+    )
+    said = [
+        text
+        for text in [thread["body"], *(c["body"] for c in thread["comments"])]
+        if text.startswith("The real-Caddy tests ")
+    ]
+    # The verdict, without the run's link, as the last one said it.
+    if said and said[-1].split(" (", 1)[0] == line.split(" (", 1)[0]:
+        print(f"#{issue['number']} says so already.")
+        return
+    gh("issue", "comment", str(issue["number"]), "--body", line)
+    print(f"commented on #{issue['number']}: {line}")
+
+
+def main(args: list[str]) -> None:
+    match args:
+        case ["versions"]:
+            versions()
+        case ["fetch", version, dest] if VERSION.match(version):
+            fetch(version, Path(dest))
+        case ["report", latest, pinned, verdict, run]:
+            report(latest, pinned, verdict, run)
+        case ["-h" | "--help"]:
+            print(__doc__)
+        case _:
+            print(__doc__, file=sys.stderr)
+            sys.exit(2)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
