@@ -62,7 +62,7 @@ pub struct Analysis {
     /// The front matter's fields the format names.
     pub fields: Fields,
     /// Front-matter fields the format doesn't name. The server stores them.
-    pub unrecognised_fields: Vec<String>,
+    pub unrecognized_fields: Vec<String>,
     /// The body's fixed sections.
     pub sections: Sections,
     /// The Results table, or why none was read.
@@ -146,7 +146,7 @@ pub fn analyze(text: &str) -> Analysis {
     if text.len() > MAX_ENTRY_BYTES {
         refusals.push(Refusal::TooLarge { bytes: text.len() });
     }
-    let text = normalised(text);
+    let text = normalized(text);
     let Some((yaml, body)) = front_matter::split(&text) else {
         refusals.push(Refusal::FrontMatterUnreadable(
             "the entry must start with a `---` line, the YAML fields, and another `---` line"
@@ -154,7 +154,7 @@ pub fn analyze(text: &str) -> Analysis {
         ));
         return Analysis {
             fields: Fields::default(),
-            unrecognised_fields: Vec::new(),
+            unrecognized_fields: Vec::new(),
             sections: body::sections(&text),
             results: Results::NotRead("no front matter".into()),
             refusals,
@@ -197,7 +197,7 @@ pub fn analyze(text: &str) -> Analysis {
     );
     Analysis {
         fields: front.fields,
-        unrecognised_fields: front.unrecognised,
+        unrecognized_fields: front.unrecognized,
         results,
         sections,
         refusals,
@@ -225,13 +225,13 @@ pub fn is_bidi_control(c: char) -> bool {
 /// The entry's front matter and body, split as [`analyze`] splits them, or `None`
 /// when it doesn't start with front matter (entry-format.md, Front matter).
 pub fn front_matter_and_body(text: &str) -> Option<(String, String)> {
-    let text = normalised(text);
+    let text = normalized(text);
     front_matter::split(&text).map(|(yaml, body)| (yaml.to_string(), body.to_string()))
 }
 
 /// `text` without a leading byte-order mark and with `\r\n` line ends as `\n`, as
 /// the analyzer reads every entry.
-fn normalised(text: &str) -> String {
+fn normalized(text: &str) -> String {
     text.strip_prefix('\u{feff}')
         .unwrap_or(text)
         .replace("\r\n", "\n")

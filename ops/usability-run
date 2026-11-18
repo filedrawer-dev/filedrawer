@@ -213,7 +213,7 @@ def wait_seconds() -> float:
 def link_from_log(path: Path, address: str) -> str | None:
     """The newest verification link mailed to `address` in a dev server's log, which
     logs each email it can't send with its address and body."""
-    # The log colours its field names when it thinks it writes to a terminal.
+    # The log colors its field names when it thinks it writes to a terminal.
     text = re.sub(r"\x1b\[[0-9;]*m", "", path.read_text(errors="replace"))
     found = None
     for match in re.finditer(r"to=(\S+)", text):

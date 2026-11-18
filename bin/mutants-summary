@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Merge the shards' results of a cargo-mutants run and summarise them.
+"""Merge the shards' results of a cargo-mutants run and summarize them.
 
     bin/mutants-summary SHARDS OUT ALL_MUTANTS [--head SHA [--base SHA]]
                         [--in-diff PATCH]
@@ -20,7 +20,7 @@ With --head, when every mutant was tested, also writes OUT/covered: the run's ba
 the head of the newest run with it as the next daily run's base.
 
 Exit status: 0 when the shards' lists hold every mutant in ALL_MUTANTS; 1 when some
-went untested, because a shard failed, was cancelled or ran out of time (OUT and the
+went untested, because a shard failed, was canceled or ran out of time (OUT and the
 summary are written all the same); 2 for a usage error; 3 when a file can't be read
 or written.
 """
@@ -114,7 +114,7 @@ def main() -> int:
     if tested < total:
         print(
             f"mutants-summary: only {tested} of {total} mutants were tested; a shard "
-            "failed, was cancelled or ran out of time.",
+            "failed, was canceled or ran out of time.",
             file=sys.stderr,
         )
         return 1

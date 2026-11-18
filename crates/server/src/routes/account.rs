@@ -126,7 +126,7 @@ pub async fn signup(
     ip: ClientIp,
     Form(form): Form<SignupForm>,
 ) -> Result<Response, AppError> {
-    let email = accounts::normalise_email(&form.email);
+    let email = accounts::normalize_email(&form.email);
     let display_name = accounts::one_line_name(&form.display_name, 50);
     let invite = Some(form.invite.trim()).filter(|code| !code.is_empty());
     let again = |problem: &str| {
@@ -268,7 +268,7 @@ pub async fn login(
     State(state): State<AppState>,
     Form(form): Form<LoginForm>,
 ) -> Result<Response, AppError> {
-    let email = accounts::normalise_email(&form.email);
+    let email = accounts::normalize_email(&form.email);
     // Failed logins count per address, known or not; once full, even the right
     // password waits (design.md, Limits and abuse). Each attempt takes its place
     // before the password is checked, and a right one gives it back.
@@ -321,7 +321,7 @@ pub async fn reset(
     ip: ClientIp,
     Form(form): Form<ResetForm>,
 ) -> Result<Response, AppError> {
-    let email = accounts::normalise_email(&form.email);
+    let email = accounts::normalize_email(&form.email);
     // Counted whether or not the address has an account, so a limit never says.
     limits::count_email(&state, Some(&ip), &email).await?;
     if let Some(Login { account_id, .. }) = accounts::login_for_email(&state.pool, &email).await? {

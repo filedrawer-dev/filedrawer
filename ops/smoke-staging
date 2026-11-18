@@ -66,7 +66,7 @@ fails, is a failure. Its settings, neither printed:
   the key     FILEDRAWER_STAGING_KEY, else STAGING_KEY in ops/.vps.env
 (FILEDRAWER_OPS_DIR moves where it looks for those files and where eval keeps its
 run files, FILEDRAWER_FIELD_TEST_DIR where eval looks for field-test entries, and
-FILEDRAWER_SCREEN_EVAL_DIR where it looks for its labelled cases, for tests.
+FILEDRAWER_SCREEN_EVAL_DIR where it looks for its labeled cases, for tests.
 FILEDRAWER_SCREEN_WAIT_SECONDS is how long it waits for a verdict, default 120: 4
 times that for an entry citing attached code, which the screen reads in parts, and
 once more for each 10 entries of a batch, whose entries are decided together. Raise
@@ -77,7 +77,7 @@ FILEDRAWER_SKILL_TAGS_URL is where the skills' git tags are read, default
 https://raw.githubusercontent.com/filedrawer-dev/filedrawer; tests point it at a
 local folder with file://.)
 
-eval runs a labelled test set through the screen, as the screen-test account, to
+eval runs a labeled test set through the screen, as the screen-test account, to
 see whether it is too strict or too lax. By hand only. The cases are the entries
 under ops/screen-eval/<expected>/, <expected> being public, rejected or review
 (ops/screen-eval/README.md says what each tests). A case with a folder beside it,

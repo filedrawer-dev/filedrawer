@@ -140,7 +140,7 @@ def test_a_missing_shard_fails_but_still_writes_the_summary(tmp_path):
     assert result.returncode == 1
     assert result.stderr == (
         "mutants-summary: only 3 of 6 mutants were tested; a shard failed, was "
-        "cancelled or ran out of time.\n"
+        "canceled or ran out of time.\n"
     )
     assert "Tested 3 of 6 mutants." in result.stdout
     assert (tmp_path / "out/summary.md").read_text() == result.stdout

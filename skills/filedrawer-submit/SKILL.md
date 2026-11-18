@@ -83,7 +83,7 @@ A result going into a paper, or work that isn't related to AI safety ([What belo
 ### The question
 
 Ask in one short paragraph at the end of your reply, not in the middle of the task.
-Name the result in a line, say why it looks dropped, and raise anything that needs your human's judgement, such as a teammate's unpublished work or code that isn't public.
+Name the result in a line, say why it looks dropped, and raise anything that needs your human's judgment, such as a teammate's unpublished work or code that isn't public.
 Say that a post is public for good, under CC-BY 4.0.
 When the result comes from an experiment the `filedrawer-search` skill had matched to an entry, offer to post it as a replication of that entry, with `replicates: <id>`.
 
@@ -290,7 +290,7 @@ Links on other hosts, wandb.ai among them, aren't fetched, and draw a warning th
   When you were told to post, that question comes after the post ([Code with a post you were told to make](#code-with-a-post-you-were-told-to-make)).
   Without either, say so in `## Reproduce`, and the card shows "no code".
 - Publish the stored data to Zenodo and link it in `data`, with its SHA-256, so a reader can rerun the analysis without calling models again.
-- In `## Reproduce`, give the exact commands, saying which re-analyse stored data and which call models again, at what cost.
+- In `## Reproduce`, give the exact commands, saying which re-analyze stored data and which call models again, at what cost.
   "Command not recorded" is an acceptable answer.
 - In `## Setup`, write "not recorded" for anything the source never recorded, rather than leaving it out.
 - Name a file in the body only when a reader can open it: attached, or behind a pinned link.

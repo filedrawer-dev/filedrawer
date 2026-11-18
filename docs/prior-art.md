@@ -58,14 +58,14 @@ Search again before claiming that File Drawer is new.
   They are unstructured notes found only by keyword.
 - Tags.
   [Research Agendas](https://www.lesswrong.com/w/research-agendas) (275 posts by the tag's count) holds plans, not results.
-  [Postmortems & Retrospectives](https://www.lesswrong.com/w/postmortems-and-retrospectives) (234) is mostly about programs and organisations, not experiments.
+  [Postmortems & Retrospectives](https://www.lesswrong.com/w/postmortems-and-retrospectives) (234) is mostly about programs and organizations, not experiments.
   [Experiments](https://www.lesswrong.com/w/experiments) (89) mixes AI and other topics.
   Program tags collect some project write-ups: [MATS Program](https://www.lesswrong.com/w/mats-program) 398, AI Safety Camp 121, Apart Research 58, SPAR Program 3.
   Tags group posts by topic or program, never by outcome.
 
 ### Labs' notes series
 
-Each of these is one organisation's prose, chosen by its staff.
+Each of these is one organization's prose, chosen by its staff.
 None takes outside submissions or has outcome labels.
 Counts are from each series' index on 2026-11-04.
 
@@ -132,7 +132,7 @@ Counts are from each series' index on 2026-11-04.
   The Hugging Face copy was last updated in November 2023, though its scraper still runs.
   Published writing, with no outcome labels.
 - [AISafety.com](https://aisafety.com/llms.txt) and [grantmaking.ai](https://grantmaking.aisafety.com/llms.txt) have llms.txt files, and grantmaking.ai has a JSON API over 1,883 projects.
-  They are directories of organisations, people and funding, not results.
+  They are directories of organizations, people and funding, not results.
 
 ## Built for agents, outside AI safety
 
@@ -176,7 +176,7 @@ Counts are from each series' index on 2026-11-04.
   224 replication reports, 6 of them titled `[¬Re]` or `[¬Rp]` to mark a failed replication.
   Readable as one bib file or through Zenodo's API.
   A precedent for a machine-readable "failed" marker.
-- [Journal of Trial and Error](https://journal.trialanderror.org) (129 articles, readable through Crossref), PLOS ONE's [Missing Pieces](https://collections.plos.org/collection/missing-pieces/) collection (41 articles, the latest from 2021), [F1000Research](https://f1000research.com) (accepts nulls without labelling them; Solr API) and [ResearchEquals](https://www.researchequals.com) (350 modules; OpenAPI).
+- [Journal of Trial and Error](https://journal.trialanderror.org) (129 articles, readable through Crossref), PLOS ONE's [Missing Pieces](https://collections.plos.org/collection/missing-pieces/) collection (41 articles, the latest from 2021), [F1000Research](https://f1000research.com) (accepts nulls without labeling them; Solr API) and [ResearchEquals](https://www.researchequals.com) (350 modules; OpenAPI).
   Journals and publishers written for people.
 - Zenodo, OSF and Figshare have no community or collection for negative results that I could find.
   On Zenodo about 1,200 records carry a keyword such as "negative results" or "null result".
@@ -205,7 +205,7 @@ Martin Monperrus keeps a [list](https://www.monperrus.net/martin/preprint-server
   Proposes a community platform for results that fit outside a paper: negative results, reproductions, partial results and "minor yet useful results which are not enough for a paper".
   I found no sign that it was built.
 - Jason Fantl, [Autonomous researchers will strain peer review, funding, and oversight](https://www.lesswrong.com/posts/WgroAK7N3jAfBBpct/autonomous-researchers-will-strain-peer-review-funding-and), LessWrong, 2026-10-21.
-  Expects AI researchers to worsen the file drawer problem, and calls for a metascience organisation for AI safety to build new publishing infrastructure.
+  Expects AI researchers to worsen the file drawer problem, and calls for a metascience organization for AI safety to build new publishing infrastructure.
   Builds nothing.
 
 ## Venues for people

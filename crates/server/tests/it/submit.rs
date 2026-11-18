@@ -54,7 +54,7 @@ async fn a_valid_entry_is_held_and_the_response_shows_its_card() {
 }
 
 #[tokio::test]
-async fn a_submission_without_a_valid_token_is_unauthorised() {
+async fn a_submission_without_a_valid_token_is_unauthorized() {
     let app = test_app().await;
     let none = app.post_as("/entries", None, entry("T", "")).await;
     assert_eq!(none.status, StatusCode::UNAUTHORIZED);

@@ -109,7 +109,7 @@ _existing() {
 ask() {
   local key="$1" prompt="$2" current input s=$'\001' e=$'\002' p rc=0
   current=$(_existing "$key" || true)
-  # Readline needs the colour codes wrapped in \001..\002 to place the cursor.
+  # Readline needs the color codes wrapped in \001..\002 to place the cursor.
   p="  $s$BOLD$e$prompt$s$RESET$e "
   [[ -n "$current" ]] && p+="$s$DIM${e}[Enter keeps current]$s$RESET$e "
   read -e -r -p "$p" input || rc=1
@@ -533,7 +533,7 @@ wait_to_resolve() {
         printf '\n'
         warn "$name resolves to $elsewhere, not $VPS_HOST. If that is a"
         warn "Cloudflare address, the record is proxied: click its orange cloud to make it"
-        warn "grey ('DNS only'). Still waiting..."
+        warn "gray ('DNS only'). Still waiting..."
         hinted=yes
       fi
       sleep 15
@@ -601,7 +601,7 @@ production_dns_stage() {
   (( ONLY_NEW )) && records=("${waiting[@]}")
   if (( ${#records[@]} > 0 )); then
     say "In Cloudflare's DNS for filedrawer.dev, add these records if they aren't there,"
-    say "each set to 'DNS only' (the grey cloud), not 'Proxied' (design.md, Hosting and"
+    say "each set to 'DNS only' (the gray cloud), not 'Proxied' (design.md, Hosting and"
     say "operations):"
     open_url "https://dash.cloudflare.com/"
     for name in "${records[@]}"; do
@@ -933,7 +933,7 @@ else
 fi
 if (( ${#records[@]} > 0 )); then
   say "In Cloudflare's DNS for filedrawer.dev, add these records, each set to"
-  say "'DNS only' (the grey cloud), not 'Proxied' (design.md, Hosting and operations):"
+  say "'DNS only' (the gray cloud), not 'Proxied' (design.md, Hosting and operations):"
   open_url "https://dash.cloudflare.com/"
   for name in "${records[@]}"; do
     step "$name  A     $VPS_HOST"

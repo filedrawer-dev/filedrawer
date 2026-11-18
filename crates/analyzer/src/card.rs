@@ -172,11 +172,11 @@ fn one_line(text: &str) -> String {
     spaced.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// A known value's words, or "unrecognised <field>", or `absent` when it's missing.
+/// A known value's words, or "unrecognized <field>", or `absent` when it's missing.
 fn label<T: Vocabulary>(value: &Choice<T>, absent: &str, words: fn(T) -> &'static str) -> String {
     match value {
         Choice::Known(known) => words(*known).to_string(),
-        Choice::Unrecognised(_) => format!("unrecognised {}", T::FIELD),
+        Choice::Unrecognized(_) => format!("unrecognized {}", T::FIELD),
         Choice::Absent => absent.to_string(),
     }
 }
@@ -227,7 +227,7 @@ fn followed_up(fields: &Fields) -> Vec<Part> {
     let counts = format!("; {}: ", counts.join(", "));
     match Reference::parse(first) {
         Some(reference) => vec![server(counts), author(reference.key())],
-        None => vec![server(format!("{counts}unrecognised reference"))],
+        None => vec![server(format!("{counts}unrecognized reference"))],
     }
 }
 
@@ -312,13 +312,13 @@ fn labels(analysis: &Analysis) -> Vec<Part> {
         None => "no positive control reported".to_string(),
         Some(control)
             if [
-                matches!(control.outcome, Choice::Unrecognised(_)),
-                matches!(control.checks, Choice::Unrecognised(_)),
-                matches!(control.source, Choice::Unrecognised(_)),
+                matches!(control.outcome, Choice::Unrecognized(_)),
+                matches!(control.checks, Choice::Unrecognized(_)),
+                matches!(control.source, Choice::Unrecognized(_)),
             ]
             .contains(&true) =>
         {
-            "unrecognised positive_control".to_string()
+            "unrecognized positive_control".to_string()
         }
         Some(control) => {
             let checks = label(&control.checks, "positive control", |checks| match checks {
@@ -373,7 +373,7 @@ fn labels(analysis: &Analysis) -> Vec<Part> {
     let mut parts = vec![server(format!("{control}; {prediction}"))];
     if let Some(smallest) = &analysis.fields.smallest_effect_of_interest {
         let set = match &smallest.set {
-            Choice::Unrecognised(_) => "unrecognised S set".to_string(),
+            Choice::Unrecognized(_) => "unrecognized S set".to_string(),
             set => label(set, "set when not stated", |set| match set {
                 SetWhen::BeforeRun => "set before run",
                 SetWhen::AfterRun => "set after run",
@@ -541,7 +541,7 @@ fn flags(analysis: &Analysis, context: &CardContext) -> Vec<Part> {
         None if unlisted() => parts.push(server("; pin not verified")),
         None => {}
     }
-    if fields.data.is_empty() && reanalyses_stored_data(analysis) {
+    if fields.data.is_empty() && reanalyzes_stored_data(analysis) {
         parts.push(server("; no data"));
     }
     if let Some(paper) = &fields.published_in {
@@ -570,8 +570,8 @@ fn flags(analysis: &Analysis, context: &CardContext) -> Vec<Part> {
     parts
 }
 
-/// Whether `## Reproduce` says it re-analyses stored data.
-fn reanalyses_stored_data(analysis: &Analysis) -> bool {
+/// Whether `## Reproduce` says it re-analyzes stored data.
+fn reanalyzes_stored_data(analysis: &Analysis) -> bool {
     analysis.sections.reproduce.as_deref().is_some_and(|text| {
         let text = text.to_lowercase();
         text.contains("re-analy") || text.contains("reanaly")

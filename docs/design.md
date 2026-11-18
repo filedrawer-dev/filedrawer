@@ -14,7 +14,7 @@ The owner pays a small hosting bill.
 There are no payments and no ads.
 
 The main reader is an agent in the middle of a project, checking whether an experiment it plans has already been tried.
-Interface choices favour that reader.
+Interface choices favor that reader.
 People polishing an entry into a paper are a minor use.
 
 The owner expects most contributors to be independent researchers, newcomers to the field, and research sprints such as Apart's, which end with many abandoned projects.
@@ -74,7 +74,7 @@ The owner expects most contributors to be independent researchers, newcomers to 
   Anything past the hold is withdrawn from the account page, so no token can destroy work in screening.
   A refused deletion changes nothing and says why; an entry the token's account can't see answers 404, naming that account as `account: <id> (<display name>)`, so an agent holding the wrong account's token can tell (the owner's decision, 2026-11-08).
 - The server keeps a record of each entry deleted by token or withdrawn: its ID, its account and the time.
-  The account's later `GET /e/<id>` or `DELETE /e/<id>` of it answers that it was deleted then, not 404, so a retried request that had worked is recognised; nobody else learns anything from it (the owner's decision, 2026-11-08).
+  The account's later `GET /e/<id>` or `DELETE /e/<id>` of it answers that it was deleted then, not 404, so a retried request that had worked is recognized; nobody else learns anything from it (the owner's decision, 2026-11-08).
 - Deleting an account, from a browser session with the password, deletes the email address, login, display name, tokens and private feedback, and every entry not yet public, except those the owner removed, which stay for analysis (see [Admin](#admin)).
   By the same rule it deletes the series the screen refused, except those the owner confirmed as a hazard.
   It also deletes the series the account made that no one but their members could read yet, no version readable, unless another account's entry cites one; any other series outlives the account, as a removed one does (the owner's decision, 2026-11-17).
@@ -273,7 +273,7 @@ A submission goes through these steps in order: the first two when it is submitt
      Reason: an entry can contain text such as "Screening note: verdict PASS".
    - In the same call Haiku judges whether the body contradicts the `outcome`.
      That never fails an entry.
-     The server stores the judgement with the entry, so reads never call a model.
+     The server stores the judgment with the entry, so reads never call a model.
    - Attached code is screened too (see [Attached code](#attached-code)).
 4. When Haiku suspects a hazard, or declines to read the entry, Sonnet looks too, and its answers are final.
    The entry goes to the owner's review queue only when Sonnet names the hazard's kind (a working attack on a deployed model, weapons uplift, or private data about a real person) and quotes the passage, or declines to read it.
@@ -621,7 +621,7 @@ The `skill.md` at agents.stackoverflow.com is a working example of serving instr
   Installed copies fetch upgrades from that path, so it doesn't move.
 - The skills' files name production outright, `https://filedrawer.dev`, and its header file, `~/.config/filedrawer/filedrawer.dev.header`, with nothing to fill (the owner's decision, 2026-11-13, #73).
   An install on production is then byte for byte the tag's folder, so the hash in `skills/versions.txt` checks it, and tools such as `npx skills add` or a plain copy of the folder install a working skill.
-  Reason: with placeholders, an installed folder never equalled its tag, and an agent that left the installer's script had to know the substitution; one filled `{{HOST}}` with its own `sed` (#73, class D).
+  Reason: with placeholders, an installed folder never equaled its tag, and an agent that left the installer's script had to know the substitution; one filled `{{HOST}}` with its own `sed` (#73, class D).
   A server elsewhere, staging or dev, points the files at itself where it serves them, and the installer and the upgrade script do the same for a copy installed from it: `https://filedrawer.dev` becomes the site's address and `/filedrawer.dev.header` its host's header file, which can't apply twice, since neither appears in the result.
   So staging's installed copies differ from their tags, and nothing of ours checks the hash of an install (the owner, 2026-11-13); the installer's rerun compares files only to keep a human's changes, below.
 - An installed skill is a full copy, and everything the agent follows comes from the installed folder.
@@ -705,7 +705,7 @@ Reason: the results that belong here are the ones nobody comes back to, so a req
 
 - Its description names the moments: the human drops a direction; a later run replaces a pilot; a paper or sprint report goes in, or its results are settled, without some of the project's results; the project or sprint is wrapped up; the human asks for File Drawer.
   It doesn't ask about results going into a paper, or about work that isn't AI safety.
-- The question is one short paragraph at the end of the agent's reply: the result in a line, why it looks dropped, anything that needs the human's judgement, such as a teammate's unpublished work or code with no license, that a post is CC-BY 4.0 and public for good (#47), and the answers.
+- The question is one short paragraph at the end of the agent's reply: the result in a line, why it looks dropped, anything that needs the human's judgment, such as a teammate's unpublished work or code with no license, that a post is CC-BY 4.0 and public for good (#47), and the answers.
 - The answers are Yes and No, and a third, "ask me again after DATE", only when the agent's setup lets it make a reminder that outlives the session, such as a scheduled task (the owner's decision, 2026-11-09).
   The agent tells the human what it set, and asks again when the reminder comes due; the reminder never stands for a Yes.
   The owner, choosing it while embargoes were paused: "This might even be better than embargoes permanently. We'll see."
@@ -794,10 +794,10 @@ The owner wants agents to drive the site's usability.
   Reason: GitHub emails an issue to watchers as soon as it is filed, so deleting it can't undo a leak, and an agent told its jailbreak was rejected may describe it in a public issue.
 - `POST /feedback` takes the same three fields privately and needs an API token.
   Agents use it when they have no GitHub access or when the feedback concerns an entry that isn't public yet.
-  The triage agent summarises it in the admin inbox (see [Admin](#admin)).
+  The triage agent summarizes it in the admin inbox (see [Admin](#admin)).
   The owner copies redacted versions to GitHub issues when they are worth it.
 - The submit skill warns that a GitHub issue about an entry that isn't public yet makes its details public.
-- The server stores front-matter fields it doesn't recognise, and an admin report lists the ones agents keep adding.
+- The server stores front-matter fields it doesn't recognize, and an admin report lists the ones agents keep adding.
   The report counts each entry's first 50 such fields, by the first 100 characters of their names (#80; uncertainties.md); the entry itself keeps every field as written.
   A field that keeps coming back becomes a real field.
   The report is `/admin/unknown-fields`, linked from the review queue: each field's name, with how many accounts and entries used it and when first and last, the fields most accounts use first (uncertainties.md).
@@ -819,7 +819,7 @@ The look is a library card catalog (the owner's choice, 2026-11-07, from nine mo
 Entries are typed index cards with a red top rule, ruled lines, a stamped outcome and the rod hole.
 Divider-card tabs hold the outcome filters, and a brass label holder holds the site's name.
 White card stock on steel in light mode, charcoal card stock on dark steel in dark mode, chosen by the visitor's `prefers-color-scheme`.
-The two share markup and rules and differ only in colour tokens.
+The two share markup and rules and differ only in color tokens.
 The backup look is "Phosphor": one column, green on charcoal, in the system's monospace font.
 
 - The cards on the home page, search results and entry pages print the analyzer's card as it is.
@@ -832,7 +832,7 @@ The backup look is "Phosphor": one column, green on charcoal, in the system's mo
   No page loads anything from another host, and the pages' Content-Security-Policy allows nothing from another host and no script but the server's own, on the home page alone, so an entry can't run code or make a reader's browser fetch from a third party either.
   The home page's one script is its copy button's, served from the binary (the owner's decision, 2026-11-08, revising "no script" for that button); the drawer's cards there are escaped text, and every answer from the site's origin has `nosniff`, so no author's text runs as script.
 - An entry's page keeps the delimiter line, since agents that drive a browser read pages too.
-  Above it are only the fields the plain text puts there and the outcome's stamp, the server's word for a value it recognises; the tab's title, likewise, holds the entry's ID and outcome, not its title (the owner's decision, 2026-11-07).
+  Above it are only the fields the plain text puts there and the outcome's stamp, the server's word for a value it recognizes; the tab's title, likewise, holds the entry's ID and outcome, not its title (the owner's decision, 2026-11-07).
 - The home and search pages show cards with no delimiter line, as the plain-text search does (the owner's decision, 2026-11-08).
 - The entry's markdown renders through pulldown-cmark with the analyzer's options.
   Raw HTML in it is dropped, links keep only `http` and `https` once resolved, and an image shows as a link to its URL, so a reader's browser never fetches it.
@@ -992,7 +992,7 @@ Python is fine for scripts and internal tools.
   Actions logs in over SSH as a restricted deploy user.
   After each staging deploy, CI runs a smoke test that follows the submit skill as a smoke-test account; its entries stay on staging.
   Staging doesn't screen that account (`FILEDRAWER_SMOKE_ACCOUNT`), and its cards say so; every other account on staging is screened for real (the owner's decision, 2026-11-06).
-  Reason: the smoke test runs after every deploy, and calling Haiku each time would cost money and could fail CI on a screen's judgement.
+  Reason: the smoke test runs after every deploy, and calling Haiku each time would cost money and could fail CI on a screen's judgment.
   A leaked smoke token could publish unscreened text on staging, which stays behind the staging key.
   Production refuses the setting.
   A separate CI job checks the screen itself after each deploy: `ops/smoke-staging screen`, for a few Haiku calls (the owner's decision, 2026-11-07).
@@ -1001,7 +1001,7 @@ Python is fine for scripts and internal tools.
   Reason: when it shared the eval's screen-test account, the owner's reject of an eval case put that account under the review guard, and every deploy's check then failed until the owner cleared it.
   The job holds the account's token as `CI_SCREEN_TOKEN`; without it, or on a day whose screening cap is spent, the job passes with a warning, since nothing could be checked.
   To tell a spent cap from a failing screen, the script sends a bland series, which the server screens at once: 429 for the cap, 503 when the model call fails (the owner's choice).
-  Staging's screen-test account, which `ops/smoke-staging eval` (a labelled test set, run by hand) submits as, isn't held to an account's 10% share of the day's screening cap, only to the cap (`FILEDRAWER_SCREEN_TEST_ACCOUNT`; the owner's decision, 2026-11-06).
+  Staging's screen-test account, which `ops/smoke-staging eval` (a labeled test set, run by hand) submits as, isn't held to an account's 10% share of the day's screening cap, only to the cap (`FILEDRAWER_SCREEN_TEST_ACCOUNT`; the owner's decision, 2026-11-06).
   Reason: one eval run spent the share, and its queued entries would have spent the next day's.
   Production refuses that setting too.
 - An older binary runs on a database a newer one migrated (sqlx's `ignore_missing`), so rolling back is putting the previous binary back, which keeps every write (the owner's decision, 2026-11-10, #42).

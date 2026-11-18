@@ -149,9 +149,9 @@ def test_a_series_made_says_the_case_was_slow_and_prints_no_key(screen):
     assert TOKEN not in result.stdout + result.stderr
 
 
-# The expected statuses of the labelled eval cases these tests send (plain_cases),
+# The expected statuses of the labeled eval cases these tests send (plain_cases),
 # in the order eval sends them.
-LABELLED = [
+LABELED = [
     expected
     for expected in ("public", "rejected", "review")
     for case in sorted((REPO / "ops/screen-eval" / expected).glob("*.md"))
@@ -165,7 +165,7 @@ UPLOADS_SPENT = (
 
 
 def plain_cases(tmp_path: Path) -> str:
-    """A copy of eval's labelled cases without the ones that attach files, whose
+    """A copy of eval's labeled cases without the ones that attach files, whose
     uploads and verdicts the replies these tests script leave out."""
     cases = tmp_path / "screen-eval"
     for case in sorted((REPO / "ops/screen-eval").glob("*/*.md")):
@@ -231,7 +231,7 @@ def eval_run(tmp_path):
 
 def test_a_refused_attachment_set_is_a_failure_reported_again_on_resume(eval_run):
     refused = (422, "refused:\n- file made-up.py isn't UTF-8 text\n")
-    result = eval_run(LABELLED, SPENT, refused)
+    result = eval_run(LABELED, SPENT, refused)
     failure = "FAIL a field-test entry's attachment set was refused (422)"
     assert failure in result.stdout, result.stdout
     assert "1 refused at submission" in result.stdout
@@ -241,13 +241,13 @@ def test_a_refused_attachment_set_is_a_failure_reported_again_on_resume(eval_run
         if line.startswith("run file: ")
     )
     again = eval_run(
-        LABELLED, SPENT, refused, ("--resume", run_file), eval_run.servers[-1]
+        LABELED, SPENT, refused, ("--resume", run_file), eval_run.servers[-1]
     )
     assert failure in again.stdout, again.stdout
     assert "made-up.py" not in result.stdout + again.stdout
 
 
-def test_a_labelled_cases_refused_files_are_a_failure_reported_again_on_resume(
+def test_a_labeled_cases_refused_files_are_a_failure_reported_again_on_resume(
     tmp_path,
 ):
     cases = tmp_path / "cases"
@@ -301,7 +301,7 @@ def test_a_labelled_cases_refused_files_are_a_failure_reported_again_on_resume(
 
 
 def test_uploads_spent_for_the_day_stop_the_run_for_a_resume(eval_run):
-    result = eval_run(LABELLED, SPENT, UPLOADS_SPENT)
+    result = eval_run(LABELED, SPENT, UPLOADS_SPENT)
     assert result.returncode == 1, result.stdout
     assert (
         "POST /attachments answered 429: this account has uploaded its 10000000 bytes"
@@ -324,7 +324,7 @@ def test_uploads_spent_for_the_day_stop_the_run_for_a_resume(eval_run):
 def test_an_upload_the_server_fails_stops_the_run_rather_than_skip_the_entry(
     eval_run,
 ):
-    result = eval_run(LABELLED, SPENT, (503, "the server is restarting\n"))
+    result = eval_run(LABELED, SPENT, (503, "the server is restarting\n"))
     assert result.returncode == 1, result.stdout
     assert "POST /attachments answered 503" in result.stdout
     assert "passed over" not in result.stdout
@@ -340,7 +340,7 @@ def test_an_upload_the_server_fails_stops_the_run_rather_than_skip_the_entry(
 def test_an_undecided_entry_with_attachments_is_most_likely_slow(eval_run):
     series_made = (201, f"id: s-1\nstatus: public\nkey: {JOIN_KEY}\n")
     uploaded = (201, "id: as-1\nbytes: 17\n")
-    result = eval_run([*LABELLED, "screening"], series_made, uploaded)
+    result = eval_run([*LABELED, "screening"], series_made, uploaded)
     assert "WAIT public field-test-1" in result.stdout
     # Attached code is screened in parts, which takes minutes; the cap's half for
     # attachments is the rarer cause, and only /staging/status can tell.
@@ -399,7 +399,7 @@ SERIES_MADE = (201, f"id: s-1\nversion: 1\nkey: {JOIN_KEY}\n")
 
 def test_a_member_in_review_holds_its_batch_without_stopping_the_run(families_run):
     result, _ = families_run(
-        ["--families"], [*LABELLED, "review", "screening"], SERIES_MADE
+        ["--families"], [*LABELED, "review", "screening"], SERIES_MADE
     )
     assert "FAIL public field-test-1" in result.stdout, result.stdout
     assert "got review" in result.stdout
@@ -416,7 +416,7 @@ def test_a_series_the_screen_held_back_isnt_sent_again_on_resume(families_run):
         422,
         "refused:\n- the screen held this series back for the archive's owner; don't send it again reworded\n",
     )
-    result, server = families_run(["--families"], [*LABELLED, "public", "public"], held)
+    result, server = families_run(["--families"], [*LABELED, "public", "public"], held)
     assert "FAIL series series-1: 422" in result.stdout, result.stdout
     assert "PASS public field-test-2" in result.stdout
     run_file = next(
@@ -425,7 +425,7 @@ def test_a_series_the_screen_held_back_isnt_sent_again_on_resume(families_run):
         if line.startswith("run file: ")
     )
     again, _ = families_run(
-        ["--resume", run_file], [*LABELLED, "public", "public"], held, server
+        ["--resume", run_file], [*LABELED, "public", "public"], held, server
     )
     assert "PASS public field-test-2" in again.stdout, again.stdout
     assert "FAIL series" not in again.stdout
@@ -463,7 +463,7 @@ def test_a_sample_takes_entries_with_a_bom_or_windows_line_ends_and_nothing_else
     (family / "crlf.md").write_bytes(b"---\r\ntitle: made-up\r\n---\r\nmade up\r\n")
     (family / "FINDINGS.md").write_text("made-up notes\n")
     (family / "series-demo.md").write_text("---\ntitle: made-up\n---\nmade up\n")
-    server = fake_server([*LABELLED, "public", "public"], SPENT)
+    server = fake_server([*LABELED, "public", "public"], SPENT)
     try:
         env = {
             "PATH": os.environ["PATH"],
@@ -486,7 +486,7 @@ def test_a_sample_takes_entries_with_a_bom_or_windows_line_ends_and_nothing_else
         server.shutdown()
     assert "PASS public field-test-2" in result.stdout, result.stdout
     assert "field-test-3" not in result.stdout
-    assert server.posts.count("/entries") == len(LABELLED) + 2, server.posts
+    assert server.posts.count("/entries") == len(LABELED) + 2, server.posts
 
 
 def test_an_entry_whose_status_comes_back_empty_doesnt_break_the_decoding_tally(
@@ -498,7 +498,7 @@ def test_an_entry_whose_status_comes_back_empty_doesnt_break_the_decoding_tally(
         '#!/bin/sh\nfor f; do echo "$f: 1 part, 10 bytes hidden"; done\n'
     )
     uploaded = (201, "id: as-1\nbytes: 17\n")
-    result = eval_run([*LABELLED, ""], SPENT, uploaded)
+    result = eval_run([*LABELED, ""], SPENT, uploaded)
     assert "bad array subscript" not in result.stderr, result.stderr
     assert (
         "citing a set that hides text or passes a limit: 1 (public 0, rejected 0, review 0, undecided 1)"
@@ -513,7 +513,7 @@ def test_a_family_whose_entries_cant_be_read_is_a_failure_not_a_silent_gap(
     family.mkdir(parents=True)
     (family / "good.md").write_text("---\ntitle: made-up\n---\nmade up\n")
     (family / "bad.md").write_bytes(b"---\ntitle: made-up \xff\n---\nmade up\n")
-    server = fake_server([*LABELLED, "public"], SPENT)
+    server = fake_server([*LABELED, "public"], SPENT)
     try:
         env = {
             "PATH": os.environ["PATH"],

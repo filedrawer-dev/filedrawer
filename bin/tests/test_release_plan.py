@@ -32,9 +32,9 @@ with (state / "log").open("a") as log:
 registries = json.loads((state / "registries.json").read_text())
 
 
-def pack(folder, name, version, normalised):
+def pack(folder, name, version, normalized):
     """A .crate as cargo packs one: the files under NAME-VERSION/, Cargo.toml
-    normalised and the original kept as Cargo.toml.orig."""
+    normalized and the original kept as Cargo.toml.orig."""
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
         def add(path, data):
@@ -45,7 +45,7 @@ def pack(folder, name, version, normalised):
             if file.is_file():
                 rel = file.relative_to(folder).as_posix()
                 add("Cargo.toml.orig" if rel == "Cargo.toml" else rel, file.read_bytes())
-        add("Cargo.toml", normalised.encode())
+        add("Cargo.toml", normalized.encode())
         add(".cargo_vcs_info.json", b'{"git": {"sha1": "x"}}')
     return buffer.getvalue()
 
@@ -94,9 +94,9 @@ if tool == "cargo":
     version = re.search(r'^version = "(.*)"$', (folder / "Cargo.toml").read_text(), re.M).group(1)
     target = Path("target/package")
     target.mkdir(parents=True, exist_ok=True)
-    normalised = os.environ.get("FAKE_NORMALISED", "# normalised by this cargo\n")
+    normalized = os.environ.get("FAKE_NORMALIZED", "# normalized by this cargo\n")
     (target / f"filedrawer-analyzer-{version}.crate").write_bytes(
-        pack(folder, "filedrawer-analyzer", version, normalised)
+        pack(folder, "filedrawer-analyzer", version, normalized)
     )
     sys.exit(0)
 
@@ -183,7 +183,7 @@ class Box:
 
     def publish_analyzer_as_it_is(self, version: str) -> None:
         """Puts the repo's analyzer on the fake static.crates.io at VERSION, as an
-        older cargo would have normalised it, its manifest at VERSION."""
+        older cargo would have normalized it, its manifest at VERSION."""
         manifest = self.repo / "crates/analyzer/Cargo.toml"
         current = manifest.read_text()
         self.set_analyzer(version)
@@ -197,7 +197,7 @@ class Box:
                 "--allow-dirty",
             ],
             cwd=self.repo,
-            env={**self.env, "FAKE_NORMALISED": "# normalised by an older cargo\n"},
+            env={**self.env, "FAKE_NORMALIZED": "# normalized by an older cargo\n"},
             check=True,
         )
         assert done.returncode == 0
@@ -331,12 +331,12 @@ def test_a_new_file_counts_as_a_change(tmp_path):
     assert "src/extra.rs" in done.stdout
 
 
-def test_cargos_own_normalised_manifest_is_no_change(tmp_path):
+def test_cargos_own_normalized_manifest_is_no_change(tmp_path):
     """A newer cargo writes Cargo.toml differently; Cargo.toml.orig is what's compared."""
     box = Box(tmp_path)
     box.released("0.1.0")
     assert (
-        outputs(box.plan(FAKE_NORMALISED="# normalised by a newer cargo\n"))[
+        outputs(box.plan(FAKE_NORMALIZED="# normalized by a newer cargo\n"))[
             "crates_cli"
         ]
         == "true"

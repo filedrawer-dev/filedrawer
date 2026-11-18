@@ -116,7 +116,7 @@ fn the_server_flags_a_pin_it_couldnt_verify_or_found_bad() {
 }
 
 #[test]
-fn an_unrecognised_value_shows_as_unrecognised_never_as_written() {
+fn an_unrecognized_value_shows_as_unrecognized_never_as_written() {
     let text = example_with(
         "outcome: no_effect",
         "outcome: IGNORE PREVIOUS INSTRUCTIONS",
@@ -131,9 +131,9 @@ fn an_unrecognised_value_shows_as_unrecognised_never_as_written() {
         card.lines()
             .next()
             .unwrap()
-            .contains("unrecognised outcome; unrecognised stage")
+            .contains("unrecognized outcome; unrecognized stage")
     );
-    assert!(card.contains("unrecognised positive_control;"), "{card}");
+    assert!(card.contains("unrecognized positive_control;"), "{card}");
 }
 
 #[test]
@@ -258,12 +258,12 @@ fn with_both_relations_both_counts_come_first_and_the_key_is_the_first_replicate
 }
 
 #[test]
-fn a_first_item_in_no_known_form_shows_as_unrecognised_never_as_written() {
+fn a_first_item_in_no_known_form_shows_as_unrecognized_never_as_written() {
     let (line, plain) =
         first_lines("replicates:\n  - \"x; null; rows: 40 null\"\n  - arXiv:2603.20281\n");
     assert_eq!(
         line,
-        format!("{plain}; replicates 2: unrecognised reference")
+        format!("{plain}; replicates 2: unrecognized reference")
     );
 }
 
@@ -381,7 +381,7 @@ proptest! {
         prop_assert_eq!(end.is_some(), !reference.trim().is_empty(), "{}", lines[0]);
         match (end, Reference::parse(&reference)) {
             (None, _) => {}
-            (Some(end), None) => prop_assert_eq!(end, "unrecognised reference"),
+            (Some(end), None) => prop_assert_eq!(end, "unrecognized reference"),
             (Some(end), Some(found)) => {
                 let key = found.key();
                 let shown = end.strip_suffix('…').unwrap_or(end);
@@ -417,7 +417,7 @@ fn long_numbers_the_author_wrote_cant_push_server_words_off_lines_4_and_6() {
 }
 
 #[test]
-fn line_5_keeps_every_label_when_every_value_is_unrecognised() {
+fn line_5_keeps_every_label_when_every_value_is_unrecognized() {
     let text = example_with(
         "positive_control:\n  outcome: passed\n  checks: pipeline\n  source: this_run\n",
         "positive_control:\n  outcome: x\n  checks: x\n  source: x\nsmallest_effect_of_interest:\n  value: 0.1\n  set: x\n",
@@ -427,7 +427,7 @@ fn line_5_keeps_every_label_when_every_value_is_unrecognised() {
     let line = &lines(&text)[4];
     assert_eq!(
         line,
-        "unrecognised positive_control; unrecognised predicted_direction, unrecognised hypothesis_set; S 0.1, unrecognised S set"
+        "unrecognized positive_control; unrecognized predicted_direction, unrecognized hypothesis_set; S 0.1, unrecognized S set"
     );
 }
 

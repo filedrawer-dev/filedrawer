@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 const FIRST_WAIT: Duration = Duration::from_secs(60);
 const LONGEST_WAIT: Duration = Duration::from_secs(60 * 60);
 
-/// The longest `Retry-After` the server honours: a day.
+/// The longest `Retry-After` the server honors: a day.
 const LONGEST_RETRY_AFTER_SECS: u64 = 24 * 60 * 60;
 
 #[derive(Default)]

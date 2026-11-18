@@ -154,7 +154,7 @@ fn doi_reference(doi: &str) -> Option<Reference> {
 
 /// A web page: arXiv's and doi.org's read as their paper, File Drawer's entry pages
 /// as their entry, and any other `http` or `https` page, those hosts' other pages
-/// included, by its normalised URL.
+/// included, by its normalized URL.
 fn page_reference(text: &str) -> Option<Reference> {
     if text.chars().any(char::is_whitespace) {
         return None;

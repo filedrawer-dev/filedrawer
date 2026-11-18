@@ -67,7 +67,7 @@ The field test's entries and logs are in `field-test/`, git-excluded and local o
   A template can't reach a field from inside a macro call, so `matches!(file.state, ...)` fails to compile; give the type a method instead.
 - `crates/server/legal`: the text of `/terms` and `/privacy`, one markdown file each, which a browser gets rendered and an agent gets as it is.
 - `crates/server/static`: the pages' one stylesheet, the home page's one script (its copy button), and the Courier Prime fonts, with their license, compiled into the binary.
-  Colours are tokens on `:root`, light by default and dark under `prefers-color-scheme: dark`; a change of look changes the tokens, not the rules.
+  Colors are tokens on `:root`, light by default and dark under `prefers-color-scheme: dark`; a change of look changes the tokens, not the rules.
 - `bin/live-preview` (`-h`): a live preview of the home page for drafting its text, as the owner does by hand, at http://localhost:8090 once the port is published from the host.
   It renders `GET /` from `base.html` and `home.html` on disk on each request, around the entries of a dev server it builds and seeds, serves `site.css` and `copy.js` from disk, and reloads the page when any of the four changes; other pages' markup is the dev server's, as built.
   It also serves `/skill.md`, `/install.sh` and the skills' files from the checkout, as plain text, filled in by its own copy of the server's rules, which a test in `crates/server/tests/it/skill.rs` holds to the server's (#71).
@@ -79,7 +79,7 @@ The field test's entries and logs are in `field-test/`, git-excluded and local o
   Then run `bin/skills sync`, which also follows a change to `docs/entry-format.md`: it copies the format into each skill and records each version in `skills/versions.txt`, bumping past every version origin's tags or origin/main already hold; a test refuses a skill changed without it.
   Commits and landings run `bin/skills sync --check`, which fetches origin's tags first and refuses a version tagged with other contents; so does a push to main, through the pre-push hook (`bin/git-pre-push`).
   CI's `release-skills` job tags each new version before staging deploys, with a deploy key `ops/protect-skill-tags` sets up (`-h`).
-- `ops/smoke-staging` follows the submit skill against staging as an agent would, and checks that each skill's tag holds what the site serves; `screen` checks staging's real screen and `eval` its labelled cases (`ops/screen-eval/`); `read` runs only the checks that write nothing, which `ops/deploy-production` runs against production.
+- `ops/smoke-staging` follows the submit skill against staging as an agent would, and checks that each skill's tag holds what the site serves; `screen` checks staging's real screen and `eval` its labeled cases (`ops/screen-eval/`); `read` runs only the checks that write nothing, which `ops/deploy-production` runs against production.
   CI runs the first two after each deploy, each as a test account of its own.
   Read its `-h` before running it, or changing staging's test accounts, their settings or CI's deploy checks: it holds the accounts, the secrets and the settings each mode reads.
 - `ops/usability-run` (`-h`) runs one scripted usability run of the skills on staging, an agent's own TUI driven through llm-toolbox's `drive-agent`, as a fresh staging account it deletes at the end, or several at once with `batch`; `report RUN_DIR...` sums up each run in at most 15 lines, with keys and tokens blanked, so read it before any transcript; `ops/remove-entries` takes down, as the owner, the entries a run left public.
@@ -108,7 +108,7 @@ Query once per value instead, or join a real table.
 ## Docs
 
 - `docs/design.md`: every settled decision with its reason, plus open questions and rejected alternatives.
-  Read it before you change behaviour.
+  Read it before you change behavior.
   Reviving a rejected alternative needs the owner's agreement.
 - `docs/entry-format.md`: the fields, `outcome`, the Results table and the card.
   Read it before you touch submission, the analyzer, cards or the skills.

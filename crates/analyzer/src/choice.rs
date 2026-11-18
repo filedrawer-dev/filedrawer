@@ -1,7 +1,7 @@
 //! Fields whose values the format names (docs/entry-format.md, Fields).
 
 /// A field whose values the format names. A value the server doesn't know is kept,
-/// but the card shows it only as "unrecognised <field>" (entry-format.md, The card).
+/// but the card shows it only as "unrecognized <field>" (entry-format.md, The card).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Choice<T> {
     /// No value: the entry leaves the field out or empty, or gives it a list or
@@ -11,7 +11,7 @@ pub enum Choice<T> {
     /// One of the values the format names.
     Known(T),
     /// A value the format doesn't name, as written.
-    Unrecognised(String),
+    Unrecognized(String),
 }
 
 impl<T: Copy> Choice<T> {

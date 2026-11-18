@@ -10,15 +10,15 @@ use crate::fields::{DataItem, Fields, Model, PositiveControl, SmallestEffect, Wr
 use crate::references::{MAX_REFERENCES, Reference};
 use crate::report::{Refusal, Warning, WarningKind};
 
-/// The front matter's fields, the names it didn't recognise, and what it found wrong.
+/// The front matter's fields, the names it didn't recognize, and what it found wrong.
 pub(crate) struct FrontMatter {
     pub fields: Fields,
-    pub unrecognised: Vec<String>,
+    pub unrecognized: Vec<String>,
     pub refusals: Vec<Refusal>,
     pub warnings: Vec<Warning>,
 }
 
-/// Splits `text` (newlines already normalised) at the closing `---` line. Returns the
+/// Splits `text` (newlines already normalized) at the closing `---` line. Returns the
 /// YAML and the body, or `None` when the entry doesn't start with front matter.
 pub(crate) fn split(text: &str) -> Option<(&str, &str)> {
     let rest = text.strip_prefix("---\n")?;
@@ -180,7 +180,7 @@ fn load(yaml: &str) -> Result<yaml_rust2::yaml::Hash, String> {
 #[derive(Default)]
 struct Reader {
     fields: Fields,
-    unrecognised: Vec<String>,
+    unrecognized: Vec<String>,
     refusals: Vec<Refusal>,
     warnings: Vec<Warning>,
 }
@@ -189,7 +189,7 @@ impl Reader {
     fn finish(self) -> FrontMatter {
         FrontMatter {
             fields: self.fields,
-            unrecognised: self.unrecognised,
+            unrecognized: self.unrecognized,
             refusals: self.refusals,
             warnings: self.warnings,
         }
@@ -298,9 +298,9 @@ impl Reader {
                 format!("the server removed `{reserved}`; the `fd_` prefix is reserved for its own fields"),
             ),
             other => {
-                self.unrecognised.push(other.to_string());
+                self.unrecognized.push(other.to_string());
                 self.warn(
-                    WarningKind::UnrecognisedField,
+                    WarningKind::UnrecognizedField,
                     format!("`{other}` is not a field the server knows; it is stored as written"),
                 );
             }
@@ -420,10 +420,10 @@ impl Reader {
             Some(known) => Choice::Known(known),
             None => {
                 self.warn(
-                    WarningKind::UnrecognisedValue,
+                    WarningKind::UnrecognizedValue,
                     format!("`{}: {text}` is not a value the server knows", T::FIELD),
                 );
-                Choice::Unrecognised(text)
+                Choice::Unrecognized(text)
             }
         }
     }

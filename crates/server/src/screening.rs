@@ -351,7 +351,7 @@ pub struct Screening {
 
 /// What a model answers about one item.
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Judgement {
+struct Judgment {
     on_topic: Opinion,
     spam: Opinion,
     hazard: Hazard,
@@ -377,7 +377,7 @@ enum Opinion {
     Unsure,
 }
 
-fn judgement(answer: &Value) -> Result<Judgement, ModelError> {
+fn judgment(answer: &Value) -> Result<Judgment, ModelError> {
     let yes_no_unsure = |name: &str| match answer[name].as_str() {
         Some("yes") => Ok(Opinion::Yes),
         Some("no") => Ok(Opinion::No),
@@ -404,7 +404,7 @@ fn judgement(answer: &Value) -> Result<Judgement, ModelError> {
         .filter_map(Value::as_str)
         .map(str::to_string)
         .collect();
-    Ok(Judgement {
+    Ok(Judgment {
         on_topic: yes_no_unsure("on_topic")?,
         spam: yes_no_unsure("spam")?,
         hazard,
@@ -522,14 +522,14 @@ async fn screen_with(client: &dyn ModelClient, text: &str, subject: Subject) -> 
         user: wrapped(text),
         schema: schema(),
     };
-    let mut ask = async |model| -> Result<Option<Judgement>, ModelError> {
+    let mut ask = async |model| -> Result<Option<Judgment>, ModelError> {
         let reply = client.call(&request(model)).await?;
         calls.push(Call {
             model,
             usage: reply.usage,
         });
         match reply.answer {
-            Answer::Json(answer) => judgement(&answer).map(Some),
+            Answer::Json(answer) => judgment(&answer).map(Some),
             Answer::Refused => Ok(None),
             Answer::Unreadable(why) => Err(ModelError::Unreadable(why)),
         }
@@ -556,11 +556,7 @@ async fn screen_with(client: &dyn ModelClient, text: &str, subject: Subject) -> 
 /// hazard. Sonnet's answers are final when it looked. Only a likely hazard with its
 /// category and a quote goes to review; a lesser doubt passes, kept for the owner.
 /// Only a plain "not AI safety" or "spam" fails an entry.
-fn decide(
-    haiku: Option<Judgement>,
-    sonnet: Option<Option<Judgement>>,
-    subject: Subject,
-) -> Verdict {
+fn decide(haiku: Option<Judgment>, sonnet: Option<Option<Judgment>>, subject: Subject) -> Verdict {
     let note = haiku.as_ref().and_then(|first| first.outcome_doubt.clone());
     // Sonnet, when it looked, has the last word; a decline is never a pass.
     let final_answer = match sonnet {

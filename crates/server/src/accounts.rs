@@ -28,7 +28,7 @@ impl Purpose {
 }
 
 /// Emails are compared trimmed and lower-cased.
-pub fn normalise_email(email: &str) -> String {
+pub fn normalize_email(email: &str) -> String {
     email.trim().to_lowercase()
 }
 

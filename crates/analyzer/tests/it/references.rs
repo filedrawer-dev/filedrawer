@@ -144,7 +144,7 @@ fn an_entry_is_named_by_its_id_its_url_or_a_slug() {
 }
 
 #[test]
-fn any_other_web_page_is_keyed_by_its_normalised_url() {
+fn any_other_web_page_is_keyed_by_its_normalized_url() {
     for written in [
         "https://www.lesswrong.com/posts/abc/title",
         "HTTPS://LessWrong.com/posts/abc/title/",

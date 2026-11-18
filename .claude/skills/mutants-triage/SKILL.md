@@ -60,7 +60,7 @@ Read the code at each candidate's lines at the run's commit (`git show SHA:path`
 4. Validation and messages.
 
 Pass over:
-- a mutant that changes no behaviour (an equivalent mutant), or only text in a log or a `Display`;
+- a mutant that changes no behavior (an equivalent mutant), or only text in a log or a `Display`;
 - a timeout, since a loop a mutant makes endless is caught in effect;
 - code an open worktree or branch is changing, which its own tests may cover soon: `git -C TREE diff --stat main -- PATH` for each tree `git worktree list` names, and `gh pr list --repo filedrawer-dev/filedrawer` for branches.
 
@@ -69,7 +69,7 @@ Done when you hold at most 3 gaps, each with the mutants that show it and one se
 
 ## 5. File each gap
 
-One issue each, titled `Tests: <the behaviour>`, holding:
+One issue each, titled `Tests: <the behavior>`, holding:
 - the run's link and commit;
 - the surviving mutants, as `missed.txt` prints them;
 - what a wrong line would let through;

@@ -361,7 +361,7 @@ fn row(
     row
 }
 
-/// The row's claim, or the unrecognised cell text. An empty primary cell takes the
+/// The row's claim, or the unrecognized cell text. An empty primary cell takes the
 /// entry's outcome unless that is `mixed`.
 fn claim(
     cell: &str,

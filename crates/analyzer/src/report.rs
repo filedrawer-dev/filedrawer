@@ -121,9 +121,9 @@ pub enum WarningKind {
     /// `replicates` or `reanalyzes` past [`crate::MAX_REFERENCES`] items.
     TooManyReferences,
     /// A value the format doesn't name, for a field whose values it does.
-    UnrecognisedValue,
+    UnrecognizedValue,
     /// A field the format doesn't name; the server keeps it.
-    UnrecognisedField,
+    UnrecognizedField,
     /// A field the server removes, such as `label` or one starting `fd_`.
     StrippedField,
     /// A field of the wrong shape, such as a list where one value belongs.

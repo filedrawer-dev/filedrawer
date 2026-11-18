@@ -380,7 +380,7 @@ async fn write_derived(
         let Some(name) = &model.name else { continue };
         let role = match &model.role {
             Choice::Absent => None,
-            role => Some(role.known().map_or("unrecognised", Role::name)),
+            role => Some(role.known().map_or("unrecognized", Role::name)),
         };
         sqlx::query!(
             "INSERT INTO entry_models (entry_seq, name, role) VALUES (?, ?, ?)",
@@ -430,7 +430,7 @@ async fn write_derived(
         .execute(&mut *transaction)
         .await?;
     }
-    for name in analysis.unrecognised_fields.iter().take(MAX_UNKNOWN_FIELDS) {
+    for name in analysis.unrecognized_fields.iter().take(MAX_UNKNOWN_FIELDS) {
         let name: String = name.chars().take(MAX_UNKNOWN_FIELD_CHARS).collect();
         sqlx::query!(
             "INSERT INTO entry_unknown_fields (entry_seq, name) VALUES (?, ?)",

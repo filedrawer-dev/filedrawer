@@ -152,20 +152,20 @@ fn an_unknown_outcome_is_kept_and_warned_not_refused() {
     assert_eq!(analysis.refusals, vec![]);
     assert_eq!(
         analysis.fields.outcome,
-        Choice::Unrecognised("null-ish".into())
+        Choice::Unrecognized("null-ish".into())
     );
     assert_eq!(
         warning_kinds(&example_with("outcome: no_effect", "outcome: null-ish")),
-        vec![WarningKind::UnrecognisedValue]
+        vec![WarningKind::UnrecognizedValue]
     );
 }
 
 #[test]
 fn unknown_values_in_nested_fields_are_warned() {
     let text = example_with("checks: pipeline", "checks: judge");
-    assert_eq!(warning_kinds(&text), vec![WarningKind::UnrecognisedValue]);
+    assert_eq!(warning_kinds(&text), vec![WarningKind::UnrecognizedValue]);
     let text = example_with("role: subject", "role: seller");
-    assert_eq!(warning_kinds(&text), vec![WarningKind::UnrecognisedValue]);
+    assert_eq!(warning_kinds(&text), vec![WarningKind::UnrecognizedValue]);
 }
 
 #[test]
@@ -300,7 +300,7 @@ fn published_in_must_be_a_doi_or_arxiv_id() {
 fn label_and_fd_fields_are_stripped_with_a_warning() {
     let text = entry("label: supported null\nfd_status: public\n", "");
     let analysis = analyze(&text);
-    assert_eq!(analysis.unrecognised_fields, Vec::<String>::new());
+    assert_eq!(analysis.unrecognized_fields, Vec::<String>::new());
     assert_eq!(
         warning_kinds(&text),
         vec![WarningKind::StrippedField, WarningKind::StrippedField]
@@ -310,8 +310,8 @@ fn label_and_fd_fields_are_stripped_with_a_warning() {
 #[test]
 fn unknown_fields_are_listed_and_warned() {
     let text = entry("compute: 3 GPU hours\n", "");
-    assert_eq!(analyze(&text).unrecognised_fields, vec!["compute"]);
-    assert_eq!(warning_kinds(&text), vec![WarningKind::UnrecognisedField]);
+    assert_eq!(analyze(&text).unrecognized_fields, vec!["compute"]);
+    assert_eq!(warning_kinds(&text), vec![WarningKind::UnrecognizedField]);
 }
 
 #[test]
@@ -483,7 +483,7 @@ fn reproduce_code_that_fetches_a_script_at_a_branch_is_refused() {
 }
 
 #[test]
-fn stored_text_strips_label_and_fd_fields_and_keeps_their_neighbours() {
+fn stored_text_strips_label_and_fd_fields_and_keeps_their_neighbors() {
     let text = "---\ntitle: T\nlabel: supported null\nfd_status: public\nfd_flags:\n  - verified\n  - safe\nhypothesis: H\n---\n\n## Setup\n\nlabel: stays in the body\n";
     assert_eq!(
         filedrawer_analyzer::stored_text(text),
@@ -579,7 +579,7 @@ proptest::proptest! {
             !analysis.warnings.iter().any(|w| w.kind == WarningKind::StrippedField),
             "{}", stored
         );
-        let mut unknown = analysis.unrecognised_fields.clone();
+        let mut unknown = analysis.unrecognized_fields.clone();
         unknown.sort();
         kept.sort();
         let missing: Vec<&String> = kept.iter().filter(|k| !unknown.contains(k)).collect();
@@ -607,7 +607,7 @@ fn attachments_names_the_attachment_set_an_entry_cites() {
         "tags: [steering, refusal, transfer]\nattachments: as-0123abcd",
     ));
     assert_eq!(analysis.fields.attachments.as_deref(), Some("as-0123abcd"));
-    assert_eq!(analysis.unrecognised_fields, Vec::<String>::new());
+    assert_eq!(analysis.unrecognized_fields, Vec::<String>::new());
     assert_eq!(analyze(EXAMPLE).fields.attachments, None);
 }
 

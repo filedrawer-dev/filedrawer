@@ -34,7 +34,7 @@ Add a new entry at the end of the topic it belongs to, or start a topic when non
 
 #### The "no data" flag
 
-- Options: flag "no data" when `data` is empty and `## Reproduce` mentions re-analysing ("re-analy", "reanaly"), or never flag it until the server has a structured way to tell.
+- Options: flag "no data" when `data` is empty and `## Reproduce` mentions re-analyzing ("re-analy", "reanaly"), or never flag it until the server has a structured way to tell.
 - Chosen: the keyword test.
 - Against: keywords miss "recompute from the stored transcripts" and catch "no re-analysis possible".
 
@@ -89,7 +89,7 @@ Add a new entry at the end of the topic it belongs to, or start a topic when non
 
 - Options: store `experiment`, as entry-format.md says a missing `kind` means, or store nothing.
 - Chosen: `experiment`, so `/search?kind=experiment` finds entries that left it out.
-- Against: an unrecognised `kind` is stored as nothing, and a reader can't tell it from the default.
+- Against: an unrecognized `kind` is stored as nothing, and a reader can't tell it from the default.
 
 ### Search
 
@@ -371,13 +371,13 @@ The owner set 10 an hour and 50 a day per account (#60); an agent chose the rest
   A part that isn't the human's to publish, such as a teammate's unpublished work or personal data, is left out and named, and when the entry can't stand without it the agent saves the draft and posts nothing.
   A set the agent has to work out ("everything from this weekend I didn't use") is drafted and listed, and nothing is posted until the human names which, since they haven't seen which results it covers; "post the drafts" names its set, and the agent lists them and posts.
   With no token, the agent ends on the draft's path, the signup link and the token command, and posts once the human says the token is set.
-- Against: each stop is a judgement an agent can stretch into asking again, which round 3 showed Claude Code doing with a code question.
+- Against: each stop is a judgment an agent can stretch into asking again, which round 3 showed Claude Code doing with a code question.
 
 #### Who ends the hold early
 
 - Options: the agent publishes a pending entry when it is sure of it, as design.md's rejected "publishing clean submissions at once" allows ("An agent that is sure calls `POST /e/<id>/publish`"); or only when its human, or the prompt that started the run, asks for it to publish now.
 - Chosen: only when asked, in the skill's "After submitting" and step 4 (#94).
-  Since 2026-11-17 an agent told to post submits without a second question, and the hold is the human's one chance to pull the entry; an agent that ends it by its own judgement takes that away.
+  Since 2026-11-17 an agent told to post submits without a second question, and the hold is the human's one chance to pull the entry; an agent that ends it by its own judgment takes that away.
 - Against: a human who says "post it" a second time may mean now, and waits up to an hour; the agent's one-line reply tells them "publish now" does it.
 
 #### When code counts as public, for a told-to-post
@@ -575,7 +575,7 @@ The owner settled the email's sections and the rules in design.md's Admin sectio
 
 - Options, for #80: cap the fields the report counts per entry in the analyzer, with a warning past the cap, or where the server stores them, saying nothing; refuse an entry past the cap, or accept it.
 - Chosen: the server stores an entry's first 50 unknown field names, each cut to 100 characters, and the reply is as before, a warning for every unknown field.
-  The entry's text keeps every field, so the cap changes nothing its author can see, and a misspelt field past the 50th still gets its warning.
+  The entry's text keeps every field, so the cap changes nothing its author can see, and a misspelled field past the 50th still gets its warning.
 - Against: a field past an entry's 50th never reaches the report, and two long names that share their first 100 characters count as one.
 
 ### Storage

@@ -27,7 +27,7 @@ pub fn page(status: StatusCode, template: &impl Template) -> Response {
     }
 }
 
-/// The outcome stamped on a card: its word, and the class that colours it.
+/// The outcome stamped on a card: its word, and the class that colors it.
 #[derive(Debug, Clone, Copy)]
 pub struct Stamp {
     pub word: &'static str,
@@ -42,7 +42,7 @@ impl Stamp {
                 class: outcome.card_word(),
             },
             None => Stamp {
-                word: "unrecognised",
+                word: "unrecognized",
                 class: "unknown",
             },
         }

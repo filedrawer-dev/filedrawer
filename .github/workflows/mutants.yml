@@ -203,7 +203,7 @@ jobs:
 
   summary:
     needs: [setup, shard]
-    # Also after a failed or cancelled shard, to keep the other shards' results.
+    # Also after a failed or canceled shard, to keep the other shards' results.
     if: always() && needs.setup.result == 'success' && needs.setup.outputs.mutants != '0'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -220,7 +220,7 @@ jobs:
           pattern: mutants-shard-*
           path: shards
       # bin/mutants-summary fails the step when fewer mutants were tested than the
-      # setup job listed, as when a shard failed, was cancelled or ran out of time.
+      # setup job listed, as when a shard failed, was canceled or ran out of time.
       # It writes the lists and the summary all the same, and `covered` only when
       # every mutant was tested.
       - name: Merge the shards' lists
@@ -248,5 +248,5 @@ jobs:
       - name: Fail when a shard failed
         if: always() && needs.shard.result != 'success'
         run: |
-          echo "::error::A shard failed, was cancelled or ran out of time."
+          echo "::error::A shard failed, was canceled or ran out of time."
           exit 1

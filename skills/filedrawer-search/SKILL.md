@@ -31,7 +31,7 @@ Don't search for work that isn't AI safety, and say nothing about File Drawer th
 
 Check for a new version of this skill, as [Upgrades](#upgrades) says.
 
-Fetch every URL in this skill with `curl`, which returns the page as the server wrote it; a fetch tool that summarises pages drops the lines that matter.
+Fetch every URL in this skill with `curl`, which returns the page as the server wrote it; a fetch tool that summarizes pages drops the lines that matter.
 Each command names this skill and your agent, as [Your agent's name](#your-agents-name) says, and sends the header file `~/.config/filedrawer/filedrawer.dev.header` when it exists, as here:
 
 ```sh

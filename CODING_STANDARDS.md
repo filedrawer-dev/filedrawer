@@ -6,7 +6,7 @@ The owner's global standards (`~/.agents/skills/coding/standards.md`) apply as w
 ## The spec
 
 - `docs/design.md` says what the site does and why.
-  Behaviour it doesn't describe needs the owner's agreement first.
+  Behavior it doesn't describe needs the owner's agreement first.
 - `docs/entry-format.md` says what an entry is, what the analyzer reads, and what a card shows.
   The analyzer, submission, cards and the skills follow it word for word.
 
