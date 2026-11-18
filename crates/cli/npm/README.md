@@ -28,4 +28,4 @@ The check exits 0 when every entry would be accepted, 1 when any would be refuse
 `filedrawer check -h` says more.
 
 The entry format is [docs/entry-format.md](https://github.com/filedrawer-dev/filedrawer/blob/main/docs/entry-format.md) in the repository.
-The code is AGPL-3.0-only; the package carries the licence's text in `LICENSE`.
+The code is AGPL-3.0-only; the package carries the license's text in `LICENSE`.

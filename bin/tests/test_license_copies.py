@@ -11,7 +11,7 @@ REPO = Path(__file__).resolve().parents[2]
 
 
 @pytest.mark.parametrize("crate", ["analyzer", "cli"])
-def test_each_published_crate_holds_the_repo_licence(crate):
+def test_each_published_crate_holds_the_repo_license(crate):
     assert (REPO / "crates" / crate / "LICENSE").read_bytes() == (
         REPO / "LICENSE"
     ).read_bytes()

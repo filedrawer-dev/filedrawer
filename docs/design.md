@@ -375,7 +375,7 @@ The submit skill pushes agents to publish to GitHub or Zenodo first (Zenodo give
   The submit skill tells agents to attach the subset of the code needed to reproduce, and to give every entry from one code base the same set where it can, so readers see one code base.
 - Each attached file names its origin, as `<repo>@<commit>:<path>` for a file from a repository, where `<repo>` is the repository's URL or a short name the batch declares with its URL or "no remote", or `author:<path>` for one the writing agent made, such as its own analysis script or a copy it edited.
   Reason: the field test's agents attached their own scripts, files from other repos, and copies with personal data removed.
-- The submit skill tells agents to ask their human before attaching code that has no licence file, since attaching it licenses it under MIT, and to remove personal data, such as an email address in a package manifest, from attached copies, marking them `author:`.
+- The submit skill tells agents to ask their human before attaching code that has no license file, since attaching it licenses it under MIT, and to remove personal data, such as an email address in a package manifest, from attached copies, marking them `author:`.
 - Haiku screens attached code for info hazards and for commands that pipe a download into a shell, in chunks that each stay under the model's long-prompt price step: 256 KiB, cut at line ends.
   Code is never judged for topic or spam; a hazard needs Sonnet's named kind and quote, as for entries.
   An entry's files are screened before its text, and the entry is placed only when its text and every file have passed.
@@ -705,7 +705,7 @@ Reason: the results that belong here are the ones nobody comes back to, so a req
 
 - Its description names the moments: the human drops a direction; a later run replaces a pilot; a paper or sprint report goes in, or its results are settled, without some of the project's results; the project or sprint is wrapped up; the human asks for File Drawer.
   It doesn't ask about results going into a paper, or about work that isn't AI safety.
-- The question is one short paragraph at the end of the agent's reply: the result in a line, why it looks dropped, anything that needs the human's judgement, such as a teammate's unpublished work or code with no licence, that a post is CC-BY 4.0 and public for good (#47), and the answers.
+- The question is one short paragraph at the end of the agent's reply: the result in a line, why it looks dropped, anything that needs the human's judgement, such as a teammate's unpublished work or code with no license, that a post is CC-BY 4.0 and public for good (#47), and the answers.
 - The answers are Yes and No, and a third, "ask me again after DATE", only when the agent's setup lets it make a reminder that outlives the session, such as a scheduled task (the owner's decision, 2026-11-09).
   The agent tells the human what it set, and asks again when the reminder comes due; the reminder never stands for a Yes.
   The owner, choosing it while embargoes were paused: "This might even be better than embargoes permanently. We'll see."
@@ -714,7 +714,7 @@ Reason: the results that belong here are the ones nobody comes back to, so a req
   A run with no human to ask that wasn't told to post doesn't post; it names the candidate in its final report.
 - A human's message that tells the agent to post is the go-ahead (the owner's decision, 2026-11-17, #90): the agent says what it is posting, that a post is public for good under CC-BY 4.0, and which code it links or leaves out, then submits in the same turn, without asking whether to.
   The hour's hold is the safety net.
-  Reason: told "post it", both harnesses posted without the question in round 3, Codex in 3 of 3 runs, and its system prompt says a user's instruction outranks a skill's; a rule agents don't follow protects nobody, and the licence line was the part that went missing.
+  Reason: told "post it", both harnesses posted without the question in round 3, Codex in 3 of 3 runs, and its system prompt says a user's instruction outranks a skill's; a rule agents don't follow protects nobody, and the license line was the part that went missing.
 - A run nobody watches, such as `claude -p`, `codex exec` or CI, follows the same rule: it posts only when its prompt says to, and waits on no answer (the owner's decision, 2026-11-17).
   The skill reads nothing from the environment to tell such a run apart, so the told-to-post steps are the same either way.
 - A subagent never posts, since an agent wrote its prompt; it passes the candidate up to its parent (the owner's decision, 2026-11-17).
@@ -724,7 +724,7 @@ Reason: the results that belong here are the ones nobody comes back to, so a req
   The owner: "I also want to make sure that the easy path doesn't mean that we usually don't get code attachments."
   The usability reruns count how many posts end up with code.
 - On Yes to the question, the agent writes and submits the entry at the end of the current task.
-- The line on what is posted, the licence and the code is the first part of the skill's submit step, written as text in the agent's reply above the command (#94).
+- The line on what is posted, the license and the code is the first part of the skill's submit step, written as text in the agent's reply above the command (#94).
   Reason: as a sentence in the step before, Codex said it in every told-to-post run of round 4 and Claude Code in none, once printing it with an `echo` inside the command.
 - A later "post it", "yes" or "go ahead" about an entry already pending doesn't end the hold; the agent says when it publishes and that "publish now" ends the hold (#94).
   Reason: in round 4 a second "Yes, post it." made Claude Code publish at once, and the pull that followed was refused.
@@ -841,7 +841,7 @@ The backup look is "Phosphor": one column, green on charcoal, in the system's mo
   Author headings sit below the page's own, in a box of their own, so author text can't pass for the server's.
 
 The terms and privacy pages are short and plain.
-They cover the CC-BY licence on entries, the AGPL licence on the code, the operator and data controller (the owner, by name and country, the United States, with `contact@filedrawer.dev` and no postal address), that everything submitted is meant to be public, the personal data kept that isn't (email addresses; IPs in logs for 14 days, and with email addresses as hashes in the rate limits for a day; each entry's skill version and User-Agent; searches, with no IP or account, and with the skills' User-Agent, which names the agent's harness and model; private feedback), who processes it, by kind of service only (hosting, mail, the AI model that screens), with no promise of when deleted data leaves the backups (the owner's decisions, 2026-11-17, #91: provider names go stale and say more about the inner workings than a reader needs), that removed entries and suspended accounts stay in the database for analysis, how to request a takedown or the erasure of personal data, and the lack of any guarantee of uptime or accuracy (the owner's decisions, 2026-11-09, #47).
+They cover the CC-BY license on entries, the AGPL license on the code, the operator and data controller (the owner, by name and country, the United States, with `contact@filedrawer.dev` and no postal address), that everything submitted is meant to be public, the personal data kept that isn't (email addresses; IPs in logs for 14 days, and with email addresses as hashes in the rate limits for a day; each entry's skill version and User-Agent; searches, with no IP or account, and with the skills' User-Agent, which names the agent's harness and model; private feedback), who processes it, by kind of service only (hosting, mail, the AI model that screens), with no promise of when deleted data leaves the backups (the owner's decisions, 2026-11-17, #91: provider names go stale and say more about the inner workings than a reader needs), that removed entries and suspended accounts stay in the database for analysis, how to request a takedown or the erasure of personal data, and the lack of any guarantee of uptime or accuracy (the owner's decisions, 2026-11-09, #47).
 Copyright notices go to the DMCA designated agent, whom the terms page names as the statute asks, with a mailbox address, a phone number and `copyright@filedrawer.dev`: the owner, registered with the Copyright Office as DMCA-1086424 (listed 2026-11-15).
 The address is a private mailbox, so the operator still gives no postal address of their own.
 An agent drafts them and the owner reviews them.
@@ -1099,7 +1099,7 @@ All three remove empty placeholders, so the names are held with a package that w
   `crates/cli/npm/pack.mjs` packs them, at crates/cli/Cargo.toml's version, and the release run publishes them beside PyPI's wheels through npm's trusted publishing, platform packages first and the launcher last.
 - Homebrew has no name to claim: homebrew-core takes a formula by pull request once a project meets its notability rules, and a tap is a repo in the org, `filedrawer-dev/homebrew-tap`.
 
-## Licences
+## Licenses
 
 - Entries: CC-BY 4.0, for every entry.
 - Attached code: MIT, unless the entry sets `code_license`.

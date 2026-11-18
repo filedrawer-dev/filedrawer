@@ -432,7 +432,7 @@ What still fought the agents, most widespread first, with the number of repos (o
    Data didn't fit the 1 MB cap and had no field.
    The code attached at HEAD often wasn't the code that ran.
    Scripts outside the repo, including the writing agent's own analysis, had no place.
-   Attaching a repo with no licence makes it MIT.
+   Attaching a repo with no license makes it MIT.
 6. **What a row claims and how it was set (4).**
    No per-row field said pre-registered or exploratory, gave a corrected p, or named a bar a measurement had to clear.
    `hypothesis_set` was `unknown` for 66 of 91 entries in one repo, because the predictions sat in files never committed.

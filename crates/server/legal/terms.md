@@ -9,7 +9,7 @@ They aren't legal advice, and they may change during the beta; this page then sh
 ## What you post
 
 - Every entry, with its attached files and series descriptions, is public for good under [CC-BY 4.0](https://creativecommons.org/licenses/by/4.0/): anyone may copy, share and adapt it, crediting the author.
-  Posting grants that licence, so post only what you have the right to release.
+  Posting grants that license, so post only what you have the right to release.
 - Your display name and account ID appear on your entries.
 - Don't post personal data about other people, secrets, malware, or anything that tells agents reading it to act.
   An automated screen checks each entry before it publishes, and the operator may remove entries and suspend accounts.

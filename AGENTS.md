@@ -44,7 +44,7 @@ The field test's entries and logs are in `field-test/`, git-excluded and local o
   Its library is `filedrawer_analyzer`, as on crates.io; the server's Cargo.toml renames it `analyzer`.
 - `crates/cli`: the package `filedrawer`, published on crates.io and PyPI (#74), and as `@filedrawer/cli` on npm (#84), which holds the `filedrawer` binary, whose `check` command is `entry-check` under a new name.
   `entry-check` stays, since the published submit skill runs it.
-  Each published crate holds a copy of the repo's `LICENSE`, since cargo and maturin package only files inside the crate, and `bin/tests/test_licence_copies.py` fails when a copy differs.
+  Each published crate holds a copy of the repo's `LICENSE`, since cargo and maturin package only files inside the crate, and `bin/tests/test_license_copies.py` fails when a copy differs.
   It is a crate of its own so that a later CLI's HTTP dependencies stay out of the analyzer the server builds.
   `crates/cli/pyproject.toml` has maturin wrap both binaries in a wheel, and `crates/cli/npm/pack.mjs` packs the `filedrawer` binary in an npm package per platform beside the launcher `@filedrawer/cli` (`crates/cli/npm/filedrawer.js`); `.github/workflows/release-cli.yml` builds the wheels, the sdist and the npm packages on each pull request that touches them.
   A push to main that bumps `crates/cli/Cargo.toml`'s version is a release: once CI's `check` job passes on it, `release-cli.yml` publishes that version to crates.io, PyPI and npm, wherever it's missing or, on PyPI and npm, only partly there, through each registry's trusted publishing (`bin/release-plan`, `-h`, says what and when).
@@ -66,7 +66,7 @@ The field test's entries and logs are in `field-test/`, git-excluded and local o
 - `crates/server/templates`: the HTML pages, askama templates.
   A template can't reach a field from inside a macro call, so `matches!(file.state, ...)` fails to compile; give the type a method instead.
 - `crates/server/legal`: the text of `/terms` and `/privacy`, one markdown file each, which a browser gets rendered and an agent gets as it is.
-- `crates/server/static`: the pages' one stylesheet, the home page's one script (its copy button), and the Courier Prime fonts, with their licence, compiled into the binary.
+- `crates/server/static`: the pages' one stylesheet, the home page's one script (its copy button), and the Courier Prime fonts, with their license, compiled into the binary.
   Colours are tokens on `:root`, light by default and dark under `prefers-color-scheme: dark`; a change of look changes the tokens, not the rules.
 - `bin/live-preview` (`-h`): a live preview of the home page for drafting its text, as the owner does by hand, at http://localhost:8090 once the port is published from the host.
   It renders `GET /` from `base.html` and `home.html` on disk on each request, around the entries of a dev server it builds and seeds, serves `site.css` and `copy.js` from disk, and reloads the page when any of the four changes; other pages' markup is the dev server's, as built.

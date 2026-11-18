@@ -9,7 +9,7 @@ name = "filedrawer"
 description = "Checks File Drawer entries offline, with the analyzer filedrawer.dev runs."
 readme = "README.md"
 license = "AGPL-3.0-only"
-# A copy of the repo's LICENSE, which bin/tests/test_licence_copies.py keeps the same.
+# A copy of the repo's LICENSE, which bin/tests/test_license_copies.py keeps the same.
 license-files = ["LICENSE"]
 authors = [{ name = "File Drawer" }]
 requires-python = ">=3.8"

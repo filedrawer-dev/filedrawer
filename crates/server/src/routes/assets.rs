@@ -56,7 +56,7 @@ const FONTS: &[(&str, &[u8])] = &[
 ];
 
 /// A year: the files never change at a URL, since the stylesheet's and the script's
-/// carry their hash and the fonts' names their version. The licence's never changes.
+/// carry their hash and the fonts' names their version. The license's never changes.
 const FOREVER: &str = "public, max-age=31536000, immutable";
 
 /// `path` with a hash of `text`, the file served there, so a new build's pages never

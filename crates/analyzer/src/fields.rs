@@ -48,7 +48,7 @@ pub struct Fields {
     pub code: Option<String>,
     /// Whether the code that ran is in a commit.
     pub code_state: Choice<CodeState>,
-    /// The licence of attached code; MIT when left out.
+    /// The license of attached code; MIT when left out.
     pub code_license: Option<String>,
     /// The stored data the results come from.
     pub data: Vec<DataItem>,

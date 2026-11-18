@@ -387,7 +387,7 @@ The owner set 10 an hour and 50 a day per account (#60); an agent chose the rest
   A private remote also holds the commit, and a public repo may not hold the code that produced the result.
   The agent pushes no branch to make code public.
 - Against: the check covers GitHub only; code on Hugging Face or Zenodo gets the question though it may be public.
-  The owner's decision named "code that isn't public or has no licence file"; a public repo with no licence file is linked without a question here, since a link licenses nothing and the MIT line only matters when code is attached.
+  The owner's decision named "code that isn't public or has no license file"; a public repo with no license file is linked without a question here, since a link licenses nothing and the MIT line only matters when code is attached.
 
 #### "Post it, and attach the code"
 

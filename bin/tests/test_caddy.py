@@ -40,7 +40,7 @@ def fake_archive(path: Path, greeting: str = "fake caddy", member="caddy") -> st
     script = f'#!/bin/sh\necho "{greeting}: $*"\nexit "${{FAKE_CADDY_EXIT:-0}}"\n'
     with tarfile.open(path, "w:gz") as tar:
         for name, data, mode in [
-            ("LICENSE", b"licence\n", 0o644),
+            ("LICENSE", b"license\n", 0o644),
             ("README.md", b"readme\n", 0o644),
             (member, script.encode(), 0o755),
         ]:
