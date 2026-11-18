@@ -710,12 +710,6 @@ The owner settled the email's sections and the rules in design.md's Admin sectio
 - Chosen: public; the repo is public anyway.
 - Against: it shows when production lags behind a public security fix.
 
-#### Holding Caddy back to the pinned version
-
-- Options: when the server's Caddy differs from `bin/caddy`'s pin, bump the pin; or `apt-get install caddy=<pin>` with `apt-mark hold caddy`, which `ops/deploy-production`'s refusal offers too.
-- Chosen: offer both.
-- Against: a hold also holds back Caddy's security fixes until someone bumps the pin, and nothing reminds anyone.
-
 #### CI's smoke test doesn't check which commit it ran against
 
 - Options: pass `--commit` to CI's smoke run; or leave it out.

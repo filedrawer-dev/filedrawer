@@ -19,8 +19,8 @@ Before it changes anything it:
     that commit whose deploy-staging and smoke-staging jobs passed, and refuses one
     that doesn't name its commit;
   - reads the server's Caddy version, production's schema version and binary in one
-    ssh round (ops/remote/deploy-facts.sh), and refuses when Caddy isn't the version
-    bin/caddy pins on origin/main, except on a rollback, where it asks;
+    ssh round (ops/remote/deploy-facts.sh); notes a Caddy newer than the version
+    bin/caddy pins on origin/main, asks about an older one, and notes a hold;
   - refuses to roll back across a migration crates/server/migration-rollback.txt
     says breaks a rollback, and lists any other migrations a rollback crosses.
 Then it replaces the server's filedrawer-install and filedrawer-backup when they
@@ -171,25 +171,30 @@ facts=$(ssh -o BatchMode=yes "root@$vps_host" "bash -s" < "$remote_dir/deploy-fa
 fact() { sed -n "s/^$1 //p" <<< "$facts" | sed -n 1p; }
 production=$(fact binary | sed -n 's/^filedrawer-commit //p')
 schema=$(fact schema)
-rollback=0
-if [[ -n "$production" ]] && in_repo merge-base --is-ancestor "$target" "$production" 2>/dev/null; then
-  rollback=1
-fi
 
-# Caddy: the version the real-Caddy tests ran is the one bin/caddy pins on main.
+# Caddy: the version the real-Caddy tests ran is the one bin/caddy pins on main. The
+# server follows Caddy's releases, guarded by caddy-upgrade-check, so a newer one is
+# only noted; an older one is asked about.
 caddy_line=$(fact caddy)
 pinned=$(in_repo show origin/main:bin/caddy | sed -n 's/^VERSION = "\(.*\)"$/\1/p')
+[[ -n "$pinned" ]] || die "can't read the Caddy version bin/caddy pins on origin/main; nothing changed"
 [[ "$caddy_line" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)( |$) ]] ||
   die "can't read the server's Caddy version from '$caddy_line'"
 caddy=${BASH_REMATCH[1]}
+case "$(fact caddy-hold)" in
+  guard) held="held: caddy-upgrade-check rolled back an upgrade whose checks failed, and its email says how to clear it" ;;
+  manual) held="held, by hand (apt-mark hold), so it gets no upgrades, security fixes included" ;;
+  *) held="" ;;
+esac
 if [[ "$caddy" != "$pinned" ]]; then
-  how="Bump bin/caddy to $caddy (its docstring says how) and land that, or put the server back on $pinned: apt-get install caddy=$pinned, then apt-mark hold caddy"
-  if (( rollback )); then
-    warnings+=("The server runs Caddy $caddy, but bin/caddy pins $pinned, which the tests ran. Afterwards: $how.")
+  if [[ "$(printf '%s\n' "$caddy" "$pinned" | sort -V | tail -n 1)" == "$caddy" ]]; then
+    say "Note: the server runs Caddy $caddy, ahead of bin/caddy's $pinned, which the tests ran. Bump bin/caddy to $caddy (its docstring says how)."
   else
-    die "the server runs Caddy $caddy, but bin/caddy on origin/main pins $pinned, which the tests ran. $how."
+    warnings+=("The server runs Caddy $caddy, older than bin/caddy's $pinned, which the tests ran; it is ${held:-not held}.")
+    held=""
   fi
 fi
+[[ -z "$held" ]] || say "Note: the server's Caddy is $held."
 
 # A rollback across a migration: the older binary runs on the newer schema, unless
 # migration-rollback.txt says a migration breaks that.

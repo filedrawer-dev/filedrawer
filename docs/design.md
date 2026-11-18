@@ -988,9 +988,9 @@ Python is fine for scripts and internal tools.
   The script takes the commit staging runs (its `X-Filedrawer-Commit`) unless given one, asks first about any other, takes the binary only from a push run of `ci.yml` on `main` whose `deploy-staging` and `smoke-staging` jobs passed, and refuses one that doesn't name its commit.
   CI keeps that artifact 90 days.
   Before it changes anything it reads the server's Caddy version, production's schema and binary in one ssh round (`ops/remote/deploy-facts.sh`).
-  It refuses when the server's Caddy differs from the version `bin/caddy` pins on `origin/main`, which the real-Caddy tests ran, except on a rollback, where it warns and asks (the owner's decisions, 2026-11-10); a rollback is to production's commit or an older one (the brief review's bound, #42).
-  Reason: `ops/remote/caddy.sh` installs whatever Caddy's apt repository offers that day, and `apt upgrade` moves it later, so a config the tests passed could fail on the server's Caddy; unattended-upgrades, which covers only Debian's security origins, doesn't move it.
-  Everything it would warn of, another commit than staging's, that Caddy, the migrations a rollback crosses, goes in one question before anything on the server changes.
+  When the server's Caddy is newer than the version `bin/caddy` pins on `origin/main`, which the real-Caddy tests ran, it says to bump the pin and goes on; when it is older, it warns and asks; when Caddy is held, it says whether the guard or a hand held it (the owner's decisions, 2026-11-18, #100, replacing 2026-11-10's refusal).
+  Reason: refusing a newer Caddy blocked deploys whenever the server upgraded before the pin, and refusing an older one would block them after the guard rolls back, or for the day between a pin bump and the server's next upgrade.
+  Everything it would warn of, another commit than staging's, an older Caddy, the migrations a rollback crosses, goes in one question before anything on the server changes.
   It pipes the binary to `filedrawer-install production`, then runs `ops/smoke-staging read` against production, which posts nothing.
   First it replaces the server's `filedrawer-install` and `filedrawer-backup` when they differ from `origin/main`'s, an agent's choice that `uncertainties.md` holds.
   Before the staging deploy, CI's `release-skills` job tags each new skill version over SSH, with a deploy key kept as a secret of the `skill-tags` environment, which only `main` may use (see [Skills](#skills)).

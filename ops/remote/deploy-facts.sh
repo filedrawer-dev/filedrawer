@@ -2,6 +2,8 @@
 # What ops/deploy-production (#42) needs to know of the server before it changes
 # anything, read in one ssh round as root, one `name value` line each:
 #   caddy    what `caddy version` prints
+#   caddy-hold  `guard` when caddy-upgrade-check rolled Caddy back and holds it,
+#            `manual` when it is held otherwise, `no` when it isn't
 #   schema   production's schema version (the highest in _sqlx_migrations), `none`
 #            when there's no database file, `error` when it can't be read
 #   binary   the "filedrawer-commit <sha>" production's binary embeds, or `none`
@@ -10,12 +12,22 @@
 # The database is read as production's user, read-only, as the install reads it.
 set -uo pipefail
 
+# The override is for tests, which point it at a fake root.
+root="${FILEDRAWER_ROOT:-}"
 database=/srv/filedrawer/production/data/filedrawer.db
 binary=/srv/filedrawer/production/bin/filedrawer
 
 # The version line, past any warning Caddy prints first; else whatever it said.
 caddy_said=$(caddy version 2>&1)
 echo "caddy $(grep -m 1 -E '^v[0-9]' <<< "$caddy_said" || head -n 1 <<< "$caddy_said")"
+holds=$(apt-mark showhold caddy 2>/dev/null)
+if ! grep -qx caddy <<< "$holds"; then
+  echo "caddy-hold no"
+elif [[ -f "$root/var/lib/filedrawer/caddy-guard/hold" ]]; then
+  echo "caddy-hold guard"
+else
+  echo "caddy-hold manual"
+fi
 if runuser -u filedrawer-prod -- test -e "$database"; then
   schema=$(runuser -u filedrawer-prod -- sqlite3 -bail "file:$database?mode=ro" \
     ".timeout 10000" "SELECT max(version) FROM _sqlx_migrations;" 2>/dev/null) || schema=error

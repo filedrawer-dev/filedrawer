@@ -131,6 +131,7 @@ def deploy(tmp_path, fake_host):
         smoke_log=smoke_log,
         api={},
         caddy="v2.10.2 h1:abc=",
+        caddy_hold="no",
         schema="31",
         production=old,
         install_sha=sha256(install),
@@ -199,7 +200,8 @@ def deploy(tmp_path, fake_host):
     def facts() -> str:
         binary = f"filedrawer-commit {state.production}" if state.production else "none"
         return (
-            f"caddy {state.caddy}\nschema {state.schema}\nbinary {binary}\n"
+            f"caddy {state.caddy}\ncaddy-hold {state.caddy_hold}\n"
+            f"schema {state.schema}\nbinary {binary}\n"
             f"install {state.install_sha}\nbackup {state.backup_sha}\n"
         )
 
@@ -414,22 +416,85 @@ def test_staging_that_names_no_commit_on_main_is_refused(deploy, header):
     assert installs(deploy) == []
 
 
-def test_another_caddy_refuses_a_promotion_and_says_how_to_move(deploy):
+def test_a_newer_caddy_than_the_pin_deploys_without_asking_and_says_to_bump(deploy):
     deploy.caddy = "v2.11.0 h1:xyz="
     result = deploy.run()
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "[y/N]" not in result.stdout
+    assert "2.11.0" in result.stdout and "2.10.2" in result.stdout
+    assert "bin/caddy" in result.stdout
+    assert len(installs(deploy)) == 1
+
+
+def test_an_older_caddy_than_the_pin_asks_and_a_no_changes_nothing(deploy):
+    deploy.caddy = "v2.9.1 h1:xyz="
+    result = deploy.run(answers="n\n")
     assert result.returncode != 0
-    assert "2.11.0" in result.stderr and "2.10.2" in result.stderr
-    assert "bin/caddy" in result.stderr
-    assert "apt-mark hold caddy" in result.stderr
+    assert result.stdout.count("[y/N]") == 1
+    assert "2.9.1" in result.stdout and "2.10.2" in result.stdout
+    assert "not held" in result.stdout
+    assert "apt-mark hold" not in result.stdout + result.stderr
     assert installs(deploy) == []
 
 
-def test_another_caddy_only_warns_on_a_rollback_and_deploys_once_asked(deploy):
-    deploy.caddy = "v2.11.0 h1:xyz="
-    deploy.production = deploy.new
-    result = deploy.run(deploy.old, answers="y\ny\n")
+def test_the_question_on_an_older_caddy_says_it_is_held(deploy):
+    deploy.caddy = "v2.9.1 h1:xyz="
+    deploy.caddy_hold = "guard"
+    result = deploy.run(answers="n\n")
+    question = result.stdout.split("[y/N]")[0].splitlines()
+    assert any(
+        "2.9.1" in line and "held" in line and "not held" not in line
+        for line in question
+    )
+
+
+def test_a_pin_it_cant_read_is_refused(deploy):
+    (deploy.repo / "bin/caddy").write_text("# no version here\n")
+    git(deploy.repo, "commit", "-q", "-am", "unreadable pin")
+    git(deploy.repo, "push", "-q")
+    head = git(deploy.repo, "rev-parse", "HEAD")
+    deploy.run_for(head, 101)
+    deploy.staging_runs(head)
+    result = deploy.run(answers="y\n")
+    assert result.returncode != 0
+    assert "bin/caddy" in result.stderr
+    assert installs(deploy) == []
+
+
+def test_an_older_caddy_than_the_pin_deploys_once_asked(deploy):
+    deploy.caddy = "v2.9.1 h1:xyz="
+    result = deploy.run(answers="y\n")
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "2.11.0" in result.stdout
+    assert len(installs(deploy)) == 1
+
+
+def test_a_version_compare_is_numeric_not_textual(deploy):
+    # 2.10.2 sorts before 2.9.1 as text; as versions the server is newer.
+    deploy.caddy = "v2.10.10 h1:xyz="
+    result = deploy.run()
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "[y/N]" not in result.stdout
+    assert len(installs(deploy)) == 1
+
+
+@pytest.mark.parametrize(
+    ("hold", "says"),
+    [("guard", "rolled"), ("manual", "by hand")],
+)
+def test_a_held_caddy_is_named_with_who_held_it(deploy, hold, says):
+    deploy.caddy_hold = hold
+    result = deploy.run()
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "held" in result.stdout and says in result.stdout
+
+
+def test_an_older_caddy_on_a_rollback_goes_in_the_one_question(deploy):
+    deploy.caddy = "v2.9.1 h1:xyz="
+    deploy.production = deploy.new
+    result = deploy.run(deploy.old, answers="y\n")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.count("[y/N]") == 1
+    assert "2.9.1" in result.stdout
     assert len(installs(deploy)) == 1
 
 
@@ -548,3 +613,33 @@ def test_no_to_the_question_changes_nothing_on_the_server(deploy):
     result = deploy.run(deploy.old, answers="n\n")
     assert result.returncode != 0
     assert deploy.host.calls() == ["bash -s"]
+
+
+@pytest.mark.parametrize(
+    ("held", "guard_marker", "expected"),
+    [(False, False, "no"), (True, False, "manual"), (True, True, "guard")],
+)
+def test_the_facts_say_who_holds_caddy(tmp_path, held, guard_marker, expected):
+    """deploy-facts.sh on its own, with fakes of caddy and apt-mark first on PATH and
+    FILEDRAWER_ROOT for the guard's marker."""
+    fakes = tmp_path / "fakes"
+    fakes.mkdir()
+    executable(fakes / "caddy", "#!/bin/sh\necho 'v2.11.9 h1:abc='\n")
+    executable(fakes / "runuser", "#!/bin/sh\nexit 1\n")
+    showhold = "echo caddy" if held else "true"
+    executable(
+        fakes / "apt-mark",
+        f'#!/bin/sh\n[ "$1 $2" = "showhold caddy" ] || exit 2\n{showhold}\n',
+    )
+    if guard_marker:
+        marker = tmp_path / "var/lib/filedrawer/caddy-guard/hold"
+        marker.parent.mkdir(parents=True)
+        marker.write_text("2.11.8\n")
+    result = subprocess.run(
+        ["bash", str(FACTS)],
+        env={"PATH": f"{fakes}:/usr/bin:/bin", "FILEDRAWER_ROOT": str(tmp_path)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert f"caddy-hold {expected}\n" in result.stdout, result.stdout + result.stderr
