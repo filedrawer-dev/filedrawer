@@ -100,3 +100,19 @@ impl IntoResponse for AppError {
         response
     }
 }
+
+/// `error`'s message followed by each of its causes', joined by ": ", for the log
+/// and the operator's status page: reqwest's own message says only "error sending
+/// request", and the cause (DNS, connect, TLS) is in its sources. A source can hold
+/// a URL of its own: with `https_only` set, a redirect's error holds a second
+/// reqwest error with the target, which `without_url` on the outer one leaves in.
+pub(crate) fn with_causes(error: &dyn std::error::Error) -> String {
+    let mut message = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        message.push_str(": ");
+        message.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    message
+}

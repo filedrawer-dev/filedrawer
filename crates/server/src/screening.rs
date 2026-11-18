@@ -9,6 +9,8 @@ use std::sync::Arc;
 
 use serde_json::{Value, json};
 
+use crate::error::with_causes;
+
 /// The Messages API's address.
 const API_URL: &str = "https://api.anthropic.com/v1/messages";
 /// The API version every request names.
@@ -285,7 +287,7 @@ impl ModelClient for AnthropicClient {
                 .json(&request_body(request))
                 .send()
                 .await
-                .map_err(|error| ModelError::Http(error.without_url().to_string()))?;
+                .map_err(|error| ModelError::Http(with_causes(&error.without_url())))?;
             let status = response.status();
             if !status.is_success() {
                 let body = response.text().await.unwrap_or_default();
@@ -294,7 +296,7 @@ impl ModelClient for AnthropicClient {
             let body: Value = response
                 .json()
                 .await
-                .map_err(|error| ModelError::Unreadable(error.without_url().to_string()))?;
+                .map_err(|error| ModelError::Unreadable(with_causes(&error.without_url())))?;
             Ok(parse_reply(&body))
         })
     }

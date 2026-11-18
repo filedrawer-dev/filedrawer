@@ -12,7 +12,7 @@ use axum::http::{Request, StatusCode};
 use common::fake_models::FakeModels;
 use common::{DELIMITER, Outbox, TestApp, entry, id_in, owner, test_app_with};
 use filedrawer_server::config::Environment;
-use filedrawer_server::daily_email::{DailyRun, Pinger, Pinging, send_daily_email};
+use filedrawer_server::daily_email::{DailyRun, HttpPinger, Pinger, Pinging, send_daily_email};
 use filedrawer_server::mail::{Email, MailError, Mailer, Sending};
 use time::{Date, Duration, OffsetDateTime};
 
@@ -741,4 +741,18 @@ async fn a_send_that_fails_for_one_admin_is_retried_for_that_admin_only() {
         "a failed run keeps the events it read: {}",
         reports[1].body
     );
+}
+
+#[tokio::test]
+async fn a_ping_that_cant_connect_names_the_cause_and_leaves_out_the_url() {
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let pinger = HttpPinger::new(&format!("http://127.0.0.1:{port}/secret-check"));
+    let error = pinger.ping(true).await.unwrap_err();
+    assert!(error.starts_with("error sending request: "), "{error}");
+    assert!(error.contains("Connection refused"), "{error}");
+    assert!(!error.contains("secret-check"), "{error}");
 }

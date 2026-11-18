@@ -12,6 +12,7 @@ use sqlx::SqlitePool;
 use time::{Date, Duration, OffsetDateTime};
 
 use crate::config::Environment;
+use crate::error::with_causes;
 use crate::event_log::Read;
 use crate::link_checks::LinkEvents;
 use crate::mail::Email;
@@ -682,7 +683,7 @@ impl Pinger for HttpPinger {
                 .get(url)
                 .send()
                 .await
-                .map_err(|error| error.without_url().to_string())?;
+                .map_err(|error| with_causes(&error.without_url()))?;
             if answer.status().is_success() {
                 Ok(())
             } else {
