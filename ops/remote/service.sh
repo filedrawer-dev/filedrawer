@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # The systemd unit and base settings for ENVIRONMENT, staging or production. The unit
 # stays idle until a deploy puts the binary at /srv/filedrawer/<env>/bin/filedrawer.
-# Each runs as its own user (service-user.sh) and may bind only its own port, so a
-# binary sent with staging's deploy key can't take production's while production is
+# Each runs as its own user (service-user.sh) and may bind only its own TCP port, so
+# a binary sent with staging's deploy key can't take production's while production is
 # down. Production's unit also needs loopback.sh's rules loaded, which keep staging's
 # user from connecting to production's port. Settings files are root's alone: systemd
 # reads them as root. Runs as root; safe to rerun. Exits 2 for an environment it
@@ -94,6 +94,9 @@ LockPersonality=yes
 MemoryDenyWriteExecute=yes
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 SocketBindAllow=tcp:$port
+# The binary is static musl, whose resolver binds its UDP socket to port 0 before
+# each DNS query; without this every lookup fails with EPERM.
+SocketBindAllow=udp
 SocketBindDeny=any
 CapabilityBoundingSet=
 

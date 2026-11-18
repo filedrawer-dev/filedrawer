@@ -227,6 +227,7 @@ def test_production_gets_its_own_settings_and_unit(box):
         "ConditionPathIsExecutable=/srv/filedrawer/production/bin/filedrawer",
         "ReadWritePaths=/srv/filedrawer/production/data",
         "SocketBindAllow=tcp:8080",
+        "SocketBindAllow=udp",
         "SocketBindDeny=any",
         "Requires=filedrawer-loopback.service",
     ):
@@ -235,7 +236,7 @@ def test_production_gets_its_own_settings_and_unit(box):
     assert "systemctl enable filedrawer-production.service" in box.log.read_text()
 
 
-def test_staging_keeps_its_settings_and_unit_and_may_bind_only_its_port(box):
+def test_staging_keeps_its_settings_and_unit_and_may_bind_only_its_tcp_port(box):
     result = run(box, SERVICE, ENVIRONMENT="staging")
     assert result.returncode == 0, result.stderr
     assert settings(box, "staging.env") == {
@@ -252,6 +253,7 @@ def test_staging_keeps_its_settings_and_unit_and_may_bind_only_its_port(box):
         "User=filedrawer",
         "EnvironmentFile=-/etc/filedrawer/staging-smoke.env",
         "SocketBindAllow=tcp:8081",
+        "SocketBindAllow=udp",
         "SocketBindDeny=any",
         "InaccessiblePaths=-/srv/filedrawer/production",
     ):
