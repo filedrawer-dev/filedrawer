@@ -192,15 +192,18 @@ pub async fn signup(
             );
         }
     }
+    // An unverified account can log in, and its account page sends the link again.
+    // Both arms above get this page, so it says nothing about which one ran.
     let text = format!(
-        "We sent a link to {email}. Open it to check your email address and finish signing up."
+        "We sent a link to {email}. Open it to check your email address and finish signing up. \
+         No email after a few minutes? Check spam, then log in to send it again."
     );
     Ok(page(
         StatusCode::OK,
         &Message {
             title: "Check your email",
             text: &text,
-            link: None,
+            link: Some(("/login", "Log in")),
         },
     ))
 }

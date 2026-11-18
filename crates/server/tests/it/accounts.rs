@@ -208,6 +208,36 @@ async fn signing_up_with_a_taken_email_looks_the_same_and_warns_its_owner() {
 }
 
 #[tokio::test]
+async fn the_check_your_email_page_says_to_log_in_to_get_the_link_again() {
+    // Logging in reaches the account page's resend button, so the page says how to
+    // get another link, and says it whether or not the address was taken.
+    let app = test_app().await;
+    signed_up_and_verified(&app, "grace@example.com").await;
+    let mut pages = Vec::new();
+    for email in ["ada@example.com", "grace@example.com"] {
+        let reply = app
+            .form(
+                "/signup",
+                &[
+                    ("email", email),
+                    ("password", PASSWORD),
+                    ("display_name", "Someone"),
+                ],
+                None,
+            )
+            .await;
+        assert_eq!(reply.status, StatusCode::OK);
+        assert!(
+            reply.body.contains(r#"<a href="/login">"#),
+            "{}",
+            reply.body
+        );
+        pages.push(reply.body.replace(email, "ADDRESS"));
+    }
+    assert_eq!(pages[0], pages[1]);
+}
+
+#[tokio::test]
 async fn a_wrong_password_and_an_unknown_email_get_the_same_answer() {
     let app = test_app().await;
     signed_up_and_verified(&app, "grace@example.com").await;
