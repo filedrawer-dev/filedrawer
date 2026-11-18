@@ -21,6 +21,9 @@
 # runs as its user, since a bad binary running as that user could plant a symlink
 # there for root to follow.
 set -euo pipefail
+# sudo over SSH starts it in /root, which the service users can't enter, and runuser
+# keeps the cwd: find run there exits 1, though it searched. All paths are absolute.
+cd /
 
 # The overrides are for tests, which set FILEDRAWER_ROOT. sudo's env_reset drops all
 # of them; when the root isn't overridden, the defaults are forced anyway.
@@ -80,14 +83,17 @@ if ! systemd-run --unit="filedrawer-check-$environment" --wait --pipe --quiet --
   exit 1
 fi
 
+# healthy: polls /tags once a second. The first tries come before the server binds,
+# so each try's error stays quiet; only the last is printed, when none answered.
 healthy() {
-  local tries
+  local tries error=""
   for (( tries = 0; tries < health_seconds; tries++ )); do
-    if curl -fsS -o /dev/null --max-time 2 "http://127.0.0.1:$port/tags"; then
+    if error=$(curl -fsS -o /dev/null --max-time 2 "http://127.0.0.1:$port/tags" 2>&1); then
       return 0
     fi
     sleep 1
   done
+  [[ -n "$error" ]] && echo "$error" >&2
   return 1
 }
 

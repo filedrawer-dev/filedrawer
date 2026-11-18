@@ -82,11 +82,14 @@ def receive(box, command: str, data: bytes) -> subprocess.CompletedProcess:
     )
 
 
-def install(box, *args: str, data: bytes = b"", **env) -> subprocess.CompletedProcess:
+def install(
+    box, *args: str, data: bytes = b"", cwd: Path | None = None, **env
+) -> subprocess.CompletedProcess:
     return subprocess.run(
         [INSTALL, *args],
         input=data,
         env={**box.env, **env},
+        cwd=cwd,
         capture_output=True,
         check=False,
     )
@@ -228,6 +231,37 @@ def test_install_rolls_back_when_the_new_server_isnt_healthy(box):
     assert b"rolled back" in result.stderr
     assert b"v1" in (box.bin / "filedrawer").read_bytes()
     assert box.log.read_text().count("systemctl restart filedrawer-staging") == 2
+
+
+def answers_after(box, tries: int) -> None:
+    """curl fails as it does before the server binds, for its first `tries` calls."""
+    count = box.tmp / "curl-count"
+    executable(
+        box.tmp / "fakes" / "curl",
+        f'#!/bin/sh\necho "curl $*" >> {box.log}\n'
+        f"n=$(cat {count} 2>/dev/null || echo 0)\necho $((n + 1)) > {count}\n"
+        f'if [ "$n" -lt {tries} ]; then\n'
+        '  echo "curl: (7) Failed to connect to 127.0.0.1, try $n" >&2\n  exit 7\nfi\n',
+    )
+
+
+def test_a_server_that_answers_after_a_try_or_two_leaves_no_curl_error(box):
+    answers_after(box, 1)
+    data = binary("v2")
+    result = install(box, "staging", sha(data), data=data)
+    assert result.returncode == 0, result.stderr
+    assert b"curl" not in result.stderr
+
+
+def test_a_server_that_never_answers_shows_curls_last_error_once(box):
+    executable(box.bin / "filedrawer", binary("v1").decode())
+    answers_after(box, 99)
+    data = binary("v2")
+    result = install(box, "staging", sha(data), data=data)
+    assert result.returncode != 0
+    assert result.stderr.count(b"curl: (7)") == 1, result.stderr
+    assert b"try 1" in result.stderr, "the last try's error, of two"
+    assert b"rolled back" in result.stderr
 
 
 def test_install_never_installs_a_binary_that_doesnt_run(box):
@@ -653,9 +687,11 @@ def prod(box):
     return box
 
 
-def install_production(box, *extra: str, data: bytes | None = None, **env):
+def install_production(
+    box, *extra: str, data: bytes | None = None, cwd: Path | None = None, **env
+):
     data = binary("v2") if data is None else data
-    return install(box, "production", sha(data), *extra, data=data, **env)
+    return install(box, "production", sha(data), *extra, data=data, cwd=cwd, **env)
 
 
 def test_production_stops_copies_the_database_then_starts_the_new_binary(prod):
@@ -910,6 +946,27 @@ def test_a_copy_13_days_old_goes_though_it_is_among_the_newest(prod):
     kept = deploy_copies(prod)
     assert "deploy-20261109T000000Z.db" not in kept
     assert "deploy-20261101T000000Z.db" in kept
+
+
+def test_a_deploy_from_a_folder_productions_user_cant_enter_still_prunes(prod):
+    """sudo over SSH starts the install in /root, which filedrawer-prod can't enter;
+    GNU find run there searches, then says so and exits 1. Other commands work."""
+    production_database(prod)
+    old_deploy_copies(prod, {"deploy-20261020T000000Z.db": 14})
+    locked = prod.tmp / "root-home"
+    locked.mkdir()
+    executable(
+        prod.tmp / "fakes" / "runuser",
+        f'#!/bin/sh\necho "runuser $*" >> {prod.log}\nshift 3\n'
+        '"$@" || exit\n'
+        f'case "$1 $PWD" in "find {locked}"*)\n'
+        '  echo "find: Failed to restore initial working directory: $PWD" >&2\n'
+        "  exit 1 ;;\nesac\n",
+    )
+    result = install_production(prod, "--expect-schema", "31", cwd=locked)
+    assert result.returncode == 0, result.stderr
+    assert b"prune" not in result.stderr
+    assert "deploy-20261020T000000Z.db" not in deploy_copies(prod)
 
 
 def test_a_first_deploy_keeps_three_older_copies(prod):
