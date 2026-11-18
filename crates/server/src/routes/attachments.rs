@@ -10,10 +10,11 @@ use serde_json::json;
 use crate::attachments::{self, Invalid, Limit, SetRequest, Stored};
 use crate::auth::TokenAccount;
 use crate::error::AppError;
-use crate::mail::{Email, send_later};
+use crate::mail_queue::{self, Queued};
 use crate::removed_files::REMOVED_BY_OWNER;
 use crate::respond::{DELIMITER, Format, one_line};
-use crate::{AppState, accounts};
+use crate::time::now_utc;
+use crate::{AppState, accounts, db};
 
 fn refused(status: StatusCode, reasons: Vec<String>) -> AppError {
     AppError::Refused { status, reasons }
@@ -114,19 +115,20 @@ async fn tell_owner(state: &AppState, limit: Limit) -> Result<(), AppError> {
             ),
         ),
     };
-    if !attachments::first_notice_today(&state.pool, kind).await? {
+    // The day's notice is recorded with its emails, so a failure leaves neither.
+    let mut tx = db::write_tx(&state.pool).await?;
+    if !attachments::first_notice_today(&mut tx, kind).await? {
         return Ok(());
     }
     tracing::error!(%why, "{what}; uploads are refused");
-    for to in accounts::admin_emails(&state.pool).await? {
-        send_later(
-            &state.mailer,
-            Email {
-                to,
-                subject: format!("File Drawer: {what}"),
-                body: format!("{} refuses new attachments: {why}.\n", state.public_url),
-            },
-        );
+    let notice = Queued::Notice {
+        subject: format!("File Drawer: {what}"),
+        body: format!("{} refuses new attachments: {why}.\n", state.public_url),
+    };
+    for admin in accounts::admin_ids(&mut tx).await? {
+        mail_queue::queue_in(&mut tx, &admin, &notice, now_utc()).await?;
     }
+    tx.commit().await?;
+    mail_queue::wake(state);
     Ok(())
 }

@@ -621,8 +621,50 @@ The owner settled the email's sections and the rules in design.md's Admin sectio
 
 - Options: show the same page and log the error, as here, or tell the person the email didn't go.
 - Chosen: the same page, so the signup and reset pages never reveal whether an account exists.
-  The account page can resend the verification email.
+  The account page can resend the verification email, and since #103 the queue retries a failed send for a day.
 - Against: a person whose email never arrives has no hint why.
+
+#### The mail queue's retry and drop rules (#103)
+
+- Options: retry every failure until the row expires, or tell apart a failure of the row's own from one of the server.
+- Chosen: an unparseable address, or a permanent refusal of the recipient (550, 551, 553), drops that row and the run goes on.
+  A failure of the server's, no answer, closing (421), no TLS (454) or a refused login (530, 534, 535, 538), stops the run and leaves the row due; no run starts until the server's wait passes (1 minute, doubling to an hour), so signups and resets can't make the server retry SMTP.
+  Any other reply, such as a full mailbox (452) or a greylist (450), puts that row off by its own wait, doubling the same way, and the run goes on.
+  The reviews found that retrying a refused recipient forever let signups with bad addresses hold up everyone's mail, that dropping on every permanent error would empty the queue on a credentials mistake, and that a row the server turns away for now mustn't stop the run.
+- Against: a server that answers 550 for a reason that isn't the recipient (some use it for policy blocks) loses those emails at once, and one whose other codes mean the server is down gets a run of tries, one a row, that each answer at once.
+
+#### How long the mail queue keeps a row
+
+- Options: drop at the link's expiry, as the issue put it, or after a day for every kind.
+- Chosen: a row is dropped unsent a day after it was queued, every kind alike, since a day-old signup or reset email is stale; the link it would carry is minted at the send and works 24 hours from then.
+  A dropped row keeps its kind, account, times and failure class, with no text, for a week, for the daily email to count; deleting the account deletes its rows, dropped ones too.
+- Against: a week of rows is longer than the count needs, and a dropped row deleted with its account goes uncounted.
+
+#### One waiting email per account and kind
+
+- Options: queue each request, or replace a waiting row of the same kind.
+- Chosen: the owner chose one waiting verify and reset email per account (2026-11-18); the "someone tried to sign up" warning is kept to one as well, since strangers can trigger it, and attachment notices are not.
+  A row replaced while it is being sent can make one extra email.
+- Against: none known.
+
+#### Error text the mail queue keeps
+
+- Options: keep the error's text for the status page, or only a class.
+- Chosen: only a class, `address`, `refused 550`, `smtp 451` or `connect`, on the row and on `/staging/status`, since an SMTP reply can repeat the recipient's address.
+- Against: the class alone may not say enough to find a fault, and no log keeps the error's text either.
+
+#### Queued mail in the restore drill
+
+- Options: start the sender in every `serve`, or skip it without SMTP settings.
+- Chosen: every `serve`, so dev's log mailer still shows each email.
+  The restore drill runs `serve` on production's copy with no SMTP, so it logs the waiting rows' emails with fresh links that work only against that copy, on a firewalled server deleted afterwards.
+- Against: those addresses sit in the drill server's journal until it is deleted.
+
+#### Reset's timing
+
+- Options: keep reset as it was, queueing (a write) only for an existing account, or make both arms write.
+- Chosen: as it was, since #103 asked for the timing to stay as even as it was; signup writes in both arms.
+- Against: reset still takes a write longer when the address has an account.
 
 ### Calls to other services
 

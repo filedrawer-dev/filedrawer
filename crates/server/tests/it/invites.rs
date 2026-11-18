@@ -189,7 +189,7 @@ async fn an_unknown_used_up_or_expired_code_refuses_the_signup() {
         late.body
     );
     // None of the refused signups made an account.
-    let sent = app.outbox.sent();
+    let sent = app.sent().await;
     for email in ["b@example.com", "c@example.com", "d@example.com"] {
         assert!(sent.iter().all(|mail| mail.to != email), "{email}");
     }

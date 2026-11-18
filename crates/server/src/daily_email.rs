@@ -19,7 +19,7 @@ use crate::mail::Email;
 use crate::respond::{DELIMITER, one_line};
 use crate::screening::Failure;
 use crate::time::{parse, parse_day, stamp};
-use crate::{AppState, queue};
+use crate::{AppState, mail_queue, queue};
 
 /// The most feedback items an email holds in full; past it the oldest are counted.
 const FEEDBACK_IN_FULL: usize = 20;
@@ -174,6 +174,10 @@ struct Report {
     feedback: Vec<Feedback>,
     feedback_total: usize,
     backups: Backups,
+    /// Emails the queue dropped unsent in the period, and those waiting at its end
+    /// for longer than `mail_queue::LATE`.
+    mail_dropped: i64,
+    mail_late: i64,
 }
 
 /// An entry waiting for the owner: in review or held.
@@ -277,6 +281,7 @@ impl Report {
         .await?;
         let feedback_total = feedback.len();
         feedback.drain(..feedback_total.saturating_sub(FEEDBACK_IN_FULL));
+        let (mail_dropped, mail_late) = mail_queue::dropped_and_late(pool, start, now).await?;
         Ok(Report {
             start,
             now,
@@ -300,12 +305,15 @@ impl Report {
             feedback,
             feedback_total,
             backups: backups(&state.backups_dir),
+            mail_dropped,
+            mail_late,
         })
     }
 
     /// Whether anything in it is worth an email in `environment`. Outside production
     /// only problems are, since CI publishes test entries on staging after each
-    /// deploy (the owner's decision, 2026-11-09).
+    /// deploy (the owner's decision, 2026-11-09). Email dropped or late sends it in
+    /// production only (the owner's decision, 2026-11-18).
     fn worth_sending(&self, environment: Environment) -> bool {
         let production = environment == Environment::Production;
         let recheck_failed = self.links.recheck_failures.count() > 0;
@@ -323,7 +331,8 @@ impl Report {
             || !self.waiting.is_empty()
             || !self.frozen.is_empty()
             || !self.at_share.is_empty();
-        problems || (production && news)
+        let mail = self.mail_dropped > 0 || self.mail_late > 0;
+        problems || (production && (news || mail))
     }
 
     /// Whether a copy dated `date` is older than yesterday's.
@@ -370,6 +379,7 @@ impl Report {
         }
         self.screening_lines(&mut text, url);
         self.link_lines(&mut text);
+        self.mail_line(&mut text);
         let _ = writeln!(text, "\nNightly copy: {}", self.backup_line());
         self.feedback_lines(&mut text, url);
         text
@@ -448,6 +458,17 @@ impl Report {
         if !lines.is_empty() {
             let _ = writeln!(text, "\nLink checks:\n{}", lines.join("\n"));
         }
+    }
+
+    fn mail_line(&self, text: &mut String) {
+        if self.mail_dropped == 0 && self.mail_late == 0 {
+            return;
+        }
+        let _ = writeln!(
+            text,
+            "\nEmail: {} dropped unsent, {} waiting over an hour.",
+            self.mail_dropped, self.mail_late
+        );
     }
 
     fn backup_line(&self) -> String {

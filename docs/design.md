@@ -75,7 +75,7 @@ The owner expects most contributors to be independent researchers, newcomers to 
   A refused deletion changes nothing and says why; an entry the token's account can't see answers 404, naming that account as `account: <id> (<display name>)`, so an agent holding the wrong account's token can tell (the owner's decision, 2026-11-08).
 - The server keeps a record of each entry deleted by token or withdrawn: its ID, its account and the time.
   The account's later `GET /e/<id>` or `DELETE /e/<id>` of it answers that it was deleted then, not 404, so a retried request that had worked is recognized; nobody else learns anything from it (the owner's decision, 2026-11-08).
-- Deleting an account, from a browser session with the password, deletes the email address, login, display name, tokens and private feedback, and every entry not yet public, except those the owner removed, which stay for analysis (see [Admin](#admin)).
+- Deleting an account, from a browser session with the password, deletes the email address, login, display name, tokens, private feedback and queued email, and every entry not yet public, except those the owner removed, which stay for analysis (see [Admin](#admin)).
   By the same rule it deletes the series the screen refused, except those the owner confirmed as a hazard.
   It also deletes the series the account made that no one but their members could read yet, no version readable, unless another account's entry cites one; any other series outlives the account, as a removed one does (the owner's decision, 2026-11-17).
   An entry rejected in the last 60 days counts as citing it (the owner's decision, 2026-11-17).
@@ -893,12 +893,12 @@ Reason: entries and feedback can carry instructions, such as "create an invite c
     Reason: a log inside the database would be lost by a restore to a point before the purge.
 - Once a day, within minutes of midnight UTC, the server emails every admin a plain-text report of the period since its last run, if there is anything to report (#44; the owner's decisions, 2026-11-09, except the details in uncertainties.md, "The daily email's details").
   Reason: production has no `/staging/status`, so without it nothing tells the owner that an entry waits for review, that screening is failing, or that feedback came in.
-  - It lists the entries published in the period, those waiting in review or held, with the oldest one's age, and the frozen ones; the screen's failed calls and its last error; the UTC days whose screening cap ran out, and the accounts that reached their 10% share of one; the link checks' failed rechecks, the hosts that asked the server to wait, and the GitHub calls not made because the server had spent its half of the hour's; the newest nightly copy; and new private feedback, in full.
+  - It lists the entries published in the period, those waiting in review or held, with the oldest one's age, and the frozen ones; the screen's failed calls and its last error; the UTC days whose screening cap ran out, and the accounts that reached their 10% share of one; the link checks' failed rechecks, the hosts that asked the server to wait, and the GitHub calls not made because the server had spent its half of the hour's; the emails the queue dropped unsent and those waiting over an hour; the newest nightly copy; and new private feedback, in full.
     Reading it is optional; it lets the owner spot-check screening.
   - The server's lines name entries and accounts only by ID and by a link to their admin page, which needs the owner's login, since titles and display names are author text.
     Feedback goes last, below the author-text delimiter, each line marked `| `, with control characters and bidi marks removed and `://` written `[:]//`, so no line passes for the server's and no link is live; past 20 items the oldest are only counted.
   - In production, anything listed sends it, and entries waiting for the owner send it every day until handled.
-    Staging and dev send it only for problems (the screen's last call failing, a cap running out, a recheck failing, the nightly copies, new feedback), since CI publishes test entries on staging after each deploy.
+    Staging and dev send it only for problems (the screen's last call failing, a cap running out, a recheck failing, the nightly copies, new feedback), since CI publishes test entries on staging after each deploy; dropped or late email is listed there but sends nothing alone (the owner's decision, 2026-11-18).
     A host pausing or GitHub's half running out is listed but sends nothing alone, so a transient overload doesn't email the owner.
   - The screen's and the link checks' events are kept in memory until a run reports them, so a restart loses them; the email then says its counts run from when the server started.
     The last run and each admin's last period are kept in the database, so a restart doesn't send twice in a day, and a send that fails for one admin is retried an hour later for that admin only, with the period up to the retry.
@@ -961,6 +961,13 @@ Python is fine for scripts and internal tools.
 - Mail goes through Purelymail SMTP on the filedrawer.dev domain, since the owner already uses Purelymail.
   Switch to a transactional mail service if messages land in spam.
   Staging and production send as Purelymail users of their own, so staging's password can be revoked alone (the owner's decision, 2026-11-10).
+- Every email to a person is queued in the database and sent by one job, which retries a failed send and drops it unsent after a day (#103, after production lost a verification email while it couldn't reach SMTP on 2026-11-18; the retry and drop rules are in uncertainties.md).
+  A queued verification or reset email holds no link and no address: the job reads the account's address and mints the link when it sends, so neither sits in the database, its replica or the nightly copies while mail is down (the owner's decision, 2026-11-18).
+  An account has at most one waiting verification and one waiting reset email; asking again replaces it (the owner's decision, 2026-11-18).
+  Queuing wakes the job, so an email goes as fast as before when SMTP answers (the owner's decision, 2026-11-18).
+  Delivery is at least once: a restart between a send and its record, or a restored copy of the database, sends again.
+  Production's daily email reports the emails dropped unsent and those waiting over an hour, and either sends it; staging's and dev's only list them (the owner's decision, 2026-11-18).
+  The daily email sends through SMTP itself, with its own retry.
 - staging.filedrawer.dev and filedrawer.dev run on the same VPS, with separate databases and separate systemd units.
   `ops/provision-vps production` sets production up beside staging, from each `ops/remote/` script run with `ENVIRONMENT=production`; `ops/provision-vps production account`, run straight after the first production deploy, has the owner sign up with a Gmail address to see where verification mail lands, makes that account the admin, and walks through the uptime check (the owner's decisions, 2026-11-09 and 2026-11-10).
 - Production runs as a Unix user of its own, `filedrawer-prod`, and staging as `filedrawer`; each data folder is its user's alone, and every settings file in `/etc/filedrawer` is root's alone, since systemd reads a unit's settings as root (#40; the owner's decisions, 2026-11-09 and 2026-11-10).

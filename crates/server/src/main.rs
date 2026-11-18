@@ -244,6 +244,7 @@ async fn serve() -> ExitCode {
         screening_daily_nano_usd: config.screening_daily_nano_usd,
         screening_lock: Default::default(),
         mailer,
+        mail_queue: Default::default(),
         public_url: config.public_url.clone(),
         smoke_account: config.smoke_account.clone(),
         screen_test_account: config.screen_test_account.clone(),
@@ -283,6 +284,7 @@ async fn serve() -> ExitCode {
     tokio::spawn(filedrawer_server::jobs::run_tidier(state.clone()));
     tokio::spawn(filedrawer_server::jobs::run_link_rechecker(state.clone()));
     tokio::spawn(filedrawer_server::jobs::run_daily_email(state.clone()));
+    tokio::spawn(filedrawer_server::mail_queue::run_sender(state.clone()));
     let router = app(state);
     let shutdown = async {
         // systemd stops a service with SIGTERM; Ctrl-C is for a terminal. A failure

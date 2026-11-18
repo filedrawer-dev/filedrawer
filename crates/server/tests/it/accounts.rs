@@ -425,6 +425,8 @@ async fn an_unverified_account_can_ask_for_another_verification_email() {
         None,
     )
     .await;
+    // The signup's email goes before the account asks again, as the sender would.
+    assert_eq!(app.sent().await.len(), 1);
     let cookie = logged_in(&app, "grace@example.com", PASSWORD).await;
     let page = app.page("/account", Some(&cookie)).await.body;
     assert!(offers_verification(&page), "{page}");

@@ -14,7 +14,7 @@ use serde::Deserialize;
 use crate::accounts::{self, EMAIL_LINK_HOURS, Login, Purpose, SESSION_DAYS, Signup};
 use crate::error::AppError;
 use crate::limits::{self, ClientIp, Counted};
-use crate::mail::Email;
+use crate::mail_queue::{self, Queued};
 use crate::pages::{
     AccountPage, DeletePage, LoginPage, Message, ResetConfirmPage, ResetPage, SignupPage,
     VerifyPage, page,
@@ -70,30 +70,6 @@ async fn password_matches(password: String, stored: Option<String>) -> bool {
     tokio::task::spawn_blocking(move || passwords::matches(&password, stored.as_deref()))
         .await
         .expect("checking a password doesn't panic")
-}
-
-/// Sends an email in the background, so a page that sends one answers as fast as one
-/// that doesn't, and whether an account exists never shows in the timing. A failure
-/// is logged; the page says the same either way.
-fn send(state: &AppState, to: &str, subject: &str, body: String) {
-    let email = Email {
-        to: to.to_string(),
-        subject: subject.to_string(),
-        body,
-    };
-    crate::mail::send_later(&state.mailer, email);
-}
-
-async fn send_verification(state: &AppState, account_id: &str, to: &str) -> Result<(), AppError> {
-    let secret = accounts::new_email_link(&state.pool, account_id, Purpose::Verify).await?;
-    let body = format!(
-        "Someone, probably you, signed up for File Drawer with this address.\n\n\
-         To verify it, open this link and press the button:\n{}/verify?token={secret}\n\n\
-         The link works for {EMAIL_LINK_HOURS} hours. If you didn't sign up, ignore this email.\n",
-        state.public_url
-    );
-    send(state, to, "Verify your email for File Drawer", body);
-    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -176,21 +152,8 @@ pub async fn signup(
     let hash = hash_password(form.password).await;
     match accounts::sign_up(&state.pool, &email, &hash, display_name, invite).await? {
         Signup::BadInvite => return Ok(again(BAD_INVITE)),
-        Signup::Created(id) => send_verification(&state, &id, &email).await?,
-        Signup::Taken => {
-            let body = format!(
-                "Someone tried to sign up for File Drawer with this address, which already \
-                 has an account.\n\nIf it was you, log in at {url}/login, or choose a new \
-                 password at {url}/reset. If it wasn't, ignore this email.\n",
-                url = state.public_url
-            );
-            send(
-                &state,
-                &email,
-                "Someone tried to sign up with your email",
-                body,
-            );
-        }
+        Signup::Created(id) => mail_queue::queue(&state, &id, Queued::Verify).await?,
+        Signup::Taken(id) => mail_queue::queue(&state, &id, Queued::Taken).await?,
     }
     // An unverified account can log in, and its account page sends the link again.
     // Both arms above get this page, so it says nothing about which one ran.
@@ -328,15 +291,7 @@ pub async fn reset(
     // Counted whether or not the address has an account, so a limit never says.
     limits::count_email(&state, Some(&ip), &email).await?;
     if let Some(Login { account_id, .. }) = accounts::login_for_email(&state.pool, &email).await? {
-        let secret = accounts::new_email_link(&state.pool, &account_id, Purpose::Reset).await?;
-        let body = format!(
-            "Someone, probably you, asked to choose a new File Drawer password for this \
-             address.\n\nTo choose one, open this link:\n{}/reset/confirm?token={secret}\n\n\
-             The link works for {EMAIL_LINK_HOURS} hours. If you didn't ask, ignore this \
-             email; your password hasn't changed.\n",
-            state.public_url
-        );
-        send(&state, &email, "Choose a new File Drawer password", body);
+        mail_queue::queue(&state, &account_id, Queued::Reset).await?;
     }
     let text = format!(
         "If an account uses that address, we sent it a link to choose a new password. It works for {EMAIL_LINK_HOURS} hours."
@@ -530,7 +485,7 @@ pub async fn resend_verification(
     if let (Some(email), false) = (view.email, view.verified) {
         let invited = invites::invited(&state.pool, &session.id).await?;
         limits::count_email(&state, (!invited).then_some(&ip), &email).await?;
-        send_verification(&state, &session.id, &email).await?;
+        mail_queue::queue(&state, &session.id, Queued::Verify).await?;
     }
     Ok(Redirect::to("/account").into_response())
 }

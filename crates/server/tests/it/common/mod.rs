@@ -15,24 +15,43 @@ use std::sync::{Arc, Mutex};
 
 use filedrawer_server::file_store::FileStore;
 use filedrawer_server::limits::{Limits, RateLimits};
-use filedrawer_server::mail::{Email, Mailer, Sending};
+use filedrawer_server::mail::{Email, MailError, Mailer, Sending};
 use filedrawer_server::request_log::RequestLog;
 use filedrawer_server::{AppState, Screener, admin, app, db};
 
-/// A mailer that keeps every email it is sent, for tests to read back.
+/// How a test's mailer fails an email, or `None` to send it.
+pub type Failing = fn(&Email) -> Option<MailError>;
+
+/// A mailer that keeps every email it sends, for tests to read back, and fails the
+/// ones a test's [`Failing`] picks.
 #[derive(Clone, Default)]
-pub struct Outbox(Arc<Mutex<Vec<Email>>>);
+pub struct Outbox {
+    sent: Arc<Mutex<Vec<Email>>>,
+    failing: Arc<Mutex<Option<Failing>>>,
+}
 
 impl Outbox {
     pub fn sent(&self) -> Vec<Email> {
-        self.0.lock().unwrap().clone()
+        self.sent.lock().unwrap().clone()
+    }
+
+    /// Fails the emails `failing` picks from now on; `None` sends every one again.
+    pub fn fail(&self, failing: Option<Failing>) {
+        *self.failing.lock().unwrap() = failing;
     }
 }
 
 impl Mailer for Outbox {
     fn send(&self, email: Email) -> Sending<'_> {
-        self.0.lock().unwrap().push(email);
-        Box::pin(async { Ok(()) })
+        let failing = *self.failing.lock().unwrap();
+        let result = match failing.and_then(|failing| failing(&email)) {
+            Some(error) => Err(error),
+            None => {
+                self.sent.lock().unwrap().push(email);
+                Ok(())
+            }
+        };
+        Box::pin(async { result })
     }
 }
 use http_body_util::BodyExt;
@@ -215,6 +234,7 @@ pub fn state(pool: sqlx::SqlitePool, outbox: &Outbox, files_dir: &std::path::Pat
         screening_daily_nano_usd: 1_000_000_000,
         screening_lock: Default::default(),
         mailer: Arc::new(outbox.clone()),
+        mail_queue: Default::default(),
         public_url: PUBLIC_URL.to_string(),
         smoke_account: None,
         screen_test_account: None,
@@ -361,13 +381,12 @@ impl TestApp {
         self.send(request.body(Body::from(body)).unwrap()).await
     }
 
-    /// Every email sent so far. The server sends in spawned tasks, so this first gives
-    /// them the chance to run.
+    /// Every email sent so far, after a run of the mail queue's sender, which no
+    /// loop runs in tests.
     pub async fn sent(&self) -> Vec<Email> {
-        for _ in 0..10 {
-            tokio::task::yield_now().await;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        filedrawer_server::mail_queue::send_due(&self.state, time::OffsetDateTime::now_utc())
+            .await
+            .unwrap();
         self.outbox.sent()
     }
 
@@ -618,6 +637,14 @@ pub fn field<'a>(body: &'a str, name: &str) -> Option<&'a str> {
     let prefix = format!("{name}: ");
     body.lines()
         .find_map(|line| line.strip_prefix(prefix.as_str()))
+}
+
+/// `at` as the server writes times: UTC, to the second.
+pub fn stamp(at: time::OffsetDateTime) -> String {
+    at.format(time::macros::format_description!(
+        "[year]-[month]-[day]T[hour]:[minute]:[second]Z"
+    ))
+    .unwrap()
 }
 
 /// A made-up entry the analyzer reads without warnings. `front` adds front-matter lines.

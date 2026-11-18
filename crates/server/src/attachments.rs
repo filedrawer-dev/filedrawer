@@ -591,14 +591,17 @@ pub fn chunks(text: &str) -> Vec<&str> {
 }
 
 /// Records that the owner is told of `kind` today. False if they already were.
-pub async fn first_notice_today(pool: &SqlitePool, kind: &str) -> Result<bool, sqlx::Error> {
+pub async fn first_notice_today(
+    conn: &mut SqliteConnection,
+    kind: &str,
+) -> Result<bool, sqlx::Error> {
     let day = now()[..10].to_string();
     let done = sqlx::query!(
         "INSERT OR IGNORE INTO owner_notices (kind, day) VALUES (?, ?)",
         kind,
         day
     )
-    .execute(pool)
+    .execute(conn)
     .await?;
     Ok(done.rows_affected() == 1)
 }

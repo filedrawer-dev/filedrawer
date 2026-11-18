@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE outgoing_mail SET dropped_at = ?, subject = NULL, body = NULL\n         WHERE dropped_at IS NULL AND created_at < ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "2d2fd4d8dbf2dcc1ba87258a96436b8382198a542eea953c44b09ebf11c973e1"
+}

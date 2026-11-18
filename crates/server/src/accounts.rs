@@ -54,8 +54,8 @@ fn later(duration: Duration) -> String {
 /// The result of a signup.
 pub enum Signup {
     Created(String),
-    /// Another account has the email already.
-    Taken,
+    /// This account has the email already.
+    Taken(String),
     /// The invite code given can't take a signup: unknown, expired, revoked or used up.
     BadInvite,
 }
@@ -79,11 +79,11 @@ pub async fn sign_up(
             None => return Ok(Signup::BadInvite),
         },
     };
-    let taken = sqlx::query_scalar!("SELECT 1 AS found FROM accounts WHERE email = ?", email)
+    let taken = sqlx::query_scalar!("SELECT id FROM accounts WHERE email = ?", email)
         .fetch_optional(&mut *tx)
         .await?;
-    if taken.is_some() {
-        return Ok(Signup::Taken);
+    if let Some(id) = taken {
+        return Ok(Signup::Taken(id));
     }
     let id = ids::new_account_id();
     let created_at = now();
@@ -127,12 +127,13 @@ pub fn one_line_name(text: &str, max: usize) -> Option<&str> {
     (length >= 1 && length <= max && !text.contains(char::is_control)).then_some(text)
 }
 
-/// A new email link's secret for `account_id`. Only its hash is stored.
+/// A new email link's secret for `account_id`, and its hash, which is all that is
+/// stored.
 pub async fn new_email_link(
-    pool: &SqlitePool,
+    conn: &mut SqliteConnection,
     account_id: &str,
     purpose: Purpose,
-) -> Result<String, sqlx::Error> {
+) -> Result<(String, Vec<u8>), sqlx::Error> {
     let secret = ids::new_secret();
     let hash = ids::token_hash(&secret);
     let created_at = now();
@@ -147,9 +148,22 @@ pub async fn new_email_link(
         created_at,
         expires_at
     )
+    .execute(conn)
+    .await?;
+    Ok((secret, hash))
+}
+
+/// Retires the email link with `hash`, as if used: its email never went out.
+pub async fn retire_email_link(pool: &SqlitePool, hash: &[u8]) -> Result<(), sqlx::Error> {
+    let now = now();
+    sqlx::query!(
+        "UPDATE email_tokens SET used_at = ? WHERE hash = ? AND used_at IS NULL",
+        now,
+        hash
+    )
     .execute(pool)
     .await?;
-    Ok(secret)
+    Ok(())
 }
 
 /// Whether an email link would work, without using it: for the page the link opens.
@@ -294,13 +308,13 @@ pub async fn session_account(
     .await
 }
 
-/// The email addresses of the admin accounts, for notices to the owner.
-pub async fn admin_emails(pool: &SqlitePool) -> Result<Vec<String>, sqlx::Error> {
+/// The admin accounts with an address, for notices to the owner.
+pub async fn admin_ids(conn: &mut SqliteConnection) -> Result<Vec<String>, sqlx::Error> {
     sqlx::query_scalar!(
-        r#"SELECT email AS "email!" FROM accounts
-           WHERE is_admin = 1 AND email IS NOT NULL AND deleted_at IS NULL"#
+        "SELECT id FROM accounts
+         WHERE is_admin = 1 AND email IS NOT NULL AND deleted_at IS NULL"
     )
-    .fetch_all(pool)
+    .fetch_all(conn)
     .await
 }
 

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email_tokens SET used_at = ? WHERE hash = ? AND used_at IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "3c2cdc5f31e9f74edf3ff281fe12e163832460fab553619ddc4c322ecc6c31ab"
+}

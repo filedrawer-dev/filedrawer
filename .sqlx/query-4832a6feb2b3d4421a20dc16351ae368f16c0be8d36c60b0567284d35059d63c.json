@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO outgoing_mail (account_id, kind, subject, body, created_at, next_try_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "4832a6feb2b3d4421a20dc16351ae368f16c0be8d36c60b0567284d35059d63c"
+}

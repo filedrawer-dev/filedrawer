@@ -1,5 +1,6 @@
 //! Sending email: verification and password-reset links (design.md, Accounts;
-//! Hosting and operations: Purelymail SMTP).
+//! Hosting and operations: Purelymail SMTP). The server queues what it sends
+//! (`mail_queue`); the daily email sends through a `Mailer` itself.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -27,24 +28,31 @@ pub trait Mailer: Send + Sync {
     fn send(&self, email: Email) -> Sending<'_>;
 }
 
+/// Why an email didn't go. A send's failure keeps only the SMTP server's reply code,
+/// since the reply's text can repeat the recipient's address.
 #[derive(Debug, thiserror::Error)]
 pub enum MailError {
     #[error("`{0}` is not an email address")]
     Address(String),
-    #[error("the SMTP server refused the email: {0}")]
-    Smtp(#[from] lettre::transport::smtp::Error),
+    #[error("the SMTP server answered {code}")]
+    Reply { code: u16 },
+    #[error("no answer from the SMTP server: {0}")]
+    Unreachable(String),
+    #[error("SMTP couldn't be set up: {0}")]
+    Setup(#[from] lettre::transport::smtp::Error),
     #[error("the email couldn't be built: {0}")]
     Build(#[from] lettre::error::Error),
 }
 
-/// Sends `email` without waiting for it; a failure is logged.
-pub fn send_later(mailer: &std::sync::Arc<dyn Mailer>, email: Email) {
-    let mailer = mailer.clone();
-    tokio::spawn(async move {
-        if let Err(error) = mailer.send(email).await {
-            tracing::error!(%error, "an email wasn't sent");
+impl MailError {
+    /// A failed send's error: the reply's code when the server answered, else what
+    /// kept it from answering (connection, TLS or timeout), which names no recipient.
+    fn sending(error: lettre::transport::smtp::Error) -> MailError {
+        match error.status() {
+            Some(code) => MailError::Reply { code: code.into() },
+            None => MailError::Unreachable(error.to_string()),
         }
-    });
+    }
 }
 
 /// Sends through an SMTP server, over implicit TLS.
@@ -83,7 +91,10 @@ impl Mailer for SmtpMailer {
                 .to(to)
                 .subject(email.subject)
                 .body(email.body)?;
-            self.transport.send(message).await?;
+            self.transport
+                .send(message)
+                .await
+                .map_err(MailError::sending)?;
             Ok(())
         })
     }

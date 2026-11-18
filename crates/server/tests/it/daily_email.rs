@@ -10,10 +10,11 @@ use std::sync::{Arc, Mutex};
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use common::fake_models::FakeModels;
-use common::{DELIMITER, Outbox, TestApp, entry, id_in, owner, test_app_with};
+use common::{DELIMITER, Outbox, TestApp, entry, id_in, owner, stamp, test_app_with};
 use filedrawer_server::config::Environment;
 use filedrawer_server::daily_email::{DailyRun, HttpPinger, Pinger, Pinging, send_daily_email};
 use filedrawer_server::mail::{Email, MailError, Mailer, Sending};
+use filedrawer_server::mail_queue::{self, Queued};
 use time::{Date, Duration, OffsetDateTime};
 
 const DOLLAR: i64 = 1_000_000_000;
@@ -48,14 +49,6 @@ async fn app_in(environment: Environment, with_owner: bool) -> (TestApp, Pings) 
     app.state.environment = environment;
     app.state.pinger = Some(Arc::new(pings.clone()));
     (app, pings)
-}
-
-/// `at` as the server writes times: UTC, to the second.
-fn stamp(at: OffsetDateTime) -> String {
-    at.format(time::macros::format_description!(
-        "[year]-[month]-[day]T[hour]:[minute]:[second]Z"
-    ))
-    .unwrap()
 }
 
 /// Writes the nightly copy of `day`, the day of the run that reads it, so production
@@ -268,6 +261,60 @@ async fn frozen_entries_are_listed() {
         body.contains(&format!("- {id} http://localhost/admin/e/{id}")),
         "{body}"
     );
+}
+
+#[tokio::test]
+async fn production_mails_dropped_and_late_email_but_staging_only_lists_it() {
+    let cases = [
+        (Environment::Production, false, true),
+        (Environment::Staging, false, false),
+        (Environment::Staging, true, true),
+    ];
+    for (environment, with_feedback, sends) in cases {
+        let (app, _) = app_in(environment, true).await;
+        if with_feedback {
+            feedback(&app, "e", "w", "k").await;
+        }
+        let now = soon();
+        fresh_copy(&app, now.date());
+        let owner: String = sqlx::query_scalar("SELECT id FROM accounts WHERE email = ?")
+            .bind(OWNER)
+            .fetch_one(&app.pool)
+            .await
+            .unwrap();
+        for (mail, queued) in [(Queued::Taken, 25), (Queued::Reset, 2)] {
+            mail_queue::queue(&app.state, &owner, mail).await.unwrap();
+            let kind = if queued == 25 { "taken" } else { "reset" };
+            sqlx::query("UPDATE outgoing_mail SET created_at = ? WHERE kind = ?")
+                .bind(stamp(now - Duration::hours(queued)))
+                .bind(kind)
+                .execute(&app.pool)
+                .await
+                .unwrap();
+        }
+        app.outbox
+            .fail(Some(|_| Some(MailError::Unreachable("down".into()))));
+        mail_queue::send_due(&app.state, now).await.unwrap();
+        app.outbox.fail(None);
+
+        let run = send_daily_email(&app.state, now + Duration::seconds(1))
+            .await
+            .unwrap();
+
+        if !sends {
+            assert_eq!(run, DailyRun::Quiet, "{environment:?}");
+            continue;
+        }
+        assert_eq!(run, DailyRun::Sent { to: 1 });
+        let email = the_report(&app);
+        assert!(
+            email
+                .body
+                .contains("Email: 1 dropped unsent, 1 waiting over an hour."),
+            "{}",
+            email.body
+        );
+    }
 }
 
 #[tokio::test]

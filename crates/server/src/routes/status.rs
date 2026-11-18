@@ -1,8 +1,8 @@
 //! `GET /staging/status`: what staging's screen spent today, what waits for it, and how
 //! its last calls went, and what the link checks know of GitHub's calls and of hosts
-//! that asked the server to wait, for agents that can't read the server's log
-//! (AGENTS.md). It names no account, entry or secret. Production doesn't route it
-//! (`lib::build`).
+//! that asked the server to wait, and how many emails wait to be sent and how the
+//! last sends went, for agents that can't read the server's log (AGENTS.md). It names
+//! no account, entry, address or secret. Production doesn't route it (`lib::build`).
 
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -15,7 +15,7 @@ use crate::link_checks::{GITHUB_HOURLY_WITHOUT_TOKEN, LinkHealth};
 use crate::respond::{Format, one_line};
 use crate::screening::{Model, Screener};
 use crate::time::{now_utc, stamp};
-use crate::{AppState, entries, queue};
+use crate::{AppState, entries, mail_queue, queue};
 
 const NONE_YET: &str = "none since the server started";
 
@@ -50,10 +50,15 @@ pub async fn status(State(state): State<AppState>, format: Format) -> Result<Res
         )
     });
     let links = state.link_checker.health();
+    let (mail_waiting, mail_oldest) = mail_queue::waiting(&state.pool).await?;
+    let mail = state.mail_queue.health();
+    let mail_sent = mail.last_sent.map(stamp);
+    let mail_failure = mail.last_failure.map(|(at, failure)| (stamp(at), failure));
     let text = format!(
         "environment: {environment}\nscreener: {screener_text}\n\
          spent today: ${spent_usd:.4} of the day's ${cap_usd:.2}\nwaiting: {}\n\
-         last success: {}\nlast failure: {}\n{}",
+         last success: {}\nlast failure: {}\n{}\
+         emails waiting: {}\nemail last sent: {}\nemail last failure: {}\n",
         match &oldest {
             Some(oldest) => format!("{waiting}, the oldest submitted {oldest}"),
             None => waiting.to_string(),
@@ -64,6 +69,15 @@ pub async fn status(State(state): State<AppState>, format: Format) -> Result<Res
             None => NONE_YET.to_string(),
         },
         link_lines(&links),
+        match &mail_oldest {
+            Some(oldest) => format!("{mail_waiting}, the oldest queued {oldest}"),
+            None => mail_waiting.to_string(),
+        },
+        mail_sent.as_deref().unwrap_or(NONE_YET),
+        match &mail_failure {
+            Some((at, failure)) => format!("{at}: {failure}"),
+            None => NONE_YET.to_string(),
+        },
     );
     let json = json!({
         "environment": environment,
@@ -87,6 +101,14 @@ pub async fn status(State(state): State<AppState>, format: Format) -> Result<Res
             json!({"host": paused.host, "until": stamp(paused.until)})
         }).collect::<Vec<_>>(),
         "commit_page_overruled": links.overruled,
+        "email": {
+            "waiting": mail_waiting,
+            "oldest_waiting_since": mail_oldest,
+            "last_sent": mail_sent,
+            "last_failure": mail_failure.map(|(at, failure)| {
+                json!({"at": at, "error": failure})
+            }),
+        },
     });
     Ok(format.reply(StatusCode::OK, text, json))
 }

@@ -28,6 +28,7 @@ pub mod limits;
 pub mod link_checks;
 mod links;
 pub mod mail;
+pub mod mail_queue;
 mod markdown;
 mod pages;
 mod passwords;
@@ -78,6 +79,8 @@ pub struct AppState {
     /// Held while one item is screened, so no two screenings run at once.
     pub screening_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
     pub mailer: std::sync::Arc<dyn mail::Mailer>,
+    /// The outgoing mail's sender: what wakes it and how its sends went.
+    pub mail_queue: std::sync::Arc<mail_queue::MailQueue>,
     /// The site's address, with no trailing slash (`Config::public_url`).
     pub public_url: String,
     /// Staging's smoke-test account (`Config::smoke_account`).

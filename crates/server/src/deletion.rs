@@ -58,13 +58,13 @@ pub async fn password_hash(
 }
 
 /// Deletes the account in one transaction.
-/// Deleted: its email, login, name, sessions, tokens, email links, private feedback
-/// and series memberships; every entry of its that isn't public or removed, with what
-/// was read from it; runs and batches nothing left uses; the series it made that have
-/// no readable version and no other account's entry cites; the series the screen
-/// refused that the owner hasn't confirmed as a hazard; the attachment sets no kept
-/// entry cites, and the files no remaining set holds, whose bytes leave `files` once
-/// the rest has committed.
+/// Deleted: its email, login, name, sessions, tokens, email links, queued email,
+/// private feedback and series memberships; every entry of its that isn't public or
+/// removed, with what was read from it; runs and batches nothing left uses; the
+/// series it made that have no readable version and no other account's entry cites;
+/// the series the screen refused that the owner hasn't confirmed as a hazard; the
+/// attachment sets no kept entry cites, and the files no remaining set holds, whose
+/// bytes leave `files` once the rest has committed.
 /// Kept: the account ID, its public entries, the other series it made, refused
 /// series the owner confirmed, the attachment sets kept entries cite, and the
 /// invite code it signed up with, so it still counts as one of the code's uses.
@@ -90,6 +90,7 @@ pub async fn delete(state: &AppState, account_id: &str) -> Result<(), sqlx::Erro
     for statement in [
         sqlx::query!("DELETE FROM sessions WHERE account_id = ?", account_id),
         sqlx::query!("DELETE FROM email_tokens WHERE account_id = ?", account_id),
+        sqlx::query!("DELETE FROM outgoing_mail WHERE account_id = ?", account_id),
         // The kept entries forget the tokens that submitted them, which go next.
         sqlx::query!(
             "UPDATE entries SET token_id = NULL WHERE account_id = ?",

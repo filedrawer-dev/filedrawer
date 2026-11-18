@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM outgoing_mail WHERE account_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "cab7dd839cb30ee99aa21a0d64d56e2ea26e0de16704b2eb72c58179948453fa"
+}
