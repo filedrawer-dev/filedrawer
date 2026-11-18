@@ -152,6 +152,9 @@ def test_versions_says_a_newer_release_is_needed(ci):
     result = ci.run("versions")
     assert result.returncode == 0, result.stderr
     assert outputs(result) == {"latest": "2.12.0", "pinned": "2.11.9", "needed": "true"}
+    # The run's log shows the versions; $GITHUB_OUTPUT gets only stdout.
+    assert "Caddy's latest release is 2.12.0; bin/caddy pins 2.11.9" in result.stderr
+    assert "tests run against it" in result.stderr
 
 
 @pytest.mark.parametrize("tag", ["v2.11.9", "v2.11.8", "v2.9.10"])
@@ -160,6 +163,8 @@ def test_versions_needs_nothing_for_a_release_at_or_behind_the_pin(ci, tag):
     result = ci.run("versions")
     assert result.returncode == 0, result.stderr
     assert outputs(result)["needed"] == "false"
+    assert f"latest release is {tag[1:]}" in result.stderr
+    assert "nothing to test" in result.stderr
 
 
 @pytest.mark.parametrize("tag", ["2.12.0", "v2.12.0-beta.1", "", "v2.12"])

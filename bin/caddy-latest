@@ -4,7 +4,8 @@
 
     bin/caddy-latest versions
         prints latest=, pinned= and needed= lines for $GITHUB_OUTPUT: Caddy's latest
-        GitHub release, the version bin/caddy pins, and whether the latest is newer.
+        GitHub release, the version bin/caddy pins, and whether the latest is newer;
+        and says the same in words on stderr, for the run's log.
         Fails on a tag that isn't vX.Y.Z or a pin it can't read.
     bin/caddy-latest fetch VERSION DIR
         downloads VERSION's linux_amd64 archive, checks its SHA-512 against the
@@ -59,8 +60,14 @@ def versions() -> None:
     if not (found and VERSION.match(found.group(1))):
         fail("can't read the VERSION bin/caddy pins")
     pinned = found.group(1)
-    needed = "true" if key(latest) > key(pinned) else "false"
-    print(f"latest={latest}\npinned={pinned}\nneeded={needed}")
+    needed = key(latest) > key(pinned)
+    # stdout goes to $GITHUB_OUTPUT, so the run's log shows only stderr.
+    then = "so the tests run against it" if needed else "so there is nothing to test"
+    print(
+        f"Caddy's latest release is {latest}; bin/caddy pins {pinned}, {then}.",
+        file=sys.stderr,
+    )
+    print(f"latest={latest}\npinned={pinned}\nneeded={'true' if needed else 'false'}")
 
 
 def download(url: str, out: Path) -> None:
