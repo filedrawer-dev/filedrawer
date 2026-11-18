@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run Caddy 2.10.2, pinned by SHA-512, for the tests that need a real Caddy.
+"""Run Caddy 2.11.9, pinned by SHA-512, for the tests that need a real Caddy.
 
     bin/caddy ARGS...    run caddy with ARGS
 
@@ -38,15 +38,15 @@ import tarfile
 import tempfile
 from pathlib import Path
 
-VERSION = "2.10.2"
+VERSION = "2.11.9"
 BASE_URL = f"https://github.com/caddyserver/caddy/releases/download/v{VERSION}"
-# Each archive's SHA-512, from caddy_2.10.2_checksums.txt, which matched the archives
-# downloaded on 2026-11-10, whose SHA-256 matched GitHub's API digests.
+# Each archive's SHA-512, from caddy_2.11.9_checksums.txt, which matched the archives
+# downloaded on 2026-11-18, whose SHA-256 matched GitHub's API digests.
 PINS = {
-    "linux_amd64": "747df7ee74de188485157a383633a1a963fd9233b71fbb4a69ddcbcc589ce4e2cc82dacf5dbbe136cb51d17e14c59daeb5d9bc92487610b0f3b93680b2646546",
-    "linux_arm64": "6ce061a690312ab38367df3c5d5f89a2e4a263e7300d300d87356211bb81e79b15933e6d6203e03fbf26f15cc0311f264805f336147dbdd24938d84b57a4421c",
-    "mac_amd64": "d6077f7a35663b1b0436a45341e96828bb8025221b777417c781c30c56931e45209b0e5468cd6eb8ec881728c20f142a4333a878c82a10b49913384cffaf541d",
-    "mac_arm64": "3b8a4b24054bddd96cae8da5c34e48c19105be29859d6f09e37344b7e188881cfd6b0a91af3f3e8f1d10987153e6bad70d1752c967e1360cc0041fc7736076ec",
+    "linux_amd64": "0e85544340290a16ce4bfb76fe7d65e9de1bf3a6e67f5ccfff30b30d27ea4c73e078077b7bf3e58ae60b6b12e44327705287059c775bca5782e8ee85ea7edd75",
+    "linux_arm64": "9e5e76d7888542924de2c25353ae87c5f77e2a22c5b1198633cae13688922282e05383d142599205c88d8d80eee5e967d291214d7abce4835329a191b20dd6e0",
+    "mac_amd64": "c36155058098d916a2f3049be3ade6ccb0a1cb0cf3cb50ee8806ea67d5249e567cf053024a5a4d2d50df5ec338c84c52aae1dfb147dfc62cabe1574a36d39282",
+    "mac_arm64": "166a8fdd183dc597ebe3a12d71e2e8eb313ab673ae8d3e286cb92bb0078d04233c23347543f7d7e8285b44136416e6718b0d106afe973de8ede4d81b6809c6bb",
 }
 # (platform.system(), platform.machine()) to release target. The machine names are the
 # ones each kernel reports: aarch64 on Linux, arm64 on macOS.
