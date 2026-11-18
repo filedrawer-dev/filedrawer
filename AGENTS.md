@@ -159,6 +159,7 @@ Each crate's integration tests build as one binary, `tests/it/main.rs`, with eac
 To run one file's tests, filter on its module: `cargo nextest run --cargo-quiet -p filedrawer-server -E 'test(/^read::/)'`.
 The Python tests in `bin/tests` run through `bin/pytest`, the pinned pytest with pytest.ini's plugins: `heavy --quick -- bin/pytest -n0 bin/tests/test_x.py`; plain `uv run pytest` lacks pytest-xdist, which pytest.ini's `-n` needs.
 Run a targeted run like that, a few tests that take seconds, through `heavy --quick -- CMD`, which starts it at once on quiet cores and otherwise next in heavy's queue (`heavy -h`); a whole suite goes through plain `heavy`.
+So do `bin/tests/test_provision_vps.py` and `bin/tests/test_deploy_production.py` whole, which take a minute or more; a `-k` selection from them fits `--quick`.
 After an edit to a crate, that run first rebuilds the test binary, a minute or more, which overruns `--quick`: build it first as a background call, `bgrun --wait -o LOG -- heavy --share -- cargo nextest run --cargo-quiet --no-run`, then run the tests with `--quick`.
 A `mutate-check` rebuilds for each mutant, so it goes through plain `heavy` the same way.
 Give a foreground `heavy --quick` call a Bash timeout of 600000 ms, since it may wait behind a running job; llm-toolbox's heavy-gate refuses one without it.

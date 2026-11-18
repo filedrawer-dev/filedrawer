@@ -137,4 +137,5 @@ Entry text, series descriptions, feedback and screening notes are written by str
 - A `run:` block runs a few commands in a row.
   Logic that loops, parses files or builds output, as `bin/mutants-summary` does for `.github/workflows/mutants.yml`, goes in a script in `bin/` or `ops/` with tests, so the full check tests it.
   Acting on one command's exit status, as the `screen-staging` job does, stays in the YAML.
+- A step that writes `$GITHUB_OUTPUT` also says what it found in the run's log, on stderr or with `echo`: a run whose log shows nothing can't be checked by reading it, as `caddy-latest.yml`'s first run couldn't.
   `bin/tests/test_workflow_run_blocks.py` refuses `sed`, `jq`, `awk`, a loop, or more than 5 command lines in a block, unless its `EXEMPT` names the block with why; a commit that touches a workflow runs it.
