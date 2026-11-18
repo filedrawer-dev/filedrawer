@@ -282,18 +282,10 @@ impl Reader {
             "series" => self.fields.series = self.text(name, value),
             "attachments" => self.fields.attachments = self.text(name, value),
             "written_by" => self.fields.written_by = self.mapping_list(name, value, Self::writer),
-            "embargo_until" => {
-                if !matches!(value, Yaml::Null) {
-                    self.refusals.push(Refusal::EmbargoPaused {
-                        field: name.to_string(),
-                    });
-                }
-                self.fields.embargo_until = self.embargo(value);
-            }
-            // A near miss would be stored as written and published, though its
-            // author meant to hold the entry (design.md, Embargo: paused).
+            // Its author meant to hold the entry, and the archive no longer can, so
+            // any key that asks is refused, empty or not (design.md, Rejected).
             asked if asked.to_ascii_lowercase().starts_with("embargo") => {
-                self.refusals.push(Refusal::EmbargoPaused {
+                self.refusals.push(Refusal::EmbargoRetired {
                     field: asked.to_string(),
                 });
             }
@@ -401,22 +393,6 @@ impl Reader {
             kept.push(text);
         }
         kept
-    }
-
-    /// `embargo_until`, which must be a YYYY-MM-DD date. Anything else is refused
-    /// rather than read as "no embargo", since an early release can't be undone.
-    fn embargo(&mut self, value: &Yaml) -> Option<String> {
-        let written = match value {
-            Yaml::Null => return None,
-            Yaml::Array(_) => "a list".to_string(),
-            Yaml::Hash(_) => "a mapping".to_string(),
-            scalar => scalar_text(scalar).unwrap_or_default(),
-        };
-        if is_date(written.trim()) {
-            return Some(written.trim().to_string());
-        }
-        self.refusals.push(Refusal::EmbargoUnreadable(written));
-        None
     }
 
     fn published_in(&mut self, value: &Yaml) -> Option<String> {
@@ -582,36 +558,6 @@ fn scalar_text(value: &Yaml) -> Option<String> {
         _ => return None,
     };
     (!text.trim().is_empty()).then_some(text)
-}
-
-/// Whether `text` is a real calendar date written YYYY-MM-DD.
-fn is_date(text: &str) -> bool {
-    let parts: Vec<&str> = text.split('-').collect();
-    let [year, month, day] = parts.as_slice() else {
-        return false;
-    };
-    let digits = |part: &str, length: usize| {
-        part.len() == length && part.bytes().all(|b| b.is_ascii_digit())
-    };
-    if !(digits(year, 4) && digits(month, 2) && digits(day, 2)) {
-        return false;
-    }
-    let (Ok(year), Ok(month), Ok(day)) = (
-        year.parse::<u32>(),
-        month.parse::<u32>(),
-        day.parse::<u32>(),
-    ) else {
-        return false;
-    };
-    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
-    let days = match month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 if leap => 29,
-        2 => 28,
-        _ => return false,
-    };
-    (1..=days).contains(&day)
 }
 
 /// Whether `text` is `arXiv:<id>` or a DOI (`10.<registrant>/<suffix>`, bare or as a

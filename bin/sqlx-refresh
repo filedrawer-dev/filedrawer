@@ -3,7 +3,8 @@
 
   bin/sqlx-refresh [--repo DIR]
   bin/sqlx-refresh --if-stale    rebuild only the database, only if the migrations
-                                 changed since it was built (the git hooks run this)
+                                 changed since it was built (the git hooks run this,
+                                 with --quiet)
 
 Deletes target/dev.db (the database in .env's DATABASE_URL, when .env names one),
 creates it again, runs every migration in crates/server/migrations, and runs
@@ -18,8 +19,10 @@ Each rebuild writes a hash of the migrations beside the database
 (target/dev.db.migrations). --if-stale compares it, and when the migrations
 differ, as after another session's merge brings one, rebuilds the database
 without `cargo sqlx prepare`, which the committed .sqlx/ already covers. It does
-nothing, silently, in a tree with no .env (a worktree builds from .sqlx/) or
-without sqlx on PATH (the owner's host, where the hooks run too).
+nothing in a tree with no .env (a worktree builds from .sqlx/) or without sqlx on
+PATH (the owner's host, where the hooks run too), and says so on stderr, since
+after a query or migration change the full refresh is what's needed; --quiet, as
+the hooks pass, leaves that line out.
 """
 
 import argparse
@@ -98,10 +101,27 @@ def main() -> int:
         action="store_true",
         help="rebuild only the database, only if the migrations changed since it was built",
     )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="with --if-stale, say nothing when there is nothing it can rebuild",
+    )
     args = parser.parse_args()
     repo = args.repo.resolve()
-    if args.if_stale and (not (repo / ".env").exists() or shutil.which("sqlx") is None):
-        return 0
+    if args.if_stale:
+        missing = None
+        if not (repo / ".env").exists():
+            missing = "no .env"
+        elif shutil.which("sqlx") is None:
+            missing = "no sqlx on PATH"
+        if missing:
+            if not args.quiet:
+                print(
+                    f"sqlx-refresh --if-stale: {missing}, so nothing was rebuilt;"
+                    " after changing a query or a migration, run bin/sqlx-refresh",
+                    file=sys.stderr,
+                )
+            return 0
     url = database_url(repo)
     database = database_path(repo, url)
     if args.if_stale and not is_stale(repo, database):

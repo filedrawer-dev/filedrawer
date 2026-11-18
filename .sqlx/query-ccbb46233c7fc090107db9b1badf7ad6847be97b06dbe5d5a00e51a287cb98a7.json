@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "UPDATE entries SET status = 'public', published_at = ?\n         WHERE seq = ? AND screen_verdict = 'pass' AND status IN ('screening', 'waiting_on_series')\n         RETURNING source",
+  "query": "UPDATE entries SET status = 'public', published_at = ?\n         WHERE seq = ? AND screen_verdict = 'pass' AND status = 'screening'\n         RETURNING source",
   "describe": {
     "columns": [
       {
@@ -22,5 +22,5 @@
       false
     ]
   },
-  "hash": "aba24a0b0c7949734fe2733fb63e5678709c598a7fb490107dea77fbf22e75be"
+  "hash": "ccbb46233c7fc090107db9b1badf7ad6847be97b06dbe5d5a00e51a287cb98a7"
 }

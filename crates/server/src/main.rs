@@ -267,8 +267,6 @@ async fn serve() -> ExitCode {
         } else {
             LinkChecker::off()
         }),
-        // Paused (design.md, Embargo); no setting opens them.
-        embargoes: filedrawer_server::Embargoes::Paused,
         pinger: config.daily_email_ping.as_ref().map(|url| {
             Arc::new(HttpPinger::new(url.expose()))
                 as Arc<dyn filedrawer_server::daily_email::Pinger>
@@ -284,7 +282,6 @@ async fn serve() -> ExitCode {
     ));
     tokio::spawn(filedrawer_server::jobs::run_tidier(state.clone()));
     tokio::spawn(filedrawer_server::jobs::run_link_rechecker(state.clone()));
-    tokio::spawn(filedrawer_server::jobs::run_releaser(state.clone()));
     tokio::spawn(filedrawer_server::jobs::run_daily_email(state.clone()));
     let router = app(state);
     let shutdown = async {

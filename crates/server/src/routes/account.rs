@@ -20,7 +20,7 @@ use crate::pages::{
     VerifyPage, page,
 };
 use crate::time::now_utc;
-use crate::{AppState, admin, deletion, invites, jobs, passwords, series, suspension, withdraw};
+use crate::{AppState, admin, deletion, invites, passwords, series, withdraw};
 
 const COOKIE: &str = "fd_session";
 
@@ -400,11 +400,10 @@ async fn account_page(
 ) -> Result<Response, AppError> {
     let view = accounts::view(&state.pool, account_id).await?;
     let series = series::created_by(&state.pool, account_id).await?;
-    let (withdrawable, with_owner) = withdraw::listing(&state.pool, account_id).await?;
+    let withdrawable = withdraw::listing(&state.pool, account_id).await?;
     let template = AccountPage {
         series: &series,
         withdrawable: &withdrawable,
-        with_owner: &with_owner,
         display_name: &view.display_name,
         account_id: &view.id,
         email: view.email.as_deref(),
@@ -484,7 +483,6 @@ async fn delete_form(
         error,
         unpublished: preview.unpublished,
         public: preview.public,
-        blocking: &preview.blocking,
     };
     Ok(page(status, &template))
 }
@@ -507,10 +505,7 @@ pub async fn delete_account(
         let error = "The password is wrong.";
         return delete_form(&state, &session.id, StatusCode::UNAUTHORIZED, Some(error)).await;
     }
-    if let deletion::Outcome::Blocked = deletion::delete(&state, &session.id).await? {
-        // A series became blocking since the page was shown; it lists them.
-        return delete_form(&state, &session.id, StatusCode::CONFLICT, None).await;
-    }
+    deletion::delete(&state, &session.id).await?;
     let clear = format!("{COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0");
     let done = page(
         StatusCode::OK,
@@ -521,22 +516,6 @@ pub async fn delete_account(
         },
     );
     Ok(([(header::SET_COOKIE, clear)], done).into_response())
-}
-
-/// Makes one of the account's series public, then places the entries that waited on
-/// it (design.md, Series: "its creator makes it public from a browser session").
-pub async fn publish_series(
-    State(state): State<AppState>,
-    session: SessionAccount,
-    Path(id): Path<String>,
-) -> Result<Response, AppError> {
-    // Making a series public serves its author text.
-    suspension::refuse_if_suspended(&state.pool, &session.id).await?;
-    if !series::make_public(&state.pool, &id, &session.id).await? {
-        return Err(AppError::NotFound);
-    }
-    jobs::place_waiting(&state).await?;
-    Ok(Redirect::to("/account").into_response())
 }
 
 pub async fn resend_verification(

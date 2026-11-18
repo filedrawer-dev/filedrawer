@@ -14,7 +14,6 @@ use analyzer::render_card;
 use axum::http::HeaderMap;
 
 use crate::auth::{TokenAccount, optional_token_account};
-use crate::embargo::parse_date;
 use crate::entries::{self, Filters};
 use crate::error::AppError;
 use crate::link_checks::{self, LinkFlags};
@@ -330,8 +329,8 @@ fn removed_reply(id: &str, format: Format) -> Response {
 }
 
 /// An entry that isn't public, for its author's token only: a pending entry with the
-/// time it publishes and its warnings, an embargoed one with its release date, or a
-/// removed one with only that it was removed. Anyone else gets the same 404 as for an
+/// time it publishes and its warnings, or a removed one with only that it was
+/// removed. Anyone else gets the same 404 as for an
 /// entry that doesn't exist.
 async fn own_entry(
     state: &AppState,
@@ -347,8 +346,7 @@ async fn own_entry(
         .ok_or(AppError::NotFound)?;
     match entry.status.as_str() {
         "removed" => return Ok(removed_reply(&entry.id, format)),
-        "pending" | "screening" | "review" | "held" | "frozen" | "rejected" | "embargoed"
-        | "waiting_on_series" => {}
+        "pending" | "screening" | "review" | "held" | "frozen" | "rejected" => {}
         _ => return Err(AppError::NotFound),
     }
     let analysis = analyze(&entry.source);
@@ -356,21 +354,10 @@ async fn own_entry(
         Results::Read(table) => table.rows.iter().map(row_note).collect(),
         Results::NotRead(_) => Vec::new(),
     };
-    // An embargoed version releases with its chain, so it shows the chain's date.
-    let release = if entry.status == "embargoed" {
-        let chain = entries::chain_embargo(&state.pool, entry.seq).await?;
-        parse_date(chain.as_deref()).map(|date| date.to_string())
-    } else {
-        None
-    };
     let when = match entry.status.as_str() {
         "pending" => format!(
             "publish_at: {}\n",
             entry.hold_until.as_deref().unwrap_or("")
-        ),
-        "embargoed" => format!(
-            "release: {}\n",
-            release.as_deref().unwrap_or("not recorded")
         ),
         _ => String::new(),
     };
@@ -442,7 +429,6 @@ async fn own_entry(
         "status": entry.status,
         "publish_at": entry.hold_until,
         "screen_from": screen_from.map(allowance::day_text),
-        "release": release,
         "analyzer_version": ANALYZER_VERSION,
         "row_notes": notes,
         "card": card,

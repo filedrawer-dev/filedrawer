@@ -1,4 +1,4 @@
-//! Submitting an entry (design.md, Submission and screening; Entry status; Embargo):
+//! Submitting an entry (design.md, Submission and screening; Entry status):
 //! `POST /entries` holds an accepted submission as `pending` for an hour, in which
 //! `PUT /e/<id>` replaces it and `POST /e/<id>/publish` ends the hold early.
 
@@ -12,7 +12,6 @@ use axum::response::Response;
 use serde_json::json;
 
 use crate::auth::TokenAccount;
-use crate::embargo::{Embargoes, Standing, kept_date, parse_date, release, repeats};
 use crate::entries::{self, NewEntry, OwnEntry};
 use crate::error::AppError;
 use crate::jobs::{end_hold, hold_until};
@@ -22,8 +21,7 @@ use crate::provenance::Provenance;
 use crate::respond::{DELIMITER, Format, card_and_warnings};
 use crate::series::{self, Cited};
 use crate::{AppState, allowance, attachments, removed_files, time, warnings};
-use ::time::format_description::well_known::Rfc3339;
-use ::time::{Date, OffsetDateTime};
+use ::time::Date;
 use analyzer::{SeriesCite, parse_series_cite, without_series};
 
 /// A submission that passed every check: the text to store, what the analyzer read
@@ -31,57 +29,12 @@ use analyzer::{SeriesCite, parse_series_cite, without_series};
 /// (design.md, Series).
 pub(crate) struct Accepted {
     pub source: String,
-    /// What the analyzer read, except that `fields.embargo_until` is the date the
-    /// entry is stored with: for a version bound by an embargo, the one it keeps
-    /// ([`kept_date`]), so the reference checks, the row and the reply all use it.
     pub analysis: Analysis,
     pub cite: Option<SeriesCite>,
 }
 
-/// What an earlier submission fixes for a resubmission or a new version: the first
-/// submission date the embargo cap counts from, the embargo in force, which a
-/// version keeps, and the previous version's stored date, which a version may repeat.
-pub(crate) struct Prior<'a> {
-    first_submitted_at: &'a str,
-    embargo_in_force: Option<&'a str>,
-    /// The `embargo_until` its previous version's text names.
-    previous_date: Option<String>,
-}
-
-impl<'a> Prior<'a> {
-    /// For a new version of `entry`. Its embargo is in force only while it is
-    /// embargoed; a public entry's old date no longer holds anything back.
-    fn of(entry: &'a OwnEntry) -> Prior<'a> {
-        Prior {
-            first_submitted_at: &entry.first_submitted_at,
-            embargo_in_force: entry
-                .embargo_until
-                .as_deref()
-                .filter(|_| entry.status == "embargoed"),
-            previous_date: analyze(&entry.source).fields.embargo_until,
-        }
-    }
-
-    /// For a PUT on the pending `entry`. A draft's own embargo holds nothing back yet,
-    /// so its author may drop or shorten it (the owner's decision, 2026-11-05). A
-    /// pending new version of an embargoed entry is bound by that entry's embargo.
-    fn for_put(entry: &'a OwnEntry, previous: Option<&'a OwnEntry>) -> Prior<'a> {
-        Prior {
-            first_submitted_at: &entry.first_submitted_at,
-            embargo_in_force: previous.and_then(|previous| Prior::of(previous).embargo_in_force),
-            previous_date: previous
-                .and_then(|previous| analyze(&previous.source).fields.embargo_until),
-        }
-    }
-}
-
-/// Runs every check a submission must pass, given what an earlier submission fixes
-/// and whether the server takes embargoes, and lists every reason it fails.
-pub(crate) fn accept(
-    body: &Bytes,
-    prior: Option<Prior<'_>>,
-    embargoes: Embargoes,
-) -> Result<Accepted, AppError> {
+/// Runs every check a submission must pass and lists every reason it fails.
+pub(crate) fn accept(body: &Bytes) -> Result<Accepted, AppError> {
     if body.len() > MAX_ENTRY_BYTES {
         return Err(AppError::Refused {
             status: StatusCode::PAYLOAD_TOO_LARGE,
@@ -93,19 +46,8 @@ pub(crate) fn accept(
         reasons: vec!["the entry is not UTF-8 text".into()],
     })?;
     let source = stored_text(text);
-    let mut analysis = analyze(&source);
-    let repeated = repeats(
-        prior
-            .as_ref()
-            .and_then(|prior| prior.previous_date.as_deref()),
-        analysis.fields.embargo_until.as_deref(),
-    );
-    if repeated {
-        analysis.fields.embargo_until = None;
-    }
-    let standing = Standing::of(&analysis.refusals, embargoes, repeated);
-    let refused_as_paused = standing.refused_as_paused;
-    let mut reasons: Vec<String> = standing.refusals.iter().map(ToString::to_string).collect();
+    let analysis = analyze(&source);
+    let mut reasons: Vec<String> = analysis.refusals.iter().map(ToString::to_string).collect();
     let (source, cite) = match analysis.fields.series.as_deref() {
         None => (source, None),
         Some(value) => {
@@ -134,31 +76,6 @@ pub(crate) fn accept(
                 )
             }),
     );
-    let now = time::now_utc();
-    // A resubmission keeps its first submission date, which the embargo cap counts from.
-    let first_submitted = prior
-        .as_ref()
-        .and_then(|prior| OffsetDateTime::parse(prior.first_submitted_at, &Rfc3339).ok())
-        .unwrap_or(now);
-    let embargo = analysis.fields.embargo_until.as_deref();
-    // The paused refusal comes alone: the embargo rules' own reasons would contradict it.
-    if !refused_as_paused {
-        match prior
-            .as_ref()
-            .and_then(|prior| parse_date(prior.embargo_in_force))
-        {
-            // The date in force was checked when it was set, so no cap applies again.
-            Some(in_force) => match kept_date(in_force, embargo) {
-                Ok(kept) => analysis.fields.embargo_until = Some(kept.to_string()),
-                Err(why) => reasons.push(why.to_string()),
-            },
-            None => {
-                if let Err(why) = release(embargo, now, first_submitted) {
-                    reasons.push(why.to_string());
-                }
-            }
-        }
-    }
     if !reasons.is_empty() {
         return Err(AppError::Refused {
             status: StatusCode::UNPROCESSABLE_ENTITY,
@@ -305,13 +222,9 @@ async fn held_reply(
     let card = render_card(analysis, &context);
     let warnings =
         warnings::entry_warnings(&state.pool, &account.id, seq, source, analysis, links).await?;
-    let embargo = parse_date(analysis.fields.embargo_until.as_deref()).map(|date| date.to_string());
     let previous_line = previous.map_or(String::new(), |id| format!("previous: {id}\n"));
-    let embargo_line = embargo
-        .as_deref()
-        .map_or(String::new(), |date| format!("embargo_until: {date}\n"));
     let text = format!(
-        "id: {id}\nstatus: pending\npublish_at: {publish_at}\n{embargo_line}{previous_line}url: {}/e/{id}\n{}\
+        "id: {id}\nstatus: pending\npublish_at: {publish_at}\n{previous_line}url: {}/e/{id}\n{}\
          Fix it before then by sending the whole entry again with PUT to the url, or publish it now with a POST to the url plus /publish.\n\
          {}{DELIMITER}\nprimary row: {}\n{}",
         state.public_url,
@@ -325,7 +238,6 @@ async fn held_reply(
         "status": "pending",
         "publish_at": publish_at,
         "screen_from": screen_from.map(allowance::day_text),
-        "embargo_until": embargo,
         "previous": previous,
         "url": format!("{}/e/{id}", state.public_url),
         "account": account.json(),
@@ -361,8 +273,8 @@ pub async fn submit(
     format: Format,
     body: Bytes,
 ) -> Result<Response, AppError> {
-    let accepted = accept(&body, None, state.embargoes)?;
-    check_references(&state, &account, &accepted, SlugRule::New, None).await?;
+    let accepted = accept(&body)?;
+    check_references(&state, &account, &accepted, SlugRule::New).await?;
     let cited = one_cite(&state, &account, &accepted).await?;
     let set = one_set(&state, &account, &accepted).await?;
     let links = one_check(&state, &account, &accepted).await?;
@@ -399,7 +311,7 @@ pub async fn submit(
     held_reply(&state, format, StatusCode::CREATED, &held).await
 }
 
-/// `POST /e/<id>/versions`: a correction of a public or embargoed entry, as a new
+/// `POST /e/<id>/versions`: a correction of a public entry, as a new
 /// entry held like any submission (design.md, Entry lifecycle). Only on the latest
 /// version in the chain, and only by its author.
 pub async fn new_version(
@@ -414,7 +326,7 @@ pub async fn new_version(
         .await?
         .ok_or(AppError::NotFound)?;
     match entry.status.as_str() {
-        "public" | "embargoed" => {}
+        "public" => {}
         "pending" => {
             return Err(AppError::Conflict(format!(
                 "entry {id} is still pending: change it with PUT to its url instead"
@@ -422,24 +334,17 @@ pub async fn new_version(
         }
         other => {
             return Err(AppError::Conflict(format!(
-                "entry {id} is {other}; a new version needs a public or embargoed entry"
+                "entry {id} is {other}; a new version needs a public entry"
             )));
         }
     }
     if let Some(conflict) = newer_version(&state, &id, entry.seq).await? {
         return Err(conflict);
     }
-    let accepted = accept(&body, Some(Prior::of(&entry)), state.embargoes)?;
+    let accepted = accept(&body)?;
     let chain_slug = entries::chain_slug(&state.pool, entry.seq).await?;
     let register_slug = chain_slug.is_none() && accepted.analysis.fields.slug.is_some();
-    check_references(
-        &state,
-        &account,
-        &accepted,
-        SlugRule::Version(chain_slug),
-        None,
-    )
-    .await?;
+    check_references(&state, &account, &accepted, SlugRule::Version(chain_slug)).await?;
     let cited = one_cite(&state, &account, &accepted).await?;
     let set = one_set(&state, &account, &accepted).await?;
     let links = one_check(&state, &account, &accepted).await?;
@@ -496,21 +401,17 @@ pub async fn new_version(
     held_reply(&state, format, StatusCode::CREATED, &held).await
 }
 
-/// Refuses one entry whose slug, runs or references don't check out. `seq` is the
-/// stored entry a PUT replaces.
+/// Refuses one entry whose slug or runs don't check out.
 async fn check_references(
     state: &AppState,
     account: &TokenAccount,
     accepted: &Accepted,
     slug_rule: SlugRule,
-    seq: Option<i64>,
 ) -> Result<(), AppError> {
     let linked = [Linked {
         label: "the entry".into(),
         analysis: &accepted.analysis,
-        source: &accepted.source,
         slug_rule,
-        seq,
     }];
     let problems = links::problems(state, account, &linked, &Default::default()).await?;
     if problems.is_empty() {
@@ -565,25 +466,10 @@ pub async fn resubmit(
     body: Bytes,
 ) -> Result<Response, AppError> {
     let entry = own_pending(&state, &id, &account).await?;
-    let previous = match &entry.previous_id {
-        Some(previous) => entries::own_entry(&state.pool, previous, &account.id).await?,
-        None => None,
-    };
-    let accepted = accept(
-        &body,
-        Some(Prior::for_put(&entry, previous.as_ref())),
-        state.embargoes,
-    )?;
+    let accepted = accept(&body)?;
     // A slug names the entry for good, and other entries may already refer to it.
     let kept = analyzer::analyze(&entry.source).fields.slug;
-    check_references(
-        &state,
-        &account,
-        &accepted,
-        SlugRule::Put(kept),
-        Some(entry.seq),
-    )
-    .await?;
+    check_references(&state, &account, &accepted, SlugRule::Put(kept)).await?;
     let cited = one_cite(&state, &account, &accepted).await?;
     let set = one_set(&state, &account, &accepted).await?;
     let links = one_check(&state, &account, &accepted).await?;
@@ -643,15 +529,8 @@ pub async fn publish(
     };
     // Ending the hold early doesn't skip the account's queue.
     let screen_from = allowance::screen_from(&state.pool, entry.seq, now.date()).await?;
-    let release = entry
-        .embargo_until
-        .clone()
-        .filter(|_| status == "embargoed");
-    let release_line = release
-        .as_deref()
-        .map_or(String::new(), |date| format!("release: {date}\n"));
     let text = format!(
-        "id: {id}\nstatus: {status}\n{release_line}url: {}/e/{id}\n{}",
+        "id: {id}\nstatus: {status}\nurl: {}/e/{id}\n{}",
         state.public_url,
         allowance::screen_from_lines(screen_from)
     );
@@ -659,7 +538,6 @@ pub async fn publish(
         "id": id,
         "status": status,
         "screen_from": screen_from.map(allowance::day_text),
-        "release": release,
         "url": format!("{}/e/{id}", state.public_url),
     });
     Ok(format.reply(StatusCode::OK, text, json))

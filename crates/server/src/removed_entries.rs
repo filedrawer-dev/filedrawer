@@ -121,15 +121,7 @@ pub enum Standing {
 /// The statuses a batch member passes through before its batch is decided. A member
 /// removed from one of them can't come back alone: the batch was decided, or is
 /// being decided, without it.
-const UNSETTLED: [&str; 7] = [
-    "pending",
-    "screening",
-    "review",
-    "held",
-    "frozen",
-    "embargoed",
-    "waiting_on_series",
-];
+const UNSETTLED: [&str; 5] = ["pending", "screening", "review", "held", "frozen"];
 
 struct Row {
     seq: i64,

@@ -1,20 +1,15 @@
-//! Seam: the router and `jobs::publish_due`, for series (design.md, Series): create,
-//! join, cite a version, versions of the description, made public from a browser
-//! session, and `waiting_on_series`.
+//! Seam: the router, for series (design.md, Series): create, join, cite a version,
+//! and versions of the description, each readable once an entry citing it is public.
 
 use crate::common;
 
 use axum::http::StatusCode;
-use common::series::{DESCRIPTION, citing, create, make_public, series_doc, submit_with};
-use common::{
-    DELIMITER, TestApp, account_id, browser_account, date_in, entry, field, id_in, test_app,
-};
-use filedrawer_server::jobs::publish_due;
+use common::series::{DESCRIPTION, citing, create, series_doc, submit_with};
+use common::{DELIMITER, TestApp, account_id, browser_account, entry, field, id_in, test_app};
 use serde_json::json;
-use time::Duration;
 
 #[tokio::test]
-async fn a_new_series_is_hidden_from_all_but_its_members() {
+async fn a_new_series_is_public_but_its_description_waits_for_a_public_entry() {
     let app = test_app().await;
     let reply = app
         .post("/series", series_doc("Layer sweep", DESCRIPTION))
@@ -22,26 +17,23 @@ async fn a_new_series_is_hidden_from_all_but_its_members() {
     assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
     let id = id_in(&reply.body);
     assert!(id.starts_with("s-"), "{id}");
-    assert_eq!(field(&reply.body, "status"), Some("hidden"));
+    assert_eq!(field(&reply.body, "status"), Some("public"));
     assert_eq!(field(&reply.body, "version"), Some("1"));
     assert!(field(&reply.body, "key").unwrap().starts_with("fdj_"));
     let (_, below) = reply.body.split_once(DELIMITER).unwrap();
     assert!(below.contains("Layer sweep"), "{}", reply.body);
 
-    assert_eq!(
-        app.get(&format!("/series/{id}")).await.status,
-        StatusCode::NOT_FOUND
-    );
-    let other = app.other_token().await;
-    assert_eq!(
-        app.get_with_token(&format!("/series/{id}"), &other)
-            .await
-            .status,
-        StatusCode::NOT_FOUND
+    let anyone = app.get(&format!("/series/{id}")).await;
+    assert_eq!(anyone.status, StatusCode::OK, "{}", anyone.body);
+    assert_eq!(field(&anyone.body, "status"), Some("public"));
+    assert_eq!(field(&anyone.body, "description"), Some("not public"));
+    assert!(
+        !anyone.body.contains("judge-b scores each reply"),
+        "{}",
+        anyone.body
     );
     let own = app.get_as_author(&format!("/series/{id}")).await;
     assert_eq!(own.status, StatusCode::OK, "{}", own.body);
-    assert_eq!(field(&own.body, "status"), Some("hidden"));
     assert!(
         own.body.contains("judge-b scores each reply"),
         "{}",
@@ -128,7 +120,7 @@ async fn only_members_cite_a_series_and_the_key_makes_a_member() {
             .await
             .status,
         StatusCode::OK,
-        "a member reads the hidden series"
+        "a member reads the series"
     );
 }
 
@@ -161,9 +153,9 @@ async fn a_cite_must_name_a_version_and_a_heading_that_exist() {
 }
 
 #[tokio::test]
-async fn an_entry_waits_on_a_hidden_series_and_publishes_when_its_creator_makes_it_public() {
+async fn an_entry_citing_a_series_publishes_with_the_section_it_cites() {
     let app = test_app().await;
-    let (cookie, token) = browser_account(&app, "grace@example.com").await;
+    let (_, token) = browser_account(&app, "grace@example.com").await;
     let (series, _) = create(&app, &token).await;
     let held = app
         .post_as(
@@ -178,35 +170,7 @@ async fn an_entry_waits_on_a_hidden_series_and_publishes_when_its_creator_makes_
         .post_as(&format!("/e/{id}/publish"), Some(&token), "")
         .await;
     assert_eq!(placed.status, StatusCode::OK, "{}", placed.body);
-    assert_eq!(field(&placed.body, "status"), Some("waiting_on_series"));
-    assert_eq!(
-        app.get(&format!("/e/{id}")).await.status,
-        StatusCode::NOT_FOUND
-    );
-    let own = app.get_with_token(&format!("/e/{id}"), &token).await;
-    assert_eq!(
-        field(&own.body, "status"),
-        Some("waiting_on_series"),
-        "{}",
-        own.body
-    );
-    assert_eq!(
-        field(&own.body, "series"),
-        Some(format!("{series}@1#models").as_str())
-    );
-    assert!(app.get("/cards.txt").await.body.is_empty());
-
-    // The account page lists the series with its button, and the POST makes it public.
-    let page = app.page("/account", Some(&cookie)).await;
-    assert!(page.body.contains(&series), "{}", page.body);
-    assert!(
-        page.body
-            .contains(&format!("/account/series/{series}/publish")),
-        "{}",
-        page.body
-    );
-    let made = make_public(&app, &cookie, &series).await;
-    assert_eq!(made.status, StatusCode::SEE_OTHER, "{}", made.body);
+    assert_eq!(field(&placed.body, "status"), Some("public"));
 
     let read = app.get(&format!("/e/{id}")).await;
     assert_eq!(read.status, StatusCode::OK, "{}", read.body);
@@ -246,42 +210,9 @@ async fn an_entry_waits_on_a_hidden_series_and_publishes_when_its_creator_makes_
 }
 
 #[tokio::test]
-async fn making_a_series_public_needs_its_creators_browser_session() {
-    let app = test_app().await;
-    let (_, token) = browser_account(&app, "grace@example.com").await;
-    let (series, _) = create(&app, &token).await;
-
-    let by_token = app
-        .post_as(
-            &format!("/account/series/{series}/publish"),
-            Some(&token),
-            "",
-        )
-        .await;
-    assert_ne!(by_token.status, StatusCode::SEE_OTHER, "{}", by_token.body);
-    let no_session = make_public(&app, "fd_session=nothing", &series).await;
-    assert_eq!(no_session.location(), Some("/login"));
-
-    let (mallory, _) = browser_account(&app, "mallory@example.com").await;
-    let not_theirs = make_public(&app, &mallory, &series).await;
-    assert_eq!(
-        not_theirs.status,
-        StatusCode::NOT_FOUND,
-        "{}",
-        not_theirs.body
-    );
-
-    assert_eq!(
-        app.get(&format!("/series/{series}")).await.status,
-        StatusCode::NOT_FOUND,
-        "the series is still hidden"
-    );
-}
-
-#[tokio::test]
 async fn a_new_version_stays_unreadable_until_every_entry_citing_it_is_public() {
     let app = test_app().await;
-    let (cookie, token) = browser_account(&app, "grace@example.com").await;
+    let (_, token) = browser_account(&app, "grace@example.com").await;
     let (series, key) = create(&app, &token).await;
     let first = app
         .post_as(
@@ -293,7 +224,6 @@ async fn a_new_version_stays_unreadable_until_every_entry_citing_it_is_public() 
     let first = id_in(&first.body);
     app.post_as(&format!("/e/{first}/publish"), Some(&token), "")
         .await;
-    make_public(&app, &cookie, &series).await;
 
     // A member who isn't the creator can't make a version.
     let other = app.other_token().await;
@@ -312,33 +242,20 @@ async fn a_new_version_stays_unreadable_until_every_entry_citing_it_is_public() 
         .post_as(
             &format!("/series/{series}/versions"),
             Some(&token),
-            series_doc("Layer sweep, embargoed half", "The secret method."),
+            series_doc("Layer sweep, unpublished half", "The secret method."),
         )
         .await;
     assert_eq!(second.status, StatusCode::CREATED, "{}", second.body);
     assert_eq!(field(&second.body, "version"), Some("2"));
-    let embargoed = app
+    // Still in its hour's hold.
+    let pending = app
         .post_as(
             "/entries",
             Some(&token),
-            citing(
-                "Second",
-                &format!("{series}@2"),
-                &format!("embargo_until: {}\n", date_in(30)),
-            ),
+            citing("Second", &format!("{series}@2"), ""),
         )
         .await;
-    assert_eq!(embargoed.status, StatusCode::CREATED, "{}", embargoed.body);
-    let embargoed = id_in(&embargoed.body);
-    let placed = app
-        .post_as(&format!("/e/{embargoed}/publish"), Some(&token), "")
-        .await;
-    assert_eq!(
-        field(&placed.body, "status"),
-        Some("embargoed"),
-        "{}",
-        placed.body
-    );
+    assert_eq!(pending.status, StatusCode::CREATED, "{}", pending.body);
 
     let page = app.get(&format!("/series/{series}")).await;
     assert_eq!(field(&page.body, "version"), Some("1"), "{}", page.body);
@@ -352,7 +269,7 @@ async fn a_new_version_stays_unreadable_until_every_entry_citing_it_is_public() 
         v2.body
     );
     assert!(!v2.body.contains("secret method"), "{}", v2.body);
-    assert!(!v2.body.contains("embargoed half"), "{}", v2.body);
+    assert!(!v2.body.contains("unpublished half"), "{}", v2.body);
     let v1 = app.get(&format!("/series/{series}@1")).await;
     assert!(v1.body.contains("judge-b scores each reply"), "{}", v1.body);
     // The creator still reads it.
@@ -367,73 +284,6 @@ async fn a_new_version_stays_unreadable_until_every_entry_citing_it_is_public() 
         "{}",
         read.body
     );
-}
-
-#[tokio::test]
-async fn a_batch_waits_as_a_whole_on_a_hidden_series() {
-    let app = test_app().await;
-    let (cookie, token) = browser_account(&app, "grace@example.com").await;
-    let (series, _) = create(&app, &token).await;
-    let body = json!({"entries": [
-        citing("Cites the series", &format!("{series}@1"), "slug: cites\n"),
-        entry("Cites nothing", "slug: plain\n"),
-    ]});
-    let reply = app
-        .send(
-            axum::http::Request::post("/entries/batch")
-                .header("authorization", format!("Bearer {token}"))
-                .header("content-type", "application/json")
-                .header("accept", "application/json")
-                .body(axum::body::Body::from(body.to_string()))
-                .unwrap(),
-        )
-        .await;
-    assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
-    let ids = common::batch_member_ids(&serde_json::from_str(&reply.body).unwrap());
-
-    publish_due(
-        &app.state,
-        time::OffsetDateTime::now_utc() + Duration::minutes(61),
-    )
-    .await
-    .unwrap();
-    for id in &ids {
-        let own = app.get_with_token(&format!("/e/{id}"), &token).await;
-        assert_eq!(
-            field(&own.body, "status"),
-            Some("waiting_on_series"),
-            "{}",
-            own.body
-        );
-    }
-
-    make_public(&app, &cookie, &series).await;
-    for id in &ids {
-        assert_eq!(app.get(&format!("/e/{id}")).await.status, StatusCode::OK);
-    }
-}
-
-#[tokio::test]
-async fn publish_due_places_waiting_entries_whose_series_is_public() {
-    let app = test_app().await;
-    let (cookie, token) = browser_account(&app, "grace@example.com").await;
-    let (series, _) = create(&app, &token).await;
-    let held = app
-        .post_as(
-            "/entries",
-            Some(&token),
-            citing("Waits", &format!("{series}@1"), ""),
-        )
-        .await;
-    let id = id_in(&held.body);
-    app.post_as(&format!("/e/{id}/publish"), Some(&token), "")
-        .await;
-    // Made public with the entry already waiting, then the job runs.
-    make_public(&app, &cookie, &series).await;
-    publish_due(&app.state, time::OffsetDateTime::now_utc())
-        .await
-        .unwrap();
-    assert_eq!(app.get(&format!("/e/{id}")).await.status, StatusCode::OK);
 }
 
 #[tokio::test]
@@ -472,16 +322,14 @@ async fn public_series_with_an_entry(app: &TestApp, email: &str) -> (String, Str
     let id = id_in(&held.body);
     app.post_as(&format!("/e/{id}/publish"), Some(&token), "")
         .await;
-    make_public(app, &cookie, &series).await;
     (cookie, token, series)
 }
 
 #[tokio::test]
 async fn a_version_no_public_entry_cites_stays_unreadable() {
     let app = test_app().await;
-    let (cookie, token) = browser_account(&app, "grace@example.com").await;
+    let (_, token) = browser_account(&app, "grace@example.com").await;
     let (empty, _) = create(&app, &token).await;
-    make_public(&app, &cookie, &empty).await;
     let page = app.get(&format!("/series/{empty}")).await;
     assert_eq!(
         field(&page.body, "description"),
@@ -496,7 +344,7 @@ async fn a_version_no_public_entry_cites_stays_unreadable() {
         .post_as(
             &format!("/series/{series}/versions"),
             Some(&token),
-            series_doc("Embargoed family", "The secret method."),
+            series_doc("Unpublished family", "The secret method."),
         )
         .await;
     assert_eq!(second.status, StatusCode::CREATED, "{}", second.body);
@@ -516,20 +364,15 @@ async fn a_version_no_public_entry_cites_stays_unreadable() {
 async fn a_readable_version_stays_readable() {
     let app = test_app().await;
     let (_, token, series) = public_series_with_an_entry(&app, "grace@example.com").await;
+    // A later entry citing it, still in its hold, doesn't take it back.
     let later = app
         .post_as(
             "/entries",
             Some(&token),
-            citing(
-                "Later",
-                &format!("{series}@1"),
-                &format!("embargo_until: {}\n", date_in(30)),
-            ),
+            citing("Later", &format!("{series}@1"), ""),
         )
         .await;
-    let later = id_in(&later.body);
-    app.post_as(&format!("/e/{later}/publish"), Some(&token), "")
-        .await;
+    assert_eq!(later.status, StatusCode::CREATED, "{}", later.body);
     let v1 = app.get(&format!("/series/{series}@1")).await;
     assert!(v1.body.contains("judge-b scores each reply"), "{}", v1.body);
 }
@@ -604,7 +447,6 @@ async fn a_removed_member_can_no_longer_cite_but_keeps_its_entries_in_the_series
         listed.body
     );
     let theirs = submit_with(&app, &other, &citing("Theirs", &format!("{series}@1"), "")).await;
-    make_public(&app, &cookie, &series).await;
 
     let removed = app
         .post_as(
@@ -661,17 +503,17 @@ async fn a_removed_member_can_no_longer_cite_but_keeps_its_entries_in_the_series
 }
 
 #[tokio::test]
-async fn an_entry_taken_out_of_a_hidden_series_stops_waiting_and_keeps_its_cite() {
+async fn an_entry_taken_out_of_a_series_keeps_its_cite_and_leaves_the_series_page() {
     let app = test_app().await;
-    let (cookie, token) = browser_account(&app, "grace@example.com").await;
+    let (_, token) = browser_account(&app, "grace@example.com").await;
     let (series, key) = create(&app, &token).await;
     let other = app.other_token().await;
     app.post_as(&format!("/series/{series}/join"), Some(&other), key)
         .await;
-    let waiting = submit_with(
+    let taken_out = submit_with(
         &app,
         &other,
-        &citing("Waits", &format!("{series}@1#models"), ""),
+        &citing("Taken out", &format!("{series}@1#models"), ""),
     )
     .await;
     let stays = submit_with(&app, &token, &citing("Stays", &format!("{series}@1"), "")).await;
@@ -691,24 +533,19 @@ async fn an_entry_taken_out_of_a_hidden_series_stops_waiting_and_keeps_its_cite(
     );
     let removed = app
         .post_as(
-            &format!("/series/{series}/entries/{waiting}/remove"),
+            &format!("/series/{series}/entries/{taken_out}/remove"),
             Some(&token),
             "",
         )
         .await;
     assert_eq!(removed.status, StatusCode::OK, "{}", removed.body);
 
-    // It no longer waits, and its page keeps the cite while the series is hidden.
-    let read = app.get(&format!("/e/{waiting}")).await;
+    let read = app.get(&format!("/e/{taken_out}")).await;
     assert_eq!(read.status, StatusCode::OK, "{}", read.body);
     assert_eq!(
         field(&read.body, "series"),
         Some(format!("{series}@1#models").as_str())
     );
-    assert_eq!(field(&read.body, "series_description"), Some("not public"));
-    assert!(!read.body.contains("Layer sweep"), "{}", read.body);
-
-    make_public(&app, &cookie, &series).await;
     let page = app.get(&format!("/series/{series}")).await;
     assert!(
         page.body.contains(&format!("entry: {stays}")),
@@ -716,11 +553,11 @@ async fn an_entry_taken_out_of_a_hidden_series_stops_waiting_and_keeps_its_cite(
         page.body
     );
     assert!(
-        !page.body.contains(&format!("entry: {waiting}")),
+        !page.body.contains(&format!("entry: {taken_out}")),
         "{}",
         page.body
     );
-    let read = app.get(&format!("/e/{waiting}")).await;
+    let read = app.get(&format!("/e/{taken_out}")).await;
     assert!(read.body.contains("520 prompts"), "{}", read.body);
 
     let unknown = app
@@ -736,25 +573,22 @@ async fn an_entry_taken_out_of_a_hidden_series_stops_waiting_and_keeps_its_cite(
 #[tokio::test]
 async fn an_entry_taken_out_of_a_series_no_longer_holds_its_version_back() {
     let app = test_app().await;
-    let (cookie, token) = browser_account(&app, "grace@example.com").await;
+    let (_, token) = browser_account(&app, "grace@example.com").await;
     let (series, _) = create(&app, &token).await;
-    make_public(&app, &cookie, &series).await;
-    let embargoed = submit_with(
-        &app,
-        &token,
-        &citing(
-            "Held",
-            &format!("{series}@1"),
-            &format!("embargo_until: {}\n", date_in(30)),
-        ),
-    )
-    .await;
+    let held = app
+        .post_as(
+            "/entries",
+            Some(&token),
+            citing("Held", &format!("{series}@1"), ""),
+        )
+        .await;
+    let held = id_in(&held.body);
     submit_with(&app, &token, &citing("Public", &format!("{series}@1"), "")).await;
     let page = app.get(&format!("/series/{series}@1")).await;
     assert_eq!(field(&page.body, "description"), Some("not public"));
 
     app.post_as(
-        &format!("/series/{series}/entries/{embargoed}/remove"),
+        &format!("/series/{series}/entries/{held}/remove"),
         Some(&token),
         "",
     )

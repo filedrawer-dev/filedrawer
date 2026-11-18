@@ -19,8 +19,6 @@ pub enum Status {
     Review,
     Held,
     Frozen,
-    Embargoed,
-    WaitingOnSeries,
     Public,
     Rejected,
     Withdrawn,
@@ -36,8 +34,6 @@ impl Status {
             Status::Review => "review",
             Status::Held => "held",
             Status::Frozen => "frozen",
-            Status::Embargoed => "embargoed",
-            Status::WaitingOnSeries => "waiting_on_series",
             Status::Public => "public",
             Status::Rejected => "rejected",
             Status::Withdrawn => "withdrawn",
@@ -106,15 +102,6 @@ pub enum Refusal {
     /// The archive's owner removed it, or withdrew it; a batch's member can be.
     #[error("entry {id} was removed by the archive's owner")]
     Removed { id: String },
-    /// A later version of its chain exists; only the newest may be withdrawn.
-    #[error("entry {id} has a later version, {newest}: withdraw that first")]
-    Later { id: String, newest: String },
-    /// A later version of its chain waits on the archive's owner, who can reject the
-    /// chain.
-    #[error(
-        "the newest version of entry {id}'s chain, {newest}, waits on the archive's owner; ask the owner, who can reject the whole chain"
-    )]
-    LaterWithOwner { id: String, newest: String },
 }
 
 /// What a deletion did.
@@ -201,35 +188,6 @@ async fn row(
         .filter(|row| !row.status.hidden()))
 }
 
-/// The newest live version of `seq`'s chain, if it isn't `seq` itself. A rejected,
-/// withdrawn or removed version doesn't count.
-async fn newest_version(
-    connection: &mut SqliteConnection,
-    seq: i64,
-) -> Result<Option<Row>, sqlx::Error> {
-    let newest = sqlx::query_scalar!(
-        r#"WITH RECURSIVE later(seq) AS (
-               SELECT e.seq FROM entries e
-               WHERE e.previous_seq = ?1 AND e.status NOT IN ('rejected', 'withdrawn', 'removed')
-               UNION ALL
-               SELECT e.seq FROM entries e JOIN later l ON e.previous_seq = l.seq
-               WHERE e.status NOT IN ('rejected', 'withdrawn', 'removed')
-           )
-           SELECT seq AS "seq!: i64" FROM later ORDER BY seq DESC LIMIT 1"#,
-        seq
-    )
-    .fetch_optional(&mut *connection)
-    .await?;
-    let Some(newest) = newest else {
-        return Ok(None);
-    };
-    let filter = Rows {
-        seq: Some(newest),
-        ..Rows::default()
-    };
-    Ok(rows(connection, filter).await?.pop())
-}
-
 /// Whether `token` may delete `row`: pending, out of any batch unless the batch is
 /// what it deletes, and its text sent with this token.
 fn token_may(row: &Row, token: Token<'_>, as_batch: bool) -> Result<(), Refusal> {
@@ -254,13 +212,14 @@ fn token_may(row: &Row, token: Token<'_>, as_batch: bool) -> Result<(), Refusal>
 /// Whether `row`'s status lets its account withdraw it (design.md, Entry lifecycle;
 /// the owner's decision, 2026-11-08): never public, not rejected, and not waiting on
 /// the archive's owner, which an entry also does while it reads `screening` with the
-/// owner's verdict on it. The one place these statuses are listed.
+/// owner's verdict on it. The one place these statuses are listed. Only a chain's
+/// newest version can be withdrawn, since a new version is made only of a public one.
 fn withdrawable(row: &Row) -> Result<(), Refusal> {
     let id = row.id.clone();
     let owners_verdict =
         row.review_reason.is_some() || row.screen_verdict.as_deref() == Some("reject");
     match row.status {
-        Status::Pending | Status::Embargoed | Status::WaitingOnSeries => Ok(()),
+        Status::Pending => Ok(()),
         Status::Screening if !owners_verdict => Ok(()),
         Status::Screening | Status::Review | Status::Held | Status::Frozen => {
             Err(Refusal::WithOwner { id })
@@ -269,31 +228,6 @@ fn withdrawable(row: &Row) -> Result<(), Refusal> {
         Status::Public => Err(Refusal::Public { id }),
         Status::Withdrawn | Status::Removed => Err(Refusal::Removed { id }),
     }
-}
-
-/// `withdrawable`, and the newest version of its chain: only the newest is withdrawn,
-/// and one waiting on the owner leaves the chain to the owner.
-async fn session_may(
-    connection: &mut SqliteConnection,
-    row: &Row,
-) -> Result<Result<(), Refusal>, sqlx::Error> {
-    if let Err(refusal) = withdrawable(row) {
-        return Ok(Err(refusal));
-    }
-    let Some(newest) = newest_version(connection, row.seq).await? else {
-        return Ok(Ok(()));
-    };
-    let id = row.id.clone();
-    Ok(match withdrawable(&newest) {
-        Err(Refusal::WithOwner { .. }) => Err(Refusal::LaterWithOwner {
-            id,
-            newest: newest.id,
-        }),
-        _ => Err(Refusal::Later {
-            id,
-            newest: newest.id,
-        }),
-    })
 }
 
 /// What a deletion asks for: one entry, or a whole batch by token.
@@ -353,13 +287,7 @@ async fn doomed(
                 Some(batch_seq) => batch_rows(connection, batch_seq).await?,
                 None => vec![row],
             };
-            let mut allowed = Ok(());
-            for row in &rows {
-                allowed = session_may(connection, row).await?;
-                if allowed.is_err() {
-                    break;
-                }
-            }
+            let allowed = rows.iter().try_for_each(withdrawable);
             Ok(Some(Doomed {
                 rows,
                 batch_id,
@@ -620,21 +548,8 @@ pub struct Listed {
     pub title: String,
 }
 
-/// A chain whose newest version waits on the archive's owner, so none of it is
-/// withdrawn from the account page.
-pub struct WithOwner {
-    /// The chain's latest version that its account could otherwise withdraw.
-    pub id: String,
-    pub title: String,
-    pub newest: String,
-}
-
-/// The account's entries that may be withdrawn, newest first, and its chains whose
-/// newest version waits on the owner.
-pub async fn listing(
-    pool: &SqlitePool,
-    account_id: &str,
-) -> Result<(Vec<Listed>, Vec<WithOwner>), sqlx::Error> {
+/// The account's entries that may be withdrawn, newest first.
+pub async fn listing(pool: &SqlitePool, account_id: &str) -> Result<Vec<Listed>, sqlx::Error> {
     let mut connection = pool.acquire().await?;
     let filter = Rows {
         account_id: Some(account_id),
@@ -642,26 +557,14 @@ pub async fn listing(
     };
     let rows = rows(&mut connection, filter).await?;
     let mut listed = Vec::new();
-    let mut with_owner: Vec<WithOwner> = Vec::new();
-    // Newest first, so the first entry met in a chain is its latest.
     for row in rows.into_iter().rev() {
-        match session_may(&mut connection, &row).await? {
-            Ok(()) => listed.push(Listed {
+        if withdrawable(&row).is_ok() {
+            listed.push(Listed {
                 title: title_of(&mut connection, row.seq).await?,
                 id: row.id,
                 status: row.status.name(),
-            }),
-            Err(Refusal::LaterWithOwner { newest, .. })
-                if !with_owner.iter().any(|chain| chain.newest == newest) =>
-            {
-                with_owner.push(WithOwner {
-                    title: title_of(&mut connection, row.seq).await?,
-                    id: row.id,
-                    newest,
-                });
-            }
-            Err(_) => {}
+            });
         }
     }
-    Ok((listed, with_owner))
+    Ok(listed)
 }

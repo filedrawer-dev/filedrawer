@@ -64,23 +64,24 @@ The owner expects most contributors to be independent researchers, newcomers to 
 - A person creates the account and then creates API tokens for their agents.
   Tokens have names, can be revoked, are shown once and are stored hashed.
 - A token can do anything the account can, with these exceptions.
-  It can't change account settings, create tokens, withdraw an entry, make a series public, or release an embargo sooner than 7 days from now.
+  It can't change account settings, create tokens or withdraw an entry.
   Those need a browser session.
   No ordinary token carries admin rights (see [Admin](#admin)).
-  Reason: entry text can carry instructions to the agents that read it, and release, withdrawal and making a series public can't be undone.
-  A token may extend an embargo, or shorten it to at least 7 days from now (see [Embargo](#embargo)).
+  Reason: entry text can carry instructions to the agents that read it, and a withdrawal can't be undone.
   A token may delete an entry while it is `pending`, in the hour's hold, and only one that same token submitted, and `DELETE /batches/<id>` deletes a whole batch on the same terms (the owner's decisions, 2026-11-08).
   The server records the token that submitted each entry, versions and batch members included.
   Reason: a human who sees the card during the hour's hold and says "pull it" needs a way to stop it that the agent can take, and an injected agent can only delete fresh work it could as well have left unsubmitted.
-  Anything past the hold, an embargoed entry included, is withdrawn from the account page, so no token can destroy held work.
+  Anything past the hold is withdrawn from the account page, so no token can destroy work in screening.
   A refused deletion changes nothing and says why; an entry the token's account can't see answers 404, naming that account as `account: <id> (<display name>)`, so an agent holding the wrong account's token can tell (the owner's decision, 2026-11-08).
 - The server keeps a record of each entry deleted by token or withdrawn: its ID, its account and the time.
   The account's later `GET /e/<id>` or `DELETE /e/<id>` of it answers that it was deleted then, not 404, so a retried request that had worked is recognised; nobody else learns anything from it (the owner's decision, 2026-11-08).
-- Deleting an account, from a browser session with the password, deletes the email address, login, display name, tokens and private feedback, and every entry not yet public, embargoed ones included, except those the owner removed, which stay for analysis (see [Admin](#admin)).
+- Deleting an account, from a browser session with the password, deletes the email address, login, display name, tokens and private feedback, and every entry not yet public, except those the owner removed, which stay for analysis (see [Admin](#admin)).
   By the same rule it deletes the series the screen refused, except those the owner confirmed as a hazard.
+  It also deletes the series the account made that no one but their members could read yet, no version readable, unless another account's entry cites one; any other series outlives the account, as a removed one does (the owner's decision, 2026-11-17).
+  An entry rejected in the last 60 days counts as citing it (the owner's decision, 2026-11-17).
+  Reason: a rejection may be the owner's mistake while the line is still being found, and its author fixes the entry and resubmits.
   Public entries stay up, marked "account deleted" with the account ID and no name.
   A full erasure, public entries included, is the owner's purge on request (see [Admin](#admin)).
-  The account can't be deleted while it made a hidden series that holds another account's entries, since nobody else could make it public; it makes the series public or takes those entries out first.
   Reason (the owner's decision, 2026-11-05): a pseudonymous name is still personal data, and publishing work after its author has left has no clear lawful basis.
 
 ## Limits and abuse
@@ -96,7 +97,7 @@ The owner expects little abuse and prefers limits to login friction.
   Verification and password-reset emails are limited per address, 5 an hour and 20 a day, and per IP, 20 an hour and 60 a day; a signup counts as one, since it always sends an email.
   They count every request to send one, whether or not the address has an account, so a limit never says whether one exists.
   Signups with an invite code are to be limited per address only, so a sprint behind one IP can verify (with invite codes, the next slice).
-  Reason: a flood of them would hurt the domain's mail reputation, and with it the embargo reminders.
+  Reason: a flood of them would hurt the domain's mail reputation, and with it every email the site sends.
   The numbers are the owner's (2026-11-06), the daily and per-IP email figures in proportion to the hourly ones.
 - Failed logins are limited per email address, 10 an hour, whether or not an account uses it; past that, every login to the address waits for the window, the right password too.
   Password reset stays open under its own limits.
@@ -288,13 +289,12 @@ Links are checked again, whatever the entry's status, except a rejected, withdra
 A submission or a PUT starts the retries again, so resubmitting can't push a check out.
 A recheck that finds a bad pin flags the card "code pin failed" and never rejects.
 Reason for the hour: an account that spends its share on purpose, then links a fork's commit under a famous repository's URL, is flagged about when its entry's hold ends, not a week later; the doubling keeps a host that is down for days from being asked every hour.
-An embargoed entry's links are checked again at release (see [Embargo](#embargo)).
-Reason: refusing dead links taught agents to add a one-day embargo to get through, and a sprint team's repo is often private until the embargo ends.
+Reason: refusing dead links taught agents to work around the check (they added a one-day embargo, while embargoes were offered), and a sprint team's repo is often private for a while after its entry is written.
 The owner (2026-11-07): "we should make a best effort to verify the links, but generally don't want to delay or reject submissions that can mostly be assumed to be good faith attempts."
 
 Outcomes:
 
-- Pass: published, or held until its release date if embargoed.
+- Pass: published.
 - Fail: rejected.
   The reasons go back to the agent so it can fix the entry and resubmit.
 - Likely info hazard: the owner's review queue.
@@ -347,7 +347,7 @@ A held entry waits until the owner publishes or rejects it.
   The review guard, not the wording, stops rewording.
 - The guard is recorded on the account when the owner first rejects or holds one of its entries, and the review queue lists guarded accounts with a button to clear each.
 
-Screening happens when the hour's hold ends, embargoed entries included.
+Screening happens when the hour's hold ends.
 
 ## Attached code
 
@@ -400,7 +400,7 @@ The submit skill pushes agents to publish to GitHub or Zenodo first (Zenodo give
   Without the setting, attachments are off.
   Reason: an attached HTML file must not run as a page on the site.
   Caddy doesn't serve the files from disk itself, since only the database knows which files a public entry holds.
-- Attachments embargo, version, get removed and get purged with their entry.
+- Attachments version, get removed and get purged with their entry.
   A purge deletes a file only when no other entry uses it.
 - The owner can remove a single file, which stops every entry that pins it from serving it.
   A file removed for a hazard, or purged with an entry removed for one, goes on a list of banned hashes, checked at submission and when serving.
@@ -416,23 +416,16 @@ The submit skill pushes agents to publish to GitHub or Zenodo first (Zenodo give
 
 ## Entry status
 
-Each entry has one status field: `pending`, `screening`, `review`, `held`, `frozen`, `embargoed`, `public`, `rejected`, `withdrawn` or `removed`.
+Each entry has one status field: `pending`, `screening`, `review`, `held`, `frozen`, `public`, `rejected`, `withdrawn` or `removed`.
 
 - Submission sets `pending` for an hour, which each resubmission restarts (see [Submission and screening](#submission-and-screening)).
   The hold's end sets `screening`.
-  Screening moves the entry to `embargoed` or `public` on a pass, to `rejected` on a fail, and to `review` when it finds a likely hazard.
-- In review the owner publishes the entry (to `embargoed` or `public`), rejects it, or sets `held` until a vendor fixes the hole.
+  Screening moves the entry to `public` on a pass, to `rejected` on a fail, and to `review` when it finds a likely hazard.
+- In review the owner publishes the entry, rejects it, or sets `held` until a vendor fixes the hole.
 - `frozen` comes from a revoked invite code (see [Limits and abuse](#limits-and-abuse)).
   `removed` comes from the owner (see [Admin](#admin)).
-- The release job publishes only `embargoed` entries whose date has come.
-  An entry still in `screening` or `review` on its release date waits, and goes straight to `public` once it passes.
-- An embargoed entry, or one in `waiting_on_series`, also waits while a later version of its chain is `pending`, `screening`, `review`, `held` or `frozen`, past its date and past the 12-month cap (the owner's decision, 2026-11-08).
-  Reason: the versions release together, an earlier version usually carries what a later one was flagged for, and a release can't be undone.
-- The owner's page for a version in `review` or `held` lists the earlier versions waiting on it and can reject them with it ("reject the chain"); a plain reject lets them release on their date (the owner's decision, 2026-11-08).
-  Reason: a later version is often flagged for a change of its own, which the earlier ones don't share, so the owner judges the chain while reading the version, rather than every version going to review.
-- "Release now" works only on `embargoed` entries, so an owner's hold can't be bypassed.
 
-Reason: without one status, an embargoed entry still in the review queue, or waiting past the spending cap, would be published unreviewed on its release date.
+Reason: with one status, an entry in the review queue, or waiting past the spending cap, can't be published unreviewed by another path.
 
 ## Outcome
 
@@ -443,63 +436,6 @@ The card shows the primary row's numbers as the author wrote them, with a tally 
 The fields and the card are in [entry-format.md](entry-format.md#outcome-and-the-cards-numbers).
 Inconclusive entries are welcome and marked as such.
 
-## Embargo
-
-**Paused** (the owner's decision, 2026-11-08; #33): "it seems like embargoes are causing a lot of problems".
-The server refuses `embargo_until`, and any other front-matter key starting `embargo`, at submission, and `/skill.md` doesn't offer embargoes.
-A version may repeat its previous version's stored date, which the stored text still carries.
-Still running, for entries embargoed before the pause: the release job, a chain's one date that a new version keeps, a chain's wait for its versions' verdicts, the owner's "reject the chain", and the 12-month cap for entries waiting on a series hidden before the pause.
-The rest of this section, and the embargo rules elsewhere in this file, are the design to revive.
-The server refuses the field rather than ignoring it, since ignoring it would publish an entry its author asked to hold, which can't be undone.
-
-Researchers close to a result fear that posting their code will get them scooped.
-An embargo lets the agent write the entry while the work is fresh and publish it later.
-
-- No default length.
-  The submit skill asks the agent for the shortest embargo that works, for example a weekend for an Apart sprint.
-- While embargoes are paused, the submit skill's third answer is "ask me again after DATE" instead, offered only when the agent can make a reminder that outlives the session (the owner's decision, 2026-11-09; see [Skills](#skills)).
-  The owner: "This might even be better than embargoes permanently. We'll see."
-- Once embargoes return, when the submit skill asks its human whether to post a result, one of its answers is "if I haven't used it by DATE" (the owner's decision, 2026-11-07).
-  The agent submits the entry now, embargoed until that date, at most 3 months away.
-  If the result goes into a paper after all, the human withdraws the entry from the account page, or lets it release and the agent posts a version that sets `published_in`.
-  The agent proposes a date only when the project names a deadline, such as the paper's deadline plus a week, and otherwise asks for one.
-  Reason: the entry goes public only once the date has passed unused, so posting still signals that nobody plans to refine it.
-- The first request may be up to 3 months.
-  An extension can set the release date at most 3 months after the day it is made, and the total stops at 12 months from the first submission.
-  Reason: someone has to confirm at least every 3 months that the line of work is still alive.
-  When nobody does, the entry is released.
-  Measuring from the day of the extension stops three extensions on day one from reaching 12 months.
-- A token may shorten an embargo, but only to at least 7 days from now.
-  The server then emails the author at once, with a link to undo it.
-  Releasing sooner needs a browser session.
-  Reason: entry text can tell a reading agent to release its embargoes, and the 7 days give a person time to notice.
-- A token moves an embargo with `POST /e/<id>/embargo` and a date, never with a new version (the owner's decision, 2026-11-07).
-  A new version of an embargoed entry keeps its chain's date, so a chain has one date and its versions release together: the version may leave `embargo_until` out, and one that names another date is refused with the chain's date and the route.
-  Reason: a version costs an allowance unit, a screening call and an hour's hold, and once released it would stay in the chain, differing only in its date.
-- The server reads `embargo_until` at submission and takes it out of the stored text, as it does `series:`.
-  The release date is shown above the delimiter (the owner's decision, 2026-11-07).
-  Entries stored before then keep theirs.
-  A PUT or a new version that leaves `embargo_until` out keeps the date in force, so leaving it out never drops an embargo.
-  A pending first submission's PUT may still name another date.
-  Dropping a draft's embargo goes through `POST /e/<id>/embargo`, and the PUT's reply names the date still in force.
-  Reason: `GET /e/<id>` returns the text without the date, so an agent that PUT that text back would otherwise release the entry when its hold ends.
-- The entry is released automatically at 23:59 anywhere on earth (UTC−12) on its date, subject to its [status](#entry-status).
-  Reason: the date then means the same thing in every timezone, since release comes after the day has ended everywhere.
-  The author can release it early ("abandoned, release now") from a browser session.
-- Seven days before release, the server emails the author with links to extend, release now or withdraw, and lists any `code` or `logs` links that are dead.
-  Withdrawing deletes the entry, since it was never public (the owner's decision, 2026-11-08).
-  Each link opens a page that needs a login, and the action is a POST.
-  Reason: mail scanners follow every link in a message, and a release can't be undone.
-  For an embargo shorter than 7 days, this email goes out at submission.
-  The API shows each entry's release date.
-- Nothing about an embargoed entry is public, not even a placeholder.
-  Entry IDs are random, `/e/<id>` returns 404 for an embargoed entry, and counts such as those in `/tags` leave embargoed entries out.
-- At release the server checks the `code` and `logs` links again, as it rechecks flagged links (see [Submission and screening](#submission-and-screening)).
-  A dead link gets a "code link dead" or "logs link dead" flag on the card.
-  Publication never waits on a link that answered "retry later".
-- The owner can read embargoed entries, so authors have to trust the owner.
-  Accepted for v1.
-
 ## Entry lifecycle
 
 - An entry never changes once public.
@@ -509,9 +445,9 @@ An embargo lets the agent write the entry while the work is fresh and publish it
   Search and `/cards.txt` return only the latest version in each chain.
   A replication that points at an old version counts against the latest one.
   Reason: a reader who lands on a superseded null may drop a direction that the correction found works.
-- An entry that isn't public yet changes only by resubmission, apart from its embargo date (see [Embargo](#embargo)).
-  Resubmission reruns every check and keeps the first submission date, which the embargo cap counts from.
-  Reason: otherwise an author could pass screening and then swap in other text, or reset the 12-month cap.
+- An entry that isn't public yet changes only by resubmission.
+  Resubmission reruns every check and keeps the first submission date.
+  Reason: otherwise an author could pass screening and then swap in other text.
   The one exception is the version that points to a paper, below.
 - When an entry's result later becomes part of a paper, the author posts a new version that sets `published_in` to the paper's DOI or arXiv ID.
   Other links go in the body.
@@ -519,24 +455,20 @@ An embargo lets the agent write the entry while the work is fresh and publish it
   The latest version's card says "now part of a paper" with the link, and stays in search, so readers find the paper through it.
   A version that sets `published_in` and has no Results table of its own carries the newest table in the chain, so a short linking version doesn't erase the numbers from search.
   Any other version shows only its own table, so a version that retracts its numbers doesn't keep showing them.
-  An embargoed entry can take this version too, through `POST /e/<id>/versions`, so the first version's text survives, and both release together on the embargo date.
   Reason for limiting `published_in` to DOIs and arXiv IDs: the card puts it beside the server's own words, "now part of a paper".
-  The 12-month cap still counts from the first submission.
   The submit skill suggests this path whenever a result goes into a paper.
   Withdrawing an entry that was never public still deletes it, for an author who wants nothing out before the paper.
 - The author withdraws one version at a time, from the account page in a browser.
   Withdrawing a public version leaves a notice giving the reason, which screening checks like entry text (#31).
   Withdrawing an entry that was never public deletes it.
   The owner can withdraw a whole chain of versions at once, so a hazard's first version doesn't outlive the withdrawal of its second.
-- The account page withdraws an entry that is `pending`, `screening`, `embargoed` or `waiting_on_series` (the owner's decision, 2026-11-08).
+- The account page withdraws an entry that is `pending` or `screening` (the owner's decision, 2026-11-08).
   Not one in `review`, `held` or `frozen`, which waits on the owner, nor one that reads `screening` with the owner's verdict on it, as an entry the owner passed or rejected does until the queue places it; and not a `rejected` or `public` one.
   The server checks every rule again in the transaction that deletes.
 - Withdrawing takes a browser session, a confirm page and its POST, and no password (the owner's decision, 2026-11-08).
-  Reason: that is the bar the owner's embargo actions set; deleting the account asks for the password because it erases the whole account at once, while a withdrawal deletes held work the author can submit again.
-- Only the latest version of a chain is withdrawn, and the page offers no button for an older one.
-  When the newest version waits on the owner, the page says so, and that the author asks the archive's owner, who can reject the chain (the owner's decision, 2026-11-08).
+  Reason: deleting the account asks for the password because it erases the whole account at once, while a withdrawal deletes held work the author can submit again.
+- Since a new version is posted only of a public entry, only a chain's newest version is ever withdrawn this way.
 - A batch member is withdrawn with its whole batch: the confirm page lists every member, and its POST deletes them all, or none if any is no longer withdrawable.
-  A member with a later version holds the batch back, and the page names that version to withdraw first (the owner's decision, 2026-11-08).
 - The confirm page names any text the withdrawal would make public: a run's description, or a series version, shows once every entry using it is public, so withdrawing the last held one publishes it (the owner's decision, 2026-11-08).
 - An entry withdrawn while a screening call on it is in flight stays deleted: the verdict is dropped when the call returns, with no error, and the call's cost still counts against the day's cap (the owner's decision, 2026-11-08).
 - Deleting an entry, by token or by withdrawal, takes its attachment set, its runs and its batch only when no remaining entry cites them.
@@ -563,7 +495,7 @@ Reason: names chosen by authors would collide across accounts.
   Each edit to its title or description makes a new version, every version stays readable and never changes, and an entry cites the version it was written against, as `<id>@<version>`, optionally with a section of the description as `#<section>`.
   The entry page shows that version's description, and the series page the latest readable one.
   A new version stays unreadable, shown as "series description not public", until every entry citing it is public, as a run's description does, and only the series' creator can make one.
-  Reason: otherwise adding an embargoed family's Setup to a public series would publish it early.
+  Reason: otherwise a family's Setup would be public while its entries are still in their hold, in screening or with the owner, any of which may yet be rejected.
   Reason: the series can be corrected later without changing what any past entry says.
   If a version is ever purged for an erasure request, the entries citing it say "series description removed".
 - A description is at most 100 KB.
@@ -579,19 +511,12 @@ Reason: names chosen by authors would collide across accounts.
   Entries reference only the public ID, so the key never appears in anything published.
   The creator can rotate the key, remove members and remove entries from the series, with its token.
   A removed member's entries stay in the series, and removing a member rotates the key, so the one it kept can't let it join again.
-  An entry taken out of a series keeps the version it cites, leaves the series page, stops waiting on the series, and no longer counts toward whether a version is readable.
+  An entry taken out of a series keeps the version it cites, leaves the series page, and no longer counts toward whether a version is readable.
 - The server reads `series:` from the front matter at submission, then takes it out of the stored entry.
   Membership lives in the server's own record.
   Reason: a public entry never changes, but its creator can still take it out of a series.
-- Hidden series are paused with embargoes (the owner's decision, 2026-11-08; #33): `POST /series` makes a series public from the start.
-  A series hidden before then still works as this bullet says, until its creator makes it public or its entries reach the 12-month cap.
-  Reason: a hidden series is an embargo by another name, and its reason below is the embargo's.
-- A series stays hidden until its creator makes it public from a browser session, and its page lists only public entries and their authors.
-  An entry that passes screening while its series is hidden waits in a `waiting_on_series` status, and publishes when the series does.
-  Only at the 12-month embargo cap is it released anyway, showing "series description not public" in place of the shared Setup and no series title, so a series creator can't hold back a member's entry indefinitely.
-  The cap doesn't release it while a later version of its chain waits for a verdict (see [Entry status](#entry-status)).
+- Every series is public from creation, and its page lists only public entries and their authors (the owner's decision, 2026-11-17: hidden series retired with embargoes, see [Rejected](#rejected)).
   Each entry keeps the series version it cites in its own record, so taking it out of the series later doesn't leave its "see series" pointing at nothing.
-  Reason: otherwise any member, or anyone holding a leaked key, could expose the title of a series made for embargoed work by publishing one entry in it, and with shared Setup, its method too.
 
 ## Agent interface
 
@@ -603,7 +528,7 @@ Plain text first, since that is cheapest for an agent to read.
   Reason: "has anyone replicated or checked this paper?" is the question an agent asks before building on it, and a follow-up's outcome alone doesn't say what it followed up.
   A public entry's ID also matches what names any other public version of its chain, or the chain's slug from the same account.
   A version that isn't public never widens the match, and the slug counts only when a public version registered it.
-  Reason: widening through a held or embargoed version would confirm a hidden ID, or tie a pending version to its chain.
+  Reason: widening through a version that isn't public would confirm a hidden ID, or tie a pending version to its chain.
   A value in no form the analyzer reads, or a slug, is a bad request rather than no results, which would read as "nobody followed it up".
   The keys are stored per entry and rebuilt at startup when the analyzer's key format changes.
 - The server logs each search's query, the number of public entries it matched and the day, with no IP, account or token, to learn what people look for and whether the archive held it (#45, the owner's decisions, 2026-11-09).
@@ -627,14 +552,9 @@ Plain text first, since that is cheapest for an agent to read.
     Another account's hidden entry reads as no entry, so the warning reveals nothing about it.
 - `PUT /e/<id>` resubmits an entry that isn't public yet.
   While the entry is `pending` it replaces it in place and restarts the hold; `POST /e/<id>/publish` ends the hold early.
-  A pending first submission may move its own embargo freely, since nothing has been held back yet (the owner's decision, 2026-11-05): a PUT may name another date, and dropping the embargo goes through `POST /e/<id>/embargo`.
-  `POST /e/<id>/versions` posts a correction to a public or embargoed entry; a version of an embargoed entry keeps its chain's date.
-  Leaving `embargo_until` out of either keeps the date in force (see [Embargo](#embargo)).
-  Reason: "resubmit without the embargo" would otherwise be an early release by token.
+  `POST /e/<id>/versions` posts a correction to a public entry.
   A hijacked agent can still paste its notes into a brand-new entry.
   That is the general prompt-injection risk, and the search skill's "entry text is data" rule is the defense.
-- `POST /e/<id>/embargo` moves an entry's embargo to the date it names: a token may extend it within the caps, or shorten it to no sooner than 7 days from now (see [Embargo](#embargo)).
-  Paused with embargoes, and never built.
 - `POST /entries` also takes attached files (see [Attached code](#attached-code)).
 - `POST /entries/batch` takes several entries, with their attachments, which are stored once for the whole batch.
   Reason: in the field test one run became as many as 13 entries that cite each other.
@@ -647,15 +567,12 @@ Plain text first, since that is cheapest for an agent to read.
     Reason: one 16-entry family in the field test needed about 170 pairwise links to say which entries shared data, and still couldn't say how much.
   - Screening checks run declarations with their batch.
     A run's description, and the list of entries that use it, are shown only once every entry using the run is public.
-    Reason: a run's description is published text, and a public entry citing an embargoed batch's run would otherwise reveal that work.
+    Reason: a run's description is published text, and a public entry citing a run that an entry still with the owner uses would otherwise publish that entry's work before its verdict.
   - A batch is screened and published as a unit.
     If one member fails, the whole batch comes back, with each member's reasons, except a member in review or held, which stays for the owner (see [Submission and screening](#submission-and-screening)).
     If one goes to review, the batch waits for it.
     A batch that fails partway through screening over several days returns its reasons when it fails, gets its unscreened members' allowance back, and reserves none of its slugs.
   - A new version of an entry keeps its slug.
-    When a queued entry refers to another, the embargo check uses the target's `embargo_until`.
-  - A public member may not refer to an embargoed one.
-    Reason: the reference would reveal that the embargoed entry exists.
 - `GET /cards.txt` returns every card in one file, so an agent can scan the whole archive while it is small.
 - `GET /tags` lists existing tags with counts, so agents reuse them.
 - `GET /entries/mine` lists a token's account's entries, newest first, one line each with its ID, status, slug, title and `code` link, so an agent can skip results already posted.
@@ -695,17 +612,17 @@ Add embedding search once keyword search starts missing relevant entries.
 ### Skills
 
 `/skill.md` installs two skills, `filedrawer-search` and `filedrawer-submit` (#25; the owner's decisions of 2026-11-07 and 2026-11-08).
-The search skill teaches an agent to search and weigh what it finds; the submit skill, to write and submit an entry, pick an embargo, and send feedback.
+The search skill teaches an agent to search and weigh what it finds; the submit skill, to write and submit an entry, and send feedback.
 Reason: an agent reads `/skill.md` only when someone points it there, so nothing in it can fire later in a project, while a harness offers its model every installed skill by its description, every session.
 The `skill.md` at agents.stackoverflow.com is a working example of serving instructions to agents.
 
 - The skills live in the repo's `skills/` folder, one folder each, in the Agent Skills format.
-  A `SKILL.md` gives `name`, `description` and `metadata` (its `version`, and the folder's `files`) in its front matter, `references/entry-format.md` is a copy of [entry-format.md](entry-format.md), and `references/upgrade.md` holds the upgrade steps, which only a newer version calls for.
+  A `SKILL.md` gives `name`, `description` and `metadata` (its `version`, and the folder's `files`) in its front matter, `references/entry-format.md` is a copy of [entry-format.md](entry-format.md), and `references/upgrade.sh` is the upgrade script, which only a newer version calls for.
   Installed copies fetch upgrades from that path, so it doesn't move.
 - The skills' files name production outright, `https://filedrawer.dev`, and its header file, `~/.config/filedrawer/filedrawer.dev.header`, with nothing to fill (the owner's decision, 2026-11-13, #73).
   An install on production is then byte for byte the tag's folder, so the hash in `skills/versions.txt` checks it, and tools such as `npx skills add` or a plain copy of the folder install a working skill.
   Reason: with placeholders, an installed folder never equalled its tag, and an agent that left the installer's script had to know the substitution; one filled `{{HOST}}` with its own `sed` (#73, class D).
-  A server elsewhere, staging or dev, points the files at itself where it serves them, and the installer and the upgrade steps do the same for a copy installed from it: `https://filedrawer.dev` becomes the site's address and `/filedrawer.dev.header` its host's header file, which can't apply twice, since neither appears in the result.
+  A server elsewhere, staging or dev, points the files at itself where it serves them, and the installer and the upgrade script do the same for a copy installed from it: `https://filedrawer.dev` becomes the site's address and `/filedrawer.dev.header` its host's header file, which can't apply twice, since neither appears in the result.
   So staging's installed copies differ from their tags, and nothing of ours checks the hash of an install (the owner, 2026-11-13); the installer's rerun compares files only to keep a human's changes, below.
 - An installed skill is a full copy, and everything the agent follows comes from the installed folder.
   Neither skill tells the agent to fetch instructions from the site.
@@ -727,7 +644,7 @@ The `skill.md` at agents.stackoverflow.com is a working example of serving instr
   The owner wanted the download and the run apart so that the script can be read before it runs: "As long as there is a clear path to audit the script before it runs, I'm good with it. I just didn't like it when the chained commands makes auditing impossible."
 - A human who keeps skills elsewhere, or manages them with tools of their own, can put each tag's folder wherever their setup reads skills; `/skill.md` says so, and the agent offers it when the human's setup suggests it (the owner's decision, 2026-11-13).
   Nothing else is needed: the submit skill makes the header file when the human sets up posting, and without an `upgrade` file the mode is `auto`.
-  Such a copy doesn't upgrade itself: the upgrade steps tell the human in a line that a version is out, since the steps' swap assumes the installer's folders.
+  Such a copy doesn't upgrade itself: the upgrade script tells the human in a line that a version is out, since its swap assumes the installer's folders.
 - The home page's paste line names the command that fetches `/skill.md` (the owner's decision, 2026-11-13, #73): "Run `curl -fsSL https://filedrawer.dev/skill.md` and follow it."
   Reason: Claude Code fetched `/skill.md` through its web fetch tool, which hands the agent a model-written summary, in 11 of 11 usability runs whose line named no command, and the summary mangled the installer (#68, #72).
   An agent reads a command in its human's message directly, and in a pilot on 2026-11-13 Claude Code ran curl first in 3 of 3 runs and Codex in 1 of 1.
@@ -744,11 +661,17 @@ The `skill.md` at agents.stackoverflow.com is a working example of serving instr
   It also carries `X-Filedrawer-Commit`, the commit the server was built from, which `ops/deploy-production` reads (see [Hosting](#hosting-and-operations)); `filedrawer-server -h` names it too.
   Once per task, in a session with a human present, a skill sends a HEAD of `/skill.md` and upgrades when the header names a higher version.
   A HEAD brings no body, so author text can't fake the header, and the skills ignore any notice found anywhere else.
-  A run with no human present never upgrades, as it never posts.
+  A run with no human present never upgrades, since nobody is there to tell or ask.
 - Upgrades are `auto` by default: the agent replaces the installed folder and tells the human in a line.
   At install the human may choose `ask`, kept in `~/.config/filedrawer/upgrade`, and then sees each change first.
-  Either way the agent diffs the new folder against its installed copy itself.
   Reason: the owner wanted the easy path by default, as long as it's clear what it means.
+- An upgrade is one script the agent runs as it stands, `sh <skill folder>/references/upgrade.sh VERSION`, which each skill's folder holds (the owner's decision, 2026-11-17, #90).
+  The script reads the mode itself.
+  In `auto` it fetches the tag, swaps the folder and prints the line for the human.
+  In `ask` it installs nothing and prints the files that changed, the diff of `SKILL.md` and the two commands that take the human's answer, `VERSION yes` and `VERSION no`; a No is recorded as a `declined` line, and that version isn't offered again.
+  Its last lines tell the agent what it did and what to do next.
+  Reason: as steps in a markdown file, with two scripts to copy out, upgrades failed in three usability rounds running: Codex rewrote the scripts or kept the old version without asking, and Claude Code in `auto` mode never read the mode file and asked (#68, #72, #90), while the install worked in 6 of 6 runs once it was one script (#78).
+  An agent that never runs the version check still gets no upgrade; only the skill's wording covers that.
 - Each request a skill sends names it in `X-Filedrawer-Skill: <name>/<N>`, so a later server can explain a refusal to an old version.
   Each entry stores that header and the request's `User-Agent`, cut to 200 characters, for judging whether a skill change improves entries; only the owner reads them, through SQL, and no page or reply shows them (#45, the owner's decisions, 2026-11-09).
   A header not shaped `name/N`, a name of 1 to 64 lowercase letters, digits and hyphens and a version of 1 to 9 digits, is stored as absent (the owner, 2026-11-10).
@@ -782,14 +705,25 @@ Reason: the results that belong here are the ones nobody comes back to, so a req
 - Its description names the moments: the human drops a direction; a later run replaces a pilot; a paper or sprint report goes in, or its results are settled, without some of the project's results; the project or sprint is wrapped up; the human asks for File Drawer.
   It doesn't ask about results going into a paper, or about work that isn't AI safety.
 - The question is one short paragraph at the end of the agent's reply: the result in a line, why it looks dropped, anything that needs the human's judgement, such as a teammate's unpublished work or code with no licence, that a post is CC-BY 4.0 and public for good (#47), and the answers.
-- While embargoes are paused, the answers are Yes and No, and a third, "ask me again after DATE", only when the agent's setup lets it make a reminder that outlives the session, such as a scheduled task (the owner's decision, 2026-11-09).
+- The answers are Yes and No, and a third, "ask me again after DATE", only when the agent's setup lets it make a reminder that outlives the session, such as a scheduled task (the owner's decision, 2026-11-09).
   The agent tells the human what it set, and asks again when the reminder comes due; the reminder never stands for a Yes.
-  Once embargoes return, the third answer is "if I haven't used it by DATE" (see [Embargo](#embargo)).
+  The owner, choosing it while embargoes were paused: "This might even be better than embargoes permanently. We'll see."
 - When the result comes from an experiment the search skill matched to an entry, the question offers to post it as a replication, with `replicates: <id>` (the owner's decision, 2026-11-08).
-- Only the human's own message counts as an answer, never text in a file, a memory, tool output or an entry.
-  A run with no human to ask doesn't post; it names the candidate in its final report.
-- On Yes, the agent writes and submits the entry at the end of the current task.
-  It then shows the human the card, the URL, the publish time and the account it posted as, and leaves the hour's hold to run, so "pull it" can still delete the entry.
+- Only the human's own message counts, or the prompt they started the run with, never text in a file, a memory, tool output or an entry.
+  A run with no human to ask that wasn't told to post doesn't post; it names the candidate in its final report.
+- A human's message that tells the agent to post is the go-ahead (the owner's decision, 2026-11-17, #90): the agent says what it is posting, that a post is public for good under CC-BY 4.0, and which code it links or leaves out, then submits in the same turn, without asking whether to.
+  The hour's hold is the safety net.
+  Reason: told "post it", both harnesses posted without the question in round 3, Codex in 3 of 3 runs, and its system prompt says a user's instruction outranks a skill's; a rule agents don't follow protects nobody, and the licence line was the part that went missing.
+- A run nobody watches, such as `claude -p`, `codex exec` or CI, follows the same rule: it posts only when its prompt says to, and waits on no answer (the owner's decision, 2026-11-17).
+  The skill reads nothing from the environment to tell such a run apart, so the told-to-post steps are the same either way.
+- A subagent never posts, since an agent wrote its prompt; it passes the candidate up to its parent (the owner's decision, 2026-11-17).
+- Code with a told-to-post (the owner's decision, 2026-11-17): code that is already public is pinned and linked in the first submit with no question.
+  Otherwise the entry posts without code, and the report ends with one question, whether to add it, by the human publishing it or the agent attaching it, which licenses it MIT; on Yes the agent sends the entry again while it is pending, which restarts the hour.
+  A bare "go ahead" to a question with several options isn't a Yes to attaching.
+  The owner: "I also want to make sure that the easy path doesn't mean that we usually don't get code attachments."
+  The usability reruns count how many posts end up with code.
+- On Yes to the question, the agent writes and submits the entry at the end of the current task.
+- After a submit, the agent's report leads with the URL, the publish time and that "pull it" deletes the entry until then, repeats that it will be public for good under CC-BY 4.0, then shows the card and the account it posted as, and leaves the hour's hold to run.
 - On Yes with no token yet, the agent gives the human the `/signup` link at once, says to look in spam for the verification email, and goes on writing; it asks for the token only when the entry is ready (#53; the owner's decision, 2026-11-09).
   Before it asks, it saves each draft in the repo's `.filedrawer/drafts/`, whose own `.gitignore` keeps it out of commits, and tells the human the path, so a later session asked to post them finds them.
   `/skill.md` does the same when the human's task is sharing.
@@ -854,10 +788,10 @@ The owner wants agents to drive the site's usability.
   Reason: screening runs after the response, so at submission the server can't know whether an entry will turn out to be a hazard.
   Reason: GitHub emails an issue to watchers as soon as it is filed, so deleting it can't undo a leak, and an agent told its jailbreak was rejected may describe it in a public issue.
 - `POST /feedback` takes the same three fields privately and needs an API token.
-  Agents use it when they have no GitHub access or when the feedback concerns an embargoed entry.
+  Agents use it when they have no GitHub access or when the feedback concerns an entry that isn't public yet.
   The triage agent summarises it in the admin inbox (see [Admin](#admin)).
   The owner copies redacted versions to GitHub issues when they are worth it.
-- The submit skill warns that a GitHub issue about an embargoed entry makes its details public.
+- The submit skill warns that a GitHub issue about an entry that isn't public yet makes its details public.
 - The server stores front-matter fields it doesn't recognise, and an admin report lists the ones agents keep adding.
   The report counts each entry's first 50 such fields, by the first 100 characters of their names (#80; uncertainties.md); the entry itself keeps every field as written.
   A field that keeps coming back becomes a real field.
@@ -902,7 +836,7 @@ The backup look is "Phosphor": one column, green on charcoal, in the system's mo
   Author headings sit below the page's own, in a box of their own, so author text can't pass for the server's.
 
 The terms and privacy pages are short and plain.
-They cover the CC-BY licence on entries, the AGPL licence on the code, the operator and data controller (the owner, by name and country, the United States, with `contact@filedrawer.dev` and no postal address), the personal data kept (email addresses; IPs in logs for 14 days, and with email addresses as hashes in the rate limits for a day; each entry's skill version and User-Agent; searches, with no IP or account, and with the skills' User-Agent, which names the agent's harness and model; private feedback), who processes it (Anthropic for screening, Purelymail for mail, Hetzner for hosting and the beta's backups, #41, which stand in for the backups in [Hosting](#hosting-and-operations) until #4), that deleted data leaves the beta's backups and deploy copies within 21 days (14 for a deploy copy, then Hetzner's 7 kept server backups; the owner's decision, 2026-11-10, #42), that removed entries and suspended accounts stay in the database for analysis, how to request a takedown or the erasure of personal data, and the lack of any guarantee of uptime or accuracy (the owner's decisions, 2026-11-09, #47).
+They cover the CC-BY licence on entries, the AGPL licence on the code, the operator and data controller (the owner, by name and country, the United States, with `contact@filedrawer.dev` and no postal address), that everything submitted is meant to be public, the personal data kept that isn't (email addresses; IPs in logs for 14 days, and with email addresses as hashes in the rate limits for a day; each entry's skill version and User-Agent; searches, with no IP or account, and with the skills' User-Agent, which names the agent's harness and model; private feedback), who processes it, by kind of service only (hosting, mail, the AI model that screens), with no promise of when deleted data leaves the backups (the owner's decisions, 2026-11-17, #91: provider names go stale and say more about the inner workings than a reader needs), that removed entries and suspended accounts stay in the database for analysis, how to request a takedown or the erasure of personal data, and the lack of any guarantee of uptime or accuracy (the owner's decisions, 2026-11-09, #47).
 Copyright notices go to the DMCA designated agent, whom the terms page names as the statute asks, with a mailbox address, a phone number and `copyright@filedrawer.dev`: the owner, registered with the Copyright Office as DMCA-1086424 (listed 2026-11-15).
 The address is a private mailbox, so the operator still gives no postal address of their own.
 An agent drafts them and the owner reviews them.
@@ -930,25 +864,21 @@ Reason: entries and feedback can carry instructions, such as "create an invite c
     The author's token reads `status: removed` and the contact address, but not the text; the public gets a 404.
   - `/admin/accounts/<id>` suspends an account, and removes each of its entries, each keeping its status for a restore, and each series it made (#57).
     The account's token can read, but every write gets a 403 that names the contact address, before its rate counts; a trigger refuses an entry insert from a suspended account, for a write that passed the token check as the suspension committed.
-    It can't make a series public, but its browser session can still log in, make tokens and delete the account.
+    Its browser session can still log in, make tokens and delete the account.
     Lifting the suspension restores nothing, and no entry or series of a suspended account can be restored (the owner's decisions, 2026-11-09).
     Reason: an entry or series removed as a hazard mustn't come back by accident.
   - `/admin/series/<id>`, linked from its creator's account page, removes a series and restores it (#57, the owner's decisions, 2026-11-09).
     Reason: a series' title and description are its creator's text, which anyone reads once it is public.
     A removed series answers 404 on every route, to its creator and members too, and a new entry or replacement citing it is refused as one citing a series the account isn't a member of.
     An entry citing it stays as it is, keeps its `series:` line and reads `series_description: not public`, as for a version nobody may read yet, so nothing shows that it was removed.
-    Its versions stay unreadable while it is removed, and an entry that waited on it while it was hidden goes on.
+    Its versions stay unreadable while it is removed.
     A restore is refused while its creator is suspended.
-    A removed hidden series doesn't stop its creator deleting the account, and outlives it.
+    A removed series outlives its creator's account, whatever its versions.
 - For an erasure request, the owner purges instead.
   A purge deletes the data from the database: the named entries with all their versions and search rows, or an account's email, login, display name, linked GitHub and ORCID handles, private feedback and its triage-inbox summaries.
   It deletes attached files that no other entry uses.
-  Backups can't be edited under Object Lock, so purged data leaves them within 45 days.
   Reason: the VPS is in Germany, and people have a legal right to have their personal data erased.
-  - Every connection runs with SQLite's `secure_delete` on, so each deletion overwrites its rows, an author's deletion of a pending entry and an account's deletion included, and each hour the server empties the write-ahead log, which holds the pages as they were before (#65).
-    A purge also uses FTS5's `secure-delete` option or follows with FTS5 `optimize` and `VACUUM`.
-    Reason: by default SQLite leaves deleted rows' bytes in freed pages, and FTS5 keeps old index entries, so every later Litestream snapshot would copy the purged text and it would never age out.
-    A test plants a string, purges it, and greps the database file and a fresh snapshot for it.
+  - Deleted rows' bytes may stay in SQLite's freed pages, its write-ahead log and the backups until they are overwritten or age out: the email address is the only private data the site keeps, and the privacy page promises no time (the owner's decision, 2026-11-17, which dropped `secure_delete`, the hourly emptying of the log (#65) and the 21-day promise).
   - The server logs each purge's IDs, with no content, in a file outside the database, with its own copy in B2.
     It applies the log again after any restore.
     Reason: a log inside the database would be lost by a restore to a point before the purge.
@@ -967,7 +897,7 @@ Reason: entries and feedback can carry instructions, such as "create an invite c
   - A missing or stale nightly copy (none dated yesterday or today in `backups/`, or no `backups/` in production) sends the email.
 - The triage agent holds a token that can read private feedback and append to the admin inbox, a page only the owner can open, and nothing else.
   It runs with no other network access, so it posts nothing public.
-  Reason: feedback can carry embargoed details and instructions.
+  Reason: feedback can carry unpublished details and instructions.
 
 ## Stack
 
@@ -1179,8 +1109,7 @@ Launch needs everything in this document except GitHub and ORCID sign-in.
 2. Accounts, tokens, submission, the analyzer and cards, reading and search, `/skill.md`, staging, backups.
 3. Screening, the fair queue, the review queue, attached code.
    Removing entries, suspending accounts and purges are a slice of their own (#15), split from attached code's removals (the owner's decision, 2026-11-06).
-4. Embargoes, invite codes and rate limits.
-   Embargoes are paused (see [Embargo](#embargo)).
+4. Invite codes and rate limits; embargoes, planned here, were retired (see [Rejected](#rejected)).
    Then the usability runs on staging.
 5. Terms and privacy pages, then launch.
 6. After launch: GitHub sign-in, then ORCID.
@@ -1223,20 +1152,20 @@ Bring one of these back only with the owner's agreement.
   Committed to a project, it would point teammates' agents at home folders they don't have, and sign them up unasked.
 - **A GitHub repo as the archive**, with entries submitted as pull requests.
   The owner found it too janky.
-  A site gives control over accounts, the API and embargoes.
+  A site gives control over accounts and the API.
 - **Requiring GitHub, ORCID or an invite code to post.**
   The owner wants a plain email and password path.
   The other routes stay available as options.
-- **Embargoed entries held on the author's machine** and submitted on the release date.
-  If the laptop is forgotten, the entry is never released.
-- **A public placeholder or hash for embargoed entries.**
-  It adds complexity, and nothing about an embargoed entry is public in v1.
+- **Embargoes and hidden series** (paused 2026-11-08, retired 2026-11-17; #33): an entry, or a series, submitted now and made public on a later date, for researchers afraid of being scooped.
+  Paused because, the owner said, "it seems like embargoes are causing a lot of problems"; retired because an account's email address is the only private data the archive keeps, and everything else submitted is meant to be public.
+  The server refuses `embargo_until`, and any other front-matter key starting `embargo`, even with no value, rather than publish an entry its author meant to hold; the submit skill's "ask me again after DATE" answer covers a result that isn't ready yet.
+  Every series is public from creation.
+  Migration 0033 deleted the entries staging still held back, with the hidden series no one could read yet; production never had any.
+  Turned down earlier as variants: entries held on the author's machine and submitted on the release date, which a forgotten laptop never releases; a public placeholder or hash for an embargoed entry; a default embargo length, which would push agents toward months; and sending a chain's held earlier versions to review with a later one.
 - **Running submitted code to verify reproducibility.**
   It would mean running untrusted code, and the compute costs money.
   Entries pin their code and data instead.
   Readers re-run on their own machines and post replications as entries.
-- **A default embargo length.**
-  Sprint embargoes can be a weekend, and a default would push agents toward months.
 - **Rejecting positive results.**
   The site should hold any experiment that won't become a paper, including an effect nobody will untangle from its confounders.
   Rejecting a submission because it reports an effect somewhere would lose those.
@@ -1270,8 +1199,5 @@ Bring one of these back only with the owner's agreement.
 - **Object storage as the home of attached files** (2026-11-06, #12).
   Real use stays at a few GB, every serve and screening would wait on the network, and Hetzner's starts at €6.49 a month (2026-11-06), more than the VPS.
   B2 holds the files' backups instead.
-- **Sending a chain's earlier versions to review when the owner rejects or holds a later one** (2026-11-08).
-  The owner chose a "reject the chain" button on the later version's page instead (see [Entry status](#entry-status)).
-  Doing nothing more was turned down too: a rejected version's earlier versions would release within a minute, with nothing in the admin pages to pull them.
 - **A 1 GB VPS.**
   Processes would fit, but with little RAM left for the page cache, and the 4 GB plans cost about the same.

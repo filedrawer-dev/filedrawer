@@ -17,7 +17,6 @@ pub mod config;
 pub mod daily_email;
 pub mod db;
 mod deletion;
-pub mod embargo;
 mod entries;
 mod error;
 pub mod event_log;
@@ -58,7 +57,6 @@ use axum::routing::{MethodRouter, delete, get, post};
 use sqlx::SqlitePool;
 
 pub use attachments::StoreError;
-pub use embargo::Embargoes;
 pub use screening::Screener;
 
 /// The largest request body the server reads. Entries are capped at 100 KiB by the
@@ -105,8 +103,6 @@ pub struct AppState {
     pub screening_health: std::sync::Arc<screening::ScreeningHealth>,
     /// Fetches `code` and `logs` links, and asks GitHub about commits.
     pub link_checker: std::sync::Arc<link_checks::LinkChecker>,
-    /// Whether embargoes and hidden series are taken: `Paused` everywhere but tests.
-    pub embargoes: Embargoes,
     /// Where the daily email's job reports each run (`Config::daily_email_ping`).
     pub pinger: Option<std::sync::Arc<dyn daily_email::Pinger>>,
     /// The nightly copies of the database (`Config::backups_dir`).
@@ -209,10 +205,6 @@ fn build(state: AppState) -> Routes<Router> {
             get(account::delete_page).post(account::delete_account),
         )
         .route(
-            "/account/series/{id}/publish",
-            post(account::publish_series),
-        )
-        .route(
             "/account/e/{id}/withdraw",
             get(routes::withdraw::confirm_page).post(routes::withdraw::withdraw),
         )
@@ -228,7 +220,6 @@ fn build(state: AppState) -> Routes<Router> {
         .route("/admin/e/{id}/publish", post(admin::publish))
         .route("/admin/e/{id}/hold", post(admin::hold))
         .route("/admin/e/{id}/reject", post(admin::reject))
-        .route("/admin/e/{id}/reject-chain", post(admin::reject_chain))
         .route("/admin/e/{id}/doubt-seen", post(admin::doubt_seen))
         .route("/admin/e/{id}/remove", post(admin::remove_entry))
         .route("/admin/e/{id}/restore", post(admin::restore_entry))

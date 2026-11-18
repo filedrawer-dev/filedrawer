@@ -114,3 +114,21 @@ fn a_series_cite_the_server_cant_read_makes_entry_check_refuse() {
         "{out}"
     );
 }
+
+#[test]
+fn an_embargo_field_makes_entry_check_refuse_even_when_empty() {
+    let path = fixture("example.md");
+    let text = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(
+        &path,
+        text.replacen("tags:", "embargo_until: null\ntags:", 1),
+    )
+    .unwrap();
+    let output = entry_check([&path]);
+    assert_eq!(output.status.code(), Some(1));
+    let out = stdout(&output);
+    assert!(
+        out.contains("refused: `embargo_until` asks for an embargo"),
+        "{out}"
+    );
+}

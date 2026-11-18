@@ -6,9 +6,15 @@
 use std::collections::BTreeSet;
 
 use sqlx::{SqliteConnection, SqlitePool};
+use time::Duration;
 
-use crate::time::now;
+use crate::time::{now, now_utc, stamp};
 use crate::{AppState, allowance, attachments, series};
+
+/// How long another account's rejected entry keeps a series it cites alive when the
+/// series' creator deletes the account. Reason: a rejection may be the owner's
+/// mistake, and its author fixes the entry and resubmits.
+const REJECTION_KEEPS_SERIES_DAYS: i64 = 60;
 
 /// What deleting an account would do, for the confirm page.
 pub struct Preview {
@@ -16,18 +22,6 @@ pub struct Preview {
     pub unpublished: i64,
     /// Public entries that would stay, under "account deleted".
     pub public: i64,
-    /// Hidden series the account made that hold another account's entries, which
-    /// stop the deletion.
-    pub blocking: Vec<String>,
-}
-
-/// What `delete` did.
-#[derive(Debug)]
-pub enum Outcome {
-    Deleted,
-    /// Nothing was deleted: hidden series it made hold other accounts' entries, as
-    /// `preview` lists.
-    Blocked,
 }
 
 // Deletion keeps public entries, under "account deleted", and the ones the owner
@@ -35,41 +29,18 @@ pub enum Outcome {
 // statuses out.
 
 pub async fn preview(pool: &SqlitePool, account_id: &str) -> Result<Preview, sqlx::Error> {
-    let mut connection = pool.acquire().await?;
     let counts = sqlx::query!(
         r#"SELECT COALESCE(SUM(status NOT IN ('public', 'removed')), 0) AS "unpublished!: i64",
                   COALESCE(SUM(status = 'public'), 0) AS "public!: i64"
            FROM entries WHERE account_id = ?"#,
         account_id
     )
-    .fetch_one(&mut *connection)
+    .fetch_one(pool)
     .await?;
     Ok(Preview {
         unpublished: counts.unpublished,
         public: counts.public,
-        blocking: blocking(&mut connection, account_id).await?,
     })
-}
-
-/// The hidden series `account_id` made that another account's live entry cites:
-/// nobody else could make them public (the owner's decision, 2026-11-05).
-async fn blocking(
-    connection: &mut SqliteConnection,
-    account_id: &str,
-) -> Result<Vec<String>, sqlx::Error> {
-    sqlx::query_scalar!(
-        "SELECT s.id FROM series s
-         WHERE s.account_id = ?1 AND s.public_at IS NULL AND s.removed_at IS NULL
-           AND EXISTS (
-               SELECT 1 FROM entries e
-               WHERE e.series_seq = s.seq AND e.account_id != ?1
-                 AND e.series_removed_at IS NULL
-                 AND e.status NOT IN ('rejected', 'withdrawn', 'removed'))
-         ORDER BY s.seq",
-        account_id
-    )
-    .fetch_all(&mut *connection)
-    .await
 }
 
 /// The account's password hash, to confirm a deletion.
@@ -86,23 +57,20 @@ pub async fn password_hash(
     Ok(hash.flatten())
 }
 
-/// Deletes the account in one transaction, or names the series that stop it.
+/// Deletes the account in one transaction.
 /// Deleted: its email, login, name, sessions, tokens, email links, private feedback
 /// and series memberships; every entry of its that isn't public or removed, with what
-/// was read from it; runs and batches nothing left uses; the hidden series it made;
-/// the series the screen refused that the owner hasn't confirmed as a hazard; the
-/// attachment sets no kept entry cites, and the files no remaining set holds, whose
-/// bytes leave `files` once the rest has committed.
-/// Kept: the account ID, its public entries, the public series it made, refused
+/// was read from it; runs and batches nothing left uses; the series it made that have
+/// no readable version and no other account's entry cites; the series the screen
+/// refused that the owner hasn't confirmed as a hazard; the attachment sets no kept
+/// entry cites, and the files no remaining set holds, whose bytes leave `files` once
+/// the rest has committed.
+/// Kept: the account ID, its public entries, the other series it made, refused
 /// series the owner confirmed, the attachment sets kept entries cite, and the
 /// invite code it signed up with, so it still counts as one of the code's uses.
-pub async fn delete(state: &AppState, account_id: &str) -> Result<Outcome, sqlx::Error> {
+pub async fn delete(state: &AppState, account_id: &str) -> Result<(), sqlx::Error> {
     let writer = state.files.write().await;
     let mut transaction = crate::db::write_tx(&state.pool).await?;
-    let blocked = blocking(&mut transaction, account_id).await?;
-    if !blocked.is_empty() {
-        return Ok(Outcome::Blocked);
-    }
     // Its allowance goes with it, before the entries its units name.
     allowance::delete_account(&mut transaction, account_id).await?;
     let doomed = sqlx::query_scalar!(
@@ -114,7 +82,10 @@ pub async fn delete(state: &AppState, account_id: &str) -> Result<Outcome, sqlx:
     .await?;
     delete_entries(&mut transaction, &doomed).await?;
     delete_unused(&mut transaction, account_id).await?;
-    delete_hidden_series(&mut transaction, account_id).await?;
+    // Its entries may have been all that held a version back, so a series they
+    // cited may be readable by now, and stays.
+    series::mark_readable(&mut transaction).await?;
+    delete_unread_series(&mut transaction, account_id).await?;
     let deleted_at = now();
     for statement in [
         sqlx::query!("DELETE FROM sessions WHERE account_id = ?", account_id),
@@ -157,11 +128,9 @@ pub async fn delete(state: &AppState, account_id: &str) -> Result<Outcome, sqlx:
     )
     .execute(&mut *transaction)
     .await?;
-    // Its entries may have been all that held a version back.
-    series::mark_readable(&mut transaction).await?;
     transaction.commit().await?;
     attachments::remove_bytes(&writer, &lone).await;
-    Ok(Outcome::Deleted)
+    Ok(())
 }
 
 /// Deletes the account's runs and batches that nothing left uses, whichever entries
@@ -188,21 +157,37 @@ async fn delete_unused(
     Ok(())
 }
 
-/// Deletes the hidden series the account made, which no other account's live entry
-/// cites by now. An entry that still names one (taken out of it, or rejected) loses
-/// the cite. A series the owner removed stays, as removed data does.
-async fn delete_hidden_series(
+/// Deletes the series the account made that no one but their members could read: no
+/// version is readable, and no other account's live entry cites one, nor one rejected
+/// within [`REJECTION_KEEPS_SERIES_DAYS`] (the owner's decisions, 2026-11-17); any
+/// other series outlives the account. An entry that still names one (taken out of it,
+/// or rejected earlier) loses the cite. A series the owner removed stays, as removed
+/// data does.
+async fn delete_unread_series(
     transaction: &mut SqliteConnection,
     account_id: &str,
 ) -> Result<(), sqlx::Error> {
-    let hidden = sqlx::query_scalar!(
-        r#"SELECT seq AS "seq!: i64" FROM series
-           WHERE account_id = ? AND public_at IS NULL AND removed_at IS NULL"#,
-        account_id
+    // No rejection time is stored; the latest submission stands in, since a
+    // rejection follows it within the screening hold or the review queue.
+    let rejected_since = stamp(now_utc() - Duration::days(REJECTION_KEEPS_SERIES_DAYS));
+    let unread = sqlx::query_scalar!(
+        r#"SELECT s.seq AS "seq!: i64" FROM series s
+           WHERE s.account_id = ?1 AND s.removed_at IS NULL
+             AND NOT EXISTS (
+                 SELECT 1 FROM series_versions v
+                 WHERE v.series_seq = s.seq AND v.readable_at IS NOT NULL)
+             AND NOT EXISTS (
+                 SELECT 1 FROM entries e
+                 WHERE e.series_seq = s.seq AND e.account_id != ?1
+                   AND e.series_removed_at IS NULL
+                   AND (e.status NOT IN ('rejected', 'withdrawn', 'removed')
+                        OR (e.status = 'rejected' AND e.submitted_at >= ?2)))"#,
+        account_id,
+        rejected_since
     )
     .fetch_all(&mut *transaction)
     .await?;
-    for seq in hidden {
+    for seq in unread {
         for statement in [
             sqlx::query!(
                 "UPDATE entries SET series_seq = NULL, series_version = NULL,

@@ -135,7 +135,7 @@ Add a new entry at the end of the topic it belongs to, or start a topic when non
 
 - Options: 30 days from login, fixed; a shorter idle timeout that each visit renews; or both.
 - Chosen: 30 days fixed.
-  The owner and the people they invite log in to make tokens and release embargoes, rarely, and agents use tokens, not sessions.
+  The owner and the people they invite log in to make tokens and withdraw entries, rarely, and agents use tokens, not sessions.
 - Against: a stolen cookie works for the whole 30 days.
   An idle timeout of a few days would cut that, at the cost of more logins.
 
@@ -173,12 +173,15 @@ The owner set 10 an hour and 50 a day per account (#60); an agent chose the rest
 - Against: the owner's agents on staging share one account, so they share its 10 an hour.
 - Nothing caps feedback across accounts: 40 signups a day from one IP can each store 50 items.
 
-#### Account deletion: entries citing a deleted hidden series
+#### Account deletion: which entries keep a series, and those that lose it
 
-- Options: clear the cite, as here, or keep it and show "series description removed", as design.md says for a purged version.
-- Chosen: clear it.
-  Only entries already taken out of the series, or rejected or withdrawn, can still name one when it is deleted.
-- Against: an entry taken out of the series that later goes public loses its "see series" pointer, which design.md's "keeps the series version it cites" was meant to prevent.
+- Options: a series the deleted account made, with no readable version, outlives the account when another account's entry cites it; "cites" can count every entry that names it, or only one still in it and not withdrawn or removed, nor rejected over 60 days ago, as here.
+  An entry that names a deleted series can lose the cite, as here, or keep it and show "series description removed", as design.md says for a purged version.
+- Chosen: only a live entry still in the series, or one rejected in the last 60 days (the owner's decision), keeps it, and the rest lose the cite.
+  A withdrawn or removed entry never publishes, and one taken out of the series no longer counts toward its versions either.
+  No rejection time is stored, so an entry's latest submission stands in for it: a rejection follows within the screening hold or the review queue, so a slow review shortens the 60 days by that much.
+  Migration 0033 differs: it deletes every hidden series no one can read, as the owner asked, so every entry naming one loses the cite, a live one in review included.
+- Against: an entry the owner removed, kept for analysis, loses which series it cited; and one taken out of the series that later goes public loses its "see series" pointer, which design.md's "keeps the series version it cites" was meant to prevent.
 
 #### A deleted entry: what a later read and a retry answer
 
@@ -215,15 +218,7 @@ The owner set 10 an hour and 50 a day per account (#60); an agent chose the rest
 - Chosen: deletes it, with the tokens and sessions that could read it.
 - Against: the record holds only random IDs and times, and the owner might want it kept for analysis, as removed entries are.
 
-### Versions, embargoes and batches
-
-#### An embargo date that has passed
-
-- Options: refuse it, as here, or publish the entry at once.
-- Chosen: refuse.
-  A date already past is most likely a typo in the year, and publishing early can't be undone.
-  Leaving `embargo_until` out publishes at once.
-- Against: design.md's release rule reads naturally as "a date that has come means public", and an agent that writes up an old result with its original embargo date gets refused.
+### Versions and batches
 
 #### Versions form one line
 
@@ -238,15 +233,6 @@ The owner set 10 an hour and 50 a day per account (#60); an agent chose the rest
 - Chosen: refuse, with a 409 that names the latest version, or says to PUT a pending one.
   The agent then reads what the latest says before correcting it.
 - Against: an agent that holds an old ID must make one more request.
-
-#### Which date a chain releases on
-
-- Options: when a chain's versions name different dates, release them all on the latest live version's date, whatever its status; on the latest version that passed screening; or each on its own date.
-- Chosen: the latest version that isn't rejected, withdrawn or removed, even one still pending or in review (`entries::chain_embargo`).
-  It is the date the author chose last, and an older version released on its own earlier date would publish what an extension held back.
-  The author's view of every embargoed version shows that date.
-  A new version now keeps its chain's date, so only chains stored before that rule can differ.
-- Against: in such a chain, an unscreened version can have brought the release forward, and a release can't be undone; the screen never saw the version that set the date.
 
 #### Batches: what holds them together
 
@@ -277,12 +263,6 @@ The owner set 10 an hour and 50 a day per account (#60); an agent chose the rest
 - Options: one `screen_from` for the batch, the day its last member waits for, as here, or one per member.
 - Chosen: one, since the batch publishes as one once its last member passes.
 - Against: an agent reading the text can't tell which members are screened today.
-
-#### Removing a version moves its chain's release date
-
-- Options: a removed version leaves the chain's release date, as here, since `entries::chain_embargo` counts only live versions; keep removed versions in the date; or refuse to remove a version while an earlier one is embargoed.
-- Chosen: leave it out, since embargoes are paused (#33) and no new entry is embargoed.
-- Against: removing a later version embargoed further ahead, say to take down personal data in it, lets an earlier embargoed version release on its own sooner date, against its author's later choice.
 
 ### Series
 
@@ -382,6 +362,39 @@ The owner set 10 an hour and 50 a day per account (#60); an agent chose the rest
 - Options: a guarded account's queued entries go to review as each one's allowance day comes, as here, or all at once when the guard trips.
 - Chosen: as each day comes. design.md has the server check the account "each time an item leaves its queue for screening", and issue #8 is about one account flooding the owner's review page.
 - Against: "and so does everything it already has waiting" can read as all at once, and the owner then sees a guarded account's whole queue only over several days.
+
+#### What still stops a told-to-post
+
+- Options: nothing, since the owner's decision says the agent doesn't ask again; or a short list of stops.
+- Chosen: three stops, each ending in a statement, not a question, so a run nobody watches behaves the same.
+  A result that doesn't belong, such as work that isn't AI safety, isn't posted.
+  A part that isn't the human's to publish, such as a teammate's unpublished work or personal data, is left out and named, and when the entry can't stand without it the agent saves the draft and posts nothing.
+  A set the agent has to work out ("everything from this weekend I didn't use") is drafted and listed, and nothing is posted until the human names which, since they haven't seen which results it covers; "post the drafts" names its set, and the agent lists them and posts.
+  With no token, the agent ends on the draft's path, the signup link and the token command, and posts once the human says the token is set.
+- Against: each stop is a judgement an agent can stretch into asking again, which round 3 showed Claude Code doing with a code question.
+
+#### When code counts as public, for a told-to-post
+
+- Options: any commit on a GitHub remote; or the commit the result ran at, when GitHub serves its page to a request with no token.
+- Chosen: the run's commit, checked with an unauthenticated `curl` of its commit page.
+  A private remote also holds the commit, and a public repo may not hold the code that produced the result.
+  The agent pushes no branch to make code public.
+- Against: the check covers GitHub only; code on Hugging Face or Zenodo gets the question though it may be public.
+  The owner's decision named "code that isn't public or has no licence file"; a public repo with no licence file is linked without a question here, since a link licenses nothing and the MIT line only matters when code is attached.
+
+#### "Post it, and attach the code"
+
+- Options: the first submit still leaves non-public code out and asks after; or the message's own instruction to attach counts.
+- Chosen: it counts: the agent says that attaching licenses the code under MIT, then attaches it in the first submit.
+  A run nobody watches has no later turn in which to answer the question.
+- Against: the MIT line is said in the same turn as the submit, so the hold is the human's only chance to object.
+
+#### The upgrade script when the human answered Yes
+
+- Options: `upgrade.sh VERSION yes` fetches the tag again and installs it; or the first run keeps the folder it fetched and the second takes its path.
+- Chosen: fetch again, so the script keeps no state between runs and the agent passes no path.
+  A ruleset keeps a `skill-*` tag from moving, so the second fetch holds what the human saw.
+- Against: two fetches, and with the network down between them the Yes installs nothing.
 
 ### Attached code
 
@@ -503,8 +516,8 @@ The owner set 10 an hour and 50 a day per account (#60); an agent chose the rest
 
 #### Skills installed by the human's own means don't upgrade themselves
 
-- Options: the upgrade steps stop and tell the human, in a line, that a version is out, for a copy outside `~/.agents/skills/` and `~/.claude/skills/`; or they try to put the new folder where the copy is.
-- Chosen: tell the human; their own tooling put the copy there, and the steps' swap assumes the installer's folders.
+- Options: the upgrade script stops and tells the human, in a line, that a version is out, for a copy outside `~/.agents/skills/` and `~/.claude/skills/`; or it tries to put the new folder where the copy is.
+- Chosen: tell the human; their own tooling put the copy there, and its swap assumes the installer's folders.
 - Against: the agent repeats the line once per task until the human upgrades.
 
 #### `/skill.md`'s download command off production
@@ -559,18 +572,6 @@ The owner settled the email's sections and the rules in design.md's Admin sectio
 - Against: a field past an entry's 50th never reaches the report, and two long names that share their first 100 characters count as one.
 
 ### Storage
-
-#### Deleted text in the database's files
-
-- Options: turn `secure_delete` on for a purge alone, as design.md first said, or on every connection; empty the write-ahead log after each deletion, on a timer, or leave it to SQLite's own checkpoints.
-- Chosen: on every connection, and the log emptied (`PRAGMA wal_checkpoint(TRUNCATE)`) each hour with the other tidying (#65).
-  Reason: the rows deleted today, a pending entry and an account's data, are the ones the privacy page promises gone, and no purge exists yet.
-  A test found the deleted text in the log first and in the database file second: SQLite's own checkpoints copy the log into the file but leave the log's old pages on disk until later writes run over them.
-- Against: text deleted stays in the log for up to an hour, and longer when a reader holds an older view of the database at that moment, such as the nightly copy: the checkpoint then waits out the 5 s busy timeout, holding up writes meanwhile, logs a warning and gives up until the next hour.
-  A truncated log's blocks also stay on the disk until reused or trimmed (#65's `fstrim` item).
-  The search index's `secure-delete` option isn't set: only public entries are indexed and nothing deletes one yet, so it belongs with the purge.
-  Once a row is deleted with it set, the index can't be read by SQLite before 3.42, which matters if the server's `sqlite3` command is older (check `sqlite3 --version` on the VPS).
-  Litestream (#4) manages checkpoints itself, so the hourly one needs checking against it then.
 
 #### When the reference keys are rebuilt
 

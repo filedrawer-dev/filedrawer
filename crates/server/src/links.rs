@@ -1,11 +1,9 @@
 //! The checks on what entries name and refer to (design.md, Agent interface):
-//! slugs, declared runs, and `slug:<name>` references, which may not let an entry
-//! become public before an entry it refers to. Submissions, PUTs, versions and
-//! batches all run them.
+//! slugs and declared runs. Submissions, PUTs, versions and batches all run them.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
-use analyzer::{Analysis, is_valid_slug, slug_references};
+use analyzer::{Analysis, is_valid_slug};
 
 use crate::AppState;
 use crate::auth::TokenAccount;
@@ -28,14 +26,11 @@ pub struct Linked<'a> {
     /// How replies name it: "entry 2 (slug b)", or "the entry".
     pub label: String,
     pub analysis: &'a Analysis,
-    pub source: &'a str,
     pub slug_rule: SlugRule,
-    /// The stored entry a PUT replaces, so it doesn't count as referring to itself.
-    pub seq: Option<i64>,
 }
 
-/// What's wrong with a set of entries' slugs, runs and references, given the runs a
-/// batch declares. Empty when nothing is.
+/// What's wrong with a set of entries' slugs and runs, given the runs a batch
+/// declares. Empty when nothing is.
 pub async fn problems(
     state: &AppState,
     account: &TokenAccount,
@@ -43,8 +38,7 @@ pub async fn problems(
     declared_runs: &BTreeSet<String>,
 ) -> Result<Vec<String>, AppError> {
     let mut problems = Vec::new();
-    // Each slug in this set, with the embargo of the entry that has it.
-    let mut slugs_here: BTreeMap<String, Option<String>> = BTreeMap::new();
+    let mut slugs_here = BTreeSet::new();
     for member in members {
         let Some(slug) = &member.analysis.fields.slug else {
             continue;
@@ -54,18 +48,17 @@ pub async fn problems(
                 "{}: a slug is 1 to 64 letters, digits, `.`, `_` or `-`",
                 member.label
             ));
-        } else if slugs_here.contains_key(slug) {
+        } else if slugs_here.contains(slug) {
             problems.push(format!(
                 "{}: slug `{slug}` is used twice in this batch",
                 member.label
             ));
         }
-        slugs_here.insert(slug.clone(), member.analysis.fields.embargo_until.clone());
+        slugs_here.insert(slug.clone());
     }
     for member in members {
         problems.extend(slug_problems(state, account, member).await?);
         problems.extend(run_problems(state, account, member, declared_runs).await?);
-        problems.extend(reference_problems(state, account, member, &slugs_here).await?);
     }
     Ok(problems)
 }
@@ -112,50 +105,6 @@ async fn run_problems(
                 "{}: `uses_runs` names `{run}`, which neither this batch nor an earlier one declares",
                 member.label
             ));
-        }
-    }
-    Ok(problems)
-}
-
-/// An entry may not become public before an entry it refers to: the reference would
-/// reveal that the other exists. Checked both ways: what this entry refers to, and
-/// what already refers to this entry's slug.
-async fn reference_problems(
-    state: &AppState,
-    account: &TokenAccount,
-    member: &Linked<'_>,
-    slugs_here: &BTreeMap<String, Option<String>>,
-) -> Result<Vec<String>, AppError> {
-    let mut problems = Vec::new();
-    let own = member.analysis.fields.embargo_until.as_deref();
-    let before = |earlier: Option<&str>, later: &str| earlier.is_none_or(|earlier| earlier < later);
-    for name in slug_references(member.source) {
-        let target = match slugs_here.get(&name) {
-            Some(embargo) => embargo.clone(),
-            None => entries::slug_embargo(&state.pool, &account.id, &name).await?,
-        };
-        if let Some(target) = target
-            && before(own, &target)
-        {
-            problems.push(format!(
-                "{}: it refers to slug:{name}, which is embargoed until {target}; an entry may not become public before an entry it refers to",
-                member.label
-            ));
-        }
-    }
-    let own_slug = match (&member.analysis.fields.slug, &member.slug_rule) {
-        (Some(slug), _) => Some(slug.clone()),
-        (None, SlugRule::Version(kept) | SlugRule::Put(kept)) => kept.clone(),
-        (None, SlugRule::New) => None,
-    };
-    if let (Some(slug), Some(own)) = (own_slug, own) {
-        for (seq, id, embargo) in entries::referrers(&state.pool, &account.id, &slug).await? {
-            if Some(seq) != member.seq && before(embargo.as_deref(), own) {
-                problems.push(format!(
-                    "{}: entry {id} refers to it and would become public first; an entry can't take an embargo while an earlier-public entry refers to it",
-                    member.label
-                ));
-            }
         }
     }
     Ok(problems)

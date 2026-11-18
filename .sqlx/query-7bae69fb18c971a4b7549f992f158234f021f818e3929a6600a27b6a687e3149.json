@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT s.id, v.title, s.public_at IS NOT NULL AS \"public!: bool\",\n                  s.removed_at IS NOT NULL AS \"removed!: bool\"\n           FROM series s JOIN series_versions v ON v.series_seq = s.seq\n           WHERE s.account_id = ?\n             AND v.version = (SELECT MAX(version) FROM series_versions WHERE series_seq = s.seq)\n           ORDER BY s.seq DESC",
+  "query": "SELECT s.id, v.title, s.removed_at IS NOT NULL AS \"removed!: bool\"\n           FROM series s JOIN series_versions v ON v.series_seq = s.seq\n           WHERE s.account_id = ?\n             AND v.version = (SELECT MAX(version) FROM series_versions WHERE series_seq = s.seq)\n           ORDER BY s.seq DESC",
   "describe": {
     "columns": [
       {
@@ -26,14 +26,8 @@
         }
       },
       {
-        "name": "public!: bool",
-        "ordinal": 2,
-        "type_info": "Integer",
-        "origin": "Expression"
-      },
-      {
         "name": "removed!: bool",
-        "ordinal": 3,
+        "ordinal": 2,
         "type_info": "Integer",
         "origin": "Expression"
       }
@@ -44,9 +38,8 @@
     "nullable": [
       false,
       false,
-      false,
       false
     ]
   },
-  "hash": "290f5bb827aea1dc9f5bb08a7fc6b885041cb4a5004cd4048318e8361d803c15"
+  "hash": "7bae69fb18c971a4b7549f992f158234f021f818e3929a6600a27b6a687e3149"
 }

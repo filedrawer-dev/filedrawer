@@ -22,7 +22,7 @@ use crate::routes::account::SessionAccount;
 use crate::series::RefusalCall;
 use crate::suspension::{self, Changed};
 use crate::time::now_utc;
-use crate::{AppState, accounts, attachments, entries, invites, jobs, series, unknown_fields};
+use crate::{AppState, accounts, attachments, entries, invites, series, unknown_fields};
 use axum::Form;
 use serde::Deserialize;
 
@@ -113,7 +113,6 @@ pub async fn entry(
     // Shown with the entry once public, so the owner reads them too.
     let runs = entries::run_declarations(&state.pool, entry.seq).await?;
     let batch_failed = entries::batch_failed(&state.pool, entry.seq).await?;
-    let held_back = entries::held_back_before(&state.pool, entry.seq).await?;
     // Its attached files, which a guarded account's entry reaches here unscreened.
     let mut files = Vec::new();
     for file in attachments::entry_files(&state.pool, entry.seq).await? {
@@ -135,7 +134,6 @@ pub async fn entry(
             runs: &runs,
             batch_failed,
             files: &files,
-            held_back: &held_back,
             versions: &versions,
             standing: &standing,
         },
@@ -143,7 +141,7 @@ pub async fn entry(
 }
 
 async fn decide(state: &AppState, id: &str, decision: Decision) -> Result<Response, AppError> {
-    match review::decide(state, id, decision, now_utc()).await? {
+    match review::decide(state, id, decision).await? {
         Decided::Done => Ok(Redirect::to("/admin").into_response()),
         Decided::NoEntry => Err(AppError::NotFound),
         Decided::NotWaiting => Err(AppError::Conflict(format!(
@@ -174,16 +172,6 @@ pub async fn reject(
     Path(id): Path<String>,
 ) -> Result<Response, AppError> {
     decide(&state, &id, Decision::Reject).await
-}
-
-/// Rejects an entry in review or held, and the earlier versions of its chain that
-/// are held back with it.
-pub async fn reject_chain(
-    _: AdminSession,
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Response, AppError> {
-    decide(&state, &id, Decision::RejectChain).await
 }
 
 /// Releases a frozen entry back to screening.
@@ -402,9 +390,6 @@ pub async fn suspend(
     Path(id): Path<String>,
 ) -> Result<Response, AppError> {
     let done = suspension::suspend(&state.pool, &id).await?;
-    if done == Changed::Done {
-        jobs::place_waiting(&state).await?;
-    }
     account_reply(&id, done, "already suspended")
 }
 
@@ -446,17 +431,13 @@ fn series_reply(id: &str, outcome: SeriesChanged, already: &str) -> Result<Respo
     }
 }
 
-/// Removes a series: the site stops serving it, with no public notice, and entries
-/// that waited on it while it was hidden go on.
+/// Removes a series: the site stops serving it, with no public notice.
 pub async fn remove_series(
     _: AdminSession,
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Response, AppError> {
     let done = removed_series::remove(&state.pool, &id).await?;
-    if done == SeriesChanged::Done {
-        jobs::place_waiting(&state).await?;
-    }
     series_reply(&id, done, "already removed")
 }
 

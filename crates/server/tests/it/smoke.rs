@@ -1040,7 +1040,6 @@ fn eval_sends_each_field_test_family_as_batches_and_resumes_without_resending() 
         printed.contains("FAIL a batch of 1 field-test entries was refused (422)"),
         "{printed}"
     );
-    // A member passed while its series is hidden waits on it: the screen passed it.
     assert!(printed.contains("PASS public field-test-1"), "{printed}");
     assert!(printed.contains("PASS public field-test-2"), "{printed}");
     assert!(!printed.contains("field-test-3"), "{printed}");

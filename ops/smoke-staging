@@ -107,9 +107,7 @@ screen.
   --field-test N      how many field-test entries to add
   --families          instead of a sample, send each repo's latest round in
                       field-test/ as batches (bin/field-test-batches builds them),
-                      making the series its entries cite first, each a case; an
-                      entry that passed while its series waits hidden, as eval's
-                      series did before hidden series were paused, counts as public
+                      making the series its entries cite first, each a case
   --resume RUNFILE    go on with the run RUNFILE records, its cases and tag
 EOF
 }
@@ -612,9 +610,6 @@ if [[ $mode == eval ]]; then
   judge() {
     local status
     status=$(field status)
-    # An entry that passed while its series is hidden waits on it: the screen passed it.
-    # Eval's series were hidden until hidden series were paused (design.md, Embargo).
-    [[ $2 == public && $status == waiting_on_series ]] && status=public
     wanted[$2]=$(( ${wanted[$2]:-0} + 1 ))
     if [[ $status == "$2" ]]; then
       echo "PASS $2 $1"

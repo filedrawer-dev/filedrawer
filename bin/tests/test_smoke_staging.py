@@ -141,7 +141,7 @@ def test_the_screen_rejecting_the_series_says_so(screen):
 
 
 def test_a_series_made_says_the_case_was_slow_and_prints_no_key(screen):
-    body = f"id: s-1\nstatus: hidden\nkey: {JOIN_KEY}\n"
+    body = f"id: s-1\nstatus: public\nkey: {JOIN_KEY}\n"
     result = screen(["screening"], (201, body))
     assert result.returncode == 1, result.stdout
     assert "the case was only slow" in result.stdout
@@ -338,7 +338,7 @@ def test_an_upload_the_server_fails_stops_the_run_rather_than_skip_the_entry(
 
 
 def test_an_undecided_entry_with_attachments_is_most_likely_slow(eval_run):
-    series_made = (201, f"id: s-1\nstatus: hidden\nkey: {JOIN_KEY}\n")
+    series_made = (201, f"id: s-1\nstatus: public\nkey: {JOIN_KEY}\n")
     uploaded = (201, "id: as-1\nbytes: 17\n")
     result = eval_run([*LABELLED, "screening"], series_made, uploaded)
     assert "WAIT public field-test-1" in result.stdout

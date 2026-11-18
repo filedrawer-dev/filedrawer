@@ -68,16 +68,6 @@ pub fn refusal() -> AppError {
     ))
 }
 
-/// Refuses a write by `account_id` while it is suspended, for a route that a browser
-/// session reaches, which has no token check. (A token's writes are refused in
-/// `auth.rs`, and an entry insert by the `entries_not_from_suspended` trigger.)
-pub async fn refuse_if_suspended(pool: &SqlitePool, account_id: &str) -> Result<(), AppError> {
-    match suspended(&mut *pool.acquire().await?, account_id).await? {
-        Some(true) => Err(refusal()),
-        _ => Ok(()),
-    }
-}
-
 /// Whether account `account_id` is suspended; `None` when there is no such account,
 /// or it is deleted.
 async fn suspended(

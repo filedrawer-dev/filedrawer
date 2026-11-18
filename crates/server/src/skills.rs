@@ -29,8 +29,8 @@ macro_rules! skill {
                     )),
                 ),
                 (
-                    "references/upgrade.md",
-                    include_str!(concat!("../../../skills/", $name, "/references/upgrade.md")),
+                    "references/upgrade.sh",
+                    include_str!(concat!("../../../skills/", $name, "/references/upgrade.sh")),
                 ),
             ],
         }
@@ -105,7 +105,7 @@ pub fn is_production(public_url: &str) -> bool {
 }
 
 /// A skill's file, or the installer, pointed at the site at `public_url`, as the
-/// installer and the upgrade steps point a skill's files: `https://filedrawer.dev`
+/// installer and the upgrade script point a skill's files: `https://filedrawer.dev`
 /// becomes `public_url`, and the header file `~/.config/filedrawer/filedrawer.dev.header`
 /// becomes that site's. On production it changes nothing.
 pub fn for_site(text: &str, public_url: &str) -> String {

@@ -8,13 +8,13 @@ use axum::response::{Html, IntoResponse, Response};
 use analyzer::{Choice, Outcome};
 
 use crate::accounts::{Guarded, TokenView};
-use crate::entries::{ChainVersion, Doubted, EarlierVersion, OwnerEntry, PublicEntry};
+use crate::entries::{ChainVersion, Doubted, OwnerEntry, PublicEntry};
 use crate::removed_entries::Standing;
 use crate::removed_files::{FileState, FileUse, OwnersFile};
 use crate::removed_series::SeriesStanding;
 use crate::series::{Owned, Refused};
 use crate::suspension::{OwnersAccount, OwnersEntry};
-use crate::withdraw::{Listed, MadePublic, Member, WithOwner};
+use crate::withdraw::{Listed, MadePublic, Member};
 
 /// A rendered page with its status code.
 pub fn page(status: StatusCode, template: &impl Template) -> Response {
@@ -304,8 +304,6 @@ pub struct DeletePage<'a> {
     pub error: Option<&'a str>,
     pub unpublished: i64,
     pub public: i64,
-    /// Hidden series that stop the deletion.
-    pub blocking: &'a [String],
 }
 
 #[derive(Template)]
@@ -322,8 +320,6 @@ pub struct AccountPage<'a> {
     pub new_token: Option<&'a str>,
     /// Its entries that may be withdrawn.
     pub withdrawable: &'a [Listed],
-    /// Its chains whose newest version waits on the archive's owner.
-    pub with_owner: &'a [WithOwner],
 }
 
 /// The confirm page for withdrawing an entry, or its whole batch.
@@ -404,8 +400,6 @@ pub struct AdminEntryPage<'a> {
     pub batch_failed: bool,
     /// Its attached files, with their text and the screen's verdict so far.
     pub files: &'a [ShownFile],
-    /// The earlier versions of its chain that wait on its verdict.
-    pub held_back: &'a [EarlierVersion],
     /// Every other version of its chain, which the owner removes one by one.
     pub versions: &'a [ChainVersion],
     /// Whether the owner may remove or restore it.

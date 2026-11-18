@@ -6,9 +6,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Migrations up to this version ran before production's first deploy, so no rollback
-/// crosses them.
-const LAST_BEFORE_PRODUCTION: u32 = 31;
+/// Migrations up to this version came before this rule, and need no line. Every later
+/// one does, before production's first deploy too: staging's install rolls back to
+/// the previous binary on staging's own database.
+const LAST_BEFORE_THE_RULE: u32 = 31;
 
 const SIDECAR: &str = include_str!("../../migration-rollback.txt");
 
@@ -46,7 +47,7 @@ fn problems(files: &BTreeMap<u32, (String, String)>, sidecar: &str) -> Vec<Strin
             ));
         }
     }
-    for (version, (name, sql)) in files.range(LAST_BEFORE_PRODUCTION + 1..) {
+    for (version, (name, sql)) in files.range(LAST_BEFORE_THE_RULE + 1..) {
         let statements = needs_a_line(sql);
         if !statements.is_empty() && !lines.contains_key(version) {
             problems.push(format!(

@@ -10,7 +10,7 @@ use axum::http::{Request, StatusCode};
 use common::attachments::{citing, one_file, set_with, upload};
 use common::deletion::state_of;
 use common::fake_models::FakeModels;
-use common::series::{DESCRIPTION, citing as cites, create, series_doc, submit_with};
+use common::series::{DESCRIPTION, series_doc, submit_with};
 use common::{
     Reply, TestApp, author_status, batch_member_ids, date_in, entry, field, id_in, owner,
     stored_texts, test_app, test_app_with,
@@ -163,21 +163,12 @@ async fn past_its_hold_an_entry_is_refused_with_its_status() {
     let models = FakeModels::default();
     let app = test_app_with(models.screener(), 1_000_000_000).await;
     let token = app.token.clone();
-    let embargo = format!("embargo_until: {}\n", date_in(30));
-    let embargoed = submit_with(
-        &app,
-        &token,
-        &entry("Held back", &format!("slug: e\n{embargo}")),
-    )
-    .await;
     // A model outage leaves an entry in screening.
     let screening = submit_with(&app, &token, &entry("Steering FAKE-ERROR", "slug: s\n")).await;
     let rejected = submit_with(&app, &token, &entry("Steering FAKE-OFFTOPIC", "")).await;
     let hazard = entry(&format!("Steering {HAZARD}"), "");
     let review = submit_with(&app, &token, &hazard).await;
     let held = submit_with(&app, &token, &hazard).await;
-    let (series, _) = create(&app, &token).await;
-    let waiting = submit_with(&app, &token, &cites("Waits", &format!("{series}@1"), "")).await;
     let frozen = app.submit_held(&entry("Frozen", "slug: f\n")).await;
     // A revoked invite code freezes an entry; here the row is set as that leaves it.
     sqlx::query("UPDATE entries SET status = 'frozen', hold_until = NULL WHERE id = ?")
@@ -191,12 +182,10 @@ async fn past_its_hold_an_entry_is_refused_with_its_status() {
         .await;
     assert_eq!(hold.status, StatusCode::SEE_OTHER, "{}", hold.body);
     for (id, what) in [
-        (&embargoed, "embargoed"),
         (&screening, "screening"),
         (&rejected, "rejected"),
         (&review, "review"),
         (&held, "held"),
-        (&waiting, "waiting_on_series"),
         (&frozen, "frozen"),
     ] {
         assert_eq!(status(&app, id).await.as_deref(), Some(what), "{id}");
@@ -366,28 +355,6 @@ async fn a_batch_is_refused_unless_every_member_is_pending_and_this_tokens() {
     )
     .await;
     assert!(reply.body.contains("public"), "{}", reply.body);
-
-    let embargo = format!("embargo_until: {}\n", date_in(30));
-    let held_back = json!({"entries": [
-        entry("C", &format!("slug: c\n{embargo}")),
-        entry("D", &format!("slug: d\n{embargo}")),
-    ]});
-    let (embargoed, members) = held_batch(&app, &app.token, held_back).await;
-    let published = app.post(&format!("/batches/{embargoed}/publish"), "").await;
-    assert_eq!(published.status, StatusCode::OK, "{}", published.body);
-    assert_eq!(
-        status(&app, &members[1]).await.as_deref(),
-        Some("embargoed")
-    );
-    let reply = refused(
-        &app,
-        &format!("/batches/{embargoed}"),
-        &app.token,
-        StatusCode::CONFLICT,
-        &ids(&members),
-    )
-    .await;
-    assert!(reply.body.contains("is embargoed"), "{}", reply.body);
 
     // With no screening budget, a batch past its hold waits in screening.
     let waiting = test_app_with(Screener::PassAll, 0).await;

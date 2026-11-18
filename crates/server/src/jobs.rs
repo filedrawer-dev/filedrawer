@@ -4,8 +4,7 @@
 use time::{Duration, OffsetDateTime};
 
 use crate::attachments::{self, StoreError};
-use crate::entries::{Due, Released};
-use crate::{AppState, entries, queue, series, time::stamp};
+use crate::{AppState, entries, queue, time::stamp};
 
 /// How long an accepted submission is held so its author can fix it. Each
 /// resubmission starts it again.
@@ -33,38 +32,18 @@ pub async fn end_hold(
     queue::screen_now(state, seq, now).await
 }
 
-/// Publishes every entry in `waiting_on_series` that no longer waits, as when its
-/// series' creator makes the series public, and returns how many.
-pub async fn place_waiting(state: &AppState) -> Result<usize, sqlx::Error> {
-    let mut placed = 0;
-    for (seq, source) in entries::in_status(&state.pool, "waiting_on_series").await? {
-        if series::waits(&state.pool, seq).await? {
-            continue;
-        }
-        let analysis = analyzer::analyze(&source);
-        if entries::publish(&state.pool, seq, &analysis)
-            .await?
-            .is_some()
-        {
-            placed += 1;
-        }
-    }
-    Ok(placed)
-}
-
 /// One run of the worker: ends the hold on every pending entry whose hour has run
-/// out at `now`, screens every entry in `screening` without a verdict within the
-/// caps, in the fair queue's order, and publishes waiting entries whose series are
-/// now public.
+/// out at `now`, and screens every entry in `screening` without a verdict within the
+/// caps, in the fair queue's order.
 /// Returns how many entries it screened or placed.
 pub async fn publish_due(state: &AppState, now: OffsetDateTime) -> Result<usize, sqlx::Error> {
-    let mut done = place_waiting(state).await?;
+    let mut done = 0;
     let now_text = stamp(now);
     for seq in entries::due(&state.pool, &now_text).await? {
         // Rechecks the hold: a PUT since `due` ran restarts it, and wins.
         entries::start_screening(&state.pool, seq, Some(&now_text)).await?;
     }
-    queue::settle_screened(state, now).await?;
+    queue::settle_screened(state).await?;
     let queued = queue::unscreened(&state.pool, now).await?;
     for seq in &queued {
         queue::screen_entry(state, *seq, now).await?;
@@ -77,44 +56,6 @@ pub async fn publish_due(state: &AppState, now: OffsetDateTime) -> Result<usize,
         }
     }
     Ok(done)
-}
-
-/// Releases every entry due at `now` (design.md, Embargo; Series): an `embargoed`
-/// entry once its chain's date has come, and one `waiting_on_series` at the
-/// 12-month cap. Returns how many it moved.
-pub async fn release_due(state: &AppState, now: OffsetDateTime) -> Result<usize, sqlx::Error> {
-    let mut releases = Vec::new();
-    for held in entries::held_back(&state.pool).await? {
-        if held.date_unreadable() {
-            tracing::error!(
-                seq = held.seq,
-                "an embargoed entry's stored date isn't a date; it is held until the date is fixed or the 12-month cap"
-            );
-        }
-        let to = match held.due(now) {
-            None => continue,
-            Some(Due::Cap) => Released::Public,
-            Some(Due::Embargo) if series::waits(&state.pool, held.seq).await? => {
-                Released::WaitingOnSeries
-            }
-            Some(Due::Embargo) => Released::Public,
-        };
-        releases.push((held.seq, to));
-    }
-    entries::release(&state.pool, &releases, now).await
-}
-
-/// Runs `release_due` every minute, for `filedrawer-server serve`, so an embargo ends
-/// within a minute of 23:59 at UTC−12 on its date. An error is logged and the loop
-/// goes on.
-pub async fn run_releaser(state: AppState) {
-    let mut ticks = tokio::time::interval(std::time::Duration::from_secs(60));
-    loop {
-        ticks.tick().await;
-        if let Err(error) = release_due(&state, OffsetDateTime::now_utc()).await {
-            tracing::error!(%error, "releasing embargoed entries failed");
-        }
-    }
 }
 
 /// How long a set may wait for an entry to cite it (design.md, Attached code).
@@ -132,10 +73,9 @@ pub async fn tidy_files(state: &AppState, now: OffsetDateTime) -> Result<(), Sto
     expired.map_err(StoreError::from).and(swept)
 }
 
-/// Runs `tidy_files`, deletes the rate limits' expired counts and the search
-/// log's old rows, and then empties the database's write-ahead log, which would
-/// otherwise keep deleted text (`db::trim_log`), every hour, for `filedrawer-server
-/// serve`. An error is logged and the loop goes on.
+/// Runs `tidy_files` and deletes the rate limits' expired counts and the search
+/// log's old rows, every hour, for `filedrawer-server serve`. An error is logged and
+/// the loop goes on.
 pub async fn run_tidier(state: AppState) {
     let mut ticks = tokio::time::interval(std::time::Duration::from_secs(60 * 60));
     loop {
@@ -148,15 +88,6 @@ pub async fn run_tidier(state: AppState) {
         }
         if let Err(error) = crate::search_log::tidy(&state.pool, OffsetDateTime::now_utc()).await {
             tracing::error!(%error, "tidying the search log failed");
-        }
-        match crate::db::trim_log(&state.pool).await {
-            Ok(true) => {}
-            Ok(false) => tracing::warn!(
-                "the database's write-ahead log wasn't emptied: a reader was at work; the next hour tries again"
-            ),
-            Err(error) => {
-                tracing::error!(%error, "emptying the database's write-ahead log failed");
-            }
         }
     }
 }

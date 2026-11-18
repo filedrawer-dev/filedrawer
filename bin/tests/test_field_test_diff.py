@@ -27,7 +27,7 @@ STRICT = """#!/bin/bash
 for f in "$@"; do
   echo "$f: refused, 0 warnings"
   echo "refused: the required field \\`title\\` is missing"
-  echo "refused: \\`embargo_until: SECRET\\` is not a date"
+  echo "refused: \\`series: SECRET\\` should be \\`<id>@<version>\\`"
 done
 """
 FAKE_CARGO = """#!/bin/sh
@@ -130,7 +130,7 @@ def test_a_reason_keeps_the_field_it_names(box):
     box.write_fake(STRICT)
     done = box.run()
     assert "the required field `title` is missing" in done.stdout
-    assert "`embargo_until" in done.stdout
+    assert "`series" in done.stdout
 
 
 def test_against_compares_with_the_commit_it_names(box):

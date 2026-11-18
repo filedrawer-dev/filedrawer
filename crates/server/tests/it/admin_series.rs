@@ -7,7 +7,7 @@ use crate::common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use common::series::{citing, create, make_public, submit_with};
+use common::series::{citing, create, submit_with};
 use common::{Reply, TestApp, browser_account, field, id_in, owner, test_app};
 use filedrawer_server::admin;
 use serde_json::json;
@@ -52,7 +52,6 @@ async fn public_series_with_an_entry(
 ) -> (String, String, String, String) {
     let (cookie, token) = browser_account(app, email).await;
     let (series, _) = create(app, &token).await;
-    make_public(app, &cookie, &series).await;
     let entry = submit_with(app, &token, &citing("First", &format!("{series}@1"), "")).await;
     (cookie, token, series, entry)
 }
@@ -303,42 +302,22 @@ async fn a_removed_series_versions_stay_unreadable_until_it_is_restored() {
 }
 
 #[tokio::test]
-async fn an_entry_waiting_on_a_removed_hidden_series_stops_waiting() {
-    let app = test_app().await;
-    let owner_cookie = owner(&app).await;
-    let (_, token) = browser_account(&app, "grace@example.com").await;
-    let (series, _) = create(&app, &token).await;
-    let entry = submit_with(&app, &token, &citing("Waits", &format!("{series}@1"), "")).await;
-    assert_eq!(
-        common::author_status(&app, &token, &entry).await.as_deref(),
-        Some("waiting_on_series")
-    );
-
-    done(&remove(&app, &owner_cookie, &series).await, &series);
-    assert_eq!(app.get(&format!("/e/{entry}")).await.status, StatusCode::OK);
-}
-
-#[tokio::test]
-async fn a_removed_hidden_series_doesnt_stop_its_creator_deleting_the_account_and_outlives_it() {
+async fn a_removed_series_no_one_could_read_outlives_its_creators_deletion() {
     let app = test_app().await;
     let owner_cookie = owner(&app).await;
     let (author, token) = browser_account(&app, "grace@example.com").await;
-    let (series, key) = create(&app, &token).await;
-    let member = app.other_token().await;
-    app.post_as(&format!("/series/{series}/join"), Some(&member), key)
+    let (series, _) = create(&app, &token).await;
+    // Still in its hold, so version 1 is unreadable.
+    let held = app
+        .post_as(
+            "/entries",
+            Some(&token),
+            citing("Held", &format!("{series}@1"), ""),
+        )
         .await;
-    let entry = submit_with(
-        &app,
-        &member,
-        &citing("Member's", &format!("{series}@1"), ""),
-    )
-    .await;
-    let page = app.page("/account/delete", Some(&author)).await;
-    assert!(page.body.contains(&series), "{}", page.body);
+    assert_eq!(held.status, StatusCode::CREATED, "{}", held.body);
 
     done(&remove(&app, &owner_cookie, &series).await, &series);
-    let page = app.page("/account/delete", Some(&author)).await;
-    assert!(!page.body.contains(&series), "{}", page.body);
     let deleted = app
         .form(
             "/account/delete",
@@ -348,30 +327,11 @@ async fn a_removed_hidden_series_doesnt_stop_its_creator_deleting_the_account_an
         .await;
     assert_eq!(deleted.status, StatusCode::OK, "{}", deleted.body);
 
-    // The removed series stays for the owner, and the member's entry keeps its cite.
+    // The removed series stays for the owner, as removed data does.
     let page = app
         .page(&format!("/admin/series/{series}"), Some(&owner_cookie))
         .await;
     assert_eq!(page.status, StatusCode::OK, "{}", page.body);
-    assert_eq!(
-        field(&app.get(&format!("/e/{entry}")).await.body, "series"),
-        Some(format!("{series}@1").as_str())
-    );
-}
-
-#[tokio::test]
-async fn its_creator_cant_make_a_removed_hidden_series_public() {
-    let app = test_app().await;
-    let owner_cookie = owner(&app).await;
-    let (author, token) = browser_account(&app, "grace@example.com").await;
-    let (series, _) = create(&app, &token).await;
-    done(&remove(&app, &owner_cookie, &series).await, &series);
-
-    let made = make_public(&app, &author, &series).await;
-    assert_ne!(made.status, StatusCode::SEE_OTHER, "{}", made.body);
-    done(&restore(&app, &owner_cookie, &series).await, &series);
-    let read = app.get(&format!("/series/{series}")).await;
-    assert_eq!(read.status, StatusCode::NOT_FOUND, "{}", read.body);
 }
 
 #[tokio::test]

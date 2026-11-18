@@ -133,17 +133,28 @@ def test_if_stale_after_a_full_refresh_does_nothing(repo):
     assert log.read_text() == ""
 
 
-def test_if_stale_does_nothing_without_an_env_file_or_sqlx(repo):
+def test_if_stale_does_nothing_without_an_env_file_or_sqlx_and_says_why(repo):
     root, env, log = repo
     # A worktree has no .env: it builds from .sqlx, so no database can be stale.
-    assert run(root, env, "--if-stale").returncode == 0
+    done = run(root, env, "--if-stale")
+    assert done.returncode == 0
     assert log.read_text() == "" and not (root / ".env").exists()
+    # Run by hand after a query change, it points at the full refresh.
+    assert ".env" in done.stderr and "bin/sqlx-refresh" in done.stderr, done.stderr
     # The owner's host has no sqlx-cli, and the hooks run there too.
     with_env_file(root)
     bare = {**env, "PATH": "/usr/bin:/bin"}
     done = run(root, bare, "--if-stale")
     assert done.returncode == 0 and done.stdout == "", done.stderr
+    assert "no sqlx on PATH" in done.stderr, done.stderr
     assert log.read_text() == ""
+
+
+def test_quiet_says_nothing_when_it_skips(repo):
+    # The git hooks pass --quiet, so a host with no .env sees nothing on a checkout.
+    root, env, log = repo
+    done = run(root, env, "--if-stale", "--quiet")
+    assert (done.returncode, done.stdout, done.stderr) == (0, "", "")
 
 
 def test_creates_the_database_folder_in_a_fresh_checkout(repo):

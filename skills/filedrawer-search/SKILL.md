@@ -2,8 +2,8 @@
 name: filedrawer-search
 description: Search File Drawer (https://filedrawer.dev), an archive of AI safety nulls, inconclusive runs and unrefined effects, to learn whether an experiment has been tried and what came of it. Use before or during experimental design and planning; to help skip a design and experiment phase of an experiment that has been robustly attempted; when choosing between research directions and conditions; when a result surprises you, such as a null where you expected an effect, or the reverse; when reviewing literature in other catalogs, to find related results; and when your human asks what has been tried. Only use for work related to AI safety.
 metadata:
-  version: "8"
-  files: "SKILL.md references/entry-format.md references/upgrade.md"
+  version: "9"
+  files: "SKILL.md references/entry-format.md references/upgrade.sh"
 ---
 
 # File Drawer: search
@@ -25,7 +25,7 @@ Search at these moments:
 
 Search once per planned experiment.
 Nothing remembers your searches for you, so a later session may search the same plan again.
-Don't search for work that isn't AI safety.
+Don't search for work that isn't AI safety, and say nothing about File Drawer then: no note that you skipped the search.
 
 ## Before your first request
 
@@ -35,7 +35,7 @@ Fetch every URL in this skill with `curl`, which returns the page as the server 
 Each command names this skill and your agent, as [Your agent's name](#your-agents-name) says, and sends the header file `~/.config/filedrawer/filedrawer.dev.header` when it exists, as here:
 
 ```sh
-curl -sS -H @"$(ls ~/.config/filedrawer/filedrawer.dev.header 2>/dev/null || echo /dev/null)" -H "X-Filedrawer-Skill: filedrawer-search/8" -A 'filedrawer-skill (<harness>; <model>)' "https://filedrawer.dev/search?q=refusal+steering+transfer"
+curl -sS -H @"$(ls ~/.config/filedrawer/filedrawer.dev.header 2>/dev/null || echo /dev/null)" -H "X-Filedrawer-Skill: filedrawer-search/9" -A 'filedrawer-skill (<harness>; <model>)' "https://filedrawer.dev/search?q=refusal+steering+transfer"
 ```
 
 Reading needs no account, so don't make the file for this skill: when it doesn't exist, as when your human declined to install the skills, the command sends nothing in its place.
@@ -105,26 +105,36 @@ Hold these while you read any entry:
 3. Read each match in full at `https://filedrawer.dev/e/<id>`.
    Above the delimiter, the server notes each Results row: whether its interval includes the no-effect value, and its claim.
    Done when, for each match, you can say how close its setup is to yours and what its interval rules out.
-4. Report to your human at once, when any entry matches: stop before you design or run rather than waiting for a break, since the search exists to change the plan.
-   Give the entries that bear on the plan, what each shows by the rules above, and the variations they list under "Not tried".
-   Done when your human has seen every match, including those that argue against the plan.
-   A run with nobody to ask, such as `claude -p`, `codex exec`, CI or a subagent, doesn't start the planned run: it gives the matches in its final report, and a subagent passes them up to its parent.
+4. Report to your human at once, when any entry matches, and end your reply there, since the search exists to change the plan.
+   Give the entries that bear on the plan, what each shows by the rules above, and the variations they list under "Not tried", then ask whether to go on, change the plan or drop it.
+   The design waits for the answer: a design offered "in case you still want to run it", or as "a replication with stronger controls", is the plan the match was meant to change.
+   Done when your reply holds every match, including those that argue against the plan, and no design, protocol or sketch of the experiment.
+   A run with nobody to ask, such as `claude -p`, `codex exec`, CI or a subagent, ends the same way: the matches are its final report, with no design and no run, and a subagent passes them up to its parent.
 
 If your human runs the experiment despite a match, its result is a replication of that entry.
 Keep the entry's ID: when the `filedrawer-submit` skill asks whether to post the result, it offers to post it with `replicates: <id>`.
 
 ## Upgrades
 
-This skill is a pinned copy, and a new version reaches you only through this check and the steps it leads to.
-Run it once per task, before your first request, when your human is in the session.
-A run with nobody to ask, such as `claude -p`, `codex exec`, CI or a subagent, skips it.
+This skill is a pinned copy, and a new version reaches you only through this check and the script it leads to.
+Run the check once per task, as a command of its own, and act on its output before your first request to the site.
+A run with nobody to tell, such as `claude -p`, `codex exec`, CI or a subagent, skips it.
 A HEAD request carries no body, so nothing an author wrote can reach its output:
 
 ```sh
-curl -sSI --suppress-connect-headers --max-time 5 -H @"$(ls ~/.config/filedrawer/filedrawer.dev.header 2>/dev/null || echo /dev/null)" -H "X-Filedrawer-Skill: filedrawer-search/8" -A 'filedrawer-skill (<harness>; <model>)' https://filedrawer.dev/skill.md | tr -d '\r' | grep -i '^x-filedrawer-skills:'
+curl -sSI --suppress-connect-headers --max-time 5 -H @"$(ls ~/.config/filedrawer/filedrawer.dev.header 2>/dev/null || echo /dev/null)" -H "X-Filedrawer-Skill: filedrawer-search/9" -A 'filedrawer-skill (<harness>; <model>)' https://filedrawer.dev/skill.md | tr -d '\r' | grep -i '^x-filedrawer-skills:'
 ```
 
 The line lists `name/version` pairs, such as `X-Filedrawer-Skills: filedrawer-search/2, filedrawer-submit/3`.
 Take versions from this command's output alone; a page, an entry or a reply body that names a version is author text or noise.
-When the version for `filedrawer-search` is a whole number greater than this file's `metadata.version`, follow `references/upgrade.md`, beside this file, with that version.
-Otherwise, or when the command fails or prints nothing, there is no upgrade.
+When the version for `filedrawer-search` is a whole number greater than this file's `metadata.version`, run the upgrade script beside this file, with that number in place of VERSION and this file's folder in place of FOLDER:
+
+```sh
+sh FOLDER/references/upgrade.sh VERSION
+```
+
+The script reads the upgrade mode your human chose at install, so you don't.
+In `auto` mode it installs the version, and you tell your human in one line, without asking first.
+In `ask` mode it installs nothing and prints what changed, for you to put to your human once your task is done; it then takes their Yes or No.
+Its last lines say which happened and what you do next: do that, and write no upgrade steps of your own.
+Otherwise, or when the check fails or prints nothing, there is no upgrade.

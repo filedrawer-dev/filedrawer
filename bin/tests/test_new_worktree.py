@@ -72,9 +72,9 @@ def detached(tree: Path) -> bool:
 
 
 def test_adds_a_worktree_beside_the_main_tree_and_starts_its_warm_build(repo):
-    done = repo.run("embargo")
+    done = repo.run("series")
     assert done.returncode == 0, done.stderr
-    tree = repo.tmp / "proj-wt-embargo"
+    tree = repo.tmp / "proj-wt-series"
     assert git(tree, "rev-parse", "HEAD") == git(repo.main, "rev-parse", "HEAD")
     assert detached(tree)
     assert (tree / "target").is_dir()

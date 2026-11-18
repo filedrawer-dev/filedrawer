@@ -625,7 +625,7 @@ async fn the_stylesheet_and_fonts_come_from_the_site() {
 #[tokio::test]
 async fn a_public_series_opened_in_a_browser_shows_its_description_below_the_delimiter() {
     let app = test_app().await;
-    let (cookie, token) = common::browser_account(&app, "grace@example.com").await;
+    let (_, token) = common::browser_account(&app, "grace@example.com").await;
     let reply = app
         .post_as(
             "/series",
@@ -641,7 +641,6 @@ async fn a_public_series_opened_in_a_browser_shows_its_description_below_the_del
     // A version is readable once a public entry cites it (design.md, Series).
     let citing = common::series::citing("Cites the sweep", &format!("{id}@1"), "");
     common::series::submit_with(&app, &token, &citing).await;
-    common::series::make_public(&app, &cookie, &id).await;
 
     let page = app.send(opened(&format!("/series/{id}"))).await;
     assert_eq!(page.status, StatusCode::OK, "{}", page.body);

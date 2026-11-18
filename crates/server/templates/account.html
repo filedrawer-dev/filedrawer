@@ -29,7 +29,7 @@
 <button type="submit">Make a token</button>
 </form>
 
-{% if !withdrawable.is_empty() || !with_owner.is_empty() %}
+{% if !withdrawable.is_empty() %}
 <h2>Entries not public yet</h2>
 <p>Withdrawing an entry that was never public deletes it. An entry from a batch is withdrawn with its whole batch.</p>
 <table>
@@ -37,19 +37,15 @@
 {% for one in withdrawable %}
 <tr><td><code>{{ one.id }}</code></td><td>{{ one.status }}</td><td>{{ one.title }}</td><td><form method="get" action="/account/e/{{ one.id }}/withdraw"><button type="submit">Withdraw</button></form></td></tr>
 {% endfor %}
-{% for chain in with_owner %}
-<tr><td><code>{{ chain.id }}</code></td><td></td><td>{{ chain.title }}</td><td>Its newest version, <code class="with-owner">{{ chain.newest }}</code>, waits on the archive's owner. To withdraw them, ask the archive's owner, who can reject the whole chain.</td></tr>
-{% endfor %}
 </table>
 {% endif %}
 
 {% if !series.is_empty() %}
 <h2>Your series</h2>
-<p>A new series is public from the start. One made hidden before 2026-11-08 stays hidden until you make it public, and entries in it wait until then. Making it public can't be undone.</p>
 <table>
 <tr><th>Series</th><th>Title</th><th></th></tr>
 {% for one in series %}
-<tr><td><code>{{ one.id }}</code></td><td>{{ one.title }}</td><td>{% if one.removed %}<span class="series-removed">The archive's owner removed it, so the site serves it nowhere and shows its text on no entry; write to {{ crate::respond::CONTACT }} about it.</span>{% else if one.public %}public{% else %}<form method="post" action="/account/series/{{ one.id }}/publish"><button type="submit">Make public</button></form>{% endif %}</td></tr>
+<tr><td><code>{{ one.id }}</code></td><td>{{ one.title }}</td><td>{% if one.removed %}<span class="series-removed">The archive's owner removed it, so the site serves it nowhere and shows its text on no entry; write to {{ crate::respond::CONTACT }} about it.</span>{% else %}public{% endif %}</td></tr>
 {% endfor %}
 </table>
 {% endif %}
