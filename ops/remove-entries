@@ -2,7 +2,9 @@
 """Removes entries as the admin, from a file of entry IDs, such as the
 public-entries.txt that ops/usability-run writes for entries a run's account left
 public. The owner runs it: the admin pages answer only the owner's browser session,
-so it logs in with the owner's email and password, which it asks for.
+so it logs in with the owner's email and password, which it asks for. Once a login
+with a typed email works on staging or production, ops/.vps.env keeps the email,
+offered on Enter next time; never the password (#112).
 
     ops/remove-entries FILE [--base URL]
 
@@ -17,7 +19,8 @@ Environment:
   FILEDRAWER_STAGING_KEY  sent as X-Staging-Key; for staging, else STAGING_KEY in
                           ops/.vps.env
   FILEDRAWER_ADMIN_EMAIL, FILEDRAWER_ADMIN_PASSWORD
-                          the login, instead of asking (tests)
+                          the login, instead of asking (tests); neither is saved
+  FILEDRAWER_VPS_ENV      the file of saved values, instead of ops/.vps.env (tests)
 
 Exit status: 0 every entry is removed, 1 one or more weren't, 2 usage or login error.
 """
@@ -33,18 +36,56 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 STAGING = "https://staging.filedrawer.dev"
+PRODUCTION = "https://filedrawer.dev"
+# The saved admin email's name in ops/.vps.env, for each site that has one.
+EMAIL_KEYS = {STAGING: "STAGING_ADMIN_EMAIL", PRODUCTION: "PROD_ADMIN_EMAIL"}
+
+
+def env_file() -> Path:
+    return Path(os.environ.get("FILEDRAWER_VPS_ENV") or HERE / ".vps.env")
+
+
+def saved(name: str) -> str:
+    """NAME's value in ops/.vps.env, as the wizard writes it, or ""."""
+    env = env_file()
+    if env.exists():
+        for line in env.read_text().splitlines():
+            match = re.match(rf"\s*(?:export\s+)?{name}=(.*)$", line)
+            if match:
+                return (shlex.split(match[1]) or [""])[0]
+    return ""
 
 
 def staging_key(base: str) -> str:
     if os.environ.get("FILEDRAWER_STAGING_KEY"):
         return os.environ["FILEDRAWER_STAGING_KEY"]
-    env = HERE / ".vps.env"
-    if base == STAGING and env.exists():
-        for line in env.read_text().splitlines():
-            match = re.match(r"\s*(?:export\s+)?STAGING_KEY=(.*)$", line)
-            if match:
-                return (shlex.split(match[1]) or [""])[0]
-    return ""
+    return saved("STAGING_KEY") if base == STAGING else ""
+
+
+def admin_email(base: str, read=None) -> tuple[str, bool]:
+    """The admin email for BASE, asked with read() (input() by default), offering the
+    saved one on Enter; and whether it was typed."""
+    read = read or input
+    key = EMAIL_KEYS.get(base.rstrip("/"))
+    offered = saved(key) if key else ""
+    typed = read(f"Admin email [{offered}]: " if offered else "Admin email: ").strip()
+    return (typed or offered), bool(typed)
+
+
+def remember_email(base: str, email: str) -> None:
+    """Saves EMAIL as BASE's admin email in ops/.vps.env, as the wizard's write_env
+    does: KEY='value', replacing the line before, the file kept to its owner."""
+    key = EMAIL_KEYS.get(base.rstrip("/"))
+    if not key:
+        return
+    env = env_file()
+    lines = env.read_text().splitlines() if env.exists() else []
+    lines = [line for line in lines if not line.startswith(f"{key}=")]
+    quoted = email.replace("'", "'\\''")
+    lines.append(f"{key}='{quoted}'")
+    if not env.exists():
+        env.touch(mode=0o600)
+    env.write_text("".join(line + "\n" for line in lines))
 
 
 class Site:
@@ -116,7 +157,9 @@ def main() -> int:
         if entry and not entry.startswith("#"):
             ids.append(entry)
     site = Site(base)
-    email = os.environ.get("FILEDRAWER_ADMIN_EMAIL") or input("Admin email: ")
+    email, typed = os.environ.get("FILEDRAWER_ADMIN_EMAIL", ""), False
+    if not email:
+        email, typed = admin_email(base)
     password = os.environ.get("FILEDRAWER_ADMIN_PASSWORD") or getpass.getpass(
         "Password: "
     )
@@ -124,6 +167,8 @@ def main() -> int:
     if status not in (200, 303) or not site.cookie:
         print(f"remove-entries: logging in answered {status}", file=sys.stderr)
         return 2
+    if typed:
+        remember_email(base, email)
     removed = 0
     for entry in dict.fromkeys(ids):
         status, text = site.post(f"/admin/e/{urllib.parse.quote(entry)}/remove", {})

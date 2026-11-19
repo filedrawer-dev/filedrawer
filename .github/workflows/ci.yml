@@ -196,7 +196,7 @@ jobs:
           FILEDRAWER_STAGING_SCREEN_API_KEY: ${{ secrets.CI_SCREEN_TOKEN }}
         run: |
           if [ -z "$FILEDRAWER_STAGING_SCREEN_API_KEY" ]; then
-            echo "::warning::Screening wasn't checked: CI_SCREEN_TOKEN isn't set; ops/provision-vps --only-new smoke makes it."
+            echo "::warning::Screening wasn't checked: CI_SCREEN_TOKEN isn't set; ops/provision-vps smoke makes it."
             exit 0
           fi
           status=0

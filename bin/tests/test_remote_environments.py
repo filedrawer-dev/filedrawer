@@ -296,7 +296,7 @@ def test_a_changed_unit_restarts_its_service_and_an_unchanged_one_doesnt(
     assert run(box, SERVICE, ENVIRONMENT=environment).returncode == 0
     assert run(box, SERVICE, ENVIRONMENT=environment).returncode == 0
     assert restarts(box, environment) == []
-    # As an older service.sh wrote it: under --only-new nothing else restarts it.
+    # As an older service.sh wrote it: on a rerun nothing else may restart it.
     path = box.root / f"etc/systemd/system/filedrawer-{environment}.service"
     path.write_text(path.read_text().replace("SocketBindAllow=udp\n", ""))
     assert run(box, SERVICE, ENVIRONMENT=environment).returncode == 0
@@ -572,7 +572,7 @@ def test_provisioning_one_environment_leaves_the_others_site_file_alone(box, cad
 
 def test_a_staging_rerun_finds_the_hash_in_the_old_single_caddyfile(box, caddy):
     """The first rerun after the split: the hash is only in the Caddyfile caddy.sh
-    wrote before, and --only-new sends no password."""
+    wrote before, and a rerun sends no password."""
     (caddy.dir / "Caddyfile").write_text(
         f"staging.filedrawer.dev {{\n\tbasic_auth {{\n\t\towner {OLD_HASH}\n\t}}\n}}\n"
     )
@@ -624,7 +624,7 @@ def test_production_refuses_to_replace_a_single_caddyfile_that_still_holds_stagi
     (caddy.dir / "Caddyfile").write_text(old)
     result = caddy.run("production")
     assert result.returncode == 1
-    assert "ops/provision-vps --only-new" in result.stderr
+    assert "a rerun of ops/provision-vps" in result.stderr
     assert (caddy.dir / "Caddyfile").read_text() == old
     assert not (caddy.dir / "sites/production.caddy").exists()
 

@@ -242,16 +242,23 @@ run_wizard() {
 # `ops/provision-vps github` only the GitHub token the link checks use;
 # `ops/provision-vps caddy-upgrades` only the guard on the server's Caddy (#100),
 # which production's run also sets up; and
-# `ops/provision-vps admin` only making your staging account the admin. `ops/provision-vps --only-new` reruns every stage, for
-# new stages and new logic, without asking for anything ops/.vps.env, the server or
-# GitHub already holds: no passwords or keys again, and no pauses.
+# `ops/provision-vps admin` only making your staging account the admin; and
+# `ops/provision-vps mail` only staging's Purelymail sender.
+# A rerun asks for nothing ops/.vps.env, the server or GitHub already holds (#112):
+# a secret the server holds is kept, sent empty so its remote script keeps its copy
+# and still brings its new logic, and only a stage that asks something pauses.
+# `--ask-all` before the rest asks everything again: Enter keeps a saved value, and
+# for each secret the server holds it asks "Change ...? [y/N]" before any tab.
+# `--only-new`, the old name for a rerun, is still taken.
 # `ops/provision-vps production` sets up production beside staging, on a server the
-# staging wizard has set up (`--only-new production` reruns it the same way), and
+# staging wizard has set up; `production mail`, `production screening` and
+# `production pings` run one of its stages alone; and
 # `ops/provision-vps production account`, after the first production deploy (#42),
 # makes your production account the admin and sets up the uptime check.
-# A run that restarts a service (the whole wizard, production's, and the smoke,
-# screening and github stages) ends by probing that environment's way out as its
-# server would (#102), and lists what it couldn't reach.
+# A run that restarts a service (the whole wizard, production's and its mail,
+# screening and pings stages, and the smoke, screening, github and mail stages) ends
+# by probing that environment's way out as its server would (#102), and lists what
+# it couldn't reach.
 
 TOTAL_STAGES=13
 ENV_FILE="ops/.vps.env"
@@ -266,10 +273,14 @@ need_gh() {
   fi
 }
 
-# staging_has_secret NAME: whether the `staging` environment holds secret NAME.
+# staging_has_secret NAME: whether the `staging` environment holds secret NAME. A gh
+# that fails stops the wizard: read as "absent", it would replace a working key.
 staging_has_secret() {
   local names
-  names=$(gh secret list --env staging --json name --jq '.[].name' 2>/dev/null) || return 1
+  if ! names=$(gh secret list --env staging --json name --jq '.[].name' 2>/dev/null); then
+    warn "gh secret list failed, so the wizard can't tell whether $1 is set. Rerun once gh works."
+    exit 1
+  fi
   [[ -n "$names" ]] && grep -qx "$1" <<<"$names"
 }
 
@@ -290,15 +301,16 @@ screen_test_setting() {
 # ci_account ROLE SAVED SECRET WHAT: the CI account for ROLE (ops/remote/ci-account.sh)
 # and a token, made on the server; its ID saved as SAVED in ops/.vps.env and its token
 # stored as the staging secret SECRET, never shown. Both are kept when set, unless the
-# owner asks for a new token (never asked under --only-new). WHAT names it in messages.
+# owner asks for a new token (asked only under --ask-all). WHAT names it in messages.
 # Returns 1 when the server fails to make it, having said why.
 ci_account() {
   local role=$1 saved=$2 secret=$3 what=$4 account reply status=0
   local account_and_token=$'^a-[^[:space:]]+\tfdt_[^[:space:]]+$'
   account=$(_existing "$saved" || true)
   if [[ -n "$account" ]] && staging_has_secret "$secret" \
-    && { (( ONLY_NEW )) || ! confirm "$secret is set already. Make a new token anyway?"; }; then
-    note "Kept the token in $secret."
+    && { ! (( ASK_ALL )) || ! confirm "$secret is set already. Make a new token anyway?"; }; then
+    note "Kept the token in $secret. To replace it: ops/provision-vps --ask-all smoke"
+    KEPT+=("$secret: kept. To replace it: ops/provision-vps --ask-all smoke")
     return 0
   fi
   step "Making the $what and a token on $VPS_HOST..."
@@ -369,24 +381,32 @@ smoke_stage() {
 # and screening). Until it runs, staging publishes everything unscreened.
 screening_stage() {
   stage "Screening with the Anthropic API"
-  if keep_existing "Screening" /etc/filedrawer/staging-screening.env; then
-    return 0
+  local keep=0
+  keep_secret "Anthropic API key" /etc/filedrawer/staging-screening.env screening && keep=1
+  if (( ! keep )); then
+    say "Staging screens entries with Haiku and Sonnet on an API key of its own, billed to"
+    say "you, within a daily cap. Until this runs, staging publishes everything unscreened."
+    open_url "https://console.anthropic.com/settings/keys"
+    step "Make a key for staging alone, named such as 'filedrawer staging'. A workspace"
+    step "with its own monthly spend limit is a second guard beside the server's cap."
   fi
-  say "Staging screens entries with Haiku and Sonnet on an API key of its own, billed to"
-  say "you, within a daily cap. Until this runs, staging publishes everything unscreened."
-  open_url "https://console.anthropic.com/settings/keys"
-  step "Make a key for staging alone, named such as 'filedrawer staging'. A workspace"
-  step "with its own monthly spend limit is a second guard beside the server's cap."
-  ask SCREENING_DAILY_USD "Staging's screening cap, in dollars a day (Enter for 1):"
-  SCREENING_DAILY_USD="${SCREENING_DAILY_USD:-1}"
-  write_env SCREENING_DAILY_USD "$SCREENING_DAILY_USD"
-  ask_new_secret API_KEY "The API key (sk-ant-...):"
+  if server_keeps SCREENING_DAILY_USD "$keep"; then
+    SCREENING_DAILY_USD=""
+  else
+    ask SCREENING_DAILY_USD "Staging's screening cap, in dollars a day (Enter for 1):" || SCREENING_DAILY_USD=""
+    SCREENING_DAILY_USD="${SCREENING_DAILY_USD:-1}"
+    write_env SCREENING_DAILY_USD "$SCREENING_DAILY_USD"
+  fi
+  API_KEY=""
+  (( keep )) || ask_new_secret API_KEY "The API key (sk-ant-...):"
   # The unit first, so it reads the file screening.sh writes.
   remote service.sh ENVIRONMENT=staging
   remote_with_secret screening.sh API_KEY "$API_KEY" ENVIRONMENT=staging "DAILY_USD=$SCREENING_DAILY_USD"
   unset API_KEY
-  note "The key is on the server only. To check it, submit an entry: it should come back"
-  note "public, rejected or review, and journalctl -u filedrawer-staging logs each call."
+  if (( ! keep )); then
+    note "The key is on the server only. To check it, submit an entry: it should come back"
+    note "public, rejected or review, and journalctl -u filedrawer-staging logs each call."
+  fi
   pause
 }
 
@@ -396,11 +416,13 @@ screening_stage() {
 # the check spends when GitHub's commit page lists no branch or doesn't answer.
 github_stage() {
   stage "A GitHub token for the link checks"
-  if keep_existing "The GitHub token" /etc/filedrawer/github.env; then
-    return 0
-  fi
   # The unit first, so it reads the file github-token.sh writes.
   remote service.sh ENVIRONMENT=staging
+  if keep_secret "GitHub token" /etc/filedrawer/github.env github; then
+    remote_with_secret github-token.sh TOKEN ""
+    pause
+    return 0
+  fi
   github_stage_body
 }
 
@@ -424,6 +446,45 @@ github_stage_body() {
   pause
 }
 
+# mail_stage: staging's Purelymail sender.
+mail_stage() {
+  stage "Mail through Purelymail"
+  local keep=0
+  keep_secret "Purelymail password" /etc/filedrawer/staging-mail.env mail && keep=1
+  if (( ! keep )); then
+    say "Staging sends verification and password-reset email through Purelymail SMTP."
+    say "Purelymail must know filedrawer.dev, and the registrar needs the DNS records it"
+    say "asks for, or mail lands in spam."
+    open_url "https://purelymail.com/manage/domains"
+    step "Add filedrawer.dev as a domain, then add every DNS record Purelymail lists for"
+    step "it (MX, SPF, DKIM and DMARC) at your registrar, and wait for Purelymail to show"
+    step "them as valid."
+    step "Add a user for sending, such as noreply@filedrawer.dev, with a password of its"
+    step "own (Purelymail's 'app password' works too). It mustn't contain a single quote."
+    note "The server connects to smtp.purelymail.com on port 465 (TLS). Check that against"
+    note "Purelymail's own SMTP settings page if it has changed."
+  fi
+  SMTP_USER="" MAIL_FROM="" SMTP_PASSWORD=""
+  if ! server_keeps SMTP_USER "$keep"; then
+    ask SMTP_USER "The sending user's address (the SMTP login):"
+    write_env SMTP_USER "$SMTP_USER"
+  fi
+  if ! server_keeps MAIL_FROM "$keep"; then
+    ask MAIL_FROM "The From line, such as File Drawer <noreply@filedrawer.dev>:"
+    write_env MAIL_FROM "$MAIL_FROM"
+  fi
+  # mail.sh keeps a password only for the user it was stored with.
+  (( keep )) || ask_new_secret SMTP_PASSWORD "The sending user's password:"
+  remote_with_secret mail.sh SMTP_PASSWORD "$SMTP_PASSWORD" ENVIRONMENT=staging \
+    "SMTP_USER=$SMTP_USER" "MAIL_FROM=$MAIL_FROM"
+  unset SMTP_PASSWORD
+  if (( ! keep )); then
+    note "To test it later: sign up at https://staging.filedrawer.dev/signup and watch"
+    note "for the verification email."
+  fi
+  pause
+}
+
 # not_deployed_yet NAME WHAT: says staging has no server yet, and how to run the
 # stage NAME once it has.
 not_deployed_yet() {
@@ -443,8 +504,8 @@ admin_stage() {
     pause
     return 0
   fi
-  # Under --only-new a saved ID needs no page to copy it from.
-  if ! (( ONLY_NEW )) || [[ -z "$(_existing ADMIN_ACCOUNT || true)" ]]; then
+  # A rerun takes a saved ID, so it needs no page to copy it from.
+  if (( ASK_ALL )) || [[ -z "$(_existing ADMIN_ACCOUNT || true)" ]]; then
     say "Sign up and verify on staging first if you haven't."
     open_url "https://staging.filedrawer.dev/account"
     step "Copy the account ID the page shows (a-...)."
@@ -481,39 +542,101 @@ ask_new_secret() {
   fi
 }
 
-# --only-new reruns the wizard for new stages and new logic without asking for what
-# it already has: a prompt whose value ops/.vps.env holds takes it, nothing pauses,
-# and the stages below skip secrets the server or GitHub already holds.
-ONLY_NEW=0
-if [[ "${1:-}" == --only-new ]]; then
-  ONLY_NEW=1
-  shift
-  # The library above the STAGES marker isn't hand-edited, so its ask is copied as
-  # library_ask and wrapped here.
+# A rerun keeps what's set up (#112): a prompt whose value ops/.vps.env holds takes
+# it, a secret the server holds is kept (keep_secret), and a pause waits only in a
+# stage that asked something or opened a tab. --ask-all asks everything again.
+# --only-new, the old name for the default, is taken and changes nothing.
+ASK_ALL=0
+case "${1:-}" in
+  --ask-all) ASK_ALL=1; shift ;;
+  --only-new) shift ;;
+esac
+if (( ! ASK_ALL )); then
+  # The library above the STAGES marker isn't hand-edited, so its functions are
+  # copied as library_<name> and wrapped here. STAGE_ASKED records whether the
+  # current stage asked the owner anything or opened a tab, so its pause waits; a
+  # first run, with nothing saved yet, waits at the banner too.
+  STAGE_ASKED=0
+  [[ -n "$(_existing VPS_HOST || true)" ]] || STAGE_ASKED=1
+  eval "library_$(declare -f stage)"
+  stage() { STAGE_ASKED=0; library_stage "$@"; }
+  for wrapped in ask_secret confirm open_url pause; do
+    eval "library_$(declare -f "$wrapped")"
+  done
+  ask_secret() { STAGE_ASKED=1; library_ask_secret "$@"; }
+  confirm() { STAGE_ASKED=1; library_confirm "$@"; }
+  open_url() { STAGE_ASKED=1; library_open_url "$@"; }
+  pause() { (( ! STAGE_ASKED )) || library_pause "$@"; }
   eval "library_$(declare -f ask)"
   ask() {
     local saved
     saved=$(_existing "$1" || true)
     if [[ -z "$saved" ]]; then
+      STAGE_ASKED=1
       library_ask "$@"
       return
     fi
     printf -v "$1" '%s' "$saved"
     note "$2 $saved (saved)"
   }
-  pause() { :; }
 fi
 
-# remote_has PATH: whether PATH exists on the server.
+# remote_has PATH: whether PATH exists on the server. An ssh that fails stops the
+# wizard: read as "absent", it would ask for a secret the server holds.
 remote_has() {
-  ssh -o BatchMode=yes "root@$VPS_HOST" "test -f $1" < /dev/null
+  local status=0
+  ssh -o BatchMode=yes "root@$VPS_HOST" "test -f $1" < /dev/null || status=$?
+  case $status in
+    0) return 0 ;;
+    1) return 1 ;;
+  esac
+  warn "ssh root@$VPS_HOST failed (exit $status) while looking for $1. Rerun once ssh works."
+  exit 1
 }
 
-# keep_existing WHAT PATH: under --only-new, true (and says so) when PATH exists on
-# the server, so the stage that would write it, and ask for its secret, is skipped.
-keep_existing() {
-  (( ONLY_NEW )) && remote_has "$2" || return 1
-  say "$1 is set up on the server already; --only-new keeps it. ✓"
+# What a rerun kept, with how to change each, listed after finish's summary, since
+# each stage clears the screen.
+KEPT=()
+eval "library_$(declare -f finish)"
+finish() {
+  library_finish
+  (( ${#KEPT[@]} )) || return 0
+  note "kept, as the server or GitHub holds them:"
+  local kept
+  for kept in "${KEPT[@]}"; do note "  - $kept"; done
+  printf '\n'
+}
+
+# server_keeps KEY KEEP: true in a rerun of a stage that keeps the server's settings
+# (KEEP is 1) when ops/.vps.env lacks KEY. The stage then sends KEY empty and its
+# remote script keeps the server's value, rather than take a default or a guess.
+server_keeps() {
+  (( $2 && ! ASK_ALL )) && [[ -z "$(_existing "$1" || true)" ]]
+}
+
+# need_vps_host: VPS_HOST from ops/.vps.env, or stops the wizard: a stage alone runs
+# on a server the whole wizard set up.
+need_vps_host() {
+  VPS_HOST=$(_existing VPS_HOST || true)
+  [[ -n "$VPS_HOST" ]] || { warn "$ENV_FILE has no VPS_HOST. Run the whole wizard first."; exit 1; }
+}
+
+# keep_secret WHAT PATH [STAGE]: true when the server holds the secret in PATH and
+# it stays: the stage then sends it empty, and its remote script keeps its copy.
+# Under --ask-all the owner is asked first, before any tab or instructions; answering
+# yes means a new one, and an empty answer then is refused, never kept. STAGE names
+# the wizard stage that changes it.
+keep_secret() {
+  remote_has "$2" || return 1
+  if (( ASK_ALL )); then
+    if confirm "Change the server's $1?"; then
+      return 1
+    fi
+    note "Kept the server's $1."
+  else
+    say "The server's $1 is set; kept. ✓ To change it: ops/provision-vps --ask-all${3:+ $3}"
+    KEPT+=("the $1. To change it: ops/provision-vps --ask-all${3:+ $3}")
+  fi
 }
 
 # resolves NAME: whether NAME resolves to the server. getent's whole answer is read
@@ -637,8 +760,8 @@ production_dns_stage() {
   for name in "${PRODUCTION_NAMES[@]}"; do
     resolves "$name" || waiting+=("$name")
   done
-  # --only-new lists only the names that don't resolve yet.
-  (( ONLY_NEW )) && records=("${waiting[@]}")
+  # A rerun lists only the names that don't resolve yet.
+  (( ASK_ALL )) || records=("${waiting[@]}")
   if (( ${#records[@]} > 0 )); then
     say "In Cloudflare's DNS for filedrawer.dev, add these records if they aren't there,"
     say "each set to 'DNS only' (the gray cloud), not 'Proxied' (design.md, Hosting and"
@@ -682,34 +805,42 @@ production_caddy_stage() {
 
 production_mail_stage() {
   stage "Mail through Purelymail"
-  if keep_existing "Production's mail" /etc/filedrawer/production-mail.env; then
-    return 0
-  fi
-  local staging_sender
+  local staging_sender keep=0
   staging_sender=$(_existing SMTP_USER || true)
-  say "Production sends verification and password-reset email as a Purelymail user"
-  say "of its own, so staging's password can be revoked without touching it."
-  open_url "https://purelymail.com/manage/users"
-  local not_staging=""
-  [[ -z "$staging_sender" ]] || not_staging="; not staging's sending user, $staging_sender"
-  step "Add a user for production's mail, with a password of its own that holds no"
-  step "single quote$not_staging."
-  step "Then, on Purelymail's routing page, forward contact@filedrawer.dev, the address"
-  step "the terms and privacy pages name, to your own inbox."
-  ask PROD_SMTP_USER "Production's sending user (the SMTP login):"
-  if [[ -n "$staging_sender" && "$PROD_SMTP_USER" == "$staging_sender" ]]; then
-    warn "That is staging's sending user; production needs one of its own. Rerun to try again."
-    exit 1
+  keep_secret "Purelymail password" /etc/filedrawer/production-mail.env "production mail" && keep=1
+  if (( ! keep )); then
+    say "Production sends verification and password-reset email as a Purelymail user"
+    say "of its own, so staging's password can be revoked without touching it."
+    open_url "https://purelymail.com/manage/users"
+    local not_staging=""
+    [[ -z "$staging_sender" ]] || not_staging="; not staging's sending user, $staging_sender"
+    step "Add a user for production's mail, with a password of its own that holds no"
+    step "single quote$not_staging."
+    step "Then, on Purelymail's routing page, forward contact@filedrawer.dev, the address"
+    step "the terms and privacy pages name, to your own inbox."
   fi
-  write_env PROD_SMTP_USER "$PROD_SMTP_USER"
-  ask PROD_MAIL_FROM "The From line, such as File Drawer <noreply@filedrawer.dev>:"
-  write_env PROD_MAIL_FROM "$PROD_MAIL_FROM"
-  ask_new_secret SMTP_PASSWORD "The sending user's password:"
+  PROD_SMTP_USER="" PROD_MAIL_FROM="" SMTP_PASSWORD=""
+  if ! server_keeps PROD_SMTP_USER "$keep"; then
+    ask PROD_SMTP_USER "Production's sending user (the SMTP login):"
+    if [[ -n "$staging_sender" && "$PROD_SMTP_USER" == "$staging_sender" ]]; then
+      warn "That is staging's sending user; production needs one of its own. Rerun to try again."
+      exit 1
+    fi
+    write_env PROD_SMTP_USER "$PROD_SMTP_USER"
+  fi
+  if ! server_keeps PROD_MAIL_FROM "$keep"; then
+    ask PROD_MAIL_FROM "The From line, such as File Drawer <noreply@filedrawer.dev>:"
+    write_env PROD_MAIL_FROM "$PROD_MAIL_FROM"
+  fi
+  # mail.sh keeps a password only for the user it was stored with.
+  (( keep )) || ask_new_secret SMTP_PASSWORD "The sending user's password:"
   remote_with_secret mail.sh SMTP_PASSWORD "$SMTP_PASSWORD" ENVIRONMENT=production \
     "SMTP_USER=$PROD_SMTP_USER" "MAIL_FROM=$PROD_MAIL_FROM"
   unset SMTP_PASSWORD
-  note "The sign-up check that this mail reaches an inbox comes after the first deploy:"
-  note "  ops/provision-vps production account"
+  if (( ! keep )); then
+    note "The sign-up check that this mail reaches an inbox comes after the first deploy:"
+    note "  ops/provision-vps production account"
+  fi
   pause
 }
 
@@ -725,28 +856,36 @@ anthropic_accepts() {
 
 production_screening_stage() {
   stage "Screening with the Anthropic API"
-  if keep_existing "Production's screening" /etc/filedrawer/production-screening.env; then
-    return 0
+  local keep=0
+  keep_secret "Anthropic API key" /etc/filedrawer/production-screening.env "production screening" && keep=1
+  if (( ! keep )); then
+    say "Production screens entries on an API key from a workspace of its own, within"
+    say "the server's daily cap, and refuses to start without one."
+    open_url "https://console.anthropic.com/settings/workspaces"
+    step "Make a workspace for production alone, and set its monthly spend limit to"
+    step "about \$40: above the most a \$1 daily cap can spend in a month, so the limit"
+    step "only catches a cap that failed."
+    pause "Press Enter once the workspace is made"
+    open_url "https://console.anthropic.com/settings/keys"
+    step "Make a key in that workspace, named such as 'filedrawer production'."
   fi
-  say "Production screens entries on an API key from a workspace of its own, within"
-  say "the server's daily cap, and refuses to start without one."
-  open_url "https://console.anthropic.com/settings/workspaces"
-  step "Make a workspace for production alone, and set its monthly spend limit to"
-  step "about \$40: above the most a \$1 daily cap can spend in a month, so the limit"
-  step "only catches a cap that failed."
-  pause "Press Enter once the workspace is made"
-  open_url "https://console.anthropic.com/settings/keys"
-  step "Make a key in that workspace, named such as 'filedrawer production'."
-  ask PROD_SCREENING_DAILY_USD "Production's screening cap, in dollars a day (Enter for 1):"
-  PROD_SCREENING_DAILY_USD="${PROD_SCREENING_DAILY_USD:-1}"
-  write_env PROD_SCREENING_DAILY_USD "$PROD_SCREENING_DAILY_USD"
-  ask_new_secret API_KEY "The API key (sk-ant-...):"
-  step "Checking the key with Anthropic..."
-  if ! anthropic_accepts "$API_KEY"; then
-    unset API_KEY
-    warn "Anthropic refused the key, or didn't answer. Check it in the console and rerun:"
-    warn "  ops/provision-vps production"
-    exit 1
+  if server_keeps PROD_SCREENING_DAILY_USD "$keep"; then
+    PROD_SCREENING_DAILY_USD=""
+  else
+    ask PROD_SCREENING_DAILY_USD "Production's screening cap, in dollars a day (Enter for 1):" || PROD_SCREENING_DAILY_USD=""
+    PROD_SCREENING_DAILY_USD="${PROD_SCREENING_DAILY_USD:-1}"
+    write_env PROD_SCREENING_DAILY_USD "$PROD_SCREENING_DAILY_USD"
+  fi
+  API_KEY=""
+  if (( ! keep )); then
+    ask_new_secret API_KEY "The API key (sk-ant-...):"
+    step "Checking the key with Anthropic..."
+    if ! anthropic_accepts "$API_KEY"; then
+      unset API_KEY
+      warn "Anthropic refused the key, or didn't answer. Check it in the console and rerun:"
+      warn "  ops/provision-vps production screening"
+      exit 1
+    fi
   fi
   remote_with_secret screening.sh API_KEY "$API_KEY" ENVIRONMENT=production \
     "DAILY_USD=$PROD_SCREENING_DAILY_USD"
@@ -758,7 +897,7 @@ production_github_stage() {
   stage "The GitHub token for the link checks"
   if remote_has /etc/filedrawer/github.env; then
     say "The server has the GitHub token already, shared with staging; production's"
-    say "unit reads the same file. ✓ To replace it: ops/provision-vps github"
+    say "unit reads the same file. ✓ To replace it: ops/provision-vps --ask-all github"
     pause
     return 0
   fi
@@ -772,21 +911,29 @@ ping_url() {
 
 production_pings_stage() {
   stage "healthchecks.io: the daily email and the nightly copy"
-  if keep_existing "The healthchecks.io URLs" /etc/filedrawer/production-ping.env; then
-    return 0
+  local asked=() which
+  DAILY_PING="" BACKUP_PING=""
+  keep_secret "daily email's ping URL" /etc/filedrawer/production-ping.env "production pings" ||
+    asked+=(DAILY_PING)
+  keep_secret "nightly copy's ping URL" /etc/filedrawer/production-backup.env "production pings" ||
+    asked+=(BACKUP_PING)
+  if (( ${#asked[@]} )); then
+    say "healthchecks.io emails you when a job stops reporting. Production refuses to"
+    say "start without the daily email's ping URL. The nightly copy's (#41) goes to the"
+    say "timer the next stage installs."
+    open_url "https://healthchecks.io/"
+    step "Sign up (free), then add two checks. Name them 'filedrawer daily email' and"
+    step "'filedrawer nightly copy', and change each one's schedule to:"
+    step "  Period: 1 day. Grace: 2 hours."
+    step "Copy each one's ping URL (https://hc-ping.com/...)."
   fi
-  say "healthchecks.io emails you when a job stops reporting. Production refuses to"
-  say "start without the daily email's ping URL. The nightly copy's (#41) goes to the"
-  say "timer the next stage installs."
-  open_url "https://healthchecks.io/"
-  step "Sign up (free), then add two checks. Name them 'filedrawer daily email' and"
-  step "'filedrawer nightly copy', and change each one's schedule to:"
-  step "  Period: 1 day. Grace: 2 hours."
-  step "Copy each one's ping URL (https://hc-ping.com/...)."
-  ask_secret DAILY_PING "The daily email's ping URL:"
-  ask_secret BACKUP_PING "The nightly copy's ping URL:"
-  local which
-  for which in DAILY_PING BACKUP_PING; do
+  for which in "${asked[@]}"; do
+    case $which in
+      DAILY_PING) ask_secret DAILY_PING "The daily email's ping URL:" ;;
+      BACKUP_PING) ask_secret BACKUP_PING "The nightly copy's ping URL:" ;;
+    esac
+  done
+  for which in "${asked[@]}"; do
     if ! ping_url "${!which}"; then
       warn "The ${which%_PING} one isn't a healthchecks.io ping URL (https://hc-ping.com/...)."
       warn "Rerun to try again."
@@ -806,13 +953,14 @@ production_backup_stage() {
   # The program first: enabling the timer can start a missed run at once.
   install_on_server filedrawer-backup /usr/local/sbin
   remote backup.sh
-  if (( ONLY_NEW )); then
-    note "--only-new doesn't ask about Hetzner's backups: the first run did."
+  if (( ! ASK_ALL )) && [[ -n "$(_existing PROD_HETZNER_BACKUPS_SHOWN || true)" ]]; then
+    note "Hetzner's backups were shown on an earlier run; --ask-all shows them again."
   else
     say "Hetzner's own backups hold the copies, the attached files and the config:"
     say "daily, 7 kept, for about 20% of the server's price."
     open_url "https://console.hetzner.cloud/"
     step "Open the server, then Backups, then Enable backups."
+    write_env PROD_HETZNER_BACKUPS_SHOWN yes
   fi
   pause
 }
@@ -826,36 +974,45 @@ caddy_upgrades_stage() {
   say "it puts the version before back, holds it, and emails you."
   # The program first: the units start it.
   install_on_server caddy-upgrade-check /usr/local/sbin
-  if keep_existing "The guard's address and ping URL" /etc/filedrawer/caddy-upgrades.env; then
-    remote_with_secret caddy-upgrades.sh SETTINGS ""
-    pause
-    return 0
+  local alert_before keep=0 holds=0 settings=/etc/filedrawer/caddy-upgrades.env
+  alert_before=$(_existing CADDY_ALERT_TO || true)
+  remote_has "$settings" && holds=1
+  CADDY_ALERT_TO=""
+  if ! server_keeps CADDY_ALERT_TO "$holds"; then
+    ask CADDY_ALERT_TO "The address the guard emails [Enter for ops@filedrawer.dev]:" || CADDY_ALERT_TO=""
+    CADDY_ALERT_TO=${CADDY_ALERT_TO:-ops@filedrawer.dev}
+    if [[ ! "$CADDY_ALERT_TO" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]+$ ]]; then
+      warn "That isn't one email address. Rerun to try again."
+      exit 1
+    fi
+    write_env CADDY_ALERT_TO "$CADDY_ALERT_TO"
   fi
-  ask CADDY_ALERT_TO "The address the guard emails [Enter for ops@filedrawer.dev]:" || CADDY_ALERT_TO=""
-  CADDY_ALERT_TO=${CADDY_ALERT_TO:-ops@filedrawer.dev}
-  if [[ ! "$CADDY_ALERT_TO" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]+$ ]]; then
-    warn "That isn't one email address. Rerun to try again."
-    exit 1
-  fi
-  write_env CADDY_ALERT_TO "$CADDY_ALERT_TO"
-  say "healthchecks.io tells you when the guard fails, or stops running, even when"
-  say "mail through Purelymail doesn't arrive."
-  open_url "https://healthchecks.io/"
-  step "Add a check named 'filedrawer caddy guard'. Period: 1 day. Grace: 2 hours."
-  step "Have its alerts go to an address that isn't at filedrawer.dev, since that mail"
-  step "goes through Purelymail too. Copy its ping URL (https://hc-ping.com/...)."
-  ask_secret CADDY_PING "The guard's ping URL:"
-  if ! ping_url "$CADDY_PING"; then
-    warn "That isn't a healthchecks.io ping URL (https://hc-ping.com/...). Rerun to try again."
-    exit 1
+  CADDY_PING=""
+  if keep_secret "guard's ping URL" "$settings" caddy-upgrades; then
+    keep=1
+  else
+    say "healthchecks.io tells you when the guard fails, or stops running, even when"
+    say "mail through Purelymail doesn't arrive."
+    open_url "https://healthchecks.io/"
+    step "Add a check named 'filedrawer caddy guard'. Period: 1 day. Grace: 2 hours."
+    step "Have its alerts go to an address that isn't at filedrawer.dev, since that mail"
+    step "goes through Purelymail too. Copy its ping URL (https://hc-ping.com/...)."
+    ask_secret CADDY_PING "The guard's ping URL:"
+    if ! ping_url "$CADDY_PING"; then
+      warn "That isn't a healthchecks.io ping URL (https://hc-ping.com/...). Rerun to try again."
+      exit 1
+    fi
   fi
   remote_with_secret caddy-upgrades.sh SETTINGS "$CADDY_ALERT_TO"$'\t'"$CADDY_PING"
   unset CADDY_PING
-  ssh -o BatchMode=yes "root@$VPS_HOST" "/usr/local/sbin/caddy-upgrade-check --test-mail" < /dev/null ||
-    warn "The test mail failed to send; what the server said is above."
-  if ! confirm "Did a 'Caddy guard: a test' email reach $CADDY_ALERT_TO, and does the check show a ping?"; then
-    warn "Check the address and the ping URL, then rerun: ops/provision-vps caddy-upgrades"
-    SKIPPED+=("Caddy guard: the test mail or ping didn't arrive")
+  # Something new to test: a ping URL, or an address.
+  if (( ! keep )) || [[ "$CADDY_ALERT_TO" != "$alert_before" ]]; then
+    ssh -o BatchMode=yes "root@$VPS_HOST" "/usr/local/sbin/caddy-upgrade-check --test-mail" < /dev/null ||
+      warn "The test mail failed to send; what the server said is above."
+    if ! confirm "Did a 'Caddy guard: a test' email reach $CADDY_ALERT_TO, and does the check show a ping?"; then
+      warn "Check the address and the ping URL, then rerun: ops/provision-vps --ask-all caddy-upgrades"
+      SKIPPED+=("Caddy guard: the test mail or ping didn't arrive")
+    fi
   fi
   pause
 }
@@ -898,8 +1055,7 @@ production_check_stage() {
 
 production_account_stage() {
   stage "Your production account, its mail, and the uptime check"
-  VPS_HOST=$(_existing VPS_HOST || true)
-  [[ -n "$VPS_HOST" ]] || { warn "$ENV_FILE has no VPS_HOST. Run the whole wizard first."; exit 1; }
+  need_vps_host
   if ! ssh -o BatchMode=yes "root@$VPS_HOST" "test -x /srv/filedrawer/production/bin/filedrawer" < /dev/null; then
     warn "Production has no server yet. Once the first deploy (#42) puts it there, run:"
     warn "  ops/provision-vps production account"
@@ -924,8 +1080,8 @@ production_account_stage() {
     warn "  ops/provision-vps production account"
     exit 1
   fi
-  # Under --only-new a saved ID needs no page to copy it from.
-  if ! (( ONLY_NEW )) || [[ -z "$(_existing PROD_ADMIN_ACCOUNT || true)" ]]; then
+  # A rerun takes a saved ID, so it needs no page to copy it from.
+  if (( ASK_ALL )) || [[ -z "$(_existing PROD_ADMIN_ACCOUNT || true)" ]]; then
     open_url "https://filedrawer.dev/account"
     step "Copy the account ID the page shows (a-...)."
   fi
@@ -949,7 +1105,8 @@ production_account_stage() {
   pause
 }
 
-# production [account]: production's stages, or the one after the first deploy.
+# production [STAGE]: production's stages; or one alone, mail, screening or pings;
+# or account, the one after the first deploy.
 production() {
   case "${1:-}" in
     "")
@@ -972,8 +1129,15 @@ production() {
       TOTAL_STAGES=1
       production_account_stage
       ;;
+    mail | screening | pings)
+      TOTAL_STAGES=1
+      need_vps_host
+      "production_$1_stage"
+      outbound_check production
+      ;;
     *)
-      warn "ops/provision-vps production takes no stage, or 'account': ops/provision-vps production account"
+      warn "ops/provision-vps production takes no stage, or one of account, mail, screening"
+      warn "and pings, as in: ops/provision-vps production account"
       exit 2
       ;;
   esac
@@ -986,20 +1150,19 @@ case "${1:-}" in
     shift
     production "$@"
     return 0 ;;
-  smoke | screening | admin | github | caddy-upgrades)
+  smoke | screening | admin | github | caddy-upgrades | mail)
     TOTAL_STAGES=1
-    VPS_HOST=$(_existing VPS_HOST || true)
-    [[ -n "$VPS_HOST" ]] || { warn "$ENV_FILE has no VPS_HOST. Run the whole wizard first."; exit 1; }
+    need_vps_host
     "${1//-/_}_stage"
     # The stages that restart staging's service.
-    case "$1" in smoke | screening | github) outbound_check staging ;; esac
+    case "$1" in smoke | screening | github | mail) outbound_check staging ;; esac
     finish
     return 0 ;;
   *)
     # A typo would otherwise run the whole staging setup.
-    warn "ops/provision-vps doesn't know '$1'. It takes, after an optional --only-new:"
-    warn "  nothing (staging's setup), production [account], or one stage alone:"
-    warn "  smoke, screening, admin, github or caddy-upgrades."
+    warn "ops/provision-vps doesn't know '$1'. It takes, after an optional --ask-all:"
+    warn "  nothing (staging's setup), production [account, mail, screening or pings],"
+    warn "  or one stage alone: smoke, screening, admin, github, caddy-upgrades or mail."
     exit 2 ;;
 esac
 
@@ -1015,7 +1178,7 @@ pause
 
 stage "DNS: point the names at the server"
 records=("filedrawer.dev" "www.filedrawer.dev" "staging.filedrawer.dev" "files.filedrawer.dev" "files.staging.filedrawer.dev")
-if (( ONLY_NEW )); then
+if (( ! ASK_ALL )); then
   # Only the served names that don't resolve yet; nothing to do when all do.
   waiting=()
   for name in "staging.filedrawer.dev" "files.staging.filedrawer.dev"; do
@@ -1050,7 +1213,9 @@ stage "Base system"
 say "Updates, automatic security updates, the firewall (SSH, HTTP, HTTPS), a 1 GB"
 say "swapfile, journald capped at 200 MB and 14 days, and SSH logins by key only."
 warn "This turns off password logins over SSH. The preflight showed your key works."
-if (( ONLY_NEW )) || confirm "Run it on $VPS_HOST?"; then
+# A rerun runs it again unasked once it has run: it writes this file.
+if { (( ! ASK_ALL )) && remote_has /etc/ssh/sshd_config.d/10-filedrawer.conf; } ||
+  confirm "Run it on $VPS_HOST?"; then
   remote base.sh
 else
   SKIPPED+=("base system (ops/remote/base.sh)")
@@ -1077,13 +1242,10 @@ say "Agents get in with a staging key instead, sent as an X-Staging-Key header, 
 say "their API token needs the Authorization header that basic auth uses."
 ask STAGING_USER "Basic-auth user name:"
 write_env STAGING_USER "$STAGING_USER"
-if (( ONLY_NEW )); then
-  # The server keeps the hash it has; caddy.sh fails if it has none.
-  STAGING_PASSWORD=""
-  note "--only-new keeps the basic-auth password the server has."
-else
+# caddy.sh keeps the server's hash for an empty password, but only for its own user.
+STAGING_PASSWORD=""
+keep_secret "basic-auth password" /etc/caddy/sites/staging.caddy ||
   ask_new_secret STAGING_PASSWORD "Basic-auth password:"
-fi
 if [[ "$STAGING_PASSWORD" == *$'\t'* ]]; then
   warn "The password holds a tab, which the wizard can't send. Rerun with another."
   exit 1
@@ -1099,31 +1261,7 @@ unset STAGING_PASSWORD
 note "The staging key is in $ENV_FILE. Give it to agents with their API token."
 pause
 
-stage "Mail through Purelymail"
-if ! keep_existing "Mail" /etc/filedrawer/staging-mail.env; then
-say "Staging sends verification and password-reset email through Purelymail SMTP."
-say "Purelymail must know filedrawer.dev, and the registrar needs the DNS records it"
-say "asks for, or mail lands in spam."
-open_url "https://purelymail.com/manage/domains"
-step "Add filedrawer.dev as a domain, then add every DNS record Purelymail lists for"
-step "it (MX, SPF, DKIM and DMARC) at your registrar, and wait for Purelymail to show"
-step "them as valid."
-step "Add a user for sending, such as noreply@filedrawer.dev, with a password of its"
-step "own (Purelymail's 'app password' works too). It mustn't contain a single quote."
-note "The server connects to smtp.purelymail.com on port 465 (TLS). Check that against"
-note "Purelymail's own SMTP settings page if it has changed."
-ask SMTP_USER "The sending user's address (the SMTP login):"
-write_env SMTP_USER "$SMTP_USER"
-ask MAIL_FROM "The From line, such as File Drawer <noreply@filedrawer.dev>:"
-write_env MAIL_FROM "$MAIL_FROM"
-ask_new_secret SMTP_PASSWORD "The sending user's password:"
-remote_with_secret mail.sh SMTP_PASSWORD "$SMTP_PASSWORD" ENVIRONMENT=staging \
-  "SMTP_USER=$SMTP_USER" "MAIL_FROM=$MAIL_FROM"
-unset SMTP_PASSWORD
-note "To test it later: sign up at https://staging.filedrawer.dev/signup and watch"
-note "for the verification email."
-fi
-pause
+mail_stage
 
 stage "Deploy key for GitHub Actions"
 say "A key that lets GitHub Actions upload a new staging binary, and nothing else:"
@@ -1141,10 +1279,12 @@ gh api -X PUT "repos/{owner}/{repo}/environments/staging" --input - > /dev/null 
 JSON
 gh api -X POST "repos/{owner}/{repo}/environments/staging/deployment-branch-policies" \
   -f name=main -f type=branch > /dev/null 2>&1 || true   # already there on a rerun
-if (( ONLY_NEW )) && staging_has_secret DEPLOY_SSH_KEY; then
+if staging_has_secret DEPLOY_SSH_KEY &&
+  { (( ! ASK_ALL )) || ! confirm "Make a new deploy key? CI's current one then stops working."; }; then
   # The rest of deploy-user.sh still runs, so a newer sudo rule reaches the server.
   remote deploy-user.sh "DEPLOY_PUBLIC_KEY="
-  say "DEPLOY_SSH_KEY is set already; --only-new keeps the key. ✓"
+  say "DEPLOY_SSH_KEY is set already; kept. ✓ To replace it: ops/provision-vps --ask-all"
+  KEPT+=("the deploy key, DEPLOY_SSH_KEY. To replace it: ops/provision-vps --ask-all")
 else
   key_dir=$(mktemp -d)
   trap 'rm -rf "$key_dir"' EXIT
@@ -1157,7 +1297,7 @@ fi
 set_var VPS_HOST "$VPS_HOST"
 # The host key comes over the root login the preflight already trusts, never from a
 # scan that would trust whoever answers first.
-host_key=$(ssh -o BatchMode=yes "root@$VPS_HOST" cat /etc/ssh/ssh_host_ed25519_key.pub | cut -d' ' -f1,2)
+host_key=$(ssh -o BatchMode=yes "root@$VPS_HOST" cat /etc/ssh/ssh_host_ed25519_key.pub < /dev/null | cut -d' ' -f1,2)
 set_var VPS_KNOWN_HOSTS "$VPS_HOST $host_key"
 note "The next push to main deploys staging once CI passes."
 pause

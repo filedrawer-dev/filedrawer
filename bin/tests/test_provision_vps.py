@@ -123,8 +123,10 @@ def smoke(tmp_path, fake_host):
     env_file = ops / ".vps.env"
     env_file.write_text(f"VPS_HOST='h'\nSTAGING_KEY='{STAGING_KEY}'\n")
 
-    def run(answers: str = "\n") -> subprocess.CompletedProcess:
-        return run_wizard("smoke", cwd=tmp_path, answers=answers, env=fake_host.env)
+    def run(answers: str = "\n", *flags: str) -> subprocess.CompletedProcess:
+        return run_wizard(
+            *flags, "smoke", cwd=tmp_path, answers=answers, env=fake_host.env
+        )
 
     return SimpleNamespace(
         run=run,
@@ -211,7 +213,7 @@ def test_a_rerun_passes_the_known_accounts_and_keeps_the_tokens_unless_asked(smo
     smoke.run()
     (smoke.secrets / "SMOKE_TEST_TOKEN").write_text("fdt_kept")
     (smoke.secrets / "CI_SCREEN_TOKEN").write_text("fdt_kept2")
-    kept = smoke.run("n\nn\n\n")
+    kept = smoke.run("n\nn\n\n", "--ask-all")
     assert kept.returncode == 0, kept.stdout + kept.stderr
     assert (smoke.secrets / "SMOKE_TEST_TOKEN").read_text() == "fdt_kept"
     assert (smoke.secrets / "CI_SCREEN_TOKEN").read_text() == "fdt_kept2"
@@ -221,7 +223,7 @@ def test_a_rerun_passes_the_known_accounts_and_keeps_the_tokens_unless_asked(smo
     assert (
         smoke.host.sent(calls[5][0]) == (REPO / "ops/remote/smoke-env.sh").read_text()
     )
-    renewed = smoke.run("y\ny\n\n")
+    renewed = smoke.run("y\ny\n\n", "--ask-all")
     assert renewed.returncode == 0, renewed.stdout + renewed.stderr
     assert (smoke.secrets / "SMOKE_TEST_TOKEN").read_text() == "fdt_s3cret"
     assert (smoke.secrets / "CI_SCREEN_TOKEN").read_text() == "fdt_ci7"
@@ -287,20 +289,30 @@ API_KEY = "sk-ant-api03-" + "k" * 40
 @pytest.fixture
 def stage(tmp_path, fake_host):
     """Runs `ops/provision-vps <name>` in a folder with an ops/.vps.env, against
-    fake_host, with the URLs the wizard opens in `opened`."""
+    fake_host as a server that holds no settings yet, with the URLs the wizard opens
+    in `opened`."""
     ops = tmp_path / "ops"
     ops.mkdir()
     env_file = ops / ".vps.env"
     env_file.write_text("VPS_HOST='h'\n")
+    fake_host.answer("test -f *", status=1)
 
-    def run(name: str, answers: str) -> subprocess.CompletedProcess:
-        return run_wizard(name, cwd=tmp_path, answers=answers, env=fake_host.env)
+    def run(*args: str) -> subprocess.CompletedProcess:
+        *names, answers = args
+        return run_wizard(*names, cwd=tmp_path, answers=answers, env=fake_host.env)
+
+    def scripts() -> list[str]:
+        """What each ssh call sent, in order, leaving out the calls that send
+        nothing, such as the checks of what the server holds."""
+        sent = (fake_host.sent(n + 1) for n in range(len(fake_host.calls())))
+        return [text for text in sent if text]
 
     return SimpleNamespace(
         run=run,
         host=fake_host,
         log=fake_host.log,
         sent=fake_host.sent,
+        scripts=scripts,
         env_file=env_file,
         opened=opened_urls(),
     )
@@ -310,10 +322,10 @@ def test_screening_sends_the_key_on_stdin_and_saves_only_the_cap(stage):
     result = stage.run("screening", f"0.25\n{API_KEY}\n{API_KEY}\n\n")
     assert result.returncode == 0, result.stdout + result.stderr
     # The unit first, so it reads the new file, then the settings.
-    assert stage.sent(1) == (REPO / "ops/remote/service.sh").read_text()
-    assert (
-        stage.sent(2) == f"{API_KEY}\n" + (REPO / "ops/remote/screening.sh").read_text()
-    )
+    assert stage.scripts()[:2] == [
+        script("service.sh"),
+        f"{API_KEY}\n" + script("screening.sh"),
+    ]
     log = stage.log.read_text()
     assert "read -r API_KEY" in log
     assert "DAILY_USD=0.25" in log
@@ -330,11 +342,10 @@ def test_github_sends_the_token_on_stdin_and_saves_nothing(stage):
     result = stage.run("github", f"{GITHUB_TOKEN}\n{GITHUB_TOKEN}\n\n")
     assert result.returncode == 0, result.stdout + result.stderr
     # The unit first, so it reads the new file, then the token.
-    assert stage.sent(1) == (REPO / "ops/remote/service.sh").read_text()
-    assert (
-        stage.sent(2)
-        == f"{GITHUB_TOKEN}\n" + (REPO / "ops/remote/github-token.sh").read_text()
-    )
+    assert stage.scripts()[:2] == [
+        script("service.sh"),
+        f"{GITHUB_TOKEN}\n" + script("github-token.sh"),
+    ]
     assert "read -r TOKEN" in stage.log.read_text()
     assert (
         stage.opened.read_text()
@@ -379,12 +390,15 @@ def test_admin_before_the_first_deploy_asks_nothing_and_says_to_rerun(stage):
     assert stage.log.read_text().count("ssh ") == 1
 
 
-# The whole wizard, rerun with --only-new on a server it has set up
+# The whole wizard, rerun on a server it has set up
+
+# base.sh writes it, so a server that has it ran base.sh.
+BASE_MARKER = "/etc/ssh/sshd_config.d/10-filedrawer.conf"
 
 
 @pytest.fixture
 def rerun(tmp_path, fake_host):
-    """Runs `ops/provision-vps --only-new` with empty stdin, so any prompt fails it,
+    """Runs `ops/provision-vps` (a rerun) with empty stdin, so any prompt fails it,
     against fake_host answering as a server it has set up, and an ops/.vps.env
     holding every saved value."""
 
@@ -398,6 +412,8 @@ def rerun(tmp_path, fake_host):
         "/etc/filedrawer/staging-mail.env",
         "/etc/filedrawer/staging-screening.env",
         "/etc/filedrawer/github.env",
+        BASE_MARKER,
+        "/etc/caddy/sites/staging.caddy",
     )
     fake_host.answer("*os-release*", stdout="ID=debian\n")
     fake_host.answer(
@@ -421,8 +437,8 @@ def rerun(tmp_path, fake_host):
         "SCREENING_DAILY_USD='1'\nADMIN_ACCOUNT='a-owner1'\n"
     )
 
-    def run() -> subprocess.CompletedProcess:
-        return run_wizard("--only-new", cwd=tmp_path, answers="", env=fake_host.env)
+    def run(*args: str, answers: str = "") -> subprocess.CompletedProcess:
+        return run_wizard(*args, cwd=tmp_path, answers=answers, env=fake_host.env)
 
     def sent_scripts() -> list[str]:
         return [fake_host.sent(n + 1) for n in range(len(fake_host.calls()))]
@@ -443,8 +459,8 @@ def script(name: str) -> str:
     return (REPO / "ops/remote" / name).read_text()
 
 
-def test_only_new_makes_the_ci_screen_account_once_then_keeps_it(rerun):
-    first = rerun.run()
+def test_a_rerun_with_the_old_only_new_flag_makes_the_ci_screen_account_once(rerun):
+    first = rerun.run("--only-new")
     assert first.returncode == 0, first.stdout + first.stderr
     assert (rerun.secrets / "CI_SCREEN_TOKEN").read_text() == "fdt_ci7"
     assert "CI_SCREEN_ACCOUNT='a-ci'" in (rerun.tmp / "ops/.vps.env").read_text()
@@ -456,7 +472,7 @@ def test_only_new_makes_the_ci_screen_account_once_then_keeps_it(rerun):
     assert "CI_SCREEN_ACCOUNT=a-ci bash -s" in rerun.log.read_text()
 
 
-def test_only_new_reruns_every_stage_without_asking_for_anything_saved(rerun):
+def test_a_rerun_runs_every_stage_without_asking_for_anything_saved(rerun):
     result = rerun.run()
     assert result.returncode == 0, result.stdout + result.stderr
     sent = rerun.sent()
@@ -464,10 +480,9 @@ def test_only_new_reruns_every_stage_without_asking_for_anything_saved(rerun):
     assert script("base.sh") in sent
     # Caddy keeps the password hash on the server: no password, only the key.
     assert f"\t{STAGING_KEY}\n" + script("caddy.sh") in sent
-    # Mail, screening and the GitHub token are in place already.
-    assert script("mail.sh") not in sent
-    assert not any(s.endswith(script("screening.sh")) for s in sent)
-    assert not any(s.endswith(script("github-token.sh")) for s in sent)
+    # Mail, screening and the GitHub token are in place already: kept, sent empty.
+    for name in ("mail.sh", "screening.sh", "github-token.sh"):
+        assert "\n" + script(name) in sent, name
     # The deploy key stays; its scripts are reinstalled.
     log = rerun.log.read_text()
     assert "ssh-keygen" not in log
@@ -487,8 +502,12 @@ def test_only_new_reruns_every_stage_without_asking_for_anything_saved(rerun):
     assert not rerun.opened.exists(), rerun.opened.read_text()
 
 
-def test_only_new_runs_a_stage_whose_settings_the_server_lacks(rerun):
-    rerun.present("/etc/filedrawer/staging-mail.env")
+def test_a_rerun_runs_a_stage_whose_settings_the_server_lacks(rerun):
+    rerun.present(
+        "/etc/filedrawer/staging-mail.env",
+        BASE_MARKER,
+        "/etc/caddy/sites/staging.caddy",
+    )
     result = rerun.run()
     # Screening isn't set up yet, so it asks for the API key, and stdin is empty.
     assert result.returncode != 0
@@ -546,10 +565,10 @@ def production(tmp_path, fake_host):
 
 
 # Answers for a full production run on a server with no production settings, in
-# the order the wizard asks; extra blank lines pass any pause.
+# the order the wizard asks; extra blank lines pass any pause. The banner and the
+# first four stages ask nothing, so they don't pause.
 FULL_RUN = (
-    "\n" * 6
-    + "prod@filedrawer.dev\nFile Drawer <noreply@filedrawer.dev>\n"
+    "prod@filedrawer.dev\nFile Drawer <noreply@filedrawer.dev>\n"
     + f"{SMTP_PASSWORD}\n{SMTP_PASSWORD}\n\n"
     + f"\n\n{PROD_KEY}\n{PROD_KEY}\n\n"
     + f"{GITHUB_TOKEN}\n{GITHUB_TOKEN}\n\n"
@@ -657,7 +676,15 @@ def test_production_never_offers_stagings_saved_values(production):
 
 
 def test_production_lists_the_three_names_dns_needs(production):
-    result = production.run(answers=FULL_RUN)
+    # Asked to list them all, though they resolve: --ask-all pauses in the banner
+    # and the first four stages too.
+    result = run_wizard(
+        "--ask-all",
+        "production",
+        cwd=production.env_file.parent.parent,
+        answers="\n" * 6 + FULL_RUN,
+        env=production.host.env,
+    )
     assert result.returncode == 0, result.stdout + result.stderr
     for name in ("filedrawer.dev", "www.filedrawer.dev", "files.filedrawer.dev"):
         assert f"{name}  A     203.0.113.7" in result.stdout, name
@@ -694,7 +721,8 @@ def test_a_ping_url_that_isnt_one_stops_before_it_reaches_the_server(production)
 
 def test_production_keeps_the_shared_github_token_the_server_has(production):
     production.host.answer("test -f /etc/filedrawer/github.env")
-    answers = FULL_RUN.replace(f"{GITHUB_TOKEN}\n{GITHUB_TOKEN}\n", "")
+    # The stage asks nothing, so it doesn't pause either.
+    answers = FULL_RUN.replace(f"{GITHUB_TOKEN}\n{GITHUB_TOKEN}\n\n", "")
     result = production.run(answers=answers)
     assert result.returncode == 0, result.stdout + result.stderr
     assert not any(s.endswith(script("github-token.sh")) for s in production.sent())
@@ -740,12 +768,13 @@ def test_production_checks_the_site_from_outside(production):
 
 
 def rerun_production(production) -> subprocess.CompletedProcess:
-    """Runs `ops/provision-vps --only-new production` with empty stdin, on a server
+    """Runs `ops/provision-vps production` (a rerun) with empty stdin, on a server
     that holds every setting production needs, and an ops/.vps.env with its values."""
     for path in (
         "production-mail.env",
         "production-screening.env",
         "production-ping.env",
+        "production-backup.env",
         "github.env",
         "caddy-upgrades.env",
     ):
@@ -753,9 +782,10 @@ def rerun_production(production) -> subprocess.CompletedProcess:
     production.env_file.write_text(
         production.env_file.read_text()
         + "PROD_SMTP_USER='prod@filedrawer.dev'\nPROD_SCREENING_DAILY_USD='1'\n"
+        + "PROD_MAIL_FROM='File Drawer <noreply@filedrawer.dev>'\n"
+        + "PROD_HETZNER_BACKUPS_SHOWN='yes'\nCADDY_ALERT_TO='ops@filedrawer.dev'\n"
     )
     return run_wizard(
-        "--only-new",
         "production",
         cwd=production.env_file.parent.parent,
         answers="",
@@ -763,28 +793,31 @@ def rerun_production(production) -> subprocess.CompletedProcess:
     )
 
 
-def test_production_only_new_asks_for_nothing_the_server_has(production):
+def test_a_production_rerun_asks_for_nothing_the_server_has(production):
     result = rerun_production(production)
     assert result.returncode == 0, result.stdout + result.stderr
     sent = production.sent()
     assert any(s.endswith(script("service.sh")) for s in sent)
     assert any(s.endswith(script("caddy.sh")) for s in sent)
-    for kept in ("mail.sh", "screening.sh", "github-token.sh", "ping.sh"):
-        assert not any(s.endswith(script(kept)) for s in sent), kept
+    # Each secret is kept: its script goes, with the secret empty.
+    for kept in ("mail.sh", "screening.sh"):
+        assert "\n" + script(kept) in sent, kept
+    assert "\t\n" + script("ping.sh") in sent
+    assert not any(s.endswith(script("github-token.sh")) for s in sent)
     assert "won't start" not in result.stdout
     # The guard's program, apt file and units still go; its settings stay.
     assert script("caddy-upgrade-check") in sent
-    assert "\n" + script("caddy-upgrades.sh") in sent
+    assert "ops@filedrawer.dev\t\n" + script("caddy-upgrades.sh") in sent
     assert "--test-mail" not in " ".join(production.host.calls())
 
 
 def test_caddy_upgrades_alone_takes_an_address_and_a_ping_url(stage):
     result = stage.run("caddy-upgrades", f"me@example.org\n{CADDY_PING}\ny\n\n")
     assert result.returncode == 0, result.stdout + result.stderr
-    assert stage.sent(1) == script("caddy-upgrade-check")
-    assert stage.sent(2) == f"me@example.org\t{CADDY_PING}\n" + script(
-        "caddy-upgrades.sh"
-    )
+    assert stage.scripts()[:2] == [
+        script("caddy-upgrade-check"),
+        f"me@example.org\t{CADDY_PING}\n" + script("caddy-upgrades.sh"),
+    ]
     assert "https://healthchecks.io/" in stage.opened.read_text()
     for where in (stage.log.read_text(), stage.env_file.read_text(), result.stdout):
         assert CADDY_PING not in where
@@ -854,7 +887,6 @@ def test_account_under_only_new_takes_the_saved_id_and_opens_no_account_page(
         production.env_file.read_text() + "PROD_ADMIN_ACCOUNT='a-prod1'\n"
     )
     result = run_wizard(
-        "--only-new",
         "production",
         "account",
         cwd=production.env_file.parent.parent,
@@ -879,9 +911,11 @@ def test_production_asks_the_owner_to_turn_on_hetzners_backups(production):
     assert result.returncode == 0, result.stdout + result.stderr
     assert "https://console.hetzner.cloud/" in production.opened.read_text()
     assert "Enable backups" in result.stdout
+    # Shown once: the next rerun leaves it out.
+    assert "PROD_HETZNER_BACKUPS_SHOWN='yes'" in production.env_file.read_text()
 
 
-def test_production_only_new_leaves_hetzners_backups_to_the_first_run(production):
+def test_a_production_rerun_leaves_hetzners_backups_to_the_first_run(production):
     result = rerun_production(production)
     assert result.returncode == 0, result.stdout + result.stderr
     opened = production.opened.read_text() if production.opened.exists() else ""
@@ -894,9 +928,9 @@ def test_production_refuses_a_stage_it_doesnt_have(production):
     assert "production account" in result.stdout + result.stderr
 
 
-# Every script in ops/remote/ reaches the server on a rerun with --only-new, or is
-# exempt below with when it does reach it. Under --only-new the owner reruns the
-# wizard to bring the server up to date, so a script it skips keeps the old version
+# Every script in ops/remote/ reaches the server on a rerun, or is exempt below with
+# when it does reach it. The owner reruns the wizard to bring the server up to
+# date, so a script it skips keeps the old version
 # there: a stricter sudo rule in deploy-user.sh once never left this machine. A new
 # script fails these tests until it is sent or exempt.
 
@@ -923,22 +957,14 @@ CADDY_GUARD = (
     "Production's wizard sends it on every run, and ops/provision-vps caddy-upgrades: "
     "the guard serves the one server's Caddy."
 )
-STAGING_ONLY_NEW_EXEMPT = {
+STAGING_RERUN_EXEMPT = {
     "deploy-facts.sh": "ops/deploy-production sends it, before each production deploy.",
     "ci-account.sh": "Sent when a CI account's ID or token is missing, or when a "
-    "run without --only-new (ops/provision-vps or ops/provision-vps smoke) is asked "
-    "for a new token.",
-    "mail.sh": "Sent without --only-new, or when /etc/filedrawer/staging-mail.env is "
-    "missing, with the password the wizard then asks for.",
-    "screening.sh": "Sent without --only-new, or when "
-    "/etc/filedrawer/staging-screening.env is missing, with the API key the wizard "
-    "then asks for.",
-    "github-token.sh": "Sent without --only-new, or when /etc/filedrawer/github.env "
-    "is missing, with the token the wizard then asks for.",
+    "run with --ask-all (ops/provision-vps or ops/provision-vps smoke) is asked for "
+    "a new token.",
     "loopback.sh": "Production's wizard sends it on every run: its rules keep "
     "staging off production's port.",
-    "ping.sh": "Production's wizard sends it, without --only-new or when "
-    "production-ping.env is missing.",
+    "ping.sh": "Production's wizard sends it on every run.",
     "backup.sh": "Production's wizard sends it on every run: only production has "
     "backups.",
     "filedrawer-backup": "Production's wizard installs it on every run, for "
@@ -947,7 +973,7 @@ STAGING_ONLY_NEW_EXEMPT = {
     "caddy-upgrades.sh": CADDY_GUARD,
     "caddy-upgrade-check": CADDY_GUARD,
 }
-PRODUCTION_ONLY_NEW_EXEMPT = {
+PRODUCTION_RERUN_EXEMPT = {
     "base.sh": "Staging's wizard sends it; production shares staging's server.",
     "deploy-facts.sh": "ops/deploy-production sends it, before each production deploy.",
     "deploy-user.sh": "Staging's wizard sends it, for staging's deploy key; "
@@ -959,13 +985,6 @@ PRODUCTION_ONLY_NEW_EXEMPT = {
     "smoke-env.sh": "Staging's wizard sends it: the smoke test runs on staging.",
     "admin-grant.sh": "ops/provision-vps production account sends it, after the "
     "first deploy.",
-    "mail.sh": "Sent without --only-new, or when /etc/filedrawer/production-mail.env "
-    "is missing, with the password the wizard then asks for.",
-    "screening.sh": "Sent without --only-new, or when "
-    "/etc/filedrawer/production-screening.env is missing, with the API key the "
-    "wizard then asks for.",
-    "ping.sh": "Sent without --only-new, or when /etc/filedrawer/production-ping.env "
-    "is missing, with the ping URLs the wizard then asks for.",
     "github-token.sh": "Sent only when /etc/filedrawer/github.env, which staging "
     "shares, is missing, or by staging's wizard (see its exemption).",
     "field-test-key.sh": FIELD_TEST_KEY,
@@ -994,11 +1013,11 @@ def assert_every_script_sent_or_exempt(host, exempt: dict[str, str]) -> None:
     sent = sent_by_name(host)
     unplaced = scripts - set(sent) - set(exempt)
     assert not unplaced, (
-        f"--only-new sends none of {sorted(unplaced)}: send each, "
+        f"a rerun sends none of {sorted(unplaced)}: send each, "
         "or exempt it with when it reaches the server"
     )
     stale = set(sent) & set(exempt)
-    assert not stale, f"exempt, yet --only-new sends {sorted(stale)}"
+    assert not stale, f"exempt, yet a rerun sends {sorted(stale)}"
     for name, calls in sent.items():
         if name in INSTALLED:
             install = (
@@ -1009,20 +1028,20 @@ def assert_every_script_sent_or_exempt(host, exempt: dict[str, str]) -> None:
             assert all(call.endswith("bash -s") for call in calls), (name, calls)
 
 
-def test_only_new_sends_every_remote_script_or_exempts_it(rerun):
+def test_a_rerun_sends_every_remote_script_or_exempts_it(rerun):
     # CI's screen account is saved too, so the rerun keeps every account and secret.
     env_file = rerun.tmp / "ops/.vps.env"
     env_file.write_text(env_file.read_text() + "CI_SCREEN_ACCOUNT='a-ci'\n")
     (rerun.secrets / "CI_SCREEN_TOKEN").write_text("kept")
     result = rerun.run()
     assert result.returncode == 0, result.stdout + result.stderr
-    assert_every_script_sent_or_exempt(rerun.host, STAGING_ONLY_NEW_EXEMPT)
+    assert_every_script_sent_or_exempt(rerun.host, STAGING_RERUN_EXEMPT)
 
 
-def test_production_only_new_sends_every_remote_script_or_exempts_it(production):
+def test_a_production_rerun_sends_every_remote_script_or_exempts_it(production):
     result = rerun_production(production)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert_every_script_sent_or_exempt(production.host, PRODUCTION_ONLY_NEW_EXEMPT)
+    assert_every_script_sent_or_exempt(production.host, PRODUCTION_RERUN_EXEMPT)
 
 
 # The outbound probe once the scripts have run (#102)
@@ -1105,3 +1124,197 @@ def test_an_argument_it_doesnt_know_is_refused_before_any_stage(stage, args):
     assert args[-1] in result.stdout + result.stderr
     assert "caddy-upgrades" in result.stdout + result.stderr
     assert stage.host.calls() == []
+
+
+# Reruns keep what's set up; --ask-all changes it (#112)
+
+CADDY_ENV = "/etc/filedrawer/caddy-upgrades.env"
+
+
+@pytest.fixture
+def held(stage):
+    """`stage`, on a server that holds the guard's settings and staging's screening,
+    with the guard's address and the cap saved."""
+    stage.host.answer("test -f *", status=1)
+    for path in (CADDY_ENV, "/etc/filedrawer/staging-screening.env"):
+        stage.host.answer(f"test -f {path}")
+    stage.env_file.write_text(
+        "VPS_HOST='h'\nCADDY_ALERT_TO='me@example.org'\nSCREENING_DAILY_USD='2'\n"
+    )
+    return stage
+
+
+def guard_settings(stage) -> list[str]:
+    script_text = script("caddy-upgrades.sh")
+    return [
+        sent[: -len(script_text)]
+        for sent in (stage.sent(n + 1) for n in range(len(stage.host.calls())))
+        if sent.endswith(script_text)
+    ]
+
+
+def test_a_plain_rerun_keeps_the_guards_ping_url_and_asks_nothing(held):
+    """The owner's case: rerunning the stage they set up keeps the URL given before."""
+    result = held.run("caddy-upgrades", "")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert guard_settings(held) == ["me@example.org\t\n"]
+    assert not held.opened.exists()
+    assert "--test-mail" not in " ".join(held.host.calls())
+    assert "--ask-all caddy-upgrades" in result.stdout
+
+
+def test_ask_all_keeps_a_held_secret_on_no_without_its_tab(held):
+    result = held.run("--ask-all", "caddy-upgrades", "\n\n\n")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Change the server's" in result.stdout
+    assert guard_settings(held) == ["me@example.org\t\n"]
+    assert not held.opened.exists()
+
+
+def test_ask_all_on_yes_opens_the_tab_and_takes_a_new_url(held):
+    result = held.run("--ask-all", "caddy-upgrades", f"\ny\n{CADDY_PING}\ny\n\n")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert guard_settings(held) == [f"me@example.org\t{CADDY_PING}\n"]
+    assert "https://healthchecks.io/" in held.opened.read_text()
+
+
+def test_ask_all_on_yes_refuses_an_empty_answer(held):
+    """A paste that delivered nothing mustn't keep the old URL silently."""
+    result = held.run("--ask-all", "caddy-upgrades", "\ny\n\n\n\n")
+    assert result.returncode != 0
+    assert guard_settings(held) == []
+
+
+def test_a_plain_rerun_sends_a_held_key_empty_with_the_saved_cap(held):
+    result = held.run("screening", "")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "\n" + script("screening.sh") in held.scripts()
+    assert "DAILY_USD=2 bash -s" in held.log.read_text()
+    assert not held.opened.exists()
+
+
+def test_an_ssh_failure_stops_the_wizard_rather_than_ask_again(held):
+    held.host.answer(f"test -f {CADDY_ENV}", status=255)
+    result = held.run("caddy-upgrades", "")
+    assert result.returncode != 0
+    assert "ssh" in result.stdout
+    assert guard_settings(held) == []
+
+
+@pytest.mark.parametrize(
+    ("args", "script_name", "first_line"),
+    [
+        (["mail"], "mail.sh", ""),
+        (["production", "mail"], "mail.sh", ""),
+        (["production", "screening"], "screening.sh", ""),
+        (["production", "pings"], "ping.sh", "\t"),
+    ],
+)
+def test_each_secret_has_a_stage_of_its_own(stage, args, script_name, first_line):
+    stage.host.answer("test -f *")
+    stage.env_file.write_text(
+        "VPS_HOST='h'\nSMTP_USER='s@x.dev'\nMAIL_FROM='S <s@x.dev>'\n"
+        "PROD_SMTP_USER='p@x.dev'\nPROD_MAIL_FROM='P <p@x.dev>'\n"
+        "PROD_SCREENING_DAILY_USD='1'\n"
+    )
+    result = run_wizard(
+        *args, cwd=stage.env_file.parent.parent, answers="", env=stage.host.env
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    sent = [stage.sent(n + 1) for n in range(len(stage.host.calls()))]
+    assert first_line + "\n" + script(script_name) in sent
+
+
+def test_a_plain_rerun_sends_each_held_secret_empty(rerun):
+    result = rerun.run()
+    assert result.returncode == 0, result.stdout + result.stderr
+    sent = rerun.sent()
+    for name in ("mail.sh", "screening.sh", "github-token.sh"):
+        assert "\n" + script(name) in sent, name
+    assert "ssh-keygen" not in rerun.log.read_text()
+
+
+def test_ask_all_with_enter_everywhere_keeps_everything(rerun):
+    result = rerun.run("--ask-all", answers="\n" * 80)
+    assert result.returncode == 0, result.stdout + result.stderr
+    sent = rerun.sent()
+    for name in ("mail.sh", "screening.sh", "github-token.sh"):
+        assert "\n" + script(name) in sent, name
+    assert "Make a new deploy key" in result.stdout
+    log = rerun.log.read_text()
+    assert "ssh-keygen" not in log
+    assert "gh secret set DEPLOY_SSH_KEY" not in log
+
+
+def test_a_gh_failure_stops_before_making_a_new_deploy_key(rerun):
+    rerun.host.answer("secret list*", status=1, tool="gh")
+    result = rerun.run()
+    assert result.returncode != 0
+    assert "ssh-keygen" not in rerun.log.read_text()
+
+
+def test_a_first_run_still_asks_before_the_base_system(rerun):
+    """Default skips what's done; base.sh turns off password logins, so a server it
+    never ran on still gets the question."""
+    rerun.present(
+        "/etc/filedrawer/staging-mail.env",
+        "/etc/filedrawer/staging-screening.env",
+        "/etc/filedrawer/github.env",
+    )
+    result = rerun.run()
+    assert "Run it on" in result.stdout
+    assert script("base.sh") not in rerun.sent()
+
+
+def test_an_unknown_argument_names_ask_all(stage):
+    result = stage.run("--force", "")
+    assert result.returncode == 2
+    assert "--ask-all" in result.stdout
+
+
+def test_a_rerun_lists_what_it_kept_after_the_closing_summary(held):
+    """Each stage clears the screen, so what a kept stage said goes at the end."""
+    result = held.run("caddy-upgrades", "")
+    after = result.stdout.split("Setup complete", 1)[1]
+    assert "guard's ping URL" in after
+    assert "ops/provision-vps --ask-all caddy-upgrades" in after
+
+
+def test_a_rerun_sends_empty_what_only_the_server_holds(held):
+    """An ops/.vps.env without the cap or the address mustn't put a default over
+    the server's."""
+    held.env_file.write_text("VPS_HOST='h'\n")
+    held.host.answer("test -f /etc/filedrawer/staging-mail.env")
+    for name in ("screening", "caddy-upgrades", "mail"):
+        result = held.run(name, "")
+        assert result.returncode == 0, name + result.stdout + result.stderr
+    log = held.log.read_text()
+    assert "DAILY_USD= bash -s" in log
+    assert "SMTP_USER= MAIL_FROM= bash -s" in log
+    assert guard_settings(held) == ["\t\n"]
+    assert held.env_file.read_text() == "VPS_HOST='h'\n"
+
+
+def test_a_first_run_waits_at_the_banner(stage):
+    stage.env_file.write_text("")
+    first = run_wizard(cwd=stage.env_file.parent.parent, answers="", env=stage.host.env)
+    assert "Ready to start?" in first.stdout
+
+
+def test_a_rerun_doesnt_wait_at_the_banner(rerun):
+    assert "Ready to start?" not in rerun.run().stdout
+
+
+def test_a_kept_deploy_key_says_how_to_replace_it(rerun):
+    result = rerun.run()
+    lines = [line for line in result.stdout.splitlines() if "DEPLOY_SSH_KEY" in line]
+    assert lines and all("--ask-all" in line for line in lines), lines
+
+
+def test_pings_ask_only_for_the_url_the_server_lacks(production):
+    production.env_file.write_text(production.env_file.read_text())
+    production.host.answer("test -f /etc/filedrawer/production-ping.env")
+    result = production.run("pings", answers=f"{BACKUP_PING}\n\n")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"\t{BACKUP_PING}\n" + script("ping.sh") in production.sent()
+    assert "daily email's ping URL:" not in result.stdout

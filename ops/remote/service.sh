@@ -6,7 +6,7 @@
 # down. Production's unit also needs loopback.sh's rules loaded, which keep staging's
 # user from connecting to production's port. Settings files are root's alone: systemd
 # reads them as root. Runs as root; safe to rerun. When the unit or the base settings
-# change, it restarts a running service, so a rerun under --only-new takes effect even
+# change, it restarts a running service, so a wizard rerun takes effect even
 # when no settings script that restarts it runs after (#102). Exits 2 for an
 # environment it doesn't know.
 set -euo pipefail

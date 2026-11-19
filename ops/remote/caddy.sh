@@ -25,8 +25,8 @@
 # For staging, reads "<password><TAB><key>" as the first line of stdin, so neither
 # appears in a command line that `ps` could show; STAGING_USER names the basic-auth
 # user. An empty password keeps the hash the server already holds for that user, in
-# staging's site file or, before the split into site files, the Caddyfile, as
-# `ops/provision-vps --only-new` sends.
+# staging's site file or, before the split into site files, the Caddyfile, as a
+# rerun of `ops/provision-vps` sends.
 #
 # Runs as root on Debian; safe to rerun. Exits 2 for an environment it doesn't know.
 set -euo pipefail
@@ -73,7 +73,7 @@ staging_site() {
       [[ -z "$hash" ]] || break
     done
     if [[ -z "$hash" ]]; then
-      echo "no password given and no basic-auth hash for $STAGING_USER to keep; run the full ops/provision-vps to set one" >&2
+      echo "no password given and no basic-auth hash for $STAGING_USER to keep; run ops/provision-vps --ask-all to set one" >&2
       exit 1
     fi
   fi
@@ -157,7 +157,7 @@ CONF
 import_line="import /etc/caddy/sites/*.caddy"
 if [[ $ENVIRONMENT != staging && -f "$caddyfile" ]] \
   && ! grep -qxF "$import_line" "$caddyfile"; then
-  echo "the Caddyfile still holds staging's sites from before the site files; run staging's Caddy stage first (ops/provision-vps --only-new), which moves them to their own file" >&2
+  echo "the Caddyfile still holds staging's sites from before the site files; run staging's Caddy stage first (a rerun of ops/provision-vps), which moves them to their own file" >&2
   exit 1
 fi
 

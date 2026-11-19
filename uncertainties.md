@@ -774,7 +774,7 @@ The owner settled the email's sections and the rules in design.md's Admin sectio
 
 #### `ops/deploy-production` updates the server's install and backup scripts
 
-- Options: replace `filedrawer-install` and `filedrawer-backup` on the server when they differ from `origin/main`'s; or refuse and ask the owner to rerun `ops/provision-vps --only-new production`.
+- Options: replace `filedrawer-install` and `filedrawer-backup` on the server when they differ from `origin/main`'s; or refuse and ask the owner to rerun `ops/provision-vps production`.
 - Chosen: replace them, saying so, from `origin/main`'s text (the checkout must be at `origin/main`).
   The install's lock and copy and the nightly copy's matching lock must be on the server for the deploy to keep its promises.
 - Against: the deploy then changes more than the binary, through a path the wizard also owns.
