@@ -21,6 +21,25 @@ fn true_skill_tags() -> &'static Path {
     .path()
 }
 
+/// A folder holding a `cargo` that fails, first on each run's PATH: a test that built
+/// the server would spend minutes in a fresh worktree, past nextest's limit (#113).
+fn failing_cargo_dir() -> &'static Path {
+    static DIR: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        let dir = tempfile::tempdir().unwrap();
+        let cargo = dir.path().join("cargo");
+        std::fs::write(
+            &cargo,
+            "#!/bin/sh\necho 'smoke tests run no cargo' >&2\nexit 1\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&cargo, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
+        dir
+    })
+    .path()
+}
+
 /// A `filedrawer-server serve` on a free loopback port, stopped when dropped.
 struct Server {
     child: Child,
@@ -128,7 +147,17 @@ fn script(args: &[&str], key: Option<&str>) -> Command {
         )
         // A local server decides within a second or two; polling every 5 s, as against
         // staging, would spend seconds per case.
-        .env("FILEDRAWER_SCREEN_POLL_SECONDS", "0.2");
+        .env("FILEDRAWER_SCREEN_POLL_SECONDS", "0.2")
+        // Cargo builds it before the tests run, so the script needn't (#113).
+        .env("FILEDRAWER_BIN", env!("CARGO_BIN_EXE_filedrawer-server"))
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                failing_cargo_dir().display(),
+                std::env::var("PATH").unwrap()
+            ),
+        );
     if let Some(key) = key {
         command.env("FILEDRAWER_STAGING_KEY", key);
     }
@@ -622,7 +651,6 @@ fn eval(
         .env("FILEDRAWER_OPS_DIR", ops_dir)
         .env("FILEDRAWER_FIELD_TEST_DIR", field_test)
         .env("FILEDRAWER_STAGING_SCREEN_API_KEY", token)
-        .env("FILEDRAWER_BIN", env!("CARGO_BIN_EXE_filedrawer-server"))
         .envs(settings.iter().copied());
     command.output().unwrap()
 }
