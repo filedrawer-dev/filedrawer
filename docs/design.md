@@ -973,6 +973,7 @@ Python is fine for scripts and internal tools.
 - Production runs as a Unix user of its own, `filedrawer-prod`, and staging as `filedrawer`; each data folder is its user's alone, and every settings file in `/etc/filedrawer` is root's alone, since systemd reads a unit's settings as root (#40; the owner's decisions, 2026-11-09 and 2026-11-10).
   Reason: GitHub holds staging's deploy key, so a binary sent with it must reach none of production's data or secrets.
   For the same reason each unit may bind only its own TCP port (`SocketBindAllow`), an nftables table of its own rejects connections from staging's user to production's port, since production trusts `X-Forwarded-For` from loopback, and the install script runs a new binary's `-h` check in a transient unit with no network, no socket binds and no view of the data.
+  The outbound probe that follows has the unit's own access, network and data included, since it runs only once the new binary already serves with them.
   The units allow UDP binds too, since the static musl binary's resolver binds a socket for each DNS query, and refusing that bind fails every lookup.
   The deploy user's sudo rule is a regular expression that admits only `staging <sha256>`.
 - Caddy's config imports one site file per environment, `/etc/caddy/sites/<env>.caddy`, so provisioning one never rewrites the other's sites; a file Caddy refuses is put back as it was.
@@ -1006,6 +1007,18 @@ Python is fine for scripts and internal tools.
   Reason: refusing a newer Caddy blocked deploys whenever the server upgraded before the pin, and refusing an older one would block them after the guard rolls back, or for the day between a pin bump and the server's next upgrade.
   Everything it would warn of, another commit than staging's, an older Caddy, the migrations a rollback crosses, goes in one question before anything on the server changes.
   It pipes the binary to `filedrawer-install production`, then runs `ops/smoke-staging read` against production, which posts nothing.
+  When the install kept the new binary with an outbound warning (its exit 3, below), it still runs that check, then exits 3 with the warning.
+- Each deploy, staging's and production's, probes the server's way out once the new binary answers: `filedrawer-server check-outbound` reaches the SMTP server (a login and a NOOP, nothing sent), api.anthropic.com, api.github.com and hc-ping.com's root, each only when the settings have the server call it (#102).
+  Reason: on 2026-11-18 a unit that refused the resolver's UDP bind cut both servers off for hours, though `/tags` answered and root's curl on the box got out; production's signup mail, screening and ping failed until the owner's own signup email never came.
+  So the probe runs as the service's user under the unit's own sandbox: a transient unit given each `[Service]` setting of the installed unit, but how it starts and restarts (the owner's decision, 2026-11-18); a unit with a drop-in, which that copy would miss, isn't probed (an agent's choice, in uncertainties.md).
+  When the new binary can't reach a host, the install probes the previous binary in a unit of its own while the new one serves, and probes the new one again, rather than rolling back first (the owner's decision, 2026-11-18; the order is an agent's choice, in uncertainties.md):
+  the previous one gets out and the new one still can't, so the binary is the cause: the previous binary goes back, keeping every write, and the deploy fails; the new one gets out on its second try: deployed; the previous one fails too or can't tell (none there, or one from before `check-outbound`), or the probe couldn't run: the new binary stays and the deploy exits 3 with a warning naming the hosts.
+  Exit 3 fails CI's `deploy-staging`, so GitHub emails the owner, though `ops/deploy-production` then refuses that commit until the job passes on a rerun (the owner's decision, 2026-11-18).
+  Reason: nobody read a log during the 2026-11-18 outage, and when mail is what broke, an email about it can't arrive.
+  When the new binary changed the schema, the install doesn't roll it back, since a rollback across a migration can break; `ops/deploy-production` with the commit before does, checking `crates/server/migration-rollback.txt` (an agent's choice, in uncertainties.md).
+  The install passes on only the probe's own lines, since a binary sent with staging's deploy key could otherwise write GitHub's workflow commands into CI's log (an agent's choice, in uncertainties.md).
+  `ops/provision-vps` runs the same probe on each environment's installed binary once its scripts have restarted the services (`filedrawer-install check-outbound ENV`), so a unit or settings change fails while the owner is at the console.
+  A real test email at each deploy was dropped as noise (the owner's decision, 2026-11-18); #106 holds a round trip through a mailbox an agent reads and empties instead.
   First it replaces the server's `filedrawer-install` and `filedrawer-backup` when they differ from `origin/main`'s, an agent's choice that `uncertainties.md` holds.
   Before the staging deploy, CI's `release-skills` job tags each new skill version over SSH, with a deploy key kept as a secret of the `skill-tags` environment, which only `main` may use (see [Skills](#skills)).
   Actions logs in over SSH as a restricted deploy user.

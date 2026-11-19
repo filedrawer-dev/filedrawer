@@ -35,10 +35,11 @@ jobs:
   # operations). The binary is static (musl), built for the CX23's x86_64. Building and
   # deploying are separate jobs, so no third-party action runs while the deploy key is
   # on disk. The key may only run filedrawer-receive on the VPS, which hands the upload
-  # to filedrawer-install: it checks the hash, installs with a health check, and rolls
-  # back on failure. ops/provision-vps sets up the key and writes DEPLOY_SSH_KEY (a
-  # secret of the `staging` environment, which only main may deploy to), VPS_HOST and
-  # VPS_KNOWN_HOSTS.
+  # to filedrawer-install: it checks the hash, installs with a health check and an
+  # outbound probe, and rolls back on failure; exit 3 says the new binary stays though
+  # the server can't get out (#102). ops/provision-vps sets up the key and writes
+  # DEPLOY_SSH_KEY (a secret of the `staging` environment, which only main may deploy
+  # to), VPS_HOST and VPS_KNOWN_HOSTS.
   build-staging:
     needs: check
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -145,8 +146,9 @@ jobs:
 
   # After each deploy, ops/smoke-staging follows the submit skill against staging as an agent
   # would, as an account of its own. deploy-staging succeeds only once the new binary
-  # passed filedrawer-install's health check, and the script's --wait then waits for
-  # /skill.md to answer through Caddy. Smoke entries stay on staging. This job holds
+  # passed filedrawer-install's health check and outbound probe, and the script's
+  # --wait then waits for /skill.md to answer through Caddy. Smoke entries stay on
+  # staging. This job holds
   # the staging key and the smoke account's token (STAGING_KEY and SMOKE_TEST_TOKEN,
   # secrets of the `staging` environment that ops/provision-vps sets), so it runs no
   # third-party action.

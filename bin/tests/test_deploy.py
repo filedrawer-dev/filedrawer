@@ -1,7 +1,8 @@
 """Tests for the deploy scripts that run on the VPS: ops/remote/filedrawer-receive (the
 deploy key's forced command) and ops/remote/filedrawer-install (run as root through
 sudo). They run as processes against a temp root, with fake sudo, runuser, systemctl,
-systemd-run and curl first on PATH. bin/agent-pre-commit runs them with pytest.
+systemd-run, chown and curl first on PATH, and the units ops/remote/service.sh writes.
+bin/agent-pre-commit runs them with pytest.
 """
 
 import fcntl
@@ -22,6 +23,7 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 RECEIVE = REPO / "ops/remote/filedrawer-receive"
 INSTALL = REPO / "ops/remote/filedrawer-install"
+SERVICE = REPO / "ops/remote/service.sh"
 
 
 def executable(path: Path, text: str) -> Path:
@@ -65,11 +67,22 @@ def box(tmp_path):
         fakes / "curl",
         f'#!/bin/sh\necho "curl $*" >> {log}\n[ ! -e {tmp_path}/unhealthy ]\n',
     )
+    executable(fakes / "chown", "#!/bin/sh\n")
     env = {
         "PATH": f"{fakes}:{os.environ['PATH']}",
         "FILEDRAWER_ROOT": str(root),
         "FILEDRAWER_HEALTH_SECONDS": "2",
+        "FILEDRAWER_TEST_PROBES": str(tmp_path),
     }
+    # The units as provisioning writes them, which the probe's unit copies.
+    for environment in ("staging", "production"):
+        subprocess.run(
+            ["bash", SERVICE],
+            env={**env, "ENVIRONMENT": environment},
+            capture_output=True,
+            check=True,
+        )
+    log.write_text("")
     return SimpleNamespace(
         tmp=tmp_path, root=root, state=state, bin=bin_dir, log=log, env=env
     )
@@ -96,8 +109,39 @@ def install(
 
 
 def binary(version: str, runs: bool = True) -> bytes:
-    """A stand-in server binary: a script that answers -h, or fails."""
-    return f"#!/bin/sh\n# {version}\nexit {0 if runs else 1}\n".encode()
+    """A stand-in server binary: a script that answers -h, or fails. Its
+    `check-outbound` exits with the next code in $FILEDRAWER_TEST_PROBES/probe-VERSION
+    (the last one repeats; 0 without the file), printing a line for api.github.com,
+    and a workflow command the install must not pass on."""
+    return (
+        f"#!/bin/sh\n# {version}\n"
+        'if [ "$1" = check-outbound ]; then\n'
+        f'  f="$FILEDRAWER_TEST_PROBES/probe-{version}"\n'
+        "  code=0\n"
+        '  if [ -s "$f" ]; then\n'
+        '    set -- $(cat "$f"); code=$1; shift\n'
+        '    [ $# -gt 0 ] && echo "$*" > "$f"\n'
+        "  fi\n"
+        '  echo "::warning::injected"\n'
+        '  if [ "$code" = 0 ]; then echo "reached api.github.com"\n'
+        '  else echo "can\'t reach api.github.com: connection refused"; fi\n'
+        '  exit "$code"\n'
+        "fi\n"
+        f"exit {0 if runs else 1}\n"
+    ).encode()
+
+
+def probes(box, version: str, *codes: int) -> None:
+    """The exit codes binary(version)'s check-outbound gives, call by call."""
+    (box.tmp / f"probe-{version}").write_text(" ".join(map(str, codes)) + "\n")
+
+
+def outbound_runs(box) -> list[str]:
+    return [
+        line
+        for line in box.log.read_text().splitlines()
+        if line.startswith("systemd-run --unit=filedrawer-outbound-")
+    ]
 
 
 def sha(data: bytes) -> str:
@@ -185,7 +229,9 @@ def test_the_run_check_can_bind_no_socket_and_dies_with_its_unit(box, environmen
     result = install(box, environment, sha(data), *schema, data=data)
     assert result.returncode == 0, result.stderr
     [check] = [
-        line for line in box.log.read_text().splitlines() if "systemd-run" in line
+        line
+        for line in box.log.read_text().splitlines()
+        if "systemd-run --unit=filedrawer-check-" in line
     ]
     for setting in (
         f"--unit=filedrawer-check-{environment}",
@@ -202,6 +248,286 @@ def test_the_run_check_can_bind_no_socket_and_dies_with_its_unit(box, environmen
         for line in box.log.read_text().splitlines()
         if line.startswith("runuser") and "filedrawer.new" in line
     ], "the new binary ran outside the check's unit"
+
+
+# The outbound probe (#102)
+
+
+@pytest.mark.parametrize(
+    ("environment", "user"),
+    [("staging", "filedrawer"), ("production", "filedrawer-prod")],
+)
+def test_the_probe_runs_the_new_binary_under_its_units_own_sandbox(
+    box, environment, user
+):
+    bin_dir = box.root / f"srv/filedrawer/{environment}/bin"
+    executable(bin_dir / "filedrawer", binary("v1").decode())
+    data = binary("v2")
+    schema = ["--expect-schema", "none"] if environment == "production" else []
+    result = install(box, environment, sha(data), *schema, data=data)
+    assert result.returncode == 0, result.stderr
+    [probe] = outbound_runs(box)
+    assert probe.startswith(
+        f"systemd-run --unit=filedrawer-outbound-{environment}-new --wait --pipe"
+    )
+    unit = (
+        box.root / f"etc/systemd/system/filedrawer-{environment}.service"
+    ).read_text()
+    service = unit.split("[Service]\n")[1].split("\n[")[0]
+    for line in service.splitlines():
+        if not line or line.startswith("#"):
+            continue
+        key = line.split("=")[0]
+        if key in ("ExecStart", "Restart", "RestartSec"):
+            assert f"-p {key}=" not in probe, key
+        else:
+            assert f"-p {line} " in probe, line
+    assert f"-p User={user} " in probe
+    assert "-p RuntimeMaxSec=60 " in probe
+    assert probe.endswith(f"-- {bin_dir}/filedrawer check-outbound")
+
+
+def test_a_probe_that_passes_shows_its_lines_and_no_other_text(box):
+    data = binary("v2")
+    result = install(box, "staging", sha(data), data=data)
+    assert result.returncode == 0, result.stderr
+    assert b"probe: reached api.github.com\n" in result.stdout
+    # A binary sent with the deploy key mustn't write CI's workflow commands.
+    assert b"::warning::" not in result.stdout + result.stderr
+
+
+def test_a_probe_where_only_the_new_binary_fails_rolls_back(box):
+    executable(box.bin / "filedrawer", binary("v1").decode())
+    probes(box, "v2", 3)
+    result = install(box, "staging", sha(binary("v2")), data=binary("v2"))
+    assert result.returncode == 1
+    assert b"v1" in (box.bin / "filedrawer").read_bytes()
+    assert b"api.github.com" in result.stderr
+    assert b"rolled back" in result.stderr
+    assert [run.split()[1] for run in outbound_runs(box)] == [
+        "--unit=filedrawer-outbound-staging-new",
+        "--unit=filedrawer-outbound-staging-previous",
+        "--unit=filedrawer-outbound-staging-new",
+    ]
+    assert box.log.read_text().count("systemctl restart filedrawer-staging") == 2
+
+
+def test_both_binaries_failing_keeps_the_new_one_and_warns(box):
+    executable(box.bin / "filedrawer", binary("v1").decode())
+    probes(box, "v2", 3)
+    probes(box, "v1", 3)
+    result = install(box, "staging", sha(binary("v2")), data=binary("v2"))
+    assert result.returncode == 3
+    assert b"v2" in (box.bin / "filedrawer").read_bytes()
+    assert b"the previous binary can't reach them either" in result.stderr
+    assert b"api.github.com" in result.stderr
+    assert box.log.read_text().count("systemctl restart filedrawer-staging") == 1
+
+
+def test_a_blip_that_passes_on_the_new_binarys_second_try_deploys(box):
+    executable(box.bin / "filedrawer", binary("v1").decode())
+    probes(box, "v2", 3, 0)
+    result = install(box, "staging", sha(binary("v2")), data=binary("v2"))
+    assert result.returncode == 0, result.stderr
+    assert b"v2" in (box.bin / "filedrawer").read_bytes()
+    assert len(outbound_runs(box)) == 3, "new, previous, then new again"
+    assert box.log.read_text().count("systemctl restart filedrawer-staging") == 1
+
+
+@pytest.mark.parametrize("old", ["cant-probe", "missing"])
+def test_an_old_binary_that_cant_judge_keeps_the_new_one(box, old):
+    if old == "cant-probe":
+        # As a binary from before check-outbound answers it: with its usage.
+        executable(box.bin / "filedrawer", binary("v1").decode())
+        probes(box, "v1", 2)
+    probes(box, "v2", 3)
+    result = install(box, "staging", sha(binary("v2")), data=binary("v2"))
+    assert result.returncode == 3
+    assert b"v2" in (box.bin / "filedrawer").read_bytes()
+    assert b"can't tell" in result.stderr
+
+
+def test_a_probe_that_cant_run_never_rolls_back(box):
+    executable(box.bin / "filedrawer", binary("v1").decode())
+    probes(box, "v2", 1)
+    result = install(box, "staging", sha(binary("v2")), data=binary("v2"))
+    assert result.returncode == 3
+    assert b"v2" in (box.bin / "filedrawer").read_bytes()
+    assert b"couldn't run" in result.stderr
+    assert b"journalctl -u filedrawer-outbound-staging-new" in result.stderr
+    assert len(outbound_runs(box)) == 1
+
+
+def test_a_second_probe_that_cant_run_keeps_the_new_binary(box):
+    executable(box.bin / "filedrawer", binary("v1").decode())
+    probes(box, "v2", 3, 1)
+    result = install(box, "staging", sha(binary("v2")), data=binary("v2"))
+    assert result.returncode == 3
+    assert b"v2" in (box.bin / "filedrawer").read_bytes()
+    assert b"couldn't run" in result.stderr
+    assert box.log.read_text().count("systemctl restart filedrawer-staging") == 1
+
+
+def staging_database(box, schema: int = 31) -> Path:
+    path = box.root / "srv/filedrawer/staging/data/filedrawer.db"
+    path.parent.mkdir(parents=True)
+    with sqlite3.connect(path) as db:
+        db.execute("CREATE TABLE _sqlx_migrations (version INTEGER PRIMARY KEY)")
+        db.executemany(
+            "INSERT INTO _sqlx_migrations VALUES (?)",
+            [(v,) for v in range(1, schema + 1)],
+        )
+    db.close()
+    return path
+
+
+def test_a_staging_regression_after_a_migration_keeps_the_new_binary(box):
+    database = staging_database(box)
+    executable(box.bin / "filedrawer", binary("v1").decode())
+    probes(box, "v2", 3)
+    # The new binary migrates as it starts.
+    executable(
+        box.tmp / "fakes" / "systemctl",
+        f'#!/bin/sh\necho "systemctl $*" >> {box.log}\n'
+        f'[ "$1" = restart ] && sqlite3 {database} '
+        '"INSERT OR IGNORE INTO _sqlx_migrations VALUES (32)"\nexit 0\n',
+    )
+    result = install(box, "staging", sha(binary("v2")), data=binary("v2"))
+    assert result.returncode == 1
+    assert b"v2" in (box.bin / "filedrawer").read_bytes()
+    assert b"from 31 to 32" in result.stderr
+    assert b"a revert on main" in result.stderr
+
+
+def test_a_schema_it_cant_read_keeps_the_new_binary_and_says_so(box):
+    path = box.root / "srv/filedrawer/staging/data/filedrawer.db"
+    path.parent.mkdir(parents=True)
+    path.write_text("not a database")
+    executable(box.bin / "filedrawer", binary("v1").decode())
+    probes(box, "v2", 3)
+    result = install(box, "staging", sha(binary("v2")), data=binary("v2"))
+    assert result.returncode == 1
+    assert b"v2" in (box.bin / "filedrawer").read_bytes()
+    assert b"couldn't read the schema" in result.stderr
+    assert b"unknown" not in result.stderr
+
+
+def test_a_probe_waits_for_one_already_running_on_its_environment(box):
+    executable(box.bin / "filedrawer", binary("v1").decode())
+    lock = box.root / "run/filedrawer-outbound-staging.lock"
+    lock.parent.mkdir(parents=True)
+    with lock.open("w") as held:
+        fcntl.flock(held, fcntl.LOCK_EX)
+        result = install(
+            box, "check-outbound", "staging", FILEDRAWER_PROBE_LOCK_SECONDS="1"
+        )
+    assert result.returncode == 1
+    assert b"another probe held the lock" in result.stdout + result.stderr
+    assert outbound_runs(box) == []
+
+
+def test_a_unit_with_a_drop_in_isnt_probed_as_if_it_had_none(box):
+    (box.root / "etc/systemd/system/filedrawer-staging.service.d").mkdir()
+    result = install(box, "staging", sha(binary("v2")), data=binary("v2"))
+    assert result.returncode == 3
+    assert b"drop-in" in result.stderr
+    assert outbound_runs(box) == []
+
+
+def test_a_rolled_back_binary_that_doesnt_answer_gets_the_new_one_back(box):
+    executable(box.bin / "filedrawer", binary("v1").decode())
+    probes(box, "v2", 3)
+    # The new server answers; once rolled back, nothing does.
+    executable(
+        box.tmp / "fakes" / "curl",
+        f'#!/bin/sh\necho "curl $*" >> {box.log}\n'
+        f'grep -q "restart" {box.log} && [ "$(grep -c restart {box.log})" -ge 2 ] && exit 7\n'
+        "exit 0\n",
+    )
+    result = install(box, "staging", sha(binary("v2")), data=binary("v2"))
+    assert result.returncode == 1
+    assert b"v2" in (box.bin / "filedrawer").read_bytes()
+    assert b"put the new one back" in result.stderr
+    assert box.log.read_text().count("systemctl restart filedrawer-staging") == 3
+
+
+def test_a_regression_rollback_in_production_keeps_the_database(prod):
+    database = production_database(prod)
+    probes(prod, "v2", 3)
+    # A write the new binary took while it served stays through the rollback.
+    when_started(prod, f"sqlite3 {database} \"INSERT INTO entries VALUES ('new')\"\n")
+    result = install_production(prod, "--expect-schema", "31")
+    assert result.returncode == 1
+    assert b"v1" in (prod.prod_bin / "filedrawer").read_bytes()
+    assert entries(database) == 4
+    assert "restoring" not in prod.log.read_text()
+
+
+def test_a_regression_after_a_migration_keeps_the_new_binary(prod):
+    database = production_database(prod)
+    probes(prod, "v2", 3)
+    when_started(
+        prod, f'sqlite3 {database} "INSERT INTO _sqlx_migrations VALUES (32)"\n'
+    )
+    result = install_production(prod, "--expect-schema", "31")
+    assert result.returncode == 1
+    assert b"v2" in (prod.prod_bin / "filedrawer").read_bytes()
+    assert b"ops/deploy-production" in result.stderr
+    assert b"31" in result.stderr and b"32" in result.stderr
+
+
+def check_outbound(box, environment: str = "staging") -> subprocess.CompletedProcess:
+    return install(box, "check-outbound", environment)
+
+
+def test_check_outbound_probes_the_running_binary_alone(box):
+    executable(box.bin / "filedrawer", binary("v1").decode())
+    result = check_outbound(box)
+    assert result.returncode == 0, result.stderr
+    assert b"probe: reached api.github.com\n" in result.stdout
+    [probe] = outbound_runs(box)
+    assert "--unit=filedrawer-outbound-staging-new" not in probe
+    assert probe.endswith(f"-- {box.bin}/filedrawer check-outbound")
+    assert "systemctl" not in box.log.read_text()
+
+
+def test_check_outbound_exits_3_naming_what_it_cant_reach(box):
+    executable(box.bin / "filedrawer", binary("v1").decode())
+    probes(box, "v1", 3)
+    result = check_outbound(box)
+    assert result.returncode == 3
+    assert b"probe: can't reach api.github.com: connection refused" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("setup", "said"),
+    [("none", b"has no binary yet"), ("old", b"the next deploy probes")],
+)
+def test_check_outbound_on_a_binary_that_cant_probe_says_why_and_passes(
+    box, setup, said
+):
+    if setup == "old":
+        # A binary from before check-outbound: its usage, exit 2, and no such word.
+        executable(box.bin / "filedrawer", "#!/bin/sh\necho usage >&2\nexit 2\n")
+    result = check_outbound(box)
+    assert result.returncode == 0, result.stderr
+    assert said in result.stdout
+
+
+def test_check_outbound_on_settings_the_binary_cant_read_fails_saying_why(box):
+    executable(box.bin / "filedrawer", binary("v1").decode())
+    # check-outbound's exit 2 from a binary that has it: its settings.
+    probes(box, "v1", 2)
+    result = check_outbound(box)
+    assert result.returncode == 1
+    assert b"predates" not in result.stdout + result.stderr
+    assert b"couldn't run" in result.stderr
+
+
+def test_check_outbound_refuses_another_environment(box):
+    result = check_outbound(box, "dev")
+    assert result.returncode == 2
+    assert b"refused: unknown environment 'dev'" in result.stderr
 
 
 def test_install_refuses_a_hash_mismatch_and_changes_nothing(box):

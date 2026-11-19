@@ -12,6 +12,26 @@
 # filedrawer.previous, restarts the service, and rolls back if the server doesn't
 # answer on 127.0.0.1 within 30 s.
 #
+# Once it answers, it probes the server's way out (#102): the binary's
+# `check-outbound`, as the service's user under the unit's own sandbox, in a transient
+# unit given each [Service] setting of the installed unit. When the new binary can't
+# reach a host, it probes the previous binary, then the new one again:
+#   - the previous one gets out and the new one still doesn't: the binary is the
+#     cause, so the previous binary goes back, keeping every write, and it exits 1;
+#     unless the new binary changed the schema, which a rollback could break
+#     (design.md), so it stays, and ops/deploy-production rolls back;
+#   - the new one gets out on its second try: deployed, exit 0;
+#   - the previous one fails too, or can't tell (no previous binary, or one from
+#     before check-outbound), or the probe couldn't run at all: the new binary stays,
+#     and it exits 3 with a warning naming the hosts, since the cause is the
+#     environment, not the binary.
+# It passes on only the probe's own lines, since the binary is the deploy key
+# holder's code and CI reads its output.
+#   filedrawer-install check-outbound staging|production
+# runs the probe alone, on the installed binary, for ops/provision-vps: exit 0 when
+# every host answered, or when there is nothing to probe yet, 3 when one didn't, 1
+# when the probe couldn't run.
+#
 # Production also keeps its database: holding the lock the nightly copy takes (flock
 # on backups/), it checks the schema is still the one ops/deploy-production saw,
 # stops the service, writes a VACUUM INTO copy to backups/deploy-<UTC time>.db, then
@@ -33,10 +53,12 @@ if [[ -z "$root" ]]; then
   max_bytes=67108864
   health_seconds=30
   lock_seconds=900
+  probe_lock_seconds=120
 else
   max_bytes="${FILEDRAWER_MAX_BYTES:-67108864}"
   health_seconds="${FILEDRAWER_HEALTH_SECONDS:-30}"
   lock_seconds="${FILEDRAWER_LOCK_SECONDS:-900}"
+  probe_lock_seconds="${FILEDRAWER_PROBE_LOCK_SECONDS:-120}"
 fi
 
 refuse() {
@@ -45,7 +67,14 @@ refuse() {
 }
 
 usage="usage: filedrawer-install staging <sha256> < binary
-       filedrawer-install production <sha256> --expect-schema N|none < binary"
+       filedrawer-install production <sha256> --expect-schema N|none < binary
+       filedrawer-install check-outbound staging|production"
+mode=deploy
+if [[ "${1-}" == check-outbound ]]; then
+  mode=check-outbound
+  shift
+  [[ $# -eq 1 ]] || refuse "$usage"
+fi
 environment="${1-}"
 expected="${2-}"
 case "$environment" in
@@ -53,6 +82,98 @@ case "$environment" in
   production) port=8080 user=filedrawer-prod ;;
   *) refuse "unknown environment '$environment'" ;;
 esac
+bin="$root/srv/filedrawer/$environment/bin"
+service="filedrawer-$environment"
+unit_file="$root/etc/systemd/system/$service.service"
+
+# probe WHICH BINARY: runs BINARY's check-outbound in a transient unit named
+# filedrawer-outbound-<env>-WHICH, given every [Service] setting of the installed unit
+# but how to start and restart it. Sets probe_status (the binary's exit: 0 every host
+# answered, 3 one didn't; anything else, the probe didn't run), probe_lines (its
+# lines that fit the probe's own, each with a "probe: " prefix, at most 20),
+# probe_hosts (the hosts it couldn't reach) and probe_errors (at most 5 lines of
+# printable ASCII from its stderr and systemd-run's, which say why a probe didn't
+# run, each with a "probe stderr: " prefix). Holds a lock, so a probe from
+# provisioning waits for a deploy's.
+probe() {
+  local which="$1" binary="$2" line key props=() output section="" errors
+  probe_lines="" probe_hosts="" probe_errors=""
+  if [[ -d "$unit_file.d" ]]; then
+    probe_lines="probe: $unit_file.d holds a drop-in, which the probe's unit can't copy"
+    probe_status=100
+    return
+  fi
+  if [[ ! -f "$unit_file" ]]; then
+    probe_lines="probe: there is no $unit_file to copy"
+    probe_status=100
+    return
+  fi
+  while IFS= read -r line; do
+    case "$line" in
+      "["*) section="$line"; continue ;;
+      "" | "#"*) continue ;;
+    esac
+    [[ "$section" == "[Service]" ]] || continue
+    key="${line%%=*}"
+    case "$key" in
+      ExecStart | Restart | RestartSec | Type) continue ;;
+    esac
+    props+=(-p "$line")
+  done < "$unit_file"
+  mkdir -p "$root/run"
+  exec 8>"$root/run/filedrawer-outbound-$environment.lock"
+  flock -w "$probe_lock_seconds" 8 || {
+    probe_lines="probe: another probe held the lock for ${probe_lock_seconds}s"
+    probe_status=100
+    exec 8>&-
+    return
+  }
+  probe_status=0
+  errors=$(mktemp)
+  output=$(systemd-run --unit="filedrawer-outbound-$environment-$which" --wait --pipe --quiet \
+    --collect "${props[@]}" -p RuntimeMaxSec=60 -- "$binary" check-outbound \
+    < /dev/null 2>"$errors") || probe_status=$?
+  exec 8>&-
+  probe_lines=$(LC_ALL=C awk '/^(reached|skipped|can.t reach) [ -~]*$/ && n++ < 20 { print "probe: " substr($0, 1, 300) }' <<< "$output")
+  probe_hosts=$(LC_ALL=C awk '/^can.t reach [!-9;-~]+:/ && n++ < 20 { sub(/^can.t reach /, ""); sub(/: .*/, ""); printf "%s%s", sep, $0; sep = ", " }' <<< "$output")
+  probe_errors=$(LC_ALL=C awk '/^[ -~]+$/ && n++ < 5 { print "probe stderr: " substr($0, 1, 300) }' "$errors")
+  rm -f "$errors"
+}
+
+# schema_now: production's or staging's schema version, `none` without a database,
+# or empty when it can't be read. As the environment's user, read-only.
+schema_now() {
+  local database="$root/srv/filedrawer/$environment/data/filedrawer.db"
+  if ! runuser -u "$user" -- test -e "$database"; then
+    echo none
+    return
+  fi
+  runuser -u "$user" -- sqlite3 -bail "file:$database?mode=ro" ".timeout 60000" \
+    "SELECT max(version) FROM _sqlx_migrations;" 2>/dev/null || true
+}
+
+if [[ "$mode" == check-outbound ]]; then
+  if [[ ! -x "$bin/filedrawer" ]]; then
+    echo "$environment has no binary yet; its first deploy probes"
+    exit 0
+  fi
+  probe current "$bin/filedrawer"
+  [[ -n "$probe_lines" ]] && echo "$probe_lines"
+  case "$probe_status" in
+    0) exit 0 ;;
+    3) echo "$environment's server can't reach: $probe_hosts" >&2; exit 3 ;;
+    100) echo "the probe couldn't run: ${probe_lines#probe: }" >&2; exit 1 ;;
+  esac
+  # A binary from before check-outbound answers it with its usage, exit 2, and its
+  # usage doesn't name it; a binary that has it exits 2 for settings it can't read.
+  if [[ "$probe_status" == 2 ]] && ! grep -q check-outbound "$bin/filedrawer"; then
+    echo "$environment's binary predates check-outbound; the next deploy probes"
+    exit 0
+  fi
+  echo "the probe couldn't run (exit $probe_status)" >&2
+  [[ -z "$probe_errors" ]] || echo "$probe_errors" >&2
+  exit 1
+fi
 if [[ "$environment" == staging ]]; then
   [[ $# -eq 2 ]] || refuse "$usage"
 else
@@ -61,8 +182,6 @@ else
 fi
 [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || refuse "'$expected' is not a SHA-256"
 
-bin="$root/srv/filedrawer/$environment/bin"
-service="filedrawer-$environment"
 new="$bin/filedrawer.new"
 trap 'rm -f "$new"' EXIT
 head -c "$((max_bytes + 1))" > "$new"
@@ -97,6 +216,87 @@ healthy() {
   return 1
 }
 
+# kept WHY: the new binary stays though the probe failed, since the binary isn't
+# shown to be the cause; exit 3 fails the deploy's job, so the owner hears of it.
+kept() {
+  {
+    echo
+    echo "WARNING: $1."
+    echo "WARNING: the new binary stays, and serves; exit 3 marks the deploy."
+    [[ -z "$probe_errors" ]] || echo "$probe_errors"
+  } >&2
+  exit 3
+}
+
+# roll_back_binary HOSTS: the binary is the cause, and no migration stands in the
+# way, so the previous binary goes back, keeping every write; when it doesn't
+# answer, the new one does. Exits 1 either way.
+roll_back_binary() {
+  local hosts="$1" summary
+  mv -f "$bin/filedrawer" "$bin/filedrawer.rejected"
+  mv -f "$bin/filedrawer.previous" "$bin/filedrawer"
+  systemctl restart "$service"
+  if healthy; then
+    rm -f "$bin/filedrawer.rejected"
+    echo "the new server can't reach $hosts, which the previous binary reaches: rolled back to the previous binary, keeping every write" >&2
+    exit 1
+  fi
+  mv -f "$bin/filedrawer" "$bin/filedrawer.previous"
+  mv -f "$bin/filedrawer.rejected" "$bin/filedrawer"
+  systemctl restart "$service"
+  summary="the new server can't reach $hosts; rolled back, but the previous binary didn't answer within ${health_seconds}s, so put the new one back"
+  if healthy; then
+    echo "$summary. It answers." >&2
+  else
+    echo "$summary. It doesn't answer either: look at journalctl -u $service" >&2
+  fi
+  exit 1
+}
+
+# judge_outbound DEPLOYED: once the new server answers, probes its way out, then
+# exits as the header says. DEPLOYED is the line a deploy that passed prints.
+judge_outbound() {
+  local deployed="$1" hosts schema_after
+  probe new "$bin/filedrawer"
+  [[ -n "$probe_lines" ]] && echo "$probe_lines"
+  case "$probe_status" in
+    0) echo "$deployed"; exit 0 ;;
+    3) hosts="$probe_hosts" ;;
+    100) kept "the probe couldn't run (${probe_lines#probe: }), so nothing shows whether the server gets out" ;;
+    *) kept "the probe couldn't run (exit $probe_status; what it said follows, and journalctl -u filedrawer-outbound-$environment-new may say more), so nothing shows whether the server gets out" ;;
+  esac
+  [[ -x "$bin/filedrawer.previous" ]] ||
+    kept "the new server can't reach $hosts, and with no previous binary to probe, the install can't tell whether the binary is the cause"
+  probe previous "$bin/filedrawer.previous"
+  case "$probe_status" in
+    0) ;;
+    3) kept "the new server can't reach $hosts, and the previous binary can't reach them either: the cause is the server's network, DNS or settings, not the binary" ;;
+    *) kept "the new server can't reach $hosts, and the previous binary can't tell whether the binary is the cause (its probe exited $probe_status; a binary from before check-outbound exits 2)" ;;
+  esac
+  probe new "$bin/filedrawer"
+  case "$probe_status" in
+    0)
+      echo "$deployed (the probe's first try couldn't reach $hosts; its last reached them)"
+      exit 0
+      ;;
+    3) hosts="$probe_hosts" ;;
+    *) kept "the new server couldn't reach $hosts, which the previous binary reaches, but the probe couldn't run on its second try (exit $probe_status), so nothing shows the binary is the cause" ;;
+  esac
+  schema_after=$(schema_now)
+  local back="a revert on main deploys the binary before"
+  [[ "$environment" == production ]] &&
+    back="ops/deploy-production with the commit before rolls back, checking crates/server/migration-rollback.txt"
+  if [[ -z "$schema_before" || -z "$schema_after" ]]; then
+    echo "the new server can't reach $hosts, which the previous binary reaches, but the install couldn't read the schema, so it can't tell whether a rollback crosses a migration (design.md): the new binary stays, and $back" >&2
+    exit 1
+  fi
+  if [[ "$schema_after" != "$schema_before" ]]; then
+    echo "the new server can't reach $hosts, which the previous binary reaches, but it changed the schema from $schema_before to $schema_after, and a rollback across a migration can break (design.md), so the new binary stays: $back" >&2
+    exit 1
+  fi
+  roll_back_binary "$hosts"
+}
+
 swap_in() {
   if [[ -e "$bin/filedrawer" ]]; then
     cp -p "$bin/filedrawer" "$bin/filedrawer.previous"
@@ -105,11 +305,11 @@ swap_in() {
 }
 
 if [[ "$environment" == staging ]]; then
+  schema_before=$(schema_now)
   swap_in
   systemctl restart "$service"
   if healthy; then
-    echo "deployed to $environment"
-    exit 0
+    judge_outbound "deployed to $environment"
   fi
   if [[ -e "$bin/filedrawer.previous" ]]; then
     mv -f "$bin/filedrawer.previous" "$bin/filedrawer"
@@ -192,8 +392,8 @@ prune() {
 
 if healthy; then
   prune || echo "deployed, but couldn't prune the old deploy copies in $backups; the next deploy or night tries again" >&2
-  echo "deployed to $environment${copy:+; the database before it is $copy}"
-  exit 0
+  schema_before="$schema"
+  judge_outbound "deployed to $environment${copy:+; the database before it is $copy}"
 fi
 
 # Each step goes on when one fails, so the service always starts again, and the

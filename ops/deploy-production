@@ -26,7 +26,10 @@ Before it changes anything it:
 Then it replaces the server's filedrawer-install and filedrawer-backup when they
 differ from origin/main's, pipes the binary to `filedrawer-install production`,
 which copies the database first and puts it back if the new binary doesn't answer,
-and runs `ops/smoke-staging read` against https://filedrawer.dev.
+then probes the new binary's way out (#102), and runs `ops/smoke-staging read`
+against https://filedrawer.dev. When the install keeps the new binary with a
+warning (its exit 3: the probe failed, but the binary isn't shown to be the cause),
+it still runs the read check, then exits 3 repeating the warning.
 
 Needs gh logged in, jq, and VPS_HOST in ops/.vps.env, as ops/provision-vps writes
 it. Staging's key is FILEDRAWER_STAGING_KEY, else STAGING_KEY in ops/.vps.env.
@@ -247,15 +250,27 @@ done
 
 hash=$(sha256sum "$binary" | cut -d' ' -f1)
 say "Installing $target on production..."
+install_status=0
 ssh -o BatchMode=yes "root@$vps_host" \
   "/usr/local/sbin/filedrawer-install production $hash --expect-schema $schema" < "$binary" ||
-  die "filedrawer-install production failed; what it said is above"
+  install_status=$?
+case "$install_status" in
+  0 | 3) ;;
+  *) die "filedrawer-install production failed; what it said is above" ;;
+esac
+outbound_warning="deployed $target, but the install's outbound probe ended in a warning (above): production's server can't reach some host it calls, or the probe couldn't tell why"
 
 if ! "$smoke" read --wait 120 --commit "$target" "$PRODUCTION"; then
   die "deployed $target, but the post-deploy check failed (above); production runs it still. To go back, run this script with the commit before"
 fi
-say "deployed $target to production."
+if [[ "$install_status" != 3 ]]; then
+  say "deployed $target to production."
+fi
 if [[ -z "$production" ]]; then
   say "Production had no binary before: set up its admin account and uptime check next,"
   say "after pulling that checkout:  ops/provision-vps production account"
+fi
+if [[ "$install_status" == 3 ]]; then
+  echo "deploy-production: $outbound_warning" >&2
+  exit 3
 fi

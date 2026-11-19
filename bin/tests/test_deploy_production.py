@@ -565,6 +565,26 @@ def test_a_failed_install_says_so_and_checks_nothing_after(deploy):
     assert not deploy.smoke_log.exists()
 
 
+def test_an_install_that_kept_the_binary_with_a_warning_checks_then_exits_3(deploy):
+    # Exit 3: the new binary serves, but the outbound probe failed for both (#102).
+    deploy.host.answer("/usr/local/sbin/filedrawer-install production *", status=3)
+    result = deploy.run()
+    assert result.returncode == 3
+    assert deploy.smoke_log.exists(), "the read check still runs"
+    assert "deployed" in result.stderr
+    assert "nor could" not in result.stderr, "exit 3 has more causes than one"
+    assert "warning" in result.stderr
+
+
+def test_a_first_deploy_kept_with_a_warning_still_says_to_set_up_the_account(deploy):
+    deploy.production = ""
+    deploy.schema = "none"
+    deploy.host.answer("/usr/local/sbin/filedrawer-install production *", status=3)
+    result = deploy.run()
+    assert result.returncode == 3
+    assert "ops/provision-vps production account" in result.stdout
+
+
 def test_a_failed_check_after_a_deploy_says_it_deployed(deploy):
     (deploy.tmp / "smoke-fails").touch()
     result = deploy.run()

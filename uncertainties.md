@@ -797,6 +797,25 @@ The owner settled the email's sections and the rules in design.md's Admin sectio
 - Chosen: server-wide, since unattended-upgrades skips a package whose conffile would prompt, and caddy.sh rewrites Caddy's packaged Caddyfile, so a Caddy release that changed it would never install.
 - Against: every package now keeps its edited conffile without a word, where before unattended-upgrades left such an upgrade for a person.
 
+#### The outbound probe's order (#102)
+
+- Options: the new binary twice, then the previous one (the order the owner approved); or the new one, the previous one, then the new one again (chosen).
+- Chosen: the second, from the brief's review: a host that comes back while the previous binary is probed would otherwise read as a regression and roll back a good binary.
+- Against: one more probe for each deploy that fails it, so up to three SMTP logins while mail may already be failing.
+
+#### No automatic rollback after a migration (#102)
+
+- Options: roll the binary back whenever the previous one gets out (keeping every write); or keep the new one when it changed the schema, or when the schema can't be read (chosen); or restore production's deploy copy too.
+- Chosen: keep it, since design.md refuses a rollback across a migration that breaks it and the server holds no copy of `crates/server/migration-rollback.txt`; `ops/deploy-production` with the commit before checks it.
+  Restoring the copy would drop the writes the new binary took while it served.
+- Against: most migrations don't break a rollback, so a binary at fault keeps serving until the owner acts, and staging's only way back is a revert.
+
+#### What the probe leaves out or passes on (#102)
+
+- Options: copy each `[Service]` line of the installed unit and ignore drop-ins; or refuse to probe a unit with a drop-in (chosen); and pass on the binary's output as it is, or only its own line shapes (chosen).
+- Chosen: no drop-ins exist, and a probe that misses one could pass a unit that fails; the binary is the deploy key holder's code, so only `reached`, `skipped` and `can't reach` lines of printable ASCII, and a few such lines of its stderr, reach CI's log.
+- Against: a drop-in added by hand makes every deploy exit 3 until it is folded into service.sh, and a binary's own diagnostics beyond those lines are only in the journal.
+
 ### Packages
 
 #### The analyzer's library name
