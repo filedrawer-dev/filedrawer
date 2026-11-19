@@ -280,6 +280,43 @@ def test_service_for_one_environment_leaves_the_others_files_alone(box):
         assert path.read_bytes() == content, path
 
 
+def restarts(box, environment) -> list[str]:
+    return [
+        line
+        for line in box.log.read_text().splitlines()
+        if line == f"systemctl try-restart filedrawer-{environment}.service"
+    ]
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_a_changed_unit_restarts_its_service_and_an_unchanged_one_doesnt(
+    box, environment
+):
+    # The first run writes the unit; a second, unchanged, restarts nothing.
+    assert run(box, SERVICE, ENVIRONMENT=environment).returncode == 0
+    assert run(box, SERVICE, ENVIRONMENT=environment).returncode == 0
+    assert restarts(box, environment) == []
+    # As an older service.sh wrote it: under --only-new nothing else restarts it.
+    path = box.root / f"etc/systemd/system/filedrawer-{environment}.service"
+    path.write_text(path.read_text().replace("SocketBindAllow=udp\n", ""))
+    assert run(box, SERVICE, ENVIRONMENT=environment).returncode == 0
+    assert restarts(box, environment) == [
+        f"systemctl try-restart filedrawer-{environment}.service"
+    ]
+    log = box.log.read_text()
+    assert log.rindex("daemon-reload") < log.rindex("try-restart")
+
+
+def test_changed_base_settings_restart_the_service_too(box):
+    assert run(box, SERVICE, ENVIRONMENT="staging").returncode == 0
+    path = box.root / "etc/filedrawer/staging.env"
+    path.write_text(path.read_text().replace("RUST_LOG=info", "RUST_LOG=debug"))
+    assert run(box, SERVICE, ENVIRONMENT="staging").returncode == 0
+    assert restarts(box, "staging") == [
+        "systemctl try-restart filedrawer-staging.service"
+    ]
+
+
 @pytest.mark.parametrize("environment", ["", "dev"])
 def test_service_refuses_another_environment(box, environment):
     result = run(box, SERVICE, ENVIRONMENT=environment)
@@ -312,8 +349,8 @@ def test_mail_writes_the_environments_own_file_and_restarts_only_it(box, environ
     )
     assert mode(path) == 0o600
     assert f"chown root:root {path}" in chowns(box)
-    restarts = [line for line in box.log.read_text().splitlines() if "restart" in line]
-    assert restarts == [f"systemctl try-restart filedrawer-{environment}.service"]
+    restarted = [line for line in box.log.read_text().splitlines() if "restart" in line]
+    assert restarted == [f"systemctl try-restart filedrawer-{environment}.service"]
 
 
 @pytest.mark.parametrize("environment", ["staging", "production"])

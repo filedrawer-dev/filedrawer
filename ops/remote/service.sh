@@ -5,8 +5,10 @@
 # a binary sent with staging's deploy key can't take production's while production is
 # down. Production's unit also needs loopback.sh's rules loaded, which keep staging's
 # user from connecting to production's port. Settings files are root's alone: systemd
-# reads them as root. Runs as root; safe to rerun. Exits 2 for an environment it
-# doesn't know.
+# reads them as root. Runs as root; safe to rerun. When the unit or the base settings
+# change, it restarts a running service, so a rerun under --only-new takes effect even
+# when no settings script that restarts it runs after (#102). Exits 2 for an
+# environment it doesn't know.
 set -euo pipefail
 
 case "${ENVIRONMENT-}" in
@@ -21,6 +23,9 @@ home="/srv/filedrawer/$env"
 
 mkdir -p "$root/etc/filedrawer" "$root/etc/systemd/system"
 settings="$root/etc/filedrawer/$env.env"
+unit="$root/etc/systemd/system/filedrawer-$env.service"
+# before: both files as they were, to tell whether this run changed them.
+before=$(cat "$settings" "$unit" 2>/dev/null || true)
 umask 077
 {
   printf 'FILEDRAWER_DATABASE=%s/data/filedrawer.db\n' "$home"
@@ -53,7 +58,7 @@ EnvironmentFile=-/etc/filedrawer/production-ping.env"
   extra_sandbox="InaccessiblePaths=-/srv/filedrawer/staging"
 fi
 
-cat > "$root/etc/systemd/system/filedrawer-$env.service" <<CONF
+cat > "$unit" <<CONF
 [Unit]
 Description=File Drawer ($env)
 After=network-online.target
@@ -105,5 +110,9 @@ WantedBy=multi-user.target
 CONF
 systemctl daemon-reload
 systemctl enable "filedrawer-$env.service"
-
-echo "$env service: done (it starts after the first deploy)"
+if [[ -n "$before" && "$(cat "$settings" "$unit")" != "$before" ]]; then
+  systemctl try-restart "filedrawer-$env.service"
+  echo "$env service: changed; restarted if it was running"
+else
+  echo "$env service: done (it starts after the first deploy)"
+fi
