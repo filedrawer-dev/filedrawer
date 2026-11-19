@@ -711,6 +711,27 @@ pub struct Filters {
     pub cites: Option<String>,
 }
 
+/// The order of results.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Order {
+    /// By relevance when there are words, then the newest first.
+    #[default]
+    Newest,
+    /// A new random order on each call, whatever the words.
+    Random,
+}
+
+impl Found {
+    /// Cuts results fetched one past `limit` back to `limit`, and says whether more
+    /// followed.
+    pub fn cut_to(&mut self, limit: i64) -> bool {
+        let limit = usize::try_from(limit).unwrap_or(usize::MAX);
+        let more = self.entries.len() > limit;
+        self.entries.truncate(limit);
+        more
+    }
+}
+
 /// A page of search results, and how many public entries match in all.
 pub struct Found {
     pub entries: Vec<PublicEntry>,
@@ -723,9 +744,11 @@ pub struct Found {
 pub async fn search(
     pool: &SqlitePool,
     filters: &Filters,
+    order: Order,
     limit: i64,
     offset: i64,
 ) -> Result<Found, sqlx::Error> {
+    let random = order == Order::Random;
     let outcome = filters.outcome.map(Outcome::name);
     let kind = filters.kind.map(Kind::name);
     let stage = filters.stage.map(Stage::name);
@@ -787,6 +810,7 @@ pub async fn search(
                     WHERE r.entry_seq = e.seq
                       AND (k.account_id IS NULL OR k.account_id = e.account_id)))
            ORDER BY
+             CASE WHEN ?12 THEN random() END,
              -- CASE runs the MATCH only when there are words; MATCH NULL is an error.
              CASE WHEN ?1 IS NULL THEN NULL ELSE (
                SELECT bm25(entries_fts, 10.0, 5.0, 2.0, 1.0) FROM entries_fts
@@ -803,7 +827,8 @@ pub async fn search(
         row_claim,
         limit,
         offset,
-        filters.cites
+        filters.cites,
+        random
     )
     .fetch_all(pool)
     .await?;

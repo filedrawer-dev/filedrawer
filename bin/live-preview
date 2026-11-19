@@ -64,6 +64,7 @@ import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -274,8 +275,9 @@ class Preview:
             )
         return text
 
-    def render(self, server_page: str) -> str:
-        """The home page, from `server_page`, the dev server's own, for its drawer."""
+    def render(self, server_page: str, readme: bool) -> str:
+        """The home page, from `server_page`, the dev server's own, for its drawer,
+        with the README when `readme`, as the server shows it on a bare `/`."""
         self.drop_caches()
         start = server_page.index('<nav class="guides"')
         end = server_page.index('<p class="foot">')
@@ -287,6 +289,7 @@ class Preview:
         )
         html = environment.get_template("home.html").render(
             public_url=self.public_url,
+            readme=readme,
             drawer_html=server_page[start:end].rstrip() + "\n",
             css_href=f"/static/site.css?live={self.stamp(self.static / 'site.css')}",
             script_href=f"/static/copy.js?live={self.stamp(self.static / 'copy.js')}",
@@ -362,9 +365,14 @@ def handler_for(preview: Preview) -> type[http.server.BaseHTTPRequestHandler]:
                 status, headers, body = self.from_server()
                 kept = [(k, v) for k, v in headers if k.lower() not in HOP_HEADERS]
                 return self.send(status, kept, body)
-            status, _, body = self.from_server()
+            status, headers, body = self.from_server()
+            if b'<nav class="guides"' not in body:
+                # The server's own refusal, such as a 400 for an unknown view.
+                kept = [(k, v) for k, v in headers if k.lower() not in HOP_HEADERS]
+                return self.send(status, kept, body)
+            query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
             try:
-                page = preview.render(body.decode())
+                page = preview.render(body.decode(), readme="view" not in query)
             # Any error shows in the tab, which reloads once the template is fixed.
             except Exception as error:
                 page = error_page(error)

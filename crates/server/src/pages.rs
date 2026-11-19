@@ -8,7 +8,7 @@ use axum::response::{Html, IntoResponse, Response};
 use analyzer::{Choice, Outcome};
 
 use crate::accounts::{Guarded, TokenView};
-use crate::entries::{ChainVersion, Doubted, OwnerEntry, PublicEntry};
+use crate::entries::{ChainVersion, Doubted, Order, OwnerEntry, PublicEntry};
 use crate::removed_entries::Standing;
 use crate::removed_files::{FileState, FileUse, OwnersFile};
 use crate::removed_series::SeriesStanding;
@@ -66,7 +66,7 @@ impl CardView {
     }
 }
 
-/// A divider card's tab: an outcome filter.
+/// A divider card's tab: a way to browse the drawer.
 pub struct Tab {
     pub label: &'static str,
     pub href: String,
@@ -80,20 +80,73 @@ pub fn is_title_line(index: &usize) -> bool {
     *index == 1
 }
 
-/// What `drawer.html` shows on the home and search pages: the outcome tabs, the
-/// subject search, and the cards.
+/// A way the home page shows the drawer, for people browsing out of curiosity
+/// (design.md, Pages for people); agents search instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum View {
+    /// The newest entries first.
+    Recent,
+    /// A new random draw on each load.
+    Random,
+}
+
+impl View {
+    pub const ALL: [View; 2] = [View::Recent, View::Random];
+
+    /// The view `?view=` names, if the server knows it.
+    pub fn parse(value: &str) -> Option<View> {
+        View::ALL.into_iter().find(|view| view.name() == value)
+    }
+
+    /// Its `?view=` value.
+    pub fn name(self) -> &'static str {
+        match self {
+            View::Recent => "recent",
+            View::Random => "random",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            View::Recent => "RECENT",
+            View::Random => "RANDOM",
+        }
+    }
+
+    /// The order its entries are fetched in.
+    pub fn order(self) -> Order {
+        match self {
+            View::Recent => Order::Newest,
+            View::Random => Order::Random,
+        }
+    }
+
+    /// Where its older entries go on, when more follow than it shows: Recent goes
+    /// on in `/search`'s second page, which lists the newest first, 20 a page.
+    pub fn older(self) -> Option<&'static str> {
+        match self {
+            View::Recent => Some("/search?page=2"),
+            View::Random => None,
+        }
+    }
+}
+
+/// What `drawer.html` shows on the home and search pages: the browsing tabs, the
+/// search box, and the cards.
 pub struct Drawer<'a> {
     pub tabs: Vec<Tab>,
-    /// The words searched for, kept in the box and the tabs.
+    /// The words searched for, kept in the box.
     pub query: &'a str,
-    /// The `outcome` filter, or empty for all.
-    pub outcome: &'a str,
     pub cards: Vec<CardView>,
+    /// A tab's page of older entries, when there are any. The search page has its
+    /// own links.
+    pub older: Option<String>,
 }
 
 impl<'a> Drawer<'a> {
-    /// The drawer for `entries`, found with `outcome` and `query`.
-    pub fn new(outcome: &'a str, query: &'a str, entries: &[PublicEntry]) -> Drawer<'a> {
+    /// The drawer for `entries`, under the tabs with `current` marked, or none on a
+    /// search, with the words searched for, `query`, in the box.
+    pub fn new(current: Option<View>, query: &'a str, entries: &[PublicEntry]) -> Drawer<'a> {
         let cards = entries
             .iter()
             .map(|entry| {
@@ -101,51 +154,30 @@ impl<'a> Drawer<'a> {
                 CardView::new(&entry.id, &card, &stamped)
             })
             .collect();
+        let tabs = View::ALL
+            .into_iter()
+            .map(|view| Tab {
+                label: view.label(),
+                href: format!("/?view={}", view.name()),
+                current: Some(view) == current,
+            })
+            .collect();
         Drawer {
-            tabs: outcome_tabs(outcome, query),
+            tabs,
             query,
-            outcome,
             cards,
+            older: None,
         }
     }
-}
-
-/// The outcome tabs, with `current` (an `outcome` value, or empty for all) marked,
-/// each keeping the words searched for, `query`.
-fn outcome_tabs(current: &str, query: &str) -> Vec<Tab> {
-    [
-        ("ALL", ""),
-        ("NULL", "no_effect"),
-        ("INCONCLUSIVE", "inconclusive"),
-        ("EFFECT", "effect"),
-        ("MIXED", "mixed"),
-    ]
-    .into_iter()
-    .map(|(label, value)| {
-        let mut href = url::form_urlencoded::Serializer::new(String::new());
-        for (name, value) in [("q", query), ("outcome", value)] {
-            if !value.is_empty() {
-                href.append_pair(name, value);
-            }
-        }
-        let href = href.finish();
-        Tab {
-            label,
-            href: if href.is_empty() {
-                "/search".to_string()
-            } else {
-                format!("/search?{href}")
-            },
-            current: value == current,
-        }
-    })
-    .collect()
 }
 
 #[derive(Template)]
 #[template(path = "home.html")]
 pub struct HomePage<'a> {
     pub public_url: &'a str,
+    /// The README above the line to paste; a page opened on a tab leaves it out,
+    /// for more room to browse.
+    pub readme: bool,
     pub drawer: Drawer<'a>,
 }
 

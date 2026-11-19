@@ -14,7 +14,7 @@ use analyzer::render_card;
 use axum::http::HeaderMap;
 
 use crate::auth::{TokenAccount, optional_token_account};
-use crate::entries::{self, Filters};
+use crate::entries::{self, Filters, Order};
 use crate::error::AppError;
 use crate::link_checks::{self, LinkFlags};
 use crate::markdown;
@@ -471,10 +471,16 @@ pub(crate) const MAX_LIMIT: i64 = 100;
 
 pub async fn search(
     State(state): State<AppState>,
-    Query(query): Query<SearchQuery>,
+    Query(mut query): Query<SearchQuery>,
     headers: HeaderMap,
     format: Format,
 ) -> Result<Response, AppError> {
+    let as_page = wants_page(&headers);
+    // The page's search is a plain box: it doesn't filter by outcome, which only
+    // agents' searches do (#107).
+    if as_page {
+        query.outcome = None;
+    }
     let filters = Filters {
         words: query.q.as_deref().and_then(entries::fts_query),
         outcome: known::<Outcome>("outcome", query.outcome.as_deref())?,
@@ -490,10 +496,10 @@ pub async fn search(
     let page_number = query.page.unwrap_or(1).max(1);
     let offset = (page_number - 1).saturating_mul(limit);
     // One more than a page, to know whether another page follows.
-    let found = entries::search(&state.pool, &filters, limit + 1, offset).await?;
-    let mut results = found.entries;
-    let more = i64::try_from(results.len()).is_ok_and(|fetched| fetched > limit);
-    results.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
+    let mut found =
+        entries::search(&state.pool, &filters, Order::Newest, limit + 1, offset).await?;
+    let more = found.cut_to(limit);
+    let results = found.entries;
     // Later pages continue the same search (#45).
     if page_number == 1
         && let Err(error) = search_log::record(
@@ -507,14 +513,13 @@ pub async fn search(
     {
         tracing::error!(%error, "logging a search failed");
     }
-    if wants_page(&headers) {
-        let outcome = query.outcome.as_deref().unwrap_or("");
+    if as_page {
         let words = query.q.as_deref().unwrap_or("");
         return Ok(page(
             StatusCode::OK,
             &SearchPage {
                 title: echoed(words),
-                drawer: Drawer::new(outcome, words, &results),
+                drawer: Drawer::new(None, words, &results),
                 previous: (page_number > 1).then(|| query.page_href(page_number - 1)),
                 next: more.then(|| query.page_href(page_number + 1)),
             },

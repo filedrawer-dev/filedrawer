@@ -533,22 +533,155 @@ async fn search_results_opened_in_a_browser_are_cards_with_the_query_kept() {
         page.body
     );
     assert!(page.body.contains(r#"value="steering""#), "{}", page.body);
-    // Each outcome tab keeps the words searched for.
-    for href in [
-        "/search?q=steering",
-        "/search?q=steering&#38;outcome=effect",
-    ] {
-        assert!(
-            page.body.contains(&format!("href=\"{href}\"")),
-            "{href}: {}",
-            page.body
-        );
-    }
     let text = app
         .send(fetched("/search?q=steering&outcome=no_effect"))
         .await;
     assert!(text.body.contains(&id));
     assert!(content_type(&text).starts_with("text/plain"));
+}
+
+/// The `href`s of the browsing tabs in `body`, each with whether it is marked
+/// current.
+fn tabs(body: &str) -> Vec<(String, bool)> {
+    let start = body.find(r#"<nav class="guides""#).expect("the tabs");
+    let end = start + body[start..].find("</nav>").expect("the tabs' end");
+    body[start..end]
+        .split("<a ")
+        .skip(1)
+        .map(|tag| {
+            let tag = &tag[..tag.find('>').expect("the tag's end")];
+            (
+                attribute(&format!(" {tag}"), "href").to_string(),
+                tag.contains("aria-current"),
+            )
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn the_tabs_browse_recent_and_random_entries_not_outcomes() {
+    let app = test_app().await;
+    let id = public_entry(&app).await;
+    let home = app.send(opened("/")).await;
+    assert_eq!(
+        tabs(&home.body),
+        [
+            ("/?view=recent".to_string(), true),
+            ("/?view=random".to_string(), false),
+        ],
+        "{}",
+        home.body
+    );
+    assert!(!home.body.contains("outcome="), "{}", home.body);
+    let random = app.send(opened("/?view=random")).await;
+    assert_eq!(random.status, StatusCode::OK);
+    assert!(random.body.contains(&format!("href=\"/e/{id}\"")));
+    assert_eq!(
+        tabs(&random.body),
+        [
+            ("/?view=recent".to_string(), false),
+            ("/?view=random".to_string(), true),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn random_shows_only_the_latest_version_of_an_entry() {
+    let app = test_app().await;
+    let first = public_entry(&app).await;
+    let reply = app
+        .post(
+            &format!("/e/{first}/versions"),
+            entry("A steering result, corrected", ""),
+        )
+        .await;
+    let second = common::id_in(&reply.body);
+    app.post(&format!("/e/{second}/publish"), "").await;
+    let random = app.send(opened("/?view=random")).await;
+    assert!(
+        random.body.contains(&format!("href=\"/e/{second}\"")),
+        "{}",
+        random.body
+    );
+    assert!(!random.body.contains(&first), "{}", random.body);
+}
+
+#[tokio::test]
+async fn an_empty_view_is_the_bare_home_page() {
+    let app = test_app().await;
+    let page = app.send(opened("/?view=")).await;
+    assert_eq!(page.status, StatusCode::OK);
+    assert!(page.body.contains(r#"class="ind""#), "{}", page.body);
+}
+
+#[tokio::test]
+async fn a_view_skips_the_readme_but_keeps_the_line_to_paste() {
+    let app = test_app().await;
+    public_entry(&app).await;
+    let bare = app.send(opened("/")).await;
+    assert!(bare.body.contains(r#"class="ind""#), "{}", bare.body);
+    for view in ["recent", "random"] {
+        let page = app.send(opened(&format!("/?view={view}"))).await;
+        assert!(
+            !page.body.contains(r#"class="ind""#),
+            "{view}: {}",
+            page.body
+        );
+        assert!(paste_line(&page.body).contains(&format!("{PUBLIC_URL}/skill.md")));
+    }
+}
+
+#[tokio::test]
+async fn recent_ends_with_a_link_to_the_older_entries_only_when_there_are_more() {
+    let app = test_app().await;
+    for n in 0..20 {
+        app.submit(&entry(&format!("Result {n}"), "")).await;
+    }
+    let full = app.send(opened("/?view=recent")).await;
+    assert!(!full.body.contains("page=2"), "{}", full.body);
+    // A second account, since a new account's day takes 20 entries.
+    let other = app.other_token().await;
+    let reply = app
+        .post_as("/entries", Some(&other), entry("Result 20", ""))
+        .await;
+    let id = common::id_in(&reply.body);
+    app.post_as(&format!("/e/{id}/publish"), Some(&other), "")
+        .await;
+    let more = app.send(opened("/")).await;
+    assert!(
+        more.body.contains(r#"href="/search?page=2""#),
+        "{}",
+        more.body
+    );
+}
+
+#[tokio::test]
+async fn an_unknown_view_is_refused_to_a_browser_but_an_agent_still_gets_the_text() {
+    let app = test_app().await;
+    let page = app.send(opened("/?view=popular")).await;
+    assert_eq!(page.status, StatusCode::BAD_REQUEST);
+    assert!(content_type(&page).starts_with("text/html"));
+    let text = app.send(fetched("/?view=popular")).await;
+    assert_eq!(text.status, StatusCode::OK);
+    assert!(text.body.contains("/skill.md"), "{}", text.body);
+}
+
+#[tokio::test]
+async fn the_search_page_is_a_plain_box_with_the_tabs_none_current() {
+    let app = test_app().await;
+    let id = public_entry(&app).await;
+    // The entry is a null: the page ignores `outcome`, the plain text keeps it.
+    let page = app.send(opened("/search?q=steering&outcome=effect")).await;
+    assert!(
+        page.body.contains(&format!("href=\"/e/{id}\"")),
+        "{}",
+        page.body
+    );
+    assert!(!page.body.contains(r#"name="outcome""#), "{}", page.body);
+    assert!(tabs(&page.body).iter().all(|(_, current)| !current));
+    assert!(!tabs(&page.body).is_empty());
+    let text = app.send(fetched("/search?q=steering&outcome=effect")).await;
+    assert!(!text.body.contains(&id), "{}", text.body);
 }
 
 #[tokio::test]

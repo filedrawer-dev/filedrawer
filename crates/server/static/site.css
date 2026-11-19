@@ -107,7 +107,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .paste code { font: inherit; font-weight: 700; }
 
-/* Divider-card tabs: the outcome filters, then the subject search. */
+/* Divider-card tabs: the ways to browse, then the search box. */
 .guides { display: flex; gap: .4rem; align-items: flex-end; flex-wrap: wrap; margin-bottom: -1px; }
 .guides a { background: var(--manila); padding: .3rem 1rem .25rem; border-radius: 8px 8px 0 0; text-decoration: none; color: var(--ink);
   font-weight: 700; letter-spacing: .08em; font-size: .85em; }

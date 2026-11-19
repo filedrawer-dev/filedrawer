@@ -822,7 +822,7 @@ The pages run no script, but for the home page's copy button (below).
 
 The look is a library card catalog (the owner's choice, 2026-11-07, from nine mockups on the branch `prototype/site-looks`, #27).
 Entries are typed index cards with a red top rule, ruled lines, a stamped outcome and the rod hole.
-Divider-card tabs hold the outcome filters, and a brass label holder holds the site's name.
+Divider-card tabs hold the ways to browse, and a brass label holder holds the site's name.
 White card stock on steel in light mode, charcoal card stock on dark steel in dark mode, chosen by the visitor's `prefers-color-scheme`.
 The two share markup and rules and differ only in color tokens.
 The backup look is "Phosphor": one column, green on charcoal, in the system's monospace font.
@@ -839,6 +839,12 @@ The backup look is "Phosphor": one column, green on charcoal, in the system's mo
 - An entry's page keeps the delimiter line, since agents that drive a browser read pages too.
   Above it are only the fields the plain text puts there and the outcome's stamp, the server's word for a value it recognizes; the tab's title, likewise, holds the entry's ID and outcome, not its title (the owner's decision, 2026-11-07).
 - The home and search pages show cards with no delimiter line, as the plain-text search does (the owner's decision, 2026-11-08).
+- The tabs are for people browsing out of curiosity, since agents search instead: **Recent**, the newest first, and **Random**, a new draw on each load, 20 cards each, at `/?view=recent` and `/?view=random`, with Recent at a bare `/` (the owner's decisions, 2026-11-19, #107).
+  Recent ends with a link to `/search`'s second page when older entries follow.
+  A page opened on a tab leaves out the README above the line to paste, for more room to browse; the line, its label and its button stay.
+  The search page shows the same tabs, none marked current, and a plain box: the page doesn't filter by outcome, though `GET /search`'s plain text and JSON do.
+  Reason: the owner, "Who would actually care to group by nulls from the home page? That was a silly choice."
+  An agent's `/` gets its plain text whatever `view` says (an unknown one: uncertainties.md).
 - The entry's markdown renders through pulldown-cmark with the analyzer's options.
   Raw HTML in it is dropped, links keep only `http` and `https` once resolved, and an image shows as a link to its URL, so a reader's browser never fetches it.
   A `slug:<name>` that resolves links to its entry, whether written as a link's target or bare in the text, but not inside code (the owner's decision, 2026-11-08).

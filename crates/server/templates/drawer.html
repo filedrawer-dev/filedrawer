@@ -1,10 +1,9 @@
-<nav class="guides" aria-label="Filter by outcome">
+<nav class="guides" aria-label="Browse">
 {%- for tab in drawer.tabs %}<a href="{{ tab.href }}"{% if tab.current %} aria-current="page"{% endif %}>{{ tab.label }}</a>{% endfor -%}
 </nav>
 <form class="guidebar" method="get" action="/search" role="search">
 <label for="q">Subject:</label>
 <input type="search" id="q" name="q" value="{{ drawer.query }}" placeholder="steering vector transfer">
-{%- if !drawer.outcome.is_empty() %}<input type="hidden" name="outcome" value="{{ drawer.outcome }}">{% endif %}
 <button type="submit">Look up</button>
 </form>
 {% if drawer.cards.is_empty() %}<p class="empty">No entries match.</p>{% else %}
@@ -19,3 +18,9 @@
 {%- endfor %}
 </div>
 {% endif %}
+{%- if let Some(href) = drawer.older %}
+<nav class="pages" aria-label="Pages">
+<span></span>
+<span><a href="{{ href }}">Older →</a></span>
+</nav>
+{%- endif %}

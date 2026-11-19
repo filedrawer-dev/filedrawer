@@ -35,7 +35,7 @@ def outside_heavy(monkeypatch):
 # What the dev server's own home page holds below the README card: the drawer, which
 # the preview keeps, between markup it replaces.
 DRAWER = (
-    '<nav class="guides" aria-label="Filter by outcome"><a href="/search">ALL</a></nav>\n'
+    '<nav class="guides" aria-label="Browse"><a href="/?view=recent">RECENT</a></nav>\n'
     '<div class="drawer"><article class="card">a seeded entry</article></div>\n'
 )
 SERVER_HOME = (
@@ -73,7 +73,9 @@ class FakeHandler(http.server.BaseHTTPRequestHandler):
         self.server.requests.append((self.command, self.path, body))
         browser = self.headers.get("Sec-Fetch-Dest") == "document"
         extra = []
-        if self.path == "/" and browser:
+        if self.path == "/?view=popular" and browser:
+            status, kind, text = 400, "text/html", "no drawer here"
+        elif self.path.split("?", 1)[0] == "/" and browser:
             status, kind, text = 200, "text/html", SERVER_HOME
         elif self.path == "/missing":
             status, kind, text = 404, "text/plain", "no such page"
@@ -176,6 +178,24 @@ def test_the_home_page_renders_from_the_checkout_with_the_servers_drawer(preview
     assert "the binary's README" not in page, page
     # It reloads itself when a file changes.
     assert "/__live/version" in page, page
+
+
+def test_a_tab_leaves_out_the_readme_as_the_server_does(preview):
+    _, _, bare = preview.get("/")
+    _, _, tab = preview.get("/?view=random")
+    assert 'class="ind"' in bare, bare
+    assert 'class="ind"' not in tab, tab
+    assert 'class="paste-label"' in tab, tab
+    assert "a seeded entry" in tab, tab
+    assert preview.server.requests[-1][1] == "/?view=random"
+    _, _, empty = preview.get("/?view=")
+    assert 'class="ind"' in empty, empty
+
+
+def test_a_server_page_with_no_drawer_passes_through(preview):
+    status, _, page = preview.get("/?view=popular")
+    assert status == 400, page
+    assert page == "no drawer here", page
 
 
 def test_an_edit_shows_on_the_next_request(preview):

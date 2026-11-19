@@ -535,12 +535,6 @@ The owner set 10 an hour and 50 a day per account (#60); an agent chose the rest
 
 ### Pages for people
 
-#### A MIXED tab on the outcome divider cards
-
-- Options: the mockup's tabs (ALL, NULL, INCONCLUSIVE, EFFECT), or those and MIXED.
-- Chosen: MIXED as well, since `mixed` is one of `outcome`'s values and a filter that can't reach it hides those entries from people browsing by outcome.
-- Against: the owner chose the look with four tabs, and mixed entries may stay rare enough that ALL covers them.
-
 #### The daily email's details
 
 The owner settled the email's sections and the rules in design.md's Admin section (#44); an agent chose these, after its brief review.
@@ -577,6 +571,13 @@ The owner settled the email's sections and the rules in design.md's Admin sectio
 - Chosen: the server stores an entry's first 50 unknown field names, each cut to 100 characters, and the reply is as before, a warning for every unknown field.
   The entry's text keeps every field, so the cap changes nothing its author can see, and a misspelled field past the 50th still gets its warning.
 - Against: a field past an entry's 50th never reaches the report, and two long names that share their first 100 characters count as one.
+
+#### An unknown `view` on the home page
+
+- Options: refuse it with a 400 page, as `/search` refuses an unknown filter value; or show Recent, as a bare `/` does.
+- Chosen: a 400, but only to a browser; an agent's `/` gets its plain text whatever `view` says (#107).
+  A misspelled tab link then shows up rather than quietly showing another tab.
+- Against: a person who edits the address by hand gets an error page where Recent would do.
 
 ### Storage
 
