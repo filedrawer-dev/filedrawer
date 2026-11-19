@@ -34,7 +34,7 @@ PING = "https://hc-ping.com/aaaaaaaa-0000-4000-8000-000000000003"
 NOW = 1_800_000_000
 DAY = 86400
 OLD, NEW = "2.11.9", "2.12.0"
-STAMP = "var/lib/apt/periodic/update-success-stamp"
+STAMP = "var/lib/apt/periodic/update-stamp"
 
 
 def executable(path: Path, text: str) -> Path:
@@ -522,6 +522,14 @@ def test_apt_lists_not_updated_for_three_days_are_stuck(server):
     result = server.run("--daily")
     assert result.returncode == 1
     assert server.pings()[-1][0] == "/fail"
+
+
+def test_apt_lists_never_updated_are_stuck(server):
+    (server.root / STAMP).unlink()
+    result = server.run("--daily")
+    assert result.returncode == 1
+    suffix, body = server.pings()[-1]
+    assert suffix == "/fail" and "never succeeded" in body
 
 
 def test_no_ping_url_mails_weekly(server):
