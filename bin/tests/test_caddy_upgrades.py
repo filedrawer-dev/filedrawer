@@ -622,6 +622,30 @@ def test_the_installer_without_settings_keeps_the_ones_there(install):
     assert PING in env.read_text()
 
 
+def test_the_installer_keeps_the_stored_ping_url_with_a_new_address(install):
+    install.run(f"ops@filedrawer.dev\t{PING}")
+    result = install.run("alerts@example.org\t")
+    assert result.returncode == 0, result.stderr
+    env = install.root / "etc/filedrawer/caddy-upgrades.env"
+    assert env.read_text() == f"ALERT_TO=alerts@example.org\nPING={PING}\n"
+    assert PING not in result.stdout + result.stderr
+
+
+def test_the_installer_keeps_the_stored_address_sent_empty(install):
+    install.run(f"alerts@example.org\t{PING}")
+    result = install.run("\t")
+    assert result.returncode == 0, result.stderr
+    env = install.root / "etc/filedrawer/caddy-upgrades.env"
+    assert env.read_text() == f"ALERT_TO=alerts@example.org\nPING={PING}\n"
+
+
+def test_the_installer_refuses_an_empty_ping_url_with_none_stored(install):
+    result = install.run("ops@filedrawer.dev\t")
+    assert result.returncode == 1
+    assert "--ask-all caddy-upgrades" in result.stderr
+    assert not (install.root / "etc/filedrawer/caddy-upgrades.env").exists()
+
+
 @pytest.mark.parametrize(
     "settings",
     [

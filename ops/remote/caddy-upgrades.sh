@@ -10,7 +10,8 @@
 #   /etc/filedrawer/caddy-upgrades.env, from "<ALERT_TO><TAB><PING>" as the first
 #     line of stdin, into $SETTINGS: the address the guard mails and its
 #     healthchecks.io ping URL, a secret, so neither sits in a command line. An empty
-#     line keeps the file there, as `ops/provision-vps --only-new` sends.
+#     address or ping URL keeps the one stored (#112), and an empty line keeps the
+#     whole file.
 # Then starts the guard once, which records the running Caddy as good if it passes.
 # Leaves a hold alone: a hold the guard set waits for the owner to clear it.
 # Runs as root on Debian; safe to rerun.
@@ -29,13 +30,15 @@ if [[ -n "$SETTINGS" ]]; then
   alert_to="${SETTINGS%%$'\t'*}"
   ping="${SETTINGS#*$'\t'}"
   unset SETTINGS
+  [[ -n "$ping" ]] || ping=$(sed -n 's/^PING=//p' "$env_file" 2>/dev/null || true)
+  [[ -n "$alert_to" ]] || alert_to=$(sed -n 's/^ALERT_TO=//p' "$env_file" 2>/dev/null || true)
   if [[ ! "$alert_to" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]+$ ]]; then
     echo "the address isn't one address, such as ops@filedrawer.dev" >&2
     exit 1
   fi
   # A secret, so a refusal never repeats it.
   if [[ ! "$ping" =~ ^https://hc-ping\.com/[A-Za-z0-9_./-]+$ ]]; then
-    echo "the ping isn't a healthchecks.io ping URL, such as https://hc-ping.com/<uuid>" >&2
+    echo "the ping isn't a healthchecks.io ping URL, such as https://hc-ping.com/<uuid>; to give one, run ops/provision-vps --ask-all caddy-upgrades" >&2
     exit 1
   fi
   mkdir -p "$root/etc/filedrawer"
@@ -47,7 +50,7 @@ if [[ -n "$SETTINGS" ]]; then
   chmod 0600 "$env_file"
   unset ping
 elif [[ ! -f "$env_file" ]]; then
-  echo "no settings given and none on the server; run ops/provision-vps caddy-upgrades without --only-new" >&2
+  echo "no settings given and none on the server; run ops/provision-vps --ask-all caddy-upgrades" >&2
   exit 1
 fi
 

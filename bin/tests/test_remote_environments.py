@@ -399,7 +399,7 @@ def test_the_github_token_restarts_every_unit_set_up_and_only_those(box):
     assert "filedrawer-production" not in log
     (units / "filedrawer-production.service").write_text("")
     box.log.write_text("")
-    assert run(box, GITHUB, TOKEN="github_pat_x").returncode == 0
+    assert run(box, GITHUB, TOKEN="github_pat_y").returncode == 0
     log = box.log.read_text()
     assert "try-restart filedrawer-staging.service" in log
     assert "try-restart filedrawer-production.service" in log
@@ -438,7 +438,6 @@ def test_ping_writes_the_daily_emails_url_for_the_server_and_the_backups_for_its
         f"{DAILY}\thttps://hc-ping.com/",
         f"{DAILY}\thttps://hc-ping.com.evil.dev/x",
         f"{DAILY}\t{BACKUP}'",
-        "\t",
     ],
 )
 def test_ping_refuses_what_isnt_a_healthchecks_ping_url_and_writes_nothing(box, pings):
@@ -735,3 +734,185 @@ def test_a_real_caddy_answers_503_while_production_is_down_and_redirects_www(
     finally:
         server.terminate()
         server.wait()
+
+
+# An empty secret keeps the one stored (#112): the wizard sends one when the owner
+# keeps the server's copy, and still runs the script so its new logic reaches the
+# server.
+
+
+def stored(box, name) -> str:
+    return (box.root / "etc/filedrawer" / name).read_text()
+
+
+def mail(box, password, user="noreply@filedrawer.dev", environment="staging"):
+    return run(
+        box,
+        MAIL,
+        ENVIRONMENT=environment,
+        SMTP_USER=user,
+        MAIL_FROM="File Drawer <noreply@filedrawer.dev>",
+        SMTP_PASSWORD=password,
+    )
+
+
+def test_screening_keeps_the_stored_key_and_takes_the_new_cap(box):
+    run(box, SCREENING, ENVIRONMENT="staging", API_KEY=API_KEY, DAILY_USD="1")
+    result = run(box, SCREENING, ENVIRONMENT="staging", API_KEY="", DAILY_USD="2")
+    assert result.returncode == 0, result.stderr
+    kept = settings(box, "staging-screening.env")
+    assert kept["FILEDRAWER_ANTHROPIC_API_KEY"] == f"'{API_KEY}'"
+    assert kept["FILEDRAWER_SCREENING_DAILY_USD"] == "2"
+    assert API_KEY not in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("before", [None, "FILEDRAWER_ANTHROPIC_API_KEY='bogus'\n"])
+@pytest.mark.parametrize(
+    ("environment", "stage"),
+    [
+        ("staging", "--ask-all screening"),
+        ("production", "--ask-all production screening"),
+    ],
+)
+def test_screening_refuses_an_empty_key_with_none_it_can_keep(
+    box, before, environment, stage
+):
+    path = box.root / f"etc/filedrawer/{environment}-screening.env"
+    if before is not None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(before)
+    result = run(box, SCREENING, ENVIRONMENT=environment, API_KEY="", DAILY_USD="1")
+    assert result.returncode == 1
+    assert stage in result.stderr
+    assert "bogus" not in result.stdout + result.stderr
+    assert before is None or path.read_text() == before
+
+
+def test_mail_keeps_the_stored_password_for_the_same_user(box):
+    mail(box, 'pa"ss\\word')
+    result = mail(box, "")
+    assert result.returncode == 0, result.stderr
+    assert (
+        settings(box, "staging-mail.env")["FILEDRAWER_SMTP_PASSWORD"]
+        == "'pa\"ss\\word'"
+    )
+    assert 'pa"ss' not in result.stdout + result.stderr
+
+
+def test_mail_wont_keep_one_users_password_for_another(box):
+    mail(box, "pw")
+    before = stored(box, "staging-mail.env")
+    result = mail(box, "", user="other@filedrawer.dev")
+    assert result.returncode == 1
+    assert "--ask-all mail" in result.stderr
+    assert stored(box, "staging-mail.env") == before
+
+
+def test_mail_names_productions_stage_when_it_has_nothing_to_keep(box):
+    result = mail(box, "", environment="production")
+    assert result.returncode == 1
+    assert "--ask-all production mail" in result.stderr
+    assert not (box.root / "etc/filedrawer/production-mail.env").exists()
+
+
+def test_the_github_token_keeps_the_stored_one(box):
+    run(box, GITHUB, TOKEN="github_pat_kept")
+    result = run(box, GITHUB, TOKEN="")
+    assert result.returncode == 0, result.stderr
+    assert stored(box, "github.env") == "FILEDRAWER_GITHUB_TOKEN='github_pat_kept'\n"
+    assert "github_pat_kept" not in result.stdout + result.stderr
+
+
+def test_the_github_token_refuses_an_empty_one_with_none_stored(box):
+    result = run(box, GITHUB, TOKEN="")
+    assert result.returncode == 1
+    assert "--ask-all github" in result.stderr
+    assert not (box.root / "etc/filedrawer/github.env").exists()
+
+
+NEW_BACKUP = "https://hc-ping.com/1f6a0b2c-0000-4000-8000-000000000009"
+
+
+@pytest.mark.parametrize(
+    ("pings", "daily", "backup"),
+    [
+        ("\t", DAILY, BACKUP),
+        (f"\t{NEW_BACKUP}", DAILY, NEW_BACKUP),
+        ("", DAILY, BACKUP),
+    ],
+)
+def test_ping_keeps_each_stored_url_sent_empty(box, pings, daily, backup):
+    run(box, PING, PINGS=f"{DAILY}\t{BACKUP}")
+    result = run(box, PING, PINGS=pings)
+    assert result.returncode == 0, result.stderr
+    assert settings(box, "production-ping.env") == {
+        "FILEDRAWER_DAILY_EMAIL_PING": daily
+    }
+    assert settings(box, "production-backup.env") == {"BACKUP_PING": backup}
+    assert DAILY not in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("pings", [f"{DAILY}\t", f"\t{BACKUP}", "\t", ""])
+def test_ping_refuses_to_keep_a_url_it_doesnt_have(box, pings):
+    result = run(box, PING, PINGS=pings)
+    assert result.returncode == 1
+    assert "--ask-all production pings" in result.stderr
+    assert not (box.root / "etc/filedrawer/production-ping.env").exists()
+
+
+@pytest.mark.parametrize(
+    ("script", "env"),
+    [
+        (SCREENING, {"ENVIRONMENT": "production", "API_KEY": "", "DAILY_USD": "1"}),
+        (
+            MAIL,
+            {
+                "ENVIRONMENT": "production",
+                "SMTP_USER": "u@filedrawer.dev",
+                "MAIL_FROM": "f",
+                "SMTP_PASSWORD": "",
+            },
+        ),
+        (GITHUB, {"TOKEN": ""}),
+        (PING, {"PINGS": "\t"}),
+    ],
+)
+def test_a_rerun_that_changes_nothing_restarts_nothing(box, script, env):
+    """A default wizard rerun sends each kept secret empty; production mustn't
+    restart for a file that came out the same."""
+    units = box.root / "etc/systemd/system"
+    units.mkdir(parents=True)
+    (units / "filedrawer-production.service").write_text("")
+    first = {
+        **env,
+        "API_KEY": API_KEY,
+        "SMTP_PASSWORD": "pw",
+        "TOKEN": "github_pat_x",
+        "PINGS": f"{DAILY}\t{BACKUP}",
+    }
+    assert run(box, script, **{k: first[k] for k in env}).returncode == 0
+    box.log.write_text("")
+    result = run(box, script, **env)
+    assert result.returncode == 0, result.stderr
+    assert "restart" not in box.log.read_text()
+    assert "unchanged" in result.stdout
+
+
+def test_screening_keeps_the_stored_cap_sent_empty(box):
+    """A rerun whose ops/.vps.env lacks the cap mustn't reset the server's."""
+    run(box, SCREENING, ENVIRONMENT="staging", API_KEY=API_KEY, DAILY_USD="5")
+    result = run(box, SCREENING, ENVIRONMENT="staging", API_KEY="", DAILY_USD="")
+    assert result.returncode == 0, result.stderr
+    assert (
+        settings(box, "staging-screening.env")["FILEDRAWER_SCREENING_DAILY_USD"] == "5"
+    )
+
+
+def test_mail_keeps_the_stored_user_and_from_line_sent_empty(box):
+    mail(box, "pw")
+    before = stored(box, "staging-mail.env")
+    result = run(
+        box, MAIL, ENVIRONMENT="staging", SMTP_USER="", MAIL_FROM="", SMTP_PASSWORD=""
+    )
+    assert result.returncode == 0, result.stderr
+    assert stored(box, "staging-mail.env") == before
