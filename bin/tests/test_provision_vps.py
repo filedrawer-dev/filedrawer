@@ -142,7 +142,12 @@ def stage_calls(smoke) -> list[tuple[int, str]]:
     """The ssh calls of each run before the outbound probe that ends it, each with
     its number for sent(); every run must end with that probe."""
     calls = [c for c in smoke.log.read_text().splitlines() if c.startswith("ssh ")]
-    numbered = list(enumerate(calls, start=1))
+    # The closing check of the server's secrets follows each run's probe.
+    numbered = [
+        (n, call)
+        for n, call in enumerate(calls, start=1)
+        if smoke.host.sent(n) != script("check-secrets.sh")
+    ]
     runs, run = [], []
     for n, call in numbered:
         run.append((n, call))
@@ -387,7 +392,9 @@ def test_admin_before_the_first_deploy_asks_nothing_and_says_to_rerun(stage):
     assert result.returncode == 0, result.stdout + result.stderr
     assert "ops/provision-vps admin" in result.stdout
     assert "account ID" not in result.stdout
-    assert stage.log.read_text().count("ssh ") == 1
+    # The deploy check, then the closing check of the server's secrets.
+    assert stage.log.read_text().count("ssh ") == 2
+    assert stage.scripts() == [script("check-secrets.sh")]
 
 
 # The whole wizard, rerun on a server it has set up
@@ -1058,9 +1065,11 @@ def test_a_staging_run_ends_probing_stagings_way_out_with_the_current_install(re
     result = rerun.run()
     assert result.returncode == 0, result.stdout + result.stderr
     calls = rerun.host.calls()
-    assert calls[-1] == PROBE_STAGING
-    assert calls[-2] == INSTALL_INSTALL
-    assert rerun.sent()[-2] == script("filedrawer-install")
+    # The probe, then the closing check of the server's secrets.
+    assert calls[-2] == PROBE_STAGING
+    assert calls[-3] == INSTALL_INSTALL
+    assert rerun.sent()[-3] == script("filedrawer-install")
+    assert rerun.sent()[-1] == script("check-secrets.sh")
     assert "staging's way out: checked" in result.stdout
 
 
@@ -1318,3 +1327,39 @@ def test_pings_ask_only_for_the_url_the_server_lacks(production):
     assert result.returncode == 0, result.stdout + result.stderr
     assert f"\t{BACKUP_PING}\n" + script("ping.sh") in production.sent()
     assert "daily email's ping URL:" not in result.stdout
+
+
+# Each run ends checking the secrets the server holds (#112)
+
+CHECK_SECRETS = "# Checks each secret the server holds"
+
+
+def test_each_run_ends_with_the_servers_secrets_checked(held):
+    held.host.answer(
+        "bash -s",
+        stdout="ok: the Caddy guard's ping URL: healthchecks.io knows it\n",
+        stdin=CHECK_SECRETS,
+    )
+    result = held.run("caddy-upgrades", "")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert script("check-secrets.sh") in held.scripts()
+    after = result.stdout.split("Setup complete", 1)[1]
+    assert "ok: the Caddy guard's ping URL: healthchecks.io knows it" in after
+
+
+def test_a_check_that_stops_is_left_to_do(held):
+    held.host.answer("bash -s", status=255, stdin=CHECK_SECRETS)
+    result = held.run("caddy-upgrades", "")
+    assert result.returncode == 0, result.stdout + result.stderr
+    todo = result.stdout.split("still to do by hand:", 1)[1]
+    assert "the server's secrets: their check stopped (exit 255)" in todo
+
+
+@pytest.mark.parametrize("word", ["failed", "unchecked"])
+def test_a_secret_that_fails_its_check_is_left_to_do(held, word):
+    failed = f"{word}: the GitHub token: GitHub refused it"
+    held.host.answer("bash -s", stdout=failed + "\n", status=1, stdin=CHECK_SECRETS)
+    result = held.run("caddy-upgrades", "")
+    assert result.returncode == 0, result.stdout + result.stderr
+    todo = result.stdout.split("still to do by hand:", 1)[1]
+    assert failed in todo

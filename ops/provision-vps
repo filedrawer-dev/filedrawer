@@ -594,17 +594,47 @@ remote_has() {
   exit 1
 }
 
-# What a rerun kept, with how to change each, listed after finish's summary, since
-# each stage clears the screen.
+# What a rerun kept, with how to change each, and what check_secrets found, listed
+# after finish's summary, since each stage clears the screen.
 KEPT=()
+CHECKED=()
+
+# check_secrets: checks each secret the server holds with the service that takes it
+# (ops/remote/check-secrets.sh, #112), so a kept secret still shows whether it
+# works. What failed, expires soon or couldn't be checked goes in the list of what's
+# left to do; it never stops the wizard.
+check_secrets() {
+  local output line status=0
+  [[ -n "${VPS_HOST:-}" ]] || return 0
+  step "Checking the secrets the server holds with the services that take them..."
+  output=$(remote check-secrets.sh 2>&1) || status=$?
+  while IFS= read -r line; do
+    case $line in
+      "") ;;
+      ok:* | accepted:*) CHECKED+=("$line") ;;
+      *) SKIPPED+=("$line") ;;
+    esac
+  done <<< "$output"
+  if (( status > 1 )); then
+    SKIPPED+=("the server's secrets: their check stopped (exit $status); rerun to check them")
+  fi
+}
+
 eval "library_$(declare -f finish)"
 finish() {
+  check_secrets
   library_finish
-  (( ${#KEPT[@]} )) || return 0
-  note "kept, as the server or GitHub holds them:"
-  local kept
-  for kept in "${KEPT[@]}"; do note "  - $kept"; done
-  printf '\n'
+  local line
+  if (( ${#KEPT[@]} )); then
+    note "kept, as the server or GitHub holds them:"
+    for line in "${KEPT[@]}"; do note "  - $line"; done
+    printf '\n'
+  fi
+  if (( ${#CHECKED[@]} )); then
+    note "the server's secrets, checked:"
+    for line in "${CHECKED[@]}"; do note "  - $line"; done
+    printf '\n'
+  fi
 }
 
 # server_keeps KEY KEEP: true in a rerun of a stage that keeps the server's settings
