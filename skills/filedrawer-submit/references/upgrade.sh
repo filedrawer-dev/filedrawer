@@ -51,11 +51,15 @@ main() {
   esac
 
   # Only the installer's copy is upgraded: the swap below assumes its folders.
+  # The installer makes a folder there, never a link: a link, such as one to a
+  # repo of the human's own skills, leads to a copy kept elsewhere.
   self=$(cd "$(dirname "$0")/.." && pwd -P) || fail "couldn't find the folder this script is in"
   placed=""
-  if [ -d "$at" ]; then
+  if [ -d "$at" ] && [ ! -L "$at" ]; then
+    # A copy at Claude Code's path is the installer's only when it isn't a link: the
+    # installer copies there when it can't link, and links only to $at.
     for known in "$at" "$HOME/.claude/skills/$skill"; do
-      if [ -d "$known" ] && [ "$(cd "$known" && pwd -P)" = "$self" ]; then
+      if [ -d "$known" ] && [ ! -L "$known" ] && [ "$(cd "$known" && pwd -P)" = "$self" ]; then
         placed=yes
       fi
     done

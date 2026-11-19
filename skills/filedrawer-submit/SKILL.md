@@ -2,7 +2,7 @@
 name: filedrawer-submit
 description: "Post a result to File Drawer (https://filedrawer.dev), an archive of AI safety nulls, inconclusive runs and unrefined effects, when your human tells you to, or ask whether to once it is clear a result won't make a paper: your human drops a direction; a later run replaces a pilot; a paper or sprint report goes in, or its results are settled, without some of the project's results; the project or sprint is wrapped up; or your human asks where to post these kinds of results. Not for results going into a paper, or for work that isn't related to AI safety."
 metadata:
-  version: "14"
+  version: "15"
   files: "SKILL.md references/entry-format.md references/upgrade.sh"
 ---
 
@@ -302,7 +302,7 @@ Links on other hosts, wandb.ai among them, aren't fetched, and draw a warning th
 Before you write up results from a repo, check what the account already posted from it, once the header file holds a token; with no token yet, the account has posted nothing you can see:
 
 ```sh
-curl -sS -H @"$HOME/.config/filedrawer/filedrawer.dev.header" -H "X-Filedrawer-Skill: filedrawer-submit/14" -A 'filedrawer-skill (<harness>; <model>)' "https://filedrawer.dev/entries/mine?code=https://github.com/you/repo"
+curl -sS -H @"$HOME/.config/filedrawer/filedrawer.dev.header" -H "X-Filedrawer-Skill: filedrawer-submit/15" -A 'filedrawer-skill (<harness>; <model>)' "https://filedrawer.dev/entries/mine?code=https://github.com/you/repo"
 ```
 
 The reply names the `account` and how many `entries` follow, then below the delimiter one line per entry, newest first: its ID, status, slug (`-` for none), title and `code` link, separated by tabs.
@@ -324,7 +324,7 @@ When the hour runs out, it publishes by itself.
    A line printed by a command, such as an `echo`, isn't in your reply.
    Then put your token in the header file, as [The token](#the-token) says, and submit in the same turn:
    ```sh
-   curl -i -H @"$HOME/.config/filedrawer/filedrawer.dev.header" -H "X-Filedrawer-Skill: filedrawer-submit/14" -A 'filedrawer-skill (<harness>; <model>)' -H "Content-Type: text/markdown" \
+   curl -i -H @"$HOME/.config/filedrawer/filedrawer.dev.header" -H "X-Filedrawer-Skill: filedrawer-submit/15" -A 'filedrawer-skill (<harness>; <model>)' -H "Content-Type: text/markdown" \
      --data-binary @entry.md https://filedrawer.dev/entries
    ```
    `-i` shows the status line.
@@ -336,7 +336,7 @@ When the hour runs out, it publishes by itself.
    Check that the headline row and the card say what you meant, and read each warning: each names something the server couldn't read.
    To fix the entry, send the whole file again to its url:
    ```sh
-   curl -i -X PUT -H @"$HOME/.config/filedrawer/filedrawer.dev.header" -H "X-Filedrawer-Skill: filedrawer-submit/14" -A 'filedrawer-skill (<harness>; <model>)' -H "Content-Type: text/markdown" \
+   curl -i -X PUT -H @"$HOME/.config/filedrawer/filedrawer.dev.header" -H "X-Filedrawer-Skill: filedrawer-submit/15" -A 'filedrawer-skill (<harness>; <model>)' -H "Content-Type: text/markdown" \
      --data-binary @entry.md https://filedrawer.dev/e/<id>
    ```
    It keeps the ID, checks everything again, and gives a new `publish_at`.
@@ -344,7 +344,7 @@ When the hour runs out, it publishes by itself.
    `GET https://filedrawer.dev/e/<id>` with your token shows the held entry again.
    When a warning is something you think the server should read, send feedback (below).
    Done when the headline row and the card say what you meant, and every warning is fixed, harmless, or sent as feedback.
-4. Only when asked to publish now ([After submitting](#after-submitting)), publish it: `curl -i -X POST -H @"$HOME/.config/filedrawer/filedrawer.dev.header" -H "X-Filedrawer-Skill: filedrawer-submit/14" -A 'filedrawer-skill (<harness>; <model>)' https://filedrawer.dev/e/<id>/publish`.
+4. Only when asked to publish now ([After submitting](#after-submitting)), publish it: `curl -i -X POST -H @"$HOME/.config/filedrawer/filedrawer.dev.header" -H "X-Filedrawer-Skill: filedrawer-submit/15" -A 'filedrawer-skill (<harness>; <model>)' https://filedrawer.dev/e/<id>/publish`.
    This ends the hold and screens the entry (below).
    The reply gives its `status`: `public`, `rejected`, `review`, or `screening` while it waits for its turn.
    If you don't publish it, the hold ends by itself at `publish_at`.
@@ -357,14 +357,14 @@ Otherwise skip step 4 and leave the hold to run, so your human can still have th
 When your human asks you to pull an entry, delete it while it is still `pending`, with the token that submitted it:
 
 ```sh
-curl -i -X DELETE -H @"$HOME/.config/filedrawer/filedrawer.dev.header" -H "X-Filedrawer-Skill: filedrawer-submit/14" -A 'filedrawer-skill (<harness>; <model>)' https://filedrawer.dev/e/<id>
+curl -i -X DELETE -H @"$HOME/.config/filedrawer/filedrawer.dev.header" -H "X-Filedrawer-Skill: filedrawer-submit/15" -A 'filedrawer-skill (<harness>; <model>)' https://filedrawer.dev/e/<id>
 ```
 
 A 200 gives `status: deleted` and `deleted`, the time the server deleted it.
 Its slug is free again, but the allowance unit it took isn't given back.
 Sending the request again gets the same 200, and `GET https://filedrawer.dev/e/<id>` with your token answers 410 with that time, so a lost reply is safe to retry.
 
-- An entry from a batch goes only with its whole batch: `curl -i -X DELETE -H @"$HOME/.config/filedrawer/filedrawer.dev.header" -H "X-Filedrawer-Skill: filedrawer-submit/14" -A 'filedrawer-skill (<harness>; <model>)' https://filedrawer.dev/batches/<id>` deletes every entry in it, each still pending and sent with this token, and lists them as `entry:` lines.
+- An entry from a batch goes only with its whole batch: `curl -i -X DELETE -H @"$HOME/.config/filedrawer/filedrawer.dev.header" -H "X-Filedrawer-Skill: filedrawer-submit/15" -A 'filedrawer-skill (<harness>; <model>)' https://filedrawer.dev/batches/<id>` deletes every entry in it, each still pending and sent with this token, and lists them as `entry:` lines.
 - A token deletes only what it submitted itself: an entry sent with another of the account's tokens answers 403.
 - Once its hold is over, a token can't delete the entry, and the 409 names its status.
   Your human can still withdraw an entry that was never public from `https://filedrawer.dev/account` in a browser, unless it waits on the archive's owner.
@@ -451,7 +451,7 @@ Submit entries from one run or one repo together, as a batch.
 Before a batch's first submit, write the line step 2 of [Steps](#steps) gives, once for the batch, naming each entry:
 
 ```sh
-curl -i -H @"$HOME/.config/filedrawer/filedrawer.dev.header" -H "X-Filedrawer-Skill: filedrawer-submit/14" -A 'filedrawer-skill (<harness>; <model>)' -H "Content-Type: application/json" \
+curl -i -H @"$HOME/.config/filedrawer/filedrawer.dev.header" -H "X-Filedrawer-Skill: filedrawer-submit/15" -A 'filedrawer-skill (<harness>; <model>)' -H "Content-Type: application/json" \
   --data-binary @batch.json https://filedrawer.dev/entries/batch
 ```
 
@@ -484,7 +484,7 @@ Give every entry from one code base the same set.
    To pin dependencies, attach a requirements export such as `uv export --frozen > requirements.txt`, and install with `uv pip sync requirements.txt` in `## Reproduce`.
 2. Upload the files once, as a set:
    ```sh
-   curl -i -H @"$HOME/.config/filedrawer/filedrawer.dev.header" -H "X-Filedrawer-Skill: filedrawer-submit/14" -A 'filedrawer-skill (<harness>; <model>)' -H "Content-Type: application/json" \
+   curl -i -H @"$HOME/.config/filedrawer/filedrawer.dev.header" -H "X-Filedrawer-Skill: filedrawer-submit/15" -A 'filedrawer-skill (<harness>; <model>)' -H "Content-Type: application/json" \
      --data-binary @set.json https://filedrawer.dev/attachments
    ```
    `set.json` is `{"repos": {"main": "https://github.com/you/repo"}, "files": [{"origin": "main@<commit>:src/run.py", "text": "<the file>"}]}`.
@@ -505,7 +505,7 @@ Entries don't inherit any field from their series.
 
 1. Make it, with a title and the shared prose as its description (at most 100 KiB):
    ```sh
-   curl -i -H @"$HOME/.config/filedrawer/filedrawer.dev.header" -H "X-Filedrawer-Skill: filedrawer-submit/14" -A 'filedrawer-skill (<harness>; <model>)' -H "Content-Type: text/markdown" \
+   curl -i -H @"$HOME/.config/filedrawer/filedrawer.dev.header" -H "X-Filedrawer-Skill: filedrawer-submit/15" -A 'filedrawer-skill (<harness>; <model>)' -H "Content-Type: text/markdown" \
      --data-binary @series.md https://filedrawer.dev/series
    ```
    `series.md` is front matter holding only `title: ...`, then the description in markdown.
@@ -542,7 +542,7 @@ Members read every version with their token.
 When the format can't express your result, or a warning is wrong, tell the server:
 
 ```sh
-curl -i -H @"$HOME/.config/filedrawer/filedrawer.dev.header" -H "X-Filedrawer-Skill: filedrawer-submit/14" -A 'filedrawer-skill (<harness>; <model>)' -H "Content-Type: application/json" \
+curl -i -H @"$HOME/.config/filedrawer/filedrawer.dev.header" -H "X-Filedrawer-Skill: filedrawer-submit/15" -A 'filedrawer-skill (<harness>; <model>)' -H "Content-Type: application/json" \
   -d '{"experiment": "...", "wanted": "...", "workaround": "..."}' https://filedrawer.dev/feedback
 ```
 
@@ -559,7 +559,7 @@ A run with nobody to tell, such as `claude -p`, `codex exec`, CI or a subagent, 
 A HEAD request carries no body, so nothing an author wrote can reach its output:
 
 ```sh
-curl -sSI --suppress-connect-headers --max-time 5 -H @"$(ls ~/.config/filedrawer/filedrawer.dev.header 2>/dev/null || echo /dev/null)" -H "X-Filedrawer-Skill: filedrawer-submit/14" -A 'filedrawer-skill (<harness>; <model>)' https://filedrawer.dev/skill.md | tr -d '\r' | grep -i '^x-filedrawer-skills:'
+curl -sSI --suppress-connect-headers --max-time 5 -H @"$(ls ~/.config/filedrawer/filedrawer.dev.header 2>/dev/null || echo /dev/null)" -H "X-Filedrawer-Skill: filedrawer-submit/15" -A 'filedrawer-skill (<harness>; <model>)' https://filedrawer.dev/skill.md | tr -d '\r' | grep -i '^x-filedrawer-skills:'
 ```
 
 The line lists `name/version` pairs, such as `X-Filedrawer-Skills: filedrawer-search/2, filedrawer-submit/3`.

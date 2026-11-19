@@ -1555,23 +1555,23 @@ async fn an_upgrade_to_the_version_in_place_changes_nothing() {
     assert_eq!(snapshot(&home), before);
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn a_copy_the_installer_didnt_place_is_told_where_the_version_is() {
-    let site = StandIn::at(PUBLIC_URL).await;
-    let home = home_with_a_newer_tag(&site).await;
-    let name = "filedrawer-search";
-    let own = home.join("my-skills").join(name);
+/// Copies the installed `name` to `own`, a folder of the human's own under `home`.
+fn copy_out(home: &Path, name: &str, own: &Path) {
     std::fs::create_dir_all(own.parent().unwrap()).unwrap();
     let copied = Command::new("cp")
         .arg("-R")
-        .arg(skill_folder(&home, name))
-        .arg(&own)
+        .arg(skill_folder(home, name))
+        .arg(own)
         .status()
         .unwrap();
     assert!(copied.success());
-    let before = snapshot(&home);
-    let script = own.join("references/upgrade.sh");
-    let output = site.run(&format!("sh '{}' {}", script.display(), next(name)), &home);
+}
+
+/// Runs the upgrade script at `script` to the next version of `name`, and asserts
+/// that it names the version's tag and changes nothing under `home`.
+fn assert_left_alone(site: &StandIn, home: &Path, name: &str, script: &Path) {
+    let before = snapshot(home);
+    let output = site.run(&format!("sh '{}' {}", script.display(), next(name)), home);
     let said = text(&output);
     assert!(output.status.success(), "{said}");
     let tag = format!(
@@ -1579,7 +1579,46 @@ async fn a_copy_the_installer_didnt_place_is_told_where_the_version_is() {
         next(name)
     );
     assert!(said.contains(&tag), "{said}");
-    assert_eq!(snapshot(&home), before);
+    assert!(said.contains("nothing was changed"), "{said}");
+    assert_eq!(snapshot(home), before);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_copy_the_installer_didnt_place_is_told_where_the_version_is() {
+    let site = StandIn::at(PUBLIC_URL).await;
+    let home = home_with_a_newer_tag(&site).await;
+    let name = "filedrawer-search";
+    let own = home.join("my-skills").join(name);
+    copy_out(&home, name, &own);
+    assert_left_alone(&site, &home, name, &own.join("references/upgrade.sh"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_link_where_the_installer_puts_the_skill_is_left_in_place() {
+    // As llm-toolbox's install.py links its own copy of a skill there.
+    let site = StandIn::at(PUBLIC_URL).await;
+    let home = home_with_a_newer_tag(&site).await;
+    let name = "filedrawer-search";
+    let own = home.join("toolbox/skills").join(name);
+    copy_out(&home, name, &own);
+    std::fs::remove_dir_all(skill_folder(&home, name)).unwrap();
+    std::os::unix::fs::symlink(&own, skill_folder(&home, name)).unwrap();
+    for script in [skill_folder(&home, name), own] {
+        assert_left_alone(&site, &home, name, &script.join("references/upgrade.sh"));
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_copy_claude_codes_link_leads_to_leaves_the_installers_folder_alone() {
+    let site = StandIn::at(PUBLIC_URL).await;
+    let home = home_with_a_newer_tag(&site).await;
+    let name = "filedrawer-submit";
+    let own = home.join("toolbox/skills").join(name);
+    copy_out(&home, name, &own);
+    let link = home.join(".claude/skills").join(name);
+    std::fs::remove_file(&link).unwrap();
+    std::os::unix::fs::symlink(&own, &link).unwrap();
+    assert_left_alone(&site, &home, name, &link.join("references/upgrade.sh"));
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -645,6 +645,7 @@ The `skill.md` at agents.stackoverflow.com is a working example of serving instr
 - A human who keeps skills elsewhere, or manages them with tools of their own, can put each tag's folder wherever their setup reads skills; `/skill.md` says so, and the agent offers it when the human's setup suggests it (the owner's decision, 2026-11-13).
   Nothing else is needed: the submit skill makes the header file when the human sets up posting, and without an `upgrade` file the mode is `auto`.
   Such a copy doesn't upgrade itself: the upgrade script tells the human in a line that a version is out, since its swap assumes the installer's folders.
+  That holds for a copy reached through a link at `~/.agents/skills/<name>` or `~/.claude/skills/<name>`, as a repo of the human's own skills links them, since the installer puts a folder at the first and links the second only to it: before, the script swapped such a link for a folder of its own, cutting the human's copy loose.
 - The home page's paste line names the command that fetches `/skill.md` (the owner's decision, 2026-11-13, #73): "Run `curl -fsSL https://filedrawer.dev/skill.md` and follow it."
   Reason: Claude Code fetched `/skill.md` through its web fetch tool, which hands the agent a model-written summary, in 11 of 11 usability runs whose line named no command, and the summary mangled the installer (#68, #72).
   An agent reads a command in its human's message directly, and in a pilot on 2026-11-13 Claude Code ran curl first in 3 of 3 runs and Codex in 1 of 1.
