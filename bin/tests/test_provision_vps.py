@@ -300,7 +300,6 @@ def stage(tmp_path, fake_host):
     ops.mkdir()
     env_file = ops / ".vps.env"
     env_file.write_text("VPS_HOST='h'\n")
-    fake_host.answer("test -f *", status=1)
 
     def run(*args: str) -> subprocess.CompletedProcess:
         *names, answers = args
@@ -371,6 +370,7 @@ def test_screening_stops_when_the_two_keys_differ(stage):
 
 
 def test_admin_refuses_a_mistyped_id_and_saves_nothing(stage):
+    stage.host.answer("test -x /srv/filedrawer/staging/bin/filedrawer")
     result = stage.run("admin", "A-abc 123\n\n")
     assert result.returncode == 1
     assert "ADMIN_ACCOUNT" not in stage.env_file.read_text()
@@ -378,6 +378,7 @@ def test_admin_refuses_a_mistyped_id_and_saves_nothing(stage):
 
 
 def test_admin_grants_the_account_named(stage):
+    stage.host.answer("test -x /srv/filedrawer/staging/bin/filedrawer")
     result = stage.run("admin", "a-abc123\n\n")
     assert result.returncode == 0, result.stdout + result.stderr
     log = stage.log.read_text().splitlines()
@@ -422,6 +423,8 @@ def rerun(tmp_path, fake_host):
         BASE_MARKER,
         "/etc/caddy/sites/staging.caddy",
     )
+    # Staging is deployed.
+    fake_host.answer("test -x /srv/filedrawer/staging/bin/filedrawer")
     fake_host.answer("*os-release*", stdout="ID=debian\n")
     fake_host.answer(
         "*ssh_host_ed25519_key.pub*", stdout="ssh-ed25519 AAAAhost root@vps\n"
@@ -544,8 +547,6 @@ def production(tmp_path, fake_host):
         "MAIL_FROM='File Drawer staging <staging@filedrawer.dev>'\n"
         "SCREENING_DAILY_USD='5'\nADMIN_ACCOUNT='a-staging1'\n"
     )
-    fake_host.answer("test -f *", status=1)
-    fake_host.answer("test -x *", status=1)
     fake_host.answer("*os-release*", stdout="ID=debian\n")
     fake_host.answer("*ip -6*", stdout="2001:db8::7\n")
     fake_host.answer("*", stdout="203.0.113.7 STREAM x\n", tool="getent")

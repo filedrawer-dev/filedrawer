@@ -3,7 +3,8 @@
 Usage: fake_tool.py ROOT TOOL ARG...
 
 Notes the call in ROOT/log, keeps an ssh call's stdin in ROOT/sent/<n>, and answers
-from the latest rule in ROOT/rules.json that matches.
+from the latest rule in ROOT/rules.json that matches; an unmatched ssh `test -f` or
+`test -x` answers 1, as a fresh server would.
 """
 
 import fnmatch
@@ -51,6 +52,8 @@ def main(root: Path, tool: str, args: list[str]) -> int:
             return rule["status"]
     if tool == "gh":
         return gh(root / "secrets", args)
+    if tool == "ssh" and line.startswith(("test -f ", "test -x ")):
+        return 1
     return 0
 
 

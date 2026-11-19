@@ -188,7 +188,9 @@ class FakeHost:
     Every call is a line in `log`: "ssh <remote command line>" (the words after the
     host), or "<tool> <args>" for the others. Each ssh call's stdin is kept, read
     back with sent(n). A call answers from the latest rule that matches it, set with
-    answer() or run_locally(), or with no output and status 0.
+    answer() or run_locally(), or with no output and status 0; but an unmatched ssh
+    `test -f` or `test -x` answers 1, as a fresh server would, so a fixture that means
+    a file is there says so with a rule.
     gh keeps what `gh secret set NAME --env staging` is given in `secrets/NAME` and
     lists them for `gh secret list`, unless a rule answers first.
     """

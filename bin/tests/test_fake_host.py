@@ -24,6 +24,23 @@ def test_ssh_logs_each_command_line_and_keeps_each_calls_stdin(fake_host):
     assert fake_host.log.read_text().splitlines()[0] == "ssh bash -s"
 
 
+def test_an_unmatched_file_test_answers_absent_as_a_fresh_server_would(fake_host):
+    """A fixture that forgets a rule gets a fresh server, not one that seems to hold
+    every file: the latter once made every secret look kept."""
+    assert (
+        call(fake_host, "ssh", "root@h", "test -f /etc/filedrawer/x.env").returncode
+        == 1
+    )
+    assert (
+        call(fake_host, "ssh", "root@h", "test -x /srv/bin/filedrawer").returncode == 1
+    )
+    fake_host.answer("test -f /etc/filedrawer/x.env")
+    assert (
+        call(fake_host, "ssh", "root@h", "test -f /etc/filedrawer/x.env").returncode
+        == 0
+    )
+
+
 def test_ssh_joins_the_words_after_the_host_as_the_server_would(fake_host):
     call(fake_host, "ssh", "-o", "BatchMode=yes", "-p", "22", "root@h", "cat", "/etc/x")
     assert fake_host.calls() == ["cat /etc/x"]
