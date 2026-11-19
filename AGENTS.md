@@ -20,6 +20,7 @@ When a commit finishes an issue, end its message with `Closes #N`, so the owner'
 `uncertainties.md` holds the choices made while building that the owner hasn't settled yet.
 
 The owner has root on the VPS but keeps SSH keys out of the sandbox.
+The VPS runs Debian and the sandbox Ubuntu, so check a system path or a package's behaviour the server relies on against Debian's own sources (salsa.debian.org), not the sandbox: Ubuntu's `update-success-stamp`, which Debian never writes, once kept the Caddy guard failing.
 Anything done on the server is a tool the owner runs from their own machine, such as `ops/provision-vps`.
 
 ## Deploys
@@ -161,9 +162,9 @@ The Rust tests run under cargo-nextest, set in `.config/nextest.toml` to print o
 To run them that way, run `cargo nextest run --cargo-quiet`. nextest skips doctests, so the full check also runs `cargo test --doc`.
 Each crate's integration tests build as one binary, `tests/it/main.rs`, with each file in `tests/it/` a module of it, so a new test file needs a `mod` line there; a test in `main.rs` fails without one.
 To run one file's tests, filter on its module: `cargo nextest run --cargo-quiet -p filedrawer-server -E 'test(/^read::/)'`.
-The Python tests in `bin/tests` run through `bin/pytest`, the pinned pytest with pytest.ini's plugins: `heavy --quick -- bin/pytest -n0 bin/tests/test_x.py`; plain `uv run pytest` lacks pytest-xdist, which pytest.ini's `-n` needs.
+The Python tests in `bin/tests` run through `bin/pytest`, the pinned pytest with pytest.ini's plugins: `heavy --quick -- bin/pytest bin/tests/test_x.py`, in parallel, or `-n0 -k NAME` for a few tests, where starting the workers costs more than they save; plain `uv run pytest` lacks pytest-xdist, which pytest.ini's `-n` needs.
+A whole file such as `test_provision_vps.py` run with `-n0` takes past a minute, which overruns `--quick`; in parallel, six such files take about 16 s.
 Run a targeted run like that, a few tests that take seconds, through `heavy --quick -- CMD`, which starts it at once on quiet cores and otherwise next in heavy's queue (`heavy -h`); a whole suite goes through plain `heavy`.
-So do `bin/tests/test_provision_vps.py` and `bin/tests/test_deploy_production.py` whole, which take a minute or more; a `-k` selection from them fits `--quick`.
 After an edit to a crate, that run first rebuilds the test binary, a minute or more, which overruns `--quick`: build it first as a background call, `bgrun --wait -o LOG -- heavy --share -- cargo nextest run --cargo-quiet --no-run`, then run the tests with `--quick`.
 A `mutate-check` rebuilds for each mutant, so it goes through plain `heavy` the same way.
 Give a foreground `heavy --quick` call a Bash timeout of 600000 ms, since it may wait behind a running job; llm-toolbox's heavy-gate refuses one without it.
