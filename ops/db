@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Opens an environment's database read-only in sqlite3 on the VPS, to read what
+# nothing on the site shows, such as the search log and each entry's User-Agent
+# (design.md, Agent interface). The owner runs it from their own checkout, over
+# their own SSH as root.
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+usage: ops/db [production|staging] [SQLITE3_ARG...]
+
+Opens production's database (or staging's) read-only in sqlite3 on the VPS, as the
+environment's own user, never root: sqlite3 as root can leave root-owned -wal and
+-shm files the server then can't open. Any further arguments go to sqlite3 after
+the database, so one SQL statement runs and prints instead of a prompt:
+
+  ops/db
+  ops/db production 'SELECT * FROM search_log ORDER BY day DESC LIMIT 50;'
+  ops/db production -header -column 'SELECT seq, skill, user_agent FROM entries;'
+
+Needs VPS_HOST in ops/.vps.env, as ops/provision-vps writes it.
+EOF
+}
+
+case "${1:-}" in
+  -h | --help) usage; exit 0 ;;
+esac
+
+environment=production
+case "${1:-}" in
+  production | staging) environment=$1; shift ;;
+esac
+case $environment in
+  production) user=filedrawer-prod ;;
+  staging) user=filedrawer ;;
+esac
+
+ops_dir="${FILEDRAWER_OPS_DIR:-$(dirname "$0")}"
+vps_host=""
+[[ -r "$ops_dir/.vps.env" ]] && vps_host=$(sed -n "s/^VPS_HOST='\(.*\)'\$/\1/p" "$ops_dir/.vps.env" | sed -n 1p)
+[[ -n "$vps_host" ]] || { echo "db: no VPS_HOST in $ops_dir/.vps.env; ops/provision-vps writes it" >&2; exit 1; }
+
+database="file:/srv/filedrawer/$environment/data/filedrawer.db?mode=ro"
+# ssh joins its arguments into one remote shell line, so quote each one.
+remote=$(printf '%q ' runuser -u "$user" -- sqlite3 "$database" "$@")
+# -t gives sqlite3's prompt a terminal; with SQL on the line it only prints.
+exec ssh -t "root@$vps_host" "$remote"
