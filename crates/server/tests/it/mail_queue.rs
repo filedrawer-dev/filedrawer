@@ -65,9 +65,10 @@ fn unreachable(_: &Email) -> Option<MailError> {
 #[tokio::test]
 async fn a_failed_send_is_retried_after_a_wait_that_doubles_and_then_its_row_is_gone() {
     let app = test_app().await;
-    let now = OffsetDateTime::now_utc();
     app.outbox.fail(Some(unreachable));
     sign_up(&app, "grace@example.com").await;
+    // After the signup, whose row is due from the second it was stamped.
+    let now = OffsetDateTime::now_utc();
 
     let failed = run(&app, now).await;
 
