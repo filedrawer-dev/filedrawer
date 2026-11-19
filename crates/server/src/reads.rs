@@ -64,6 +64,11 @@ impl ReadCounter {
         }
     }
 
+    /// The most readers it takes a day.
+    pub fn cap(&self) -> i64 {
+        self.cap
+    }
+
     /// The hash that stands for `reader` of `entry_seq` as `kind` on `day`, or `None`
     /// when this server has already counted it today.
     fn first_read(&self, day: Date, entry_seq: i64, kind: &str, reader: &str) -> Option<[u8; 32]> {

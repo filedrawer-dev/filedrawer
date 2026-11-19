@@ -1,0 +1,28 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT IFNULL((SELECT readers FROM read_days WHERE day = ?1), 0)\n                        + (SELECT COUNT(*) FROM entry_readers WHERE day = ?1) AS \"counted!: i64\",\n                      IFNULL((SELECT dropped FROM read_days WHERE day = ?1), 0) AS \"dropped!: i64\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "counted!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "dropped!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "e527941ea5821dd6e203fb9a06a8270715f3d174add34cd8f16c8905a71cba15"
+}

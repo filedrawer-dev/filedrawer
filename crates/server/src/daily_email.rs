@@ -19,7 +19,7 @@ use crate::mail::Email;
 use crate::respond::{DELIMITER, one_line};
 use crate::screening::Failure;
 use crate::time::{parse, parse_day, stamp};
-use crate::{AppState, mail_queue, queue};
+use crate::{AppState, mail_queue, queue, search_log};
 
 /// The most feedback items an email holds in full; past it the oldest are counted.
 const FEEDBACK_IN_FULL: usize = 20;
@@ -178,6 +178,19 @@ struct Report {
     /// for longer than `mail_queue::LATE`.
     mail_dropped: i64,
     mail_late: i64,
+    /// The days of the period on which a daily cap was half reached or more.
+    caps: Vec<CapDay>,
+}
+
+/// A UTC day on which the read counter or the search log took half its daily cap or
+/// more.
+struct CapDay {
+    what: &'static str,
+    day: Date,
+    counted: i64,
+    cap: i64,
+    /// Reads or searches past the cap, which went uncounted.
+    dropped: i64,
 }
 
 /// An entry waiting for the owner: in review or held.
@@ -224,6 +237,59 @@ struct Feedback {
     wanted: String,
     workaround: String,
     created_at: String,
+}
+
+/// The days from `first` to `last` on which the read counter, taking at most
+/// `read_cap` readers a day, or the search log took half their cap or more. Each
+/// drops only once full, so a day that dropped any is among them.
+async fn cap_days(
+    pool: &SqlitePool,
+    read_cap: i64,
+    first: Date,
+    last: Date,
+) -> Result<Vec<CapDay>, sqlx::Error> {
+    let mut days = Vec::new();
+    let mut day = first;
+    while day <= last {
+        let key = day.to_string();
+        // A closed day's readers are its total; an open day's are still rows.
+        let read = sqlx::query!(
+            r#"SELECT IFNULL((SELECT readers FROM read_days WHERE day = ?1), 0)
+                        + (SELECT COUNT(*) FROM entry_readers WHERE day = ?1) AS "counted!: i64",
+                      IFNULL((SELECT dropped FROM read_days WHERE day = ?1), 0) AS "dropped!: i64""#,
+            key
+        )
+        .fetch_one(pool)
+        .await?;
+        let searched = sqlx::query!(
+            r#"SELECT (SELECT COUNT(*) FROM search_log WHERE day = ?1) AS "counted!: i64",
+                      IFNULL((SELECT dropped FROM search_log_dropped WHERE day = ?1), 0) AS "dropped!: i64""#,
+            key
+        )
+        .fetch_one(pool)
+        .await?;
+        let read = CapDay {
+            what: "read counter",
+            day,
+            counted: read.counted,
+            cap: read_cap,
+            dropped: read.dropped,
+        };
+        let searched = CapDay {
+            what: "search log",
+            day,
+            counted: searched.counted,
+            cap: search_log::MAX_PER_DAY,
+            dropped: searched.dropped,
+        };
+        days.extend(
+            [read, searched]
+                .into_iter()
+                .filter(|load| load.counted * 2 >= load.cap),
+        );
+        day = day.next_day().expect("a day before the end of time");
+    }
+    Ok(days)
 }
 
 /// What `backups/` holds.
@@ -282,6 +348,7 @@ impl Report {
         let feedback_total = feedback.len();
         feedback.drain(..feedback_total.saturating_sub(FEEDBACK_IN_FULL));
         let (mail_dropped, mail_late) = mail_queue::dropped_and_late(pool, start, now).await?;
+        let caps = cap_days(pool, state.reads.cap(), start.date(), now.date()).await?;
         Ok(Report {
             start,
             now,
@@ -307,6 +374,7 @@ impl Report {
             backups: backups(&state.backups_dir),
             mail_dropped,
             mail_late,
+            caps,
         })
     }
 
@@ -322,15 +390,19 @@ impl Report {
             Backups::Unreadable(_) | Backups::NoCopy => true,
             Backups::Newest { date, .. } => self.stale(*date),
         };
+        // Half a cap only warns, like a host asking the server to wait; reads or
+        // searches lost past it are a problem.
         let problems = (self.screen.count() > 0 && self.screen_failing)
             || !self.cap_out.is_empty()
+            || self.caps.iter().any(|day| day.dropped > 0)
             || recheck_failed
             || backups
             || self.feedback_total > 0;
         let news = !self.published.is_empty()
             || !self.waiting.is_empty()
             || !self.frozen.is_empty()
-            || !self.at_share.is_empty();
+            || !self.at_share.is_empty()
+            || !self.caps.is_empty();
         let mail = self.mail_dropped > 0 || self.mail_late > 0;
         problems || (production && (news || mail))
     }
@@ -380,6 +452,7 @@ impl Report {
         self.screening_lines(&mut text, url);
         self.link_lines(&mut text);
         self.mail_line(&mut text);
+        self.cap_lines(&mut text);
         let _ = writeln!(text, "\nNightly copy: {}", self.backup_line());
         self.feedback_lines(&mut text, url);
         text
@@ -469,6 +542,30 @@ impl Report {
             "\nEmail: {} dropped unsent, {} waiting over an hour.",
             self.mail_dropped, self.mail_late
         );
+    }
+
+    fn cap_lines(&self, text: &mut String) {
+        if self.caps.is_empty() {
+            return;
+        }
+        let _ = writeln!(text, "\nDaily caps:");
+        for CapDay {
+            what,
+            day,
+            counted,
+            cap,
+            dropped,
+        } in &self.caps
+        {
+            let _ = write!(
+                text,
+                "- {what}, {day}: {counted} counted, of a cap of {cap} a day"
+            );
+            if *dropped > 0 {
+                let _ = write!(text, "; {dropped} more went uncounted");
+            }
+            let _ = writeln!(text);
+        }
     }
 
     fn backup_line(&self) -> String {

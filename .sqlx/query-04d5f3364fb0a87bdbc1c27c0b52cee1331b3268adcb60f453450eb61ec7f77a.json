@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO search_log_dropped (day, dropped) VALUES (?, 1)\n             ON CONFLICT (day) DO UPDATE SET dropped = dropped + 1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "04d5f3364fb0a87bdbc1c27c0b52cee1331b3268adcb60f453450eb61ec7f77a"
+}

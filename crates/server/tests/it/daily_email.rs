@@ -15,6 +15,7 @@ use filedrawer_server::config::Environment;
 use filedrawer_server::daily_email::{DailyRun, HttpPinger, Pinger, Pinging, send_daily_email};
 use filedrawer_server::mail::{Email, MailError, Mailer, Sending};
 use filedrawer_server::mail_queue::{self, Queued};
+use filedrawer_server::reads::{self, ReadCounter};
 use time::{Date, Duration, OffsetDateTime};
 
 const DOLLAR: i64 = 1_000_000_000;
@@ -802,4 +803,144 @@ async fn a_ping_that_cant_connect_names_the_cause_and_leaves_out_the_url() {
     assert!(error.starts_with("error sending request: "), "{error}");
     assert!(error.contains("Connection refused"), "{error}");
     assert!(!error.contains("secret-check"), "{error}");
+}
+
+/// Counts `readers` distinct readers of a new entry now, through `app`'s read counter.
+async fn read_by(app: &TestApp, readers: usize) {
+    let id = submit(app, &entry("Read a lot", "")).await;
+    let seq: i64 = sqlx::query_scalar("SELECT seq FROM entries WHERE id = ?")
+        .bind(&id)
+        .fetch_one(&app.pool)
+        .await
+        .unwrap();
+    for n in 0..readers {
+        reads::record(
+            &app.pool,
+            &app.state.reads,
+            seq,
+            reads::Kind::Agent,
+            &format!("reader {n}"),
+            OffsetDateTime::now_utc(),
+        )
+        .await
+        .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn the_read_counter_at_half_its_cap_is_listed_and_past_it_sends_the_email() {
+    let (mut half, _) = app_in(Environment::Staging, true).await;
+    half.state.reads = Arc::new(ReadCounter::new(4));
+    on_one_day(async || read_by(&half, 2).await).await;
+    assert_eq!(
+        send_daily_email(&half.state, soon()).await.unwrap(),
+        DailyRun::Quiet
+    );
+    let (mut listed, _) = app_in(Environment::Dev, true).await;
+    listed.state.reads = Arc::new(ReadCounter::new(4));
+    let ((), day_listed) = on_one_day(async || read_by(&listed, 2).await).await;
+    feedback(&listed, "x", "y", "z").await;
+    send_daily_email(&listed.state, soon()).await.unwrap();
+    let body = the_report(&listed).body;
+    assert!(
+        body.contains(&format!(
+            "- read counter, {day_listed}: 2 counted, of a cap of 4 a day\n"
+        )),
+        "{body}"
+    );
+    let (mut over, _) = app_in(Environment::Staging, true).await;
+    over.state.reads = Arc::new(ReadCounter::new(4));
+    let ((), day_over) = on_one_day(async || read_by(&over, 6).await).await;
+    send_daily_email(&over.state, soon()).await.unwrap();
+    let body = the_report(&over).body;
+    assert!(
+        body.contains(&format!(
+            "- read counter, {day_over}: 4 counted, of a cap of 4 a day; 2 more went uncounted"
+        )),
+        "{body}"
+    );
+}
+
+/// Fills `day`'s search log with `rows` rows.
+async fn searches_logged(app: &TestApp, day: Date, rows: i64) {
+    sqlx::query(
+        "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?2)
+         INSERT INTO search_log (day, query, hits) SELECT ?1, 'q=x', 0 FROM n",
+    )
+    .bind(day.to_string())
+    .bind(rows)
+    .execute(&app.pool)
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn the_search_log_at_half_its_cap_is_listed_and_past_it_sends_the_email() {
+    let (half, _) = app_in(Environment::Staging, true).await;
+    let now = soon();
+    searches_logged(&half, now.date(), 5_000).await;
+    assert_eq!(
+        send_daily_email(&half.state, now).await.unwrap(),
+        DailyRun::Quiet
+    );
+    let (listed, _) = app_in(Environment::Dev, true).await;
+    let now = soon();
+    searches_logged(&listed, now.date(), 5_000).await;
+    feedback(&listed, "x", "y", "z").await;
+    send_daily_email(&listed.state, now).await.unwrap();
+    let body = the_report(&listed).body;
+    assert!(
+        body.contains(&format!(
+            "- search log, {}: 5000 counted, of a cap of 10000 a day",
+            now.date()
+        )),
+        "{body}"
+    );
+    let (over, _) = app_in(Environment::Staging, true).await;
+    let ((), day) = on_one_day(async || {
+        searches_logged(&over, OffsetDateTime::now_utc().date(), 10_000).await;
+        over.get("/search?q=steering").await;
+    })
+    .await;
+    send_daily_email(&over.state, soon()).await.unwrap();
+    let body = the_report(&over).body;
+    assert!(
+        body.contains(&format!(
+            "- search log, {day}: 10000 counted, of a cap of 10000 a day; 1 more went uncounted"
+        )),
+        "{body}"
+    );
+}
+
+#[tokio::test]
+async fn production_sends_a_half_taken_cap_alone() {
+    let (mut app, _) = app_in(Environment::Production, true).await;
+    app.state.reads = Arc::new(ReadCounter::new(4));
+    // The day's entry publishes, which production lists too; so the next day's run,
+    // past the entry, has only the cap to tell.
+    let ((), day) = on_one_day(async || read_by(&app, 2).await).await;
+    let first = end_of_day(day.midnight().assume_utc());
+    fresh_copy(&app, day);
+    send_daily_email(&app.state, first).await.unwrap();
+    let next = first + Duration::minutes(5);
+    std::fs::write(
+        app.state
+            .backups_dir
+            .join(format!("filedrawer-{}.db", next.date())),
+        "",
+    )
+    .unwrap();
+    sqlx::query("DELETE FROM entry_readers")
+        .execute(&app.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO read_days (day, readers) VALUES (?, 2)")
+        .bind(next.date().to_string())
+        .execute(&app.pool)
+        .await
+        .unwrap();
+    assert!(matches!(
+        send_daily_email(&app.state, next).await.unwrap(),
+        DailyRun::Sent { .. }
+    ));
 }

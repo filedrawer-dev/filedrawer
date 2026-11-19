@@ -1,0 +1,28 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT (SELECT COUNT(*) FROM search_log WHERE day = ?1) AS \"counted!: i64\",\n                      IFNULL((SELECT dropped FROM search_log_dropped WHERE day = ?1), 0) AS \"dropped!: i64\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "counted!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "dropped!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "6fc4a0b6d98b7e78c9329b7d896c66536164461689445e4540c39268468feac3"
+}

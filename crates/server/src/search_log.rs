@@ -13,7 +13,7 @@ use crate::provenance::Provenance;
 const KEPT_DAYS: i64 = 90;
 
 /// The most rows one UTC day takes, so a flood of searches can't fill the disk.
-const MAX_PER_DAY: i64 = 10_000;
+pub const MAX_PER_DAY: i64 = 10_000;
 
 /// How much of a query is kept, in characters.
 const MAX_QUERY: usize = 500;
@@ -30,7 +30,7 @@ pub fn client(headers: &HeaderMap) -> Option<String> {
 }
 
 /// Logs one search of `query` that matched `hits` entries, from `client`, at
-/// `now`, unless the day already holds its most.
+/// `now`, unless the day already holds its most; then the day's `dropped` counts it.
 pub async fn record(
     pool: &SqlitePool,
     query: &str,
@@ -40,7 +40,7 @@ pub async fn record(
 ) -> Result<(), sqlx::Error> {
     let day = now.date().to_string();
     let query: String = query.chars().take(MAX_QUERY).collect();
-    sqlx::query!(
+    let logged = sqlx::query!(
         "INSERT INTO search_log (day, query, hits, client)
          SELECT ?1, ?2, ?3, ?4 WHERE (SELECT COUNT(*) FROM search_log WHERE day = ?1) < ?5",
         day,
@@ -51,6 +51,15 @@ pub async fn record(
     )
     .execute(pool)
     .await?;
+    if logged.rows_affected() == 0 {
+        sqlx::query!(
+            "INSERT INTO search_log_dropped (day, dropped) VALUES (?, 1)
+             ON CONFLICT (day) DO UPDATE SET dropped = dropped + 1",
+            day
+        )
+        .execute(pool)
+        .await?;
+    }
     Ok(())
 }
 
@@ -58,6 +67,9 @@ pub async fn record(
 pub async fn tidy(pool: &SqlitePool, now: OffsetDateTime) -> Result<(), sqlx::Error> {
     let before = (now - Duration::days(KEPT_DAYS)).date().to_string();
     sqlx::query!("DELETE FROM search_log WHERE day < ?", before)
+        .execute(pool)
+        .await?;
+    sqlx::query!("DELETE FROM search_log_dropped WHERE day < ?", before)
         .execute(pool)
         .await?;
     Ok(())
