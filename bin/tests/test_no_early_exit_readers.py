@@ -49,8 +49,9 @@ def early_readers(source: str) -> list[int]:
 
 
 def pipefail_scripts() -> list[Path]:
-    """The shell scripts in bin/, ops/ and ops/remote/ that set `pipefail`."""
-    scripts = []
+    """The shell scripts in bin/, ops/ and ops/remote/ that set `pipefail`, and the
+    parts ops/provision-vps sources after setting it."""
+    scripts = sorted((REPO / "ops/provision-vps.d").glob("*.sh"))
     for folder in (REPO / "bin", REPO / "ops", REPO / "ops/remote"):
         for path in sorted(folder.iterdir()):
             if not path.is_file():
@@ -90,6 +91,7 @@ def test_the_scripts_checked_include_the_ones_that_misfired():
     assert {
         "ops/protect-skill-tags",
         "ops/provision-vps",
+        "ops/provision-vps.d/staging.sh",
         "ops/smoke-staging",
         "ops/remote/base.sh",
     } <= names

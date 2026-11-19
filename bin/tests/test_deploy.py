@@ -684,11 +684,13 @@ def test_install_refuses_a_third_argument_too(box):
 
 def test_every_secret_and_variable_the_workflow_reads_is_one_the_ops_scripts_set():
     workflow = (REPO / ".github/workflows/ci.yml").read_text()
-    # Every ops script, so a new one that sets a secret needs no line here.
+    # Every ops script and the parts provision-vps sources, so a new one that sets a
+    # secret needs no line here.
     setters = "".join(
         path.read_text()
         for path in sorted((REPO / "ops").rglob("*"))
-        if path.is_file() and os.access(path, os.X_OK)
+        if path.is_file()
+        and (os.access(path, os.X_OK) or path.parent.name == "provision-vps.d")
     )
     read = set(re.findall(r"\$\{\{\s*(?:secrets|vars)\.(\w+)\s*\}\}", workflow))
     set_by_scripts = set(
@@ -876,8 +878,8 @@ def test_the_files_host_has_a_caddy_site_behind_the_staging_gate_and_a_dns_recor
             "reverse_proxy 127.0.0.1:8081" in block or "import staging_gate" in block
         ), name
     # service.sh's FILEDRAWER_FILES_URL for each environment: test_remote_environments.
-    wizard = (REPO / "ops/provision-vps").read_text()
-    dns = re.search(r"^records=\((.*?)\)$", wizard, re.M).group(1)
+    wizard = (REPO / "ops/provision-vps.d/staging.sh").read_text()
+    dns = re.search(r"^\s*records=\((.*?)\)$", wizard, re.M).group(1)
     assert '"files.staging.filedrawer.dev"' in dns
 
 

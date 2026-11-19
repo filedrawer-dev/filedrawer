@@ -96,7 +96,13 @@ def test_unset_stdin_finds_an_ssh_call_with_nothing_on_its_stdin():
 
 def test_the_scripts_checked_include_the_ones_that_call_ssh():
     names = {str(path.relative_to(REPO)) for path in owner_scripts()}
-    assert {"ops/provision-vps", "ops/deploy-production", "ops/field-test-key"} <= names
+    assert {
+        "ops/provision-vps.d/helpers.sh",
+        "ops/provision-vps.d/staging.sh",
+        "ops/provision-vps.d/production.sh",
+        "ops/deploy-production",
+        "ops/field-test-key",
+    } <= names
     assert not any(name.startswith("ops/remote/") for name in names)
 
 
