@@ -26,7 +26,9 @@ Before it changes anything it:
 Then it replaces the server's filedrawer-install and filedrawer-backup when they
 differ from origin/main's, pipes the binary to `filedrawer-install production`,
 which copies the database first and puts it back if the new binary doesn't answer,
-then probes the new binary's way out (#102), and runs `ops/smoke-staging read`
+and restarts the server, so a reader of an entry that UTC day may count twice in
+Most read (#107); then probes the new binary's way out (#102), and runs
+`ops/smoke-staging read`
 against https://filedrawer.dev. When the install keeps the new binary with a
 warning (its exit 3: the probe failed, but the binary isn't shown to be the cause),
 it still runs the read check, then exits 3 repeating the warning.
@@ -249,6 +251,8 @@ for name in install backup; do
 done
 
 hash=$(sha256sum "$binary" | cut -d' ' -f1)
+# The read counter's salt lives only in the server's memory (#107).
+say "The install restarts the server, so a reader of an entry today (UTC) may count twice in Most read."
 say "Installing $target on production..."
 install_status=0
 ssh -o BatchMode=yes "root@$vps_host" \

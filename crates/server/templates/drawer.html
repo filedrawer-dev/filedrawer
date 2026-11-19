@@ -6,11 +6,14 @@
 <input type="search" id="q" name="q" value="{{ drawer.query }}" placeholder="steering vector transfer">
 <button type="submit">Look up</button>
 </form>
-{% if drawer.cards.is_empty() %}<p class="empty">No entries match.</p>{% else %}
+{%- if let Some(note) = drawer.note %}
+<p class="tabnote">{{ note }}</p>
+{%- endif %}
+{% if drawer.cards.is_empty() %}<p class="empty">{{ drawer.empty }}</p>{% else %}
 <div class="drawer">
 {%- for card in drawer.cards %}
 <article class="card">
-<div class="call"><a href="/e/{{ card.id }}">{{ card.id }}</a><span class="stamp {{ card.stamp.class }}">{{ card.stamp.word }}</span></div>
+<div class="call"><a href="/e/{{ card.id }}">{{ card.id }}</a><span class="stamp {{ card.stamp.class }}">{{ card.stamp.word }}</span>{% if let Some(readers) = card.readers %}<span class="reads">{{ readers }} {% if *readers == 1 %}read{% else %}reads{% endif %}</span>{% endif %}</div>
 <div class="cardtext">
 {%- for line in card.lines %}{% if crate::pages::is_title_line(loop.index0) %}<p><a href="/e/{{ card.id }}"><b>{{ line }}</b></a></p>{% else %}<p>{{ line }}</p>{% endif %}{% endfor -%}
 </div>
@@ -18,9 +21,9 @@
 {%- endfor %}
 </div>
 {% endif %}
-{%- if let Some(href) = drawer.older %}
+{%- if drawer.back.is_some() || drawer.more.is_some() %}
 <nav class="pages" aria-label="Pages">
-<span></span>
-<span><a href="{{ href }}">Older →</a></span>
+<span>{% if let Some(href) = drawer.back %}<a href="{{ href }}">← Back</a>{% endif %}</span>
+<span>{% if let Some(href) = drawer.more %}<a href="{{ href }}">More →</a>{% endif %}</span>
 </nav>
 {%- endif %}

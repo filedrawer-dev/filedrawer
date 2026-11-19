@@ -35,6 +35,7 @@ mod pages;
 mod provenance;
 mod read;
 mod reader_warnings;
+mod reads;
 mod removed_files;
 mod request_log;
 mod review;

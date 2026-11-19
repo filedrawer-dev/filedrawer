@@ -5,7 +5,7 @@ use analyzer::{
     row_note,
 };
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{Method, StatusCode};
 use axum::response::Response;
 use serde::Deserialize;
 use serde_json::json;
@@ -14,17 +14,20 @@ use analyzer::render_card;
 use axum::http::HeaderMap;
 
 use crate::auth::{TokenAccount, optional_token_account};
-use crate::entries::{self, Filters, Order};
+use crate::entries::{self, Filters, Order, PublicEntry};
 use crate::error::AppError;
+use crate::limits::ClientIp;
 use crate::link_checks::{self, LinkFlags};
 use crate::markdown;
 use crate::pages::{
     Drawer, EntryPage, FileView, SearchPage, SeriesBlock, Stamp, fields_above, page,
 };
+use crate::reads;
 use crate::respond::{
     CONTACT, DELIMITER, Format, Reading, author_name, card_and_warnings, echoed, one_line,
     wants_page,
 };
+use crate::routes::account::optional_session_account;
 use crate::{AppState, allowance, attachments, deletion, time, warnings};
 use crate::{search_log, series};
 use analyzer::slug_references;
@@ -36,6 +39,8 @@ use url::Url;
 pub async fn entry(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    method: Method,
+    ip: ClientIp,
     headers: HeaderMap,
     format: Format,
 ) -> Result<Response, AppError> {
@@ -62,6 +67,9 @@ pub async fn entry(
         }
         return Err(AppError::NotFound);
     };
+    if method == Method::GET {
+        count_read(&state, &headers, &ip, account.as_ref(), &entry).await;
+    }
     let analysis = analyze(&entry.source);
     let notes: Vec<String> = match &analysis.results {
         Results::Read(table) => table.rows.iter().map(row_note).collect(),
@@ -296,6 +304,48 @@ struct CitedSeries {
     shown: Option<(String, String)>,
 }
 
+/// Counts a GET of a public entry for Most read, if its client counts and its reader
+/// isn't the author, an admin or a suspended account; the latest public version gets
+/// the read (#107). A failure is logged, and the entry is served anyway.
+async fn count_read(
+    state: &AppState,
+    headers: &HeaderMap,
+    ip: &ClientIp,
+    token: Option<&TokenAccount>,
+    entry: &PublicEntry,
+) {
+    let Some(kind) = reads::Kind::of(headers) else {
+        return;
+    };
+    let counted = async {
+        let account = match (token, kind) {
+            (Some(token), _) => Some(token.id.clone()),
+            (None, reads::Kind::Page) => optional_session_account(headers, state).await?,
+            (None, reads::Kind::Agent) => None,
+        };
+        if let Some(account) = &account
+            && (account == &entry.account_id
+                || !reads::counts_as_reader(&state.pool, account).await?)
+        {
+            return Ok(());
+        }
+        let latest = entries::latest_public_seq(&state.pool, entry.seq).await?;
+        let reader = reads::reader(account.as_deref(), ip, headers);
+        reads::record(
+            &state.pool,
+            &state.reads,
+            latest,
+            kind,
+            &reader,
+            time::now_utc(),
+        )
+        .await
+    };
+    if let Err(error) = counted.await {
+        tracing::error!(%error, "counting a read failed");
+    }
+}
+
 async fn shown_series(state: &AppState, seq: i64) -> Result<Option<CitedSeries>, AppError> {
     let Some(cite) = series::entry_cite(&state.pool, seq).await? else {
         return Ok(None);
@@ -499,7 +549,6 @@ pub async fn search(
     let mut found =
         entries::search(&state.pool, &filters, Order::Newest, limit + 1, offset).await?;
     let more = found.cut_to(limit);
-    let results = found.entries;
     // Later pages continue the same search (#45).
     if page_number == 1
         && let Err(error) = search_log::record(
@@ -519,13 +568,14 @@ pub async fn search(
             StatusCode::OK,
             &SearchPage {
                 title: echoed(words),
-                drawer: Drawer::new(None, words, &results),
+                drawer: Drawer::new(None, words, &found),
                 previous: (page_number > 1).then(|| query.page_href(page_number - 1)),
                 next: more.then(|| query.page_href(page_number + 1)),
             },
         ));
     }
-    let cards: Vec<(String, String)> = results
+    let cards: Vec<(String, String)> = found
+        .entries
         .iter()
         .map(|entry| (entry.id.clone(), entry.card()))
         .collect();

@@ -6,9 +6,11 @@ use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Response};
 
 use analyzer::{Choice, Outcome};
+use time::Date;
 
 use crate::accounts::{Guarded, TokenView};
-use crate::entries::{ChainVersion, Doubted, Order, OwnerEntry, PublicEntry};
+use crate::entries::{ChainVersion, Doubted, Found, Order, OwnerEntry, PublicEntry};
+use crate::reads;
 use crate::removed_entries::Standing;
 use crate::removed_files::{FileState, FileUse, OwnersFile};
 use crate::removed_series::SeriesStanding;
@@ -49,19 +51,23 @@ impl Stamp {
     }
 }
 
-/// A card in the drawer: the analyzer's card, line by line, under its stamp.
+/// A card in the drawer: the analyzer's card, line by line, under its stamp, and on
+/// Most read, its readers in the window beside the stamp.
 pub struct CardView {
     pub id: String,
     pub stamp: Stamp,
     pub lines: Vec<String>,
+    pub readers: Option<i64>,
 }
 
 impl CardView {
-    pub fn new(id: &str, card: &str, outcome: &Choice<Outcome>) -> CardView {
+    fn new(entry: &PublicEntry, readers: Option<i64>) -> CardView {
+        let (card, outcome) = entry.card_and_outcome();
         CardView {
-            id: id.to_string(),
-            stamp: Stamp::of(outcome),
+            id: entry.id.clone(),
+            stamp: Stamp::of(&outcome),
             lines: card.lines().map(str::to_string).collect(),
+            readers,
         }
     }
 }
@@ -86,12 +92,15 @@ pub fn is_title_line(index: &usize) -> bool {
 pub enum View {
     /// The newest entries first.
     Recent,
+    /// The entries with the most readers in the read counter's window, a page at a
+    /// time.
+    MostRead,
     /// A new random draw on each load.
     Random,
 }
 
 impl View {
-    pub const ALL: [View; 2] = [View::Recent, View::Random];
+    pub const ALL: [View; 3] = [View::Recent, View::MostRead, View::Random];
 
     /// The view `?view=` names, if the server knows it.
     pub fn parse(value: &str) -> Option<View> {
@@ -102,6 +111,7 @@ impl View {
     pub fn name(self) -> &'static str {
         match self {
             View::Recent => "recent",
+            View::MostRead => "read",
             View::Random => "random",
         }
     }
@@ -109,24 +119,56 @@ impl View {
     fn label(self) -> &'static str {
         match self {
             View::Recent => "RECENT",
+            View::MostRead => "MOST READ",
             View::Random => "RANDOM",
         }
     }
 
-    /// The order its entries are fetched in.
-    pub fn order(self) -> Order {
+    /// The order its entries are fetched in on UTC day `today`.
+    pub fn order(self, today: Date) -> Order {
         match self {
             View::Recent => Order::Newest,
+            View::MostRead => Order::MostRead {
+                since: reads::window_start(today),
+            },
             View::Random => Order::Random,
         }
     }
 
-    /// Where its older entries go on, when more follow than it shows: Recent goes
-    /// on in `/search`'s second page, which lists the newest first, 20 a page.
-    pub fn older(self) -> Option<&'static str> {
+    /// Whether it shows page `?page=`; the others show only their first.
+    pub fn pages(self) -> bool {
+        self == View::MostRead
+    }
+
+    /// The links from page `page` back to the page before and on to the next, the
+    /// next only when `more` follow. Recent goes on in `/search`'s second page, which
+    /// lists the newest first, 20 a page.
+    pub fn links(self, page: i64, more: bool) -> (Option<String>, Option<String>) {
+        let href = |page: i64| match page {
+            1 => format!("/?view={}", self.name()),
+            _ => format!("/?view={}&page={page}", self.name()),
+        };
         match self {
-            View::Recent => Some("/search?page=2"),
-            View::Random => None,
+            View::Recent => (None, more.then(|| "/search?page=2".to_string())),
+            View::MostRead => (
+                (page > 1).then(|| href(page - 1)),
+                more.then(|| href(page + 1)),
+            ),
+            View::Random => (None, None),
+        }
+    }
+
+    /// What it says under the tabs, if anything.
+    fn note(self) -> Option<&'static str> {
+        (self == View::MostRead)
+            .then_some("Readers in the last 30 days, through the skills or in a browser.")
+    }
+
+    /// What it says when it has no entries.
+    fn empty(self) -> &'static str {
+        match self {
+            View::MostRead => "No reads counted yet.",
+            View::Recent | View::Random => "No entries match.",
         }
     }
 }
@@ -137,22 +179,25 @@ pub struct Drawer<'a> {
     pub tabs: Vec<Tab>,
     /// The words searched for, kept in the box.
     pub query: &'a str,
+    /// What the tab says under the tabs, if anything.
+    pub note: Option<&'static str>,
     pub cards: Vec<CardView>,
-    /// A tab's page of older entries, when there are any. The search page has its
-    /// own links.
-    pub older: Option<String>,
+    /// What it says with no cards.
+    pub empty: &'static str,
+    /// A tab's links back to the page before and on to the next, when there are any.
+    /// The search page has its own links.
+    pub back: Option<String>,
+    pub more: Option<String>,
 }
 
 impl<'a> Drawer<'a> {
-    /// The drawer for `entries`, under the tabs with `current` marked, or none on a
-    /// search, with the words searched for, `query`, in the box.
-    pub fn new(current: Option<View>, query: &'a str, entries: &[PublicEntry]) -> Drawer<'a> {
-        let cards = entries
+    /// The drawer for what `found` holds, under the tabs with `current` marked, or
+    /// none on a search, with the words searched for, `query`, in the box.
+    pub fn new(current: Option<View>, query: &'a str, found: &Found) -> Drawer<'a> {
+        let cards = found
+            .entries
             .iter()
-            .map(|entry| {
-                let (card, stamped) = entry.card_and_outcome();
-                CardView::new(&entry.id, &card, &stamped)
-            })
+            .map(|entry| CardView::new(entry, found.readers(entry.seq)))
             .collect();
         let tabs = View::ALL
             .into_iter()
@@ -165,8 +210,11 @@ impl<'a> Drawer<'a> {
         Drawer {
             tabs,
             query,
+            note: current.and_then(View::note),
             cards,
-            older: None,
+            empty: current.map_or("No entries match.", View::empty),
+            back: None,
+            more: None,
         }
     }
 }

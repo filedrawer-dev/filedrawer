@@ -559,7 +559,7 @@ fn tabs(body: &str) -> Vec<(String, bool)> {
 }
 
 #[tokio::test]
-async fn the_tabs_browse_recent_and_random_entries_not_outcomes() {
+async fn the_tabs_browse_recent_most_read_and_random_entries_not_outcomes() {
     let app = test_app().await;
     let id = public_entry(&app).await;
     let home = app.send(opened("/")).await;
@@ -567,6 +567,7 @@ async fn the_tabs_browse_recent_and_random_entries_not_outcomes() {
         tabs(&home.body),
         [
             ("/?view=recent".to_string(), true),
+            ("/?view=read".to_string(), false),
             ("/?view=random".to_string(), false),
         ],
         "{}",
@@ -580,6 +581,7 @@ async fn the_tabs_browse_recent_and_random_entries_not_outcomes() {
         tabs(&random.body),
         [
             ("/?view=recent".to_string(), false),
+            ("/?view=read".to_string(), false),
             ("/?view=random".to_string(), true),
         ]
     );
@@ -620,7 +622,7 @@ async fn a_view_skips_the_readme_but_keeps_the_line_to_paste() {
     public_entry(&app).await;
     let bare = app.send(opened("/")).await;
     assert!(bare.body.contains(r#"class="ind""#), "{}", bare.body);
-    for view in ["recent", "random"] {
+    for view in ["recent", "read", "random"] {
         let page = app.send(opened(&format!("/?view={view}"))).await;
         assert!(
             !page.body.contains(r#"class="ind""#),
@@ -661,9 +663,11 @@ async fn an_unknown_view_is_refused_to_a_browser_but_an_agent_still_gets_the_tex
     let page = app.send(opened("/?view=popular")).await;
     assert_eq!(page.status, StatusCode::BAD_REQUEST);
     assert!(content_type(&page).starts_with("text/html"));
-    let text = app.send(fetched("/?view=popular")).await;
-    assert_eq!(text.status, StatusCode::OK);
-    assert!(text.body.contains("/skill.md"), "{}", text.body);
+    for query in ["view=popular", "view=read&page=abc"] {
+        let text = app.send(fetched(&format!("/?{query}"))).await;
+        assert_eq!(text.status, StatusCode::OK, "{query}");
+        assert!(text.body.contains("/skill.md"), "{}", text.body);
+    }
 }
 
 #[tokio::test]

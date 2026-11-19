@@ -579,6 +579,26 @@ The owner settled the email's sections and the rules in design.md's Admin sectio
   A misspelled tab link then shows up rather than quietly showing another tab.
 - Against: a person who edits the address by hand gets an error page where Recent would do.
 
+#### Most read: what its cards and links show
+
+- Options: each card's count beside its stamp ("12 reads"), or no count; links "← Back" and "More →", or "Newer" and "Older" as search has them; a line under the tabs saying what counts, or none.
+- Chosen: the count, since how often an entry is read is what the tab is about, in the call strip beside the stamp, the server's own words, not on the analyzer's card; "Back" and "More", since the pages go by readers, not by date, and Recent's link to `/search` says "More" too; and the line "Readers in the last 30 days, through the skills or in a browser." (#107).
+- Against: a count invites gaming (#114), and "More" on Recent leads to a search page that says "Older".
+
+#### The read counter: who counts as whom
+
+- Options, for each: a browser with a session from another site; a browser opening `/e/<id>.txt`; an agent's fetch tool that copies a browser's headers; a day's close right at midnight.
+- Chosen (#107, after its brief reviews):
+  - The session cookie is `SameSite=Strict`, so it isn't sent on a link from another site: an author or the admin who arrives that way counts as an anonymous reader.
+    Weakening the cookie would cost the forms' guard.
+  - A browser opening the plain text counts as a page read, by `Sec-Fetch-Dest: document`, the same rule that gives browsers pages.
+  - A fetch tool that copies a browser's headers counts as `page`, and one that sends neither those nor the skills' User-Agent isn't counted; `page` means "a browser-like client", not "a person".
+  - A browser's prefetch or prerender (`Sec-Purpose`, `Purpose: prefetch`) doesn't count.
+  - A day closes 10 minutes after midnight UTC, so a read that began just before still lands in its day.
+  - A read of a superseded version goes to the latest public version when it is counted; if that version is later removed, its counts stay with it.
+  - Browsers send reduced User-Agents, so people on the same browser behind one address mostly count as one; the address with the User-Agent separates harnesses and models more than browsers.
+- Against: each of these miscounts some honest reads, which matters only for a curiosity tab.
+
 ### Storage
 
 #### When the reference keys are rebuilt

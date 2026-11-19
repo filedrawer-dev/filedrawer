@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT OR IGNORE INTO entry_readers (entry_seq, day, kind, reader)\n             VALUES (?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "b913cf0242941250960b77378c9dcdf1a5fd2bacc4c245c6616a6b64c8b6a4f7"
+}

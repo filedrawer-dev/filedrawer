@@ -6,12 +6,12 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 
-use crate::AppState;
 use crate::entries::{self, Filters};
 use crate::error::AppError;
 use crate::pages::{Drawer, HomePage, View, page};
 use crate::respond::{RunsOwnScript, echoed, wants_page};
 use crate::routes::read::DEFAULT_LIMIT;
+use crate::{AppState, time};
 
 /// How many cards a tab shows: a page of search results, so Recent's next page is
 /// `/search`'s second.
@@ -20,6 +20,8 @@ const SHOWN: i64 = DEFAULT_LIMIT;
 #[derive(Debug, Deserialize)]
 pub struct HomeQuery {
     view: Option<String>,
+    /// Read only once a page is wanted, so a bad one can't refuse an agent's `/`.
+    page: Option<String>,
 }
 
 pub async fn home(
@@ -44,12 +46,26 @@ pub async fn home(
             ))
         })?,
     };
-    // One more than a page, to know whether older entries follow.
+    let page_number = match view.pages() {
+        true => query
+            .page
+            .as_deref()
+            .map_or(Ok(1), str::parse::<i64>)
+            .map_err(|_| AppError::BadRequest("`page` is a page number, from 1".into()))?
+            .max(1),
+        false => 1,
+    };
+    let order = view.order(time::now_utc().date());
+    let offset = (page_number - 1).saturating_mul(SHOWN);
+    // One more than a page, to know whether more follow.
     let mut found =
-        entries::search(&state.pool, &Filters::default(), view.order(), SHOWN + 1, 0).await?;
+        entries::search(&state.pool, &Filters::default(), order, SHOWN + 1, offset).await?;
     let more = found.cut_to(SHOWN);
-    let mut drawer = Drawer::new(Some(view), "", &found.entries);
-    drawer.older = view.older().filter(|_| more).map(str::to_string);
+    let mut drawer = Drawer::new(Some(view), "", &found);
+    (drawer.back, drawer.more) = view.links(page_number, more);
+    if page_number > 1 {
+        drawer.empty = "No more entries.";
+    }
     let mut response = page(
         StatusCode::OK,
         &HomePage {

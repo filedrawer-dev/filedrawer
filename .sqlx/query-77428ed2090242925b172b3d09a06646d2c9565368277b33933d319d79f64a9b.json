@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO read_days (day, dropped) VALUES (?, 1)\n             ON CONFLICT (day) DO UPDATE SET dropped = dropped + 1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "77428ed2090242925b172b3d09a06646d2c9565368277b33933d319d79f64a9b"
+}

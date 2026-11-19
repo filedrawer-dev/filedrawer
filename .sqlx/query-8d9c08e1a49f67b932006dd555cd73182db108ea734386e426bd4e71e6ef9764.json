@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT is_admin = 1 OR suspended_at IS NOT NULL AS \"excluded!: bool\"\n           FROM accounts WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "excluded!: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "8d9c08e1a49f67b932006dd555cd73182db108ea734386e426bd4e71e6ef9764"
+}

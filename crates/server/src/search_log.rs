@@ -19,7 +19,7 @@ const MAX_PER_DAY: i64 = 10_000;
 const MAX_QUERY: usize = 500;
 
 /// The User-Agent File Drawer's own skills send begins with this.
-const SKILL_CLIENT: &str = "filedrawer-skill";
+pub const SKILL_CLIENT: &str = "filedrawer-skill";
 
 /// The client a search's row keeps: the User-Agent when one of the skills sent it,
 /// which names the agent's harness and model, and nothing for any other client.

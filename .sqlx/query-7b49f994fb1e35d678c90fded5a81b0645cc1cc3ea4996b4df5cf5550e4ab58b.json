@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM entry_readers WHERE day = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "7b49f994fb1e35d678c90fded5a81b0645cc1cc3ea4996b4df5cf5550e4ab58b"
+}

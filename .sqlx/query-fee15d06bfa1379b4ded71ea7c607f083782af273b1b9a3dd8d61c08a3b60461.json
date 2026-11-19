@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH RECURSIVE later(seq) AS (\n             SELECT ?1\n             UNION\n             SELECT n.seq FROM later l JOIN entries n ON n.previous_seq = l.seq\n             WHERE n.status = 'public')\n           SELECT MAX(seq) AS \"seq!: i64\" FROM later",
+  "describe": {
+    "columns": [
+      {
+        "name": "seq!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "fee15d06bfa1379b4ded71ea7c607f083782af273b1b9a3dd8d61c08a3b60461"
+}

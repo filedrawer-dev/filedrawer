@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM entry_reads_daily WHERE day < ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "2c05fe559a1dfa4baf9eafafa8f03d4b680c4dab848dc22cb7739c5e3da1d847"
+}

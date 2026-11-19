@@ -35,6 +35,7 @@ mod pages;
 mod passwords;
 mod provenance;
 mod queue;
+pub mod reads;
 mod removed_entries;
 mod removed_files;
 mod removed_series;
@@ -116,6 +117,8 @@ pub struct AppState {
     pub started_at: ::time::OffsetDateTime,
     /// Staging's record of the headers requests sent (`request_log`); none elsewhere.
     pub request_log: Option<std::sync::Arc<request_log::RequestLog>>,
+    /// Today's readers of each entry, for Most read, and the salt they're hashed with.
+    pub reads: std::sync::Arc<reads::ReadCounter>,
 }
 
 /// The free disk an upload must leave (design.md, Attached code: 5 GB).

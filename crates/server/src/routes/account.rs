@@ -44,6 +44,19 @@ fn session_secret(headers: &HeaderMap) -> Option<String> {
         })
 }
 
+/// The account of the request's session, if it carries a live one; unlike
+/// `SessionAccount`, no session is no error. Only the read counter uses it, to know
+/// who read: a session reveals nothing a page wouldn't show anyone.
+pub async fn optional_session_account(
+    headers: &HeaderMap,
+    state: &AppState,
+) -> Result<Option<String>, sqlx::Error> {
+    match session_secret(headers) {
+        Some(secret) => accounts::session_account(&state.pool, &secret).await,
+        None => Ok(None),
+    }
+}
+
 impl FromRequestParts<AppState> for SessionAccount {
     type Rejection = Response;
 

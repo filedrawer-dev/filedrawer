@@ -124,6 +124,9 @@ button { font: inherit; font-weight: 700; background: var(--ink); color: var(--c
 .drawer a { text-decoration: none; }
 .drawer a:hover, .drawer a:focus-visible { text-decoration: underline; }
 .empty { color: var(--foot); text-align: center; }
+/* Most read: what its counts are, and each card's count beside its stamp. */
+.tabnote { color: var(--foot); text-align: center; margin: -.8rem 0 1.4rem; font-size: .9em; }
+.reads { color: var(--foot); font-size: .85em; }
 .pages { display: flex; justify-content: space-between; margin-top: 1.6rem; }
 .pages a { color: var(--foot-a); }
 

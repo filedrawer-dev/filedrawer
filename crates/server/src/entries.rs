@@ -4,6 +4,8 @@ use analyzer::{
     Analysis, Author, CardContext, Choice, Claim, Kind, Outcome, REFERENCE_KEYS_VERSION, Reference,
     Results, Role, Stage, Vocabulary, analyze, render_card,
 };
+use std::collections::HashMap;
+
 use sqlx::SqlitePool;
 
 use crate::link_checks::{self, LinkFlags};
@@ -670,6 +672,22 @@ async fn index(
     Ok(())
 }
 
+/// The latest public version of the chain public entry `seq` is in: a version comes
+/// after the one it replaced, so it has the higher seq.
+pub async fn latest_public_seq(pool: &SqlitePool, seq: i64) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar!(
+        r#"WITH RECURSIVE later(seq) AS (
+             SELECT ?1
+             UNION
+             SELECT n.seq FROM later l JOIN entries n ON n.previous_seq = l.seq
+             WHERE n.status = 'public')
+           SELECT MAX(seq) AS "seq!: i64" FROM later"#,
+        seq
+    )
+    .fetch_one(pool)
+    .await
+}
+
 /// A public entry by ID.
 pub async fn public_entry(pool: &SqlitePool, id: &str) -> Result<Option<PublicEntry>, sqlx::Error> {
     sqlx::query_as!(
@@ -719,9 +737,27 @@ pub enum Order {
     Newest,
     /// A new random order on each call, whatever the words.
     Random,
+    /// Only entries read since `since` (a UTC day), the most readers first, then the
+    /// newest (design.md, Agent interface: the read counter).
+    MostRead { since: time::Date },
+}
+
+impl Order {
+    fn name(self) -> &'static str {
+        match self {
+            Order::Newest => "newest",
+            Order::Random => "random",
+            Order::MostRead { .. } => "read",
+        }
+    }
 }
 
 impl Found {
+    /// How many readers entry `seq` had in the window, when ranked by them.
+    pub fn readers(&self, seq: i64) -> Option<i64> {
+        self.readers.get(&seq).copied()
+    }
+
     /// Cuts results fetched one past `limit` back to `limit`, and says whether more
     /// followed.
     pub fn cut_to(&mut self, limit: i64) -> bool {
@@ -737,6 +773,8 @@ pub struct Found {
     pub entries: Vec<PublicEntry>,
     /// Every match, across pages; 0 when the page is past the last.
     pub total: i64,
+    /// Under `Order::MostRead`, each entry's readers in the window, by its seq.
+    readers: HashMap<i64, i64>,
 }
 
 /// Public entries matching `filters`: best match first when there are search words
@@ -748,7 +786,11 @@ pub async fn search(
     limit: i64,
     offset: i64,
 ) -> Result<Found, sqlx::Error> {
-    let random = order == Order::Random;
+    let order_name = order.name();
+    let since = match order {
+        Order::MostRead { since } => Some(since.to_string()),
+        Order::Newest | Order::Random => None,
+    };
     let outcome = filters.outcome.map(Outcome::name);
     let kind = filters.kind.map(Kind::name);
     let stage = filters.stage.map(Stage::name);
@@ -777,7 +819,15 @@ pub async fn search(
                SELECT 'slug:' || s.slug, s.account_id FROM slugs s
                JOIN chain c ON c.seq = s.entry_seq
                JOIN entries r ON r.seq = s.entry_seq
-               WHERE r.status = 'public')
+               WHERE r.status = 'public'),
+             -- Readers in Most read's window: the closed days' counts, and the rows
+             -- of days the tidier hasn't closed yet.
+             read_counts(seq, readers) AS (
+               SELECT entry_seq, SUM(n) FROM (
+                 SELECT entry_seq, readers AS n FROM entry_reads_daily WHERE day >= ?13
+                 UNION ALL
+                 SELECT entry_seq, 1 FROM entry_readers WHERE day >= ?13)
+               WHERE ?13 IS NOT NULL GROUP BY entry_seq)
            SELECT e.seq AS "seq!: i64", e.id, e.source, e.account_id,
                   a.display_name AS "display_name?: String", e.submitted_at, e.published_at,
                   (SELECT p.id FROM entries p WHERE p.seq = e.previous_seq AND p.status = 'public') AS "previous_id?",
@@ -787,11 +837,14 @@ pub async fn search(
                   IFNULL(f.code_link_dead, 0) AS "code_link_dead!: bool",
                   IFNULL(f.logs_link_dead, 0) AS "logs_link_dead!: bool",
                   f.pin_flag AS "pin_flag?: String",
+                  IFNULL(rc.readers, 0) AS "readers!: i64",
                   -- Every match, before LIMIT: the sort visits them all anyway.
                   COUNT(*) OVER () AS "total!: i64"
            FROM entries e JOIN authors a ON a.id = e.account_id
            LEFT JOIN link_flags f ON f.entry_seq = e.seq
+           LEFT JOIN read_counts rc ON rc.seq = e.seq
            WHERE e.status = 'public'
+             AND (?12 <> 'read' OR rc.readers > 0)
              -- Only the latest version in each chain (design.md, Entry lifecycle).
              AND NOT EXISTS (SELECT 1 FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public')
              AND (?1 IS NULL OR e.seq IN (SELECT rowid FROM entries_fts WHERE entries_fts MATCH ?1))
@@ -810,7 +863,8 @@ pub async fn search(
                     WHERE r.entry_seq = e.seq
                       AND (k.account_id IS NULL OR k.account_id = e.account_id)))
            ORDER BY
-             CASE WHEN ?12 THEN random() END,
+             CASE WHEN ?12 = 'random' THEN random() END,
+             CASE WHEN ?12 = 'read' THEN -rc.readers END,
              -- CASE runs the MATCH only when there are words; MATCH NULL is an error.
              CASE WHEN ?1 IS NULL THEN NULL ELSE (
                SELECT bm25(entries_fts, 10.0, 5.0, 2.0, 1.0) FROM entries_fts
@@ -828,11 +882,16 @@ pub async fn search(
         limit,
         offset,
         filters.cites,
-        random
+        order_name,
+        since
     )
     .fetch_all(pool)
     .await?;
     let total = rows.first().map_or(0, |row| row.total);
+    let readers = match order {
+        Order::MostRead { .. } => rows.iter().map(|row| (row.seq, row.readers)).collect(),
+        Order::Newest | Order::Random => HashMap::new(),
+    };
     let entries = rows
         .into_iter()
         .map(|row| PublicEntry {
@@ -852,7 +911,11 @@ pub async fn search(
             pin_flag: row.pin_flag,
         })
         .collect();
-    Ok(Found { entries, total })
+    Ok(Found {
+        entries,
+        total,
+        readers,
+    })
 }
 
 /// Every public entry, oldest first, for `/cards.txt`.

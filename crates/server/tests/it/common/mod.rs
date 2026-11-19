@@ -251,6 +251,7 @@ pub fn state(pool: sqlx::SqlitePool, outbox: &Outbox, files_dir: &std::path::Pat
         backups_dir: files_dir.join("backups"),
         started_at: time::OffsetDateTime::UNIX_EPOCH,
         request_log: None,
+        reads: Default::default(),
     }
 }
 

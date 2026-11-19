@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO read_days (day, readers)\n             SELECT ?1, COUNT(*) FROM entry_readers WHERE day = ?1\n             ON CONFLICT (day) DO UPDATE SET readers = readers + excluded.readers",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "87ba48fc2eafe0129342048f7c0b7be3b05bebc12580c805d09b9a86a31d709d"
+}
