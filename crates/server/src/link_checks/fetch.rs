@@ -79,7 +79,7 @@ pub struct HttpFetcher {
 impl HttpFetcher {
     /// With `token`, GitHub's API allows 5,000 calls an hour instead of 60.
     pub fn new(token: Option<String>) -> HttpFetcher {
-        HttpFetcher::with_api_base(token, "https://api.github.com", FETCH_TIMEOUT)
+        HttpFetcher::with_api_base(token, super::GITHUB_API, FETCH_TIMEOUT)
     }
 
     /// With `api_base` standing in for `https://api.github.com`, and each fetch

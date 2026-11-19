@@ -68,14 +68,49 @@ impl SmtpMailer {
             .from
             .parse()
             .map_err(|_| MailError::Address(settings.from.clone()))?;
-        let transport = AsyncSmtpTransport::<Tokio1Executor>::relay(&settings.host)?
-            .port(settings.port)
-            .credentials(Credentials::new(
-                settings.user.clone(),
-                settings.password.clone(),
-            ))
-            .build();
+        let transport = transport(settings)?.build();
         Ok(SmtpMailer { transport, from })
+    }
+}
+
+/// The SMTP transport for `settings`, which the mailer and `check_login` share.
+fn transport(
+    settings: &SmtpSettings,
+) -> Result<lettre::transport::smtp::AsyncSmtpTransportBuilder, lettre::transport::smtp::Error> {
+    Ok(AsyncSmtpTransport::<Tokio1Executor>::relay(&settings.host)?
+        .port(settings.port)
+        .credentials(Credentials::new(
+            settings.user.clone(),
+            settings.password.clone(),
+        )))
+}
+
+/// Why `check_login` failed. Its causes, which `error::with_causes` prints, never hold
+/// the password.
+#[derive(Debug, thiserror::Error)]
+pub enum LoginError {
+    #[error("SMTP couldn't be set up")]
+    Setup(#[source] lettre::transport::smtp::Error),
+    #[error("the SMTP login and NOOP failed")]
+    Failed(#[source] lettre::transport::smtp::Error),
+    #[error("the SMTP server refused NOOP")]
+    NoopRefused,
+}
+
+/// Logs in to the SMTP server and sends NOOP, which sends no email, each step within
+/// `timeout`: `check-outbound`'s test (#102).
+pub async fn check_login(
+    settings: &SmtpSettings,
+    timeout: std::time::Duration,
+) -> Result<(), LoginError> {
+    let transport: AsyncSmtpTransport<Tokio1Executor> = transport(settings)
+        .map_err(LoginError::Setup)?
+        .timeout(Some(timeout))
+        .build();
+    match transport.test_connection().await {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(LoginError::NoopRefused),
+        Err(error) => Err(LoginError::Failed(error)),
     }
 }
 

@@ -30,6 +30,7 @@ mod links;
 pub mod mail;
 pub mod mail_queue;
 mod markdown;
+pub mod outbound;
 mod pages;
 mod passwords;
 mod provenance;

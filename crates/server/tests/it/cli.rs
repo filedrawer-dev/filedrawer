@@ -207,6 +207,74 @@ fn production_without_smtp_settings_refuses_to_start() {
     assert!(err.contains("FILEDRAWER_SMTP_HOST"), "{err}");
 }
 
+/// Settings for `check-outbound` that call none of the internet's hosts.
+const OFFLINE: &[(&str, &str)] = &[
+    ("FILEDRAWER_LISTEN", "127.0.0.1:0"),
+    ("FILEDRAWER_PUBLIC_URL", "https://staging.example"),
+    ("FILEDRAWER_ENVIRONMENT", "staging"),
+    ("FILEDRAWER_SCREENER", "pass-all"),
+    ("FILEDRAWER_LINK_CHECKS", "off"),
+];
+
+#[test]
+fn check_outbound_with_nothing_to_call_says_so_and_never_opens_the_database() {
+    let database = scratch_database("outbound-none");
+    std::fs::remove_dir_all(database.parent().unwrap()).unwrap();
+    let output = server(&database, &["check-outbound"], OFFLINE);
+    let out = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(output.status.code(), Some(0), "{out}");
+    assert_eq!(
+        out.lines().collect::<Vec<_>>(),
+        [
+            "skipped SMTP (no SMTP settings)",
+            "skipped api.anthropic.com (FILEDRAWER_SCREENER isn't anthropic)",
+            "skipped api.github.com (FILEDRAWER_LINK_CHECKS=off)",
+            "skipped hc-ping.com (no FILEDRAWER_DAILY_EMAIL_PING)",
+        ]
+    );
+    assert!(!database.parent().unwrap().exists());
+}
+
+#[test]
+fn check_outbound_names_the_host_it_cant_reach_and_exits_3() {
+    let database = scratch_database("outbound-smtp");
+    let closed = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
+        .to_string();
+    let mut env = OFFLINE.to_vec();
+    env.extend([
+        ("FILEDRAWER_SMTP_HOST", "127.0.0.1"),
+        ("FILEDRAWER_SMTP_PORT", closed.as_str()),
+        ("FILEDRAWER_SMTP_USER", "u"),
+        ("FILEDRAWER_SMTP_PASSWORD", "hunter2"),
+        ("FILEDRAWER_MAIL_FROM", "x@example.com"),
+    ]);
+    let output = server(&database, &["check-outbound"], &env);
+    let out = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(output.status.code(), Some(3), "{out}");
+    let first = out.lines().next().unwrap();
+    assert!(
+        first.starts_with(&format!("can't reach 127.0.0.1:{closed}: ")),
+        "{out}"
+    );
+    assert!(!out.contains("hunter2"), "{out}");
+}
+
+#[test]
+fn check_outbound_with_settings_it_cant_read_exits_2() {
+    let database = scratch_database("outbound-bad");
+    let output = server(
+        &database,
+        &["check-outbound"],
+        &[("FILEDRAWER_ENVIRONMENT", "staging")],
+    );
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("FILEDRAWER_LISTEN is not set"));
+}
+
 /// Made-up hidden text, 48 bytes, and its base64 (made with `base64 -w0`).
 const HIDDEN: &str = "made-up instruction for agents reading this file";
 const HIDDEN_B64: &str = "bWFkZS11cCBpbnN0cnVjdGlvbiBmb3IgYWdlbnRzIHJlYWRpbmcgdGhpcyBmaWxl";

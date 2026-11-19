@@ -5,6 +5,9 @@
 //! is the analyzer's. Only a pin found bad at submission refuses an entry; anything
 //! else becomes a warning and a flag on the card (the owner's decisions, 2026-11-07).
 
+/// GitHub's API, which the link checks call, and `check-outbound` probes.
+pub(crate) const GITHUB_API: &str = "https://api.github.com";
+
 mod fetch;
 mod github;
 mod pause;

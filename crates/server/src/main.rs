@@ -11,7 +11,7 @@ use filedrawer_server::request_log::RequestLog;
 use std::sync::Arc;
 
 use filedrawer_server::mail::{LogMailer, Mailer, SmtpMailer};
-use filedrawer_server::{AppState, admin, app, db, unpack};
+use filedrawer_server::{AppState, admin, app, db, outbound, unpack};
 
 const USAGE: &str = "\
 usage:
@@ -20,6 +20,7 @@ usage:
   filedrawer-server admin create-token --account ID --name NAME
   filedrawer-server admin grant --account ID
   filedrawer-server unpack FILE...
+  filedrawer-server check-outbound
 
 serve runs the server. It reads FILEDRAWER_DATABASE (the SQLite file),
 FILEDRAWER_LISTEN (such as 127.0.0.1:8080), FILEDRAWER_ENVIRONMENT (production,
@@ -75,7 +76,16 @@ unpack runs the server's decoding on files read as one entry's attached files, a
 the screen reads them, and prints for each how many parts it hides and how many
 bytes, that it hides nothing, or the limit it passes, which sends an entry to the
 owner's review. It never prints what a file hides. `ops/smoke-staging eval` runs it
-on the field-test entries' attachment sets.";
+on the field-test entries' attachment sets.
+
+check-outbound reads serve's settings and calls, each within 10 seconds, every host
+they have the server call: the SMTP server (a login and a NOOP; nothing is sent),
+api.anthropic.com and api.github.com (an unauthenticated request, whose answer of
+any kind shows the way out), and hc-ping.com (its root, never the ping URL). It
+prints a line a host, `reached HOST`, `skipped HOST (why)` or `can't reach HOST:
+causes`, and exits 0 when every host it called answered, 3 when one didn't, and 2
+when it can't read the settings. It never opens the database. filedrawer-install
+runs it after each deploy, under the service's own sandbox (#102).";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -112,6 +122,7 @@ fn main() -> ExitCode {
             admin::grant(&pool, account).await
         })),
         ["unpack", files @ ..] if !files.is_empty() => unpack_files(files),
+        ["check-outbound"] => check_outbound(&runtime),
         _ => {
             eprintln!("{USAGE}");
             ExitCode::from(2)
@@ -155,6 +166,30 @@ fn unpack_files(paths: &[&str]) -> ExitCode {
         }
     }
     ExitCode::SUCCESS
+}
+
+/// `filedrawer-server check-outbound`: one line a host, then the exit code. It exits the
+/// process itself, since a lookup stuck in the resolver's blocking thread would hold
+/// the runtime's shutdown past its timeout.
+fn check_outbound(runtime: &tokio::runtime::Runtime) -> ExitCode {
+    use std::io::Write;
+    let config = match Config::from_env(|name| std::env::var(name).ok()) {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("filedrawer-server: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    let results = runtime.block_on(outbound::run(outbound::plan(&config), outbound::TIMEOUT));
+    let mut out = std::io::stdout().lock();
+    for (host, outcome) in &results {
+        let _ = writeln!(out, "{}", outbound::line(host, outcome));
+    }
+    let _ = out.flush();
+    let failed = results
+        .iter()
+        .any(|(_, outcome)| matches!(outcome, outbound::Outcome::Failed(_)));
+    std::process::exit(if failed { 3 } else { 0 });
 }
 
 /// Opens the database, runs `command`, and prints what it returns: an ID or a token.

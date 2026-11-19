@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use crate::error::with_causes;
 
 /// The Messages API's address.
-const API_URL: &str = "https://api.anthropic.com/v1/messages";
+pub(crate) const API_URL: &str = "https://api.anthropic.com/v1/messages";
 /// The API version every request names.
 const API_VERSION: &str = "2026-10-21";
 /// How many calls that fail may be made for one entry before it goes to review.
