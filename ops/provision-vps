@@ -249,6 +249,9 @@ run_wizard() {
 # staging wizard has set up (`--only-new production` reruns it the same way), and
 # `ops/provision-vps production account`, after the first production deploy (#42),
 # makes your production account the admin and sets up the uptime check.
+# A run that restarts a service (the whole wizard, production's, and the smoke,
+# screening and github stages) ends by probing that environment's way out as its
+# server would (#102), and lists what it couldn't reach.
 
 TOTAL_STAGES=13
 ENV_FILE="ops/.vps.env"
@@ -579,6 +582,41 @@ reach_server() {
 install_on_server() {
   ssh -o BatchMode=yes "root@$VPS_HOST" \
     "install -o root -g root -m 0755 /dev/stdin $2/$1" < "$REMOTE/$1"
+}
+
+# outbound_check ENV: probes the way out of ENV's installed binary, as its service's
+# user under its unit's sandbox (#102), once the scripts before have restarted it, so
+# a unit or settings change that cuts the server off shows while you're here. It
+# installs the current filedrawer-install first, which holds the probe. A failure
+# warns and goes in the closing list; it never stops the wizard.
+outbound_check() {
+  local env="$1" output status=0
+  step "Checking that $env's server reaches the hosts it calls..."
+  if ! install_on_server filedrawer-install /usr/local/sbin; then
+    warn "Couldn't install filedrawer-install on the server, so $env isn't probed."
+    SKIPPED+=("$env's outbound probe: couldn't install filedrawer-install; rerun")
+    return 0
+  fi
+  output=$(ssh -o BatchMode=yes "root@$VPS_HOST" \
+    "/usr/local/sbin/filedrawer-install check-outbound $env" < /dev/null 2>&1) || status=$?
+  local line
+  while IFS= read -r line; do
+    [[ -z "$line" ]] || note "$line"
+  done <<< "$output"
+  if (( status == 0 )); then
+    # With no binary yet, or one from before the probe, the install says so instead.
+    [[ "$output" != *"probe: "* ]] || say "$env's way out: checked. ✓"
+    return 0
+  fi
+  warn "$env's server can't reach every host it calls (above), or the probe couldn't"
+  warn "run: look at its unit and settings, and journalctl -u filedrawer-$env."
+  # The closing screen clears this one, so its list keeps what failed: the install's
+  # own line naming the hosts.
+  local failed why="exit $status"
+  failed=$(sed -n "s/^.*'s server can't reach: //p" <<< "$output")
+  [[ -z "$failed" ]] || why+="; can't reach $failed"
+  SKIPPED+=("$env's outbound probe failed ($why): fix, then rerun")
+  pause
 }
 
 production_preflight_stage() {
@@ -927,6 +965,7 @@ production() {
       production_pings_stage
       production_backup_stage
       caddy_upgrades_stage
+      outbound_check production
       production_check_stage
       ;;
     account)
@@ -952,6 +991,8 @@ case "${1:-}" in
     VPS_HOST=$(_existing VPS_HOST || true)
     [[ -n "$VPS_HOST" ]] || { warn "$ENV_FILE has no VPS_HOST. Run the whole wizard first."; exit 1; }
     "${1//-/_}_stage"
+    # The stages that restart staging's service.
+    case "$1" in smoke | screening | github) outbound_check staging ;; esac
     finish
     return 0 ;;
   *)
@@ -1151,6 +1192,7 @@ screening_stage
 github_stage
 admin_stage
 smoke_stage
+outbound_check staging
 
 finish
 }

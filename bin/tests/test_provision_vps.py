@@ -136,6 +136,22 @@ def smoke(tmp_path, fake_host):
     )
 
 
+def stage_calls(smoke) -> list[tuple[int, str]]:
+    """The ssh calls of each run before the outbound probe that ends it, each with
+    its number for sent(); every run must end with that probe."""
+    calls = [c for c in smoke.log.read_text().splitlines() if c.startswith("ssh ")]
+    numbered = list(enumerate(calls, start=1))
+    runs, run = [], []
+    for n, call in numbered:
+        run.append((n, call))
+        if call == f"ssh {PROBE_STAGING}":
+            assert run[-2][1] == f"ssh {INSTALL_INSTALL}", run
+            runs.extend(run[:-2])
+            run = []
+    assert not run, f"a run didn't end with the probe: {run}"
+    return runs
+
+
 def test_smoke_stores_the_token_and_key_as_staging_secrets_and_shows_neither(smoke):
     result = smoke.run()
     assert result.returncode == 0, result.stdout + result.stderr
@@ -170,8 +186,7 @@ def test_smoke_also_names_the_screen_test_account_it_finds_in_ops(smoke):
     )
     result = smoke.run()
     assert result.returncode == 0, result.stdout + result.stderr
-    calls = [c for c in smoke.log.read_text().splitlines() if c.startswith("ssh ")]
-    assert calls[-1] == (
+    assert stage_calls(smoke)[-1][1] == (
         "ssh env SMOKE_ACCOUNT=a-new SCREEN_TEST_ACCOUNT=a-screen1"
         " CI_SCREEN_ACCOUNT=a-ci bash -s"
     )
@@ -183,12 +198,12 @@ def test_smoke_also_names_the_screen_test_account_it_finds_in_ops(smoke):
 def test_smoke_names_the_accounts_to_staging_so_their_entries_are_handled(smoke):
     result = smoke.run()
     assert result.returncode == 0, result.stdout + result.stderr
-    calls = [c for c in smoke.log.read_text().splitlines() if c.startswith("ssh ")]
-    assert calls[-1] == "ssh env SMOKE_ACCOUNT=a-new CI_SCREEN_ACCOUNT=a-ci bash -s"
-    sent = smoke.host.sent(len(calls))
-    assert sent == (REPO / "ops/remote/smoke-env.sh").read_text()
+    calls = stage_calls(smoke)
+    last, call = calls[-1]
+    assert call == "ssh env SMOKE_ACCOUNT=a-new CI_SCREEN_ACCOUNT=a-ci bash -s"
+    assert smoke.host.sent(last) == (REPO / "ops/remote/smoke-env.sh").read_text()
     # The unit first, so it reads the file smoke-env.sh writes.
-    unit = smoke.host.sent(len(calls) - 1)
+    unit = smoke.host.sent(calls[-2][0])
     assert unit == (REPO / "ops/remote/service.sh").read_text()
 
 
@@ -201,9 +216,11 @@ def test_a_rerun_passes_the_known_accounts_and_keeps_the_tokens_unless_asked(smo
     assert (smoke.secrets / "SMOKE_TEST_TOKEN").read_text() == "fdt_kept"
     assert (smoke.secrets / "CI_SCREEN_TOKEN").read_text() == "fdt_kept2"
     # The kept run sends only the setting, not ci-account.sh.
-    calls = [c for c in smoke.log.read_text().splitlines() if c.startswith("ssh ")]
+    calls = stage_calls(smoke)
     assert len(calls) == 6, calls
-    assert smoke.host.sent(6) == (REPO / "ops/remote/smoke-env.sh").read_text()
+    assert (
+        smoke.host.sent(calls[5][0]) == (REPO / "ops/remote/smoke-env.sh").read_text()
+    )
     renewed = smoke.run("y\ny\n\n")
     assert renewed.returncode == 0, renewed.stdout + renewed.stderr
     assert (smoke.secrets / "SMOKE_TEST_TOKEN").read_text() == "fdt_s3cret"
@@ -1006,6 +1023,75 @@ def test_production_only_new_sends_every_remote_script_or_exempts_it(production)
     result = rerun_production(production)
     assert result.returncode == 0, result.stdout + result.stderr
     assert_every_script_sent_or_exempt(production.host, PRODUCTION_ONLY_NEW_EXEMPT)
+
+
+# The outbound probe once the scripts have run (#102)
+
+PROBE_STAGING = "/usr/local/sbin/filedrawer-install check-outbound staging"
+PROBE_PRODUCTION = "/usr/local/sbin/filedrawer-install check-outbound production"
+INSTALL_INSTALL = (
+    "install -o root -g root -m 0755 /dev/stdin /usr/local/sbin/filedrawer-install"
+)
+
+
+def test_a_staging_run_ends_probing_stagings_way_out_with_the_current_install(rerun):
+    rerun.host.answer(PROBE_STAGING, stdout="probe: reached api.github.com\n")
+    result = rerun.run()
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = rerun.host.calls()
+    assert calls[-1] == PROBE_STAGING
+    assert calls[-2] == INSTALL_INSTALL
+    assert rerun.sent()[-2] == script("filedrawer-install")
+    assert "staging's way out: checked" in result.stdout
+
+
+def test_a_binary_that_cant_probe_yet_isnt_called_checked(rerun):
+    rerun.host.answer(
+        PROBE_STAGING, stdout="staging has no binary yet; its first deploy probes\n"
+    )
+    result = rerun.run()
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "its first deploy probes" in result.stdout
+    assert "way out: checked" not in result.stdout
+
+
+def test_a_failed_probe_warns_and_lists_the_hosts_but_finishes(rerun):
+    # As filedrawer-install check-outbound answers, its stderr after its stdout.
+    rerun.host.answer(
+        PROBE_STAGING,
+        stdout="probe: reached SMTP\nprobe: can't reach api.github.com: refused\n"
+        "staging's server can't reach: api.github.com\n",
+        status=3,
+    )
+    result = rerun.run()
+    assert result.returncode == 0, result.stdout + result.stderr
+    closing = result.stdout.split("Setup complete")[1]
+    assert (
+        "staging's outbound probe failed (exit 3; can't reach api.github.com)"
+        in closing
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "answers", "probes"),
+    [
+        ("screening", f"0.25\n{API_KEY}\n{API_KEY}\n\n", True),
+        ("github", f"{GITHUB_TOKEN}\n{GITHUB_TOKEN}\n\n", True),
+        ("caddy-upgrades", "\n" + "https://hc-ping.com/" + "c" * 36 + "\ny\n", False),
+    ],
+)
+def test_a_stage_alone_probes_staging_when_it_restarts_it(stage, name, answers, probes):
+    stage.run(name, answers)
+    assert (PROBE_STAGING in stage.host.calls()) == probes
+
+
+def test_production_probes_its_way_out_with_the_current_install(production):
+    result = production.run(answers=FULL_RUN)
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = production.host.calls()
+    probe = calls.index(PROBE_PRODUCTION)
+    assert calls[probe - 1] == INSTALL_INSTALL
+    assert PROBE_STAGING not in calls
 
 
 @pytest.mark.parametrize("args", [["screenng"], ["--only-new", "caddy-upgrade"]])
