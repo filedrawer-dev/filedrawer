@@ -182,6 +182,11 @@ if [ -f Cargo.toml ] && needs rust; then
     cargo test --doc --quiet >"$logs/doc" 2>&1 || { cat "$logs/doc"; failed=1; }
   fi
   cargo clippy --quiet --all-targets -- -D warnings >"$logs/clippy" 2>&1 || { cat "$logs/clippy"; failed=1; }
+  # sqlx's own message names `cargo sqlx prepare`, which skips the database rebuild
+  # this repo's refresh does. Its online and SQLX_OFFLINE messages both end so.
+  if grep -q 'to update the query cache' "$logs/clippy"; then
+    echo "COMMIT REFUSED: .sqlx/ is stale for a query this change adds or edits: run bin/sqlx-refresh, stage .sqlx/, and commit again." >&2
+  fi
   # At a commit, the one test that a new route, unnamed for agents and unlisted in
   # NOT_FOR_AGENTS, fails; the full check's nextest runs it with the rest.
   if [ -n "$routes" ] && needs routes && [ -f crates/server/Cargo.toml ]; then

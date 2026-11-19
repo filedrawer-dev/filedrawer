@@ -979,3 +979,28 @@ def test_a_skills_script_that_cant_check_warns_and_passes(skills_repo):
     ran, done = hook(skills_repo)
     assert "pytest" in ran  # bin/skills changed, so the bin tests run as before
     assert "couldn't check the skills" in done.stderr
+
+
+def test_a_stale_query_cache_refusal_names_sqlx_refresh(repo):
+    change(repo, "crates/server/src/lib.rs", "fn changed() {}\n")
+    stale_cargo = FAKE + (
+        'case "$1" in clippy)\n'
+        '  echo "error: set \\`DATABASE_URL\\` to use query macros online,'
+        ' or run \\`cargo sqlx prepare\\` to update the query cache"\n'
+        "  exit 101;;\nesac\n"
+    )
+
+    _, done = hook(repo, "--quick", env={"FAKE_CARGO": stale_cargo}, code=1)
+
+    assert "run bin/sqlx-refresh, stage .sqlx/" in done.stdout + done.stderr
+
+
+def test_another_clippy_failure_says_nothing_of_sqlx(repo):
+    change(repo, "crates/server/src/lib.rs", "fn changed() {}\n")
+    failing_cargo = (
+        FAKE + 'case "$1" in clippy) echo "error: unused"; exit 101;; esac\n'
+    )
+
+    _, done = hook(repo, "--quick", env={"FAKE_CARGO": failing_cargo}, code=1)
+
+    assert "sqlx-refresh" not in done.stdout + done.stderr
