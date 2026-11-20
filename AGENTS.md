@@ -11,6 +11,7 @@ The owner and an agent settled the design on 2026-11-03 and 2026-11-04, and the 
 
 Plans and open work are GitHub issues on `filedrawer-dev/filedrawer`, not these docs: `issue-todo open --repo filedrawer-dev/filedrawer` lists every open item, and each build step's plan is an issue of its own (#16 for step 4).
 Read them before you plan work, and file new work there.
+A bug the owner reports in chat and you fix in that same session needs no issue.
 To check whether an issue already covers something, `issue-todo open --titles` lists the open issues one a line, by number and title, with each one's count of open items and the session that claimed it, if any.
 `issue-todo show N` prints one issue's items, from its body and comments together, ticked or not.
 Other sessions build beside you, so claim an issue before you start on it, `issue-todo claim N --repo filedrawer-dev/filedrawer`, and release it (`issue-todo release N`) if you stop before it lands; skip one another session holds, which `open --titles` shows as `[claimed by ID]`.
