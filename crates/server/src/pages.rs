@@ -359,6 +359,8 @@ pub struct SignupPage<'a> {
 pub struct LoginPage<'a> {
     pub error: Option<&'a str>,
     pub email: &'a str,
+    /// The page on this site to land on once logged in; none lands on the account page.
+    pub next: Option<&'a str>,
 }
 
 #[derive(Template)]

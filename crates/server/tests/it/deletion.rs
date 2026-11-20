@@ -105,7 +105,7 @@ async fn deleting_an_account_keeps_its_public_entries_without_its_name() {
     );
     assert_eq!(
         app.page("/account", Some(&cookie)).await.location(),
-        Some("/login")
+        Some("/login?next=%2Faccount")
     );
     let login = app
         .form("/login", &[("email", EMAIL), ("password", PASSWORD)], None)
@@ -124,7 +124,7 @@ async fn deleting_needs_a_browser_session() {
     let by_token = app.post_as("/account/delete", Some(&token), "").await;
     assert_eq!(by_token.status, StatusCode::FORBIDDEN, "{}", by_token.body);
     let page = app.page("/account/delete", None).await;
-    assert_eq!(page.location(), Some("/login"));
+    assert_eq!(page.location(), Some("/login?next=%2Faccount%2Fdelete"));
     let still = app
         .post_as("/entries", Some(&token), entry("Still here", ""))
         .await;

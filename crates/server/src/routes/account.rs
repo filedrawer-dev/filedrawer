@@ -7,7 +7,7 @@
 use axum::Form;
 use axum::extract::{FromRequestParts, Path, Query, State};
 use axum::http::request::Parts;
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use serde::Deserialize;
 
@@ -28,6 +28,13 @@ const COOKIE: &str = "fd_session";
 /// the request is sent to the login page.
 pub struct SessionAccount {
     pub id: String,
+}
+
+/// The `Set-Cookie` value that sets the session cookie to `secret` for `max_age`
+/// seconds; an empty secret with 0 clears it. Lax, so a link from another site, such
+/// as an email's, keeps the session (design.md, Accounts).
+fn session_cookie(secret: &str, max_age: i64) -> String {
+    format!("{COOKIE}={secret}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age={max_age}")
 }
 
 /// The session cookie's secret, if the request carries one.
@@ -62,14 +69,39 @@ impl FromRequestParts<AppState> for SessionAccount {
 
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, Response> {
         let Some(secret) = session_secret(&parts.headers) else {
-            return Err(Redirect::to("/login").into_response());
+            return Err(to_login(parts));
         };
         match accounts::session_account(&state.pool, &secret).await {
             Ok(Some(id)) => Ok(SessionAccount { id }),
-            Ok(None) => Err(Redirect::to("/login").into_response()),
+            Ok(None) => Err(to_login(parts)),
             Err(error) => Err(AppError::from(error).into_response()),
         }
     }
+}
+
+/// The login page, which returns a GET to the page it asked for once logged in. A
+/// form's POST goes to the plain login page, since its target is no page to land on.
+fn to_login(parts: &Parts) -> Response {
+    let asked = parts.uri.path_and_query().map(|asked| asked.as_str());
+    match asked {
+        Some(asked) if parts.method == Method::GET || parts.method == Method::HEAD => {
+            let next: String = url::form_urlencoded::byte_serialize(asked.as_bytes()).collect();
+            Redirect::to(&format!("/login?next={next}")).into_response()
+        }
+        _ => Redirect::to("/login").into_response(),
+    }
+}
+
+/// `next` if it names a page on this site; otherwise none, so a crafted login link
+/// can't send a browser elsewhere. Browsers read `\` as `/`, so `/\host` would be
+/// `//host`, another site; and a header takes only visible ASCII.
+fn page_on_this_site(next: &str) -> Option<&str> {
+    let on_site = next.starts_with('/')
+        && !next.starts_with("//")
+        && next
+            .bytes()
+            .all(|byte| byte.is_ascii_graphic() && byte != b'\\');
+    on_site.then_some(next)
 }
 
 /// Hashes on a blocking thread: argon2id takes tens of milliseconds of CPU.
@@ -233,20 +265,33 @@ pub async fn verify(
     ))
 }
 
-pub async fn login_page() -> Response {
-    page(StatusCode::OK, &LoginPage::default())
+#[derive(Deserialize)]
+pub struct LoginQuery {
+    next: Option<String>,
+}
+
+pub async fn login_page(Query(query): Query<LoginQuery>) -> Response {
+    let template = LoginPage {
+        next: query.next.as_deref().and_then(page_on_this_site),
+        ..LoginPage::default()
+    };
+    page(StatusCode::OK, &template)
 }
 
 #[derive(Deserialize)]
 pub struct LoginForm {
     email: String,
     password: String,
+    /// The page to land on once logged in, from the login page's query.
+    #[serde(default)]
+    next: String,
 }
 
 pub async fn login(
     State(state): State<AppState>,
     Form(form): Form<LoginForm>,
 ) -> Result<Response, AppError> {
+    let next = page_on_this_site(&form.next);
     let email = accounts::normalize_email(&form.email);
     // Failed logins count per address, known or not; once full, even the right
     // password waits (design.md, Limits and abuse). Each attempt takes its place
@@ -263,16 +308,15 @@ pub async fn login(
         let template = LoginPage {
             error: Some("The email or the password is wrong."),
             email: "",
+            next,
         };
         return Ok(page(StatusCode::UNAUTHORIZED, &template));
     };
     limits::give_back(&state.pool, slot).await?;
     let secret = accounts::new_session(&state.pool, &account_id).await?;
-    let cookie = format!(
-        "{COOKIE}={secret}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age={}",
-        SESSION_DAYS * 24 * 60 * 60
-    );
-    Ok(([(header::SET_COOKIE, cookie)], Redirect::to("/account")).into_response())
+    let cookie = session_cookie(&secret, SESSION_DAYS * 24 * 60 * 60);
+    let landing = Redirect::to(next.unwrap_or("/account"));
+    Ok(([(header::SET_COOKIE, cookie)], landing).into_response())
 }
 
 pub async fn logout(
@@ -282,7 +326,7 @@ pub async fn logout(
     if let Some(secret) = session_secret(&headers) {
         accounts::end_session(&state.pool, &secret).await?;
     }
-    let clear = format!("{COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0");
+    let clear = session_cookie("", 0);
     Ok(([(header::SET_COOKIE, clear)], Redirect::to("/login")).into_response())
 }
 
@@ -477,7 +521,7 @@ pub async fn delete_account(
         return delete_form(&state, &session.id, StatusCode::UNAUTHORIZED, Some(error)).await;
     }
     deletion::delete(&state, &session.id).await?;
-    let clear = format!("{COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0");
+    let clear = session_cookie("", 0);
     let done = page(
         StatusCode::OK,
         &Message {
@@ -504,7 +548,7 @@ pub async fn resend_verification(
 }
 
 /// Middleware for the account routes: a POST must carry an `Origin` header naming
-/// this site. With the session cookie's `SameSite=Strict`, that stops another site
+/// this site. With the session cookie's `SameSite=Lax`, that stops another site
 /// from posting a form on a logged-in visitor's behalf. A POST with no Origin is
 /// refused too, since every browser that matters sends one.
 pub async fn same_origin(

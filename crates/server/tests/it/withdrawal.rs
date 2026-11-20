@@ -166,7 +166,11 @@ async fn only_the_accounts_browser_session_withdraws() {
     let id = id_in(&held.body);
     let path = format!("/account/e/{id}/withdraw");
     let before = state_of(&app, &[&id]).await;
-    assert_eq!(app.page(&path, None).await.location(), Some("/login"));
+    let to_login = format!("/login?next=%2Faccount%2Fe%2F{id}%2Fwithdraw");
+    assert_eq!(
+        app.page(&path, None).await.location(),
+        Some(to_login.as_str())
+    );
     assert_eq!(app.form(&path, &[], None).await.location(), Some("/login"));
     let by_token = app
         .send(

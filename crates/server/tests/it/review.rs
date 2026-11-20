@@ -59,9 +59,9 @@ async fn only_the_admins_session_reaches_the_queue() {
 
     let anonymous = app.page("/admin", None).await;
     assert_eq!(anonymous.status, StatusCode::SEE_OTHER);
-    assert_eq!(anonymous.location(), Some("/login"));
+    assert_eq!(anonymous.location(), Some("/login?next=%2Fadmin"));
     let with_token = app.get_as_author("/admin").await;
-    assert_eq!(with_token.location(), Some("/login"));
+    assert_eq!(with_token.location(), Some("/login?next=%2Fadmin"));
 
     let (someone, _) = browser_account(&app, "grace@example.com").await;
     for path in ["/admin".to_string(), format!("/admin/e/{id}")] {

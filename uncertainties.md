@@ -589,8 +589,7 @@ The owner settled the email's sections and the rules in design.md's Admin sectio
 
 - Options, for each: a browser with a session from another site; a browser opening `/e/<id>.txt`; an agent's fetch tool that copies a browser's headers; a day's close right at midnight.
 - Chosen (#107, after its brief reviews):
-  - The session cookie is `SameSite=Strict`, so it isn't sent on a link from another site: an author or the admin who arrives that way counts as an anonymous reader.
-    Weakening the cookie would cost the forms' guard.
+  - The session cookie is `SameSite=Lax`, so it comes with a link from another site, such as an email's: an author or the admin who arrives that way is known, and their read isn't counted.
   - A browser opening the plain text counts as a page read, by `Sec-Fetch-Dest: document`, the same rule that gives browsers pages.
   - A fetch tool that copies a browser's headers counts as `page`, and one that sends neither those nor the skills' User-Agent isn't counted; `page` means "a browser-like client", not "a person".
   - A browser's prefetch or prerender (`Sec-Purpose`, `Purpose: prefetch`) doesn't count.
@@ -884,3 +883,10 @@ An agent chose these with #87's fix, after its brief review.
 - Chosen: afresh, right before the release stage, since `npm trust list` doesn't say whether a publisher has lapsed after its 2 days (npm/cli v11.21.2, `lib/trust-cmd.js`), so a rerun days after a failed release would otherwise keep one that no longer works (#84).
   A released package's publisher has been used, so it is left alone.
 - Against: each rerun before the first release asks for up to three second factors a package, eighteen in all, where most reruns come within the 2 days and need none.
+
+#### Where login lands
+
+- Options: always the account page; the page a GET with no session asked for, carried as `/login?next=`, or in a cookie.
+- Chosen: `next`, taken only when it names a page on this site: one leading `/`, visible ASCII, no `\`, which browsers read as `/`; anything else lands on the account page.
+  A POST with no session goes to the plain login page, since a form's target is no page to land on.
+- Against: an admin whose session ended before pressing a form's button lands on the account page, not back on the form; and a `\` in a query is refused, though it couldn't lead off the site.

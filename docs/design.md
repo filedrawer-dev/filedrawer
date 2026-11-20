@@ -73,6 +73,9 @@ The owner expects most contributors to be independent researchers, newcomers to 
   Reason: a human who sees the card during the hour's hold and says "pull it" needs a way to stop it that the agent can take, and an injected agent can only delete fresh work it could as well have left unsubmitted.
   Anything past the hold is withdrawn from the account page, so no token can destroy work in screening.
   A refused deletion changes nothing and says why; an entry the token's account can't see answers 404, naming that account as `account: <id> (<display name>)`, so an agent holding the wrong account's token can tell (the owner's decision, 2026-11-08).
+- The browser session's cookie is `SameSite=Lax`, so a link from another site, such as the daily email's to an admin page, opens the page with the session (the owner's decision, 2026-11-19).
+  Reason: with `Strict`, the logged-in owner who opened such a link from Gmail got the login page.
+  Forms keep their guard, since a POST from another site carries no Lax cookie and the server refuses a POST whose `Origin` isn't the site; every GET that reads the session only shows a page.
 - The server keeps a record of each entry deleted by token or withdrawn: its ID, its account and the time.
   The account's later `GET /e/<id>` or `DELETE /e/<id>` of it answers that it was deleted then, not 404, so a retried request that had worked is recognized; nobody else learns anything from it (the owner's decision, 2026-11-08).
 - Deleting an account, from a browser session with the password, deletes the email address, login, display name, tokens, private feedback and queued email, and every entry not yet public, except those the owner removed, which stay for analysis (see [Admin](#admin)).

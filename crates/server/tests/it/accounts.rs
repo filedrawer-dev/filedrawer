@@ -41,7 +41,7 @@ async fn signup_verify_login_and_submit_with_a_new_token() {
 }
 
 #[tokio::test]
-async fn the_session_cookie_is_http_only_secure_and_strict() {
+async fn the_session_cookie_is_http_only_secure_and_lax() {
     let app = test_app().await;
     signed_up_and_verified(&app, "grace@example.com").await;
     let reply = app
@@ -52,9 +52,98 @@ async fn the_session_cookie_is_http_only_secure_and_strict() {
         )
         .await;
     let header = reply.headers["set-cookie"].to_str().unwrap();
-    for attribute in ["HttpOnly", "Secure", "SameSite=Strict", "Path=/"] {
+    // Lax, so a link from an email to an admin or account page keeps the session.
+    for attribute in ["HttpOnly", "Secure", "SameSite=Lax", "Path=/"] {
         assert!(header.contains(attribute), "{header}");
     }
+}
+
+#[tokio::test]
+async fn a_page_opened_without_a_session_sends_the_login_back_to_it() {
+    let app = test_app().await;
+    let reply = app.get("/admin/e/3h1kzn8sj4?x=1").await;
+    assert_eq!(reply.status, StatusCode::SEE_OTHER);
+    assert_eq!(
+        reply.location(),
+        Some("/login?next=%2Fadmin%2Fe%2F3h1kzn8sj4%3Fx%3D1")
+    );
+    let login = app.get(reply.location().unwrap()).await;
+    assert!(
+        login
+            .body
+            .contains(r#"name="next" value="/admin/e/3h1kzn8sj4?x=1""#),
+        "{}",
+        login.body
+    );
+}
+
+#[tokio::test]
+async fn login_lands_on_the_page_it_was_sent_from() {
+    let app = test_app().await;
+    signed_up_and_verified(&app, "grace@example.com").await;
+    let reply = app
+        .form(
+            "/login",
+            &[
+                ("email", "grace@example.com"),
+                ("password", PASSWORD),
+                ("next", "/account/delete"),
+            ],
+            None,
+        )
+        .await;
+    assert_eq!(reply.location(), Some("/account/delete"));
+}
+
+#[tokio::test]
+async fn login_never_sends_a_browser_off_the_site() {
+    let app = test_app().await;
+    signed_up_and_verified(&app, "grace@example.com").await;
+    for next in [
+        "//evil.example/",
+        "https://evil.example/",
+        "/\\evil.example/",
+        "/\t/evil.example/",
+        "evil",
+        "/é",
+        "",
+    ] {
+        let reply = app
+            .form(
+                "/login",
+                &[
+                    ("email", "grace@example.com"),
+                    ("password", PASSWORD),
+                    ("next", next),
+                ],
+                None,
+            )
+            .await;
+        assert_eq!(reply.location(), Some("/account"), "{next:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_failed_login_keeps_the_page_to_return_to() {
+    let app = test_app().await;
+    signed_up_and_verified(&app, "grace@example.com").await;
+    let reply = app
+        .form(
+            "/login",
+            &[
+                ("email", "grace@example.com"),
+                ("password", "wrong password"),
+                ("next", "/admin"),
+            ],
+            None,
+        )
+        .await;
+    assert_eq!(reply.status, StatusCode::UNAUTHORIZED);
+    assert!(
+        reply.body.contains(r#"name="next" value="/admin""#),
+        "{}",
+        reply.body
+    );
 }
 
 #[tokio::test]
@@ -272,9 +361,9 @@ async fn the_account_page_needs_a_session() {
     let app = test_app().await;
     let reply = app.page("/account", None).await;
     assert_eq!(reply.status, StatusCode::SEE_OTHER);
-    assert_eq!(reply.location(), Some("/login"));
+    assert_eq!(reply.location(), Some("/login?next=%2Faccount"));
     let forged = app.page("/account", Some("fd_session=forged")).await;
-    assert_eq!(forged.location(), Some("/login"));
+    assert_eq!(forged.location(), Some("/login?next=%2Faccount"));
 }
 
 #[tokio::test]
@@ -286,7 +375,7 @@ async fn logout_ends_the_session() {
     assert_eq!(reply.status, StatusCode::SEE_OTHER);
     assert_eq!(
         app.page("/account", Some(&cookie)).await.location(),
-        Some("/login")
+        Some("/login?next=%2Faccount")
     );
 }
 
@@ -384,7 +473,7 @@ async fn password_reset_sets_a_new_password_and_ends_old_sessions() {
     assert_eq!(old.status, StatusCode::UNAUTHORIZED);
     assert_eq!(
         app.page("/account", Some(&old_session)).await.location(),
-        Some("/login")
+        Some("/login?next=%2Faccount")
     );
     let again = app
         .form(
@@ -520,7 +609,7 @@ async fn whoever_resets_an_address_gets_the_account_with_no_tokens_left() {
     assert_eq!(done.status, StatusCode::OK, "{}", done.body);
     assert_eq!(
         app.page("/account", Some(&mallory)).await.location(),
-        Some("/login")
+        Some("/login?next=%2Faccount")
     );
     // The reset proved the address, so Grace can make a token and submit.
     let cookie = logged_in(&app, "grace@example.com", PASSWORD).await;
