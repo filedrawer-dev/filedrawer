@@ -1,0 +1,31 @@
+# Dependabot opens at most two pull requests a week: one moving the workflows' pinned
+# actions (each `uses:` names a commit, with its version in a comment, which
+# Dependabot rewrites with it), and one moving the crates in Cargo.lock, with
+# Cargo.toml only where a requirement must widen. A release has to be a week old
+# first, so one that is pulled or replaced within days never arrives here.
+#
+# It doesn't see the tools pinned inside scripts and workflow inputs (bin/lychee,
+# bin/caddy, `uvx tool@version`, install-action's `tool:` versions): those move by
+# hand.
+#
+# To stop the pull requests, delete this file.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      crates:
+        patterns: ["*"]

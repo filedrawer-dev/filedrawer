@@ -1,6 +1,10 @@
 # Every check the commit hooks run, over every file, on each push to main and each pull
 # request: the hooks in .pre-commit-config.yaml, then the tests and clippy through
 # bin/agent-pre-commit.
+#
+# Every action, here and in the other workflows, is pinned to a commit, with its
+# version in a comment; .github/dependabot.yml moves the pins by pull request, and
+# bin/tests/test_workflow_supply_chain.py refuses a tag or a branch.
 name: CI
 
 on:
@@ -15,18 +19,22 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - if: hashFiles('Cargo.toml') != ''
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
         with:
+          toolchain: stable
           components: rustfmt, clippy
       - if: hashFiles('Cargo.toml') != ''
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - if: hashFiles('Cargo.toml') != ''
-        uses: taiki-e/install-action@nextest
-      - uses: astral-sh/setup-uv@v10.3.3
+        uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
+        with:
+          tool: nextest@0.9.152
+          fallback: none
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       # The formatters write; the diff shows what was unformatted.
       - run: uvx pre-commit@4.7.0 run --all-files --show-diff-on-failure
       - run: bin/agent-pre-commit
@@ -34,7 +42,10 @@ jobs:
   # A push to main that passes the checks deploys to staging (design.md, Hosting and
   # operations). The binary is static (musl), built for the CX23's x86_64. Building and
   # deploying are separate jobs, so no third-party action runs while the deploy key is
-  # on disk. The key may only run filedrawer-receive on the VPS, which hands the upload
+  # on disk. The build restores no cache, so the binary is built from the checkout and
+  # the crates Cargo.lock names, by nothing an earlier job left behind; that costs a
+  # cold build, about 2 minutes, on each push.
+  # The key may only run filedrawer-receive on the VPS, which hands the upload
   # to filedrawer-install: it checks the hash, installs with a health check and an
   # outbound probe, and rolls back on failure; exit 3 says the new binary stays though
   # the server can't get out (#102). ops/provision-vps sets up the key and writes
@@ -48,15 +59,13 @@ jobs:
     env:
       BINARY: target/x86_64-unknown-linux-musl/release/filedrawer-server
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
         with:
+          toolchain: stable
           targets: x86_64-unknown-linux-musl
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: musl
       # SQLite's C code compiles into the binary, so the musl C compiler is needed.
       - run: sudo apt-get update -q && sudo apt-get install -y -q musl-tools
       # The binary embeds its commit, which ops/deploy-production reads from staging
@@ -76,7 +85,7 @@ jobs:
       # artifact to production, and rolls back to an older one. The artifact keeps the
       # name filedrawer, and holds the one file filedrawer-server; runs from before
       # #77 hold the file filedrawer, which ops/deploy-production also takes.
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: filedrawer
           path: ${{ env.BINARY }}
@@ -99,7 +108,7 @@ jobs:
       group: release-skills
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Tag each new skill version
@@ -126,7 +135,7 @@ jobs:
       group: deploy-staging
       cancel-in-progress: false
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: filedrawer
       - name: Deploy
@@ -161,7 +170,7 @@ jobs:
       group: smoke-staging
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Smoke test
@@ -187,7 +196,7 @@ jobs:
       group: screen-staging
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Screen with the real model

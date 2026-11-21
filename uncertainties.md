@@ -916,6 +916,25 @@ The owner settled the email's sections and the rules in design.md's Admin sectio
 - Against: the first daily run, with no covered run before it, tests the lines changed since the workflow was added, close to a full run: about 2300 mutants on 4 shards, some 2.5 hours, under the shard job's 330 minutes but longer than a full run takes.
   A full run started by hand on main first makes that daily run small.
 
+#### Dependabot
+
+An agent added this on 2026-11-20, with the owner away; deleting `.github/dependabot.yml` undoes it.
+
+- Options: pin each workflow action to a commit and move the pins by hand; pin them and let Dependabot move them, with or without the crates in `Cargo.lock`; or leave actions on tags.
+- Chosen: pinned, with Dependabot for `github-actions` and `cargo`, weekly, grouped into one pull request for each, and only releases at least 7 days old (`cooldown`).
+  A pin nothing moves goes stale, and a tag is whatever was last pushed to it.
+- Against: up to two pull requests a week that the owner merges on GitHub, outside wt-ship, each deploying staging; the cargo one can widen a requirement in a `Cargo.toml`, a major version included.
+  Dependabot's security updates and alerts are repository settings, which this file doesn't turn on.
+
+#### What a build job may restore
+
+An agent chose this on 2026-11-20, with the owner away.
+
+- Options: let `build-staging` restore `Swatinem/rust-cache` and the release's `wheel` and `sdist` jobs uv's cache, as before; or build what ships from the checkout alone.
+- Chosen: no cache in those three jobs.
+  Any job on main can save a cache entry the next run restores, so a restored one makes every such job's tools part of what built the server's binary or a published package.
+- Against: each push to main builds the server cold, about 2 minutes where a warm build took 40 seconds, so staging deploys that much later.
+
 ### Production deploys
 
 #### Production's commit is public

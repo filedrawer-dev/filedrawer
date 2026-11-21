@@ -123,7 +123,12 @@ def template(tmp_path_factory) -> Path:
         root / "bin/tests/test_no_wall_clock_limits.py",
     )
     # And the ones it runs beside it, here only names the fake uvx is handed.
-    for name in ("checks_needed", "no_early_exit_readers", "workflow_run_blocks"):
+    for name in (
+        "checks_needed",
+        "no_early_exit_readers",
+        "workflow_run_blocks",
+        "workflow_supply_chain",
+    ):
         (root / f"bin/tests/test_{name}.py").write_text("")
     git(root, "init", "-q")
     # Its own identity, since CI's runner has no global one.
@@ -322,7 +327,8 @@ def test_the_checks_a_change_to_each_reference_needs(template, path, checks):
 RULE_TEST = "bin/tests/test_no_wall_clock_limits.py"
 NEEDED_TEST = "bin/tests/test_checks_needed.py"
 SH_RULE_TESTS = (
-    "bin/tests/test_no_early_exit_readers.py bin/tests/test_workflow_run_blocks.py"
+    "bin/tests/test_no_early_exit_readers.py bin/tests/test_workflow_run_blocks.py "
+    "bin/tests/test_workflow_supply_chain.py"
 )
 
 
@@ -353,7 +359,8 @@ def test_the_commit_check_runs_the_source_rules_for_a_bin_tests_change(repo):
 )
 def test_a_script_or_workflow_change_runs_only_the_shell_and_workflow_rules(repo, path):
     """A pipe into `grep -q` and parsing in a workflow's YAML once passed their
-    commits; the table of checks, which takes 9 s, stays with bin/tests changes."""
+    commits, and an action named by a tag would pass one; the table of checks, which
+    takes 9 s, stays with bin/tests changes."""
     change(repo, path, "x\n")
 
     hook(repo, env=QUEUE_EXIT, script="agent-commit-check")

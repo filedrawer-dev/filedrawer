@@ -36,7 +36,7 @@ jobs:
       needed: ${{ steps.versions.outputs.needed }}
       verdict: ${{ steps.tests.outputs.verdict }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - id: versions
@@ -49,7 +49,7 @@ jobs:
           LATEST: ${{ steps.versions.outputs.latest }}
         run: echo "FILEDRAWER_TEST_CADDY=$(bin/caddy-latest fetch "$LATEST" "$RUNNER_TEMP/caddy")" >> "$GITHUB_ENV"
       - if: steps.versions.outputs.needed == 'true'
-        uses: astral-sh/setup-uv@v10.3.3
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       - id: tests
         if: steps.versions.outputs.needed == 'true'
         run: |
@@ -73,7 +73,7 @@ jobs:
       VERDICT: ${{ needs.test.outputs.verdict }}
       RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - run: bin/caddy-latest report "$LATEST" "$PINNED" "$VERDICT" "$RUN"

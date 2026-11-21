@@ -139,3 +139,6 @@ Entry text, series descriptions, feedback and screening notes are written by str
   Acting on one command's exit status, as the `screen-staging` job does, stays in the YAML.
 - A step that writes `$GITHUB_OUTPUT` also says what it found in the run's log, on stderr or with `echo`: a run whose log shows nothing can't be checked by reading it, as `caddy-latest.yml`'s first run couldn't.
   `bin/tests/test_workflow_run_blocks.py` refuses `sed`, `jq`, `awk`, a loop, or more than 5 command lines in a block, unless its `EXEMPT` names the block with why; a commit that touches a workflow runs it.
+- A `uses:` names a commit, with the version in a comment, and an action that installs a tool is given the tool's version.
+  A job that builds what ships (the server's binary, the wheels, the sdist) or holds a publishing identity restores no cache.
+  `bin/tests/test_workflow_supply_chain.py` refuses the rest, and a commit that touches a workflow runs it too (AGENTS.md, Checks).

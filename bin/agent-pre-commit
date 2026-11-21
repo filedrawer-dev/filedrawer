@@ -41,8 +41,10 @@
 # which checks a skills edit needs and failed that table only when it landed. For a
 # path in bin/, ops/ or .github/workflows (`sh-rules`):
 # bin/tests/test_no_early_exit_readers.py, since a script's pipe into `grep -q` passed
-# its commit and only a review found it, and bin/tests/test_workflow_run_blocks.py,
-# since parsing in a workflow's YAML passed its commit and a review sent it back. None
+# its commit and only a review found it, bin/tests/test_workflow_run_blocks.py,
+# since parsing in a workflow's YAML passed its commit and a review sent it back, and
+# bin/tests/test_workflow_supply_chain.py, since an action named by a tag, or a
+# cache in a job that builds what ships, would pass a workflow's commit too. None
 # needs a build and each takes seconds, so, like the skills check, they run outside
 # heavy's queue. So does --mods, which the commit check passes too: bin/test-modules, when a
 # path in a crate's tests/it changed (bin/checks-needed's `test-mods`), since a test
@@ -138,11 +140,11 @@ fi
 # Outside the queue, as the skills check is, and each in seconds: for py-rules, an
 # ast read of bin/tests' sources and, when the tree has it, the table of which checks
 # a path needs, which a bin test's new read of a repo folder changes; for sh-rules,
-# the scripts' early-exit pipes and the workflows' run blocks.
+# the scripts' early-exit pipes, the workflows' run blocks and the actions they name.
 if [ -n "$rules" ] && [ -x bin/pytest ]; then
   names=
   needs py-rules && names="no_wall_clock_limits checks_needed"
-  needs sh-rules && names="$names no_early_exit_readers workflow_run_blocks"
+  needs sh-rules && names="$names no_early_exit_readers workflow_run_blocks workflow_supply_chain"
   rule_tests=
   # Those the tree has: one checked out at an older commit lacks the newer ones.
   for name in $names; do

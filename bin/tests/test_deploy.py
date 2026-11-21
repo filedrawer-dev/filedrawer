@@ -827,9 +827,12 @@ def test_staging_and_production_deploy_the_file_cargo_builds(tmp_path):
     cargo = (REPO / "crates/server/Cargo.toml").read_text()
     assert f'[[bin]]\nname = "{name}"\n' in cargo, name
     assert f"--bin {name}\n" in build, build
-    [uploaded] = re.findall(r"upload-artifact@\S+\n\s+with:\n\s+name: (\S+)", build)
+    # After the action's commit comes its version, in a comment.
+    [uploaded] = re.findall(
+        r"upload-artifact@\S+(?: #.*)?\n\s+with:\n\s+name: (\S+)", build
+    )
     [downloaded] = re.findall(
-        r"download-artifact@\S+\n\s+with:\n\s+name: (\S+)", deploy
+        r"download-artifact@\S+(?: #.*)?\n\s+with:\n\s+name: (\S+)", deploy
     )
     assert uploaded == downloaded
     promote = (REPO / "ops/deploy-production").read_text()
