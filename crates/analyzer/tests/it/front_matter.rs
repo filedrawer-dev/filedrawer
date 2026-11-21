@@ -815,6 +815,15 @@ fn a_valid_tag_is_a_short_label_on_one_line() {
         "GPT-4o",
         "\u{6a21}\u{578b}",
         &"x".repeat(60),
+        // Persian writes a zero-width non-joiner inside words.
+        "\u{645}\u{6cc}\u{200c}\u{646}\u{627}",
+        // Devanagari: a half form, written with a zero-width joiner after the virama.
+        "\u{915}\u{94d}\u{200d}\u{937}",
+        // Emoji sequences: joined emoji, a presentation selector, and both.
+        "\u{1f469}\u{200d}\u{1f4bb}",
+        "\u{2764}\u{fe0f}",
+        "\u{1f441}\u{fe0f}\u{200d}\u{1f5e8}\u{fe0f}",
+        "1\u{fe0f}\u{20e3}",
     ] {
         assert!(is_valid_tag(tag), "{tag:?}");
     }
@@ -831,6 +840,24 @@ fn a_valid_tag_is_a_short_label_on_one_line() {
         "a\u{e0041}b",
         "\u{3164}",
         &"x".repeat(61),
+        // A joiner joins only visible characters, and no two ASCII ones.
+        "a\u{200d}b",
+        "a\u{200c}b",
+        "\u{200c}\u{645}\u{6cc}",
+        "\u{645}\u{6cc}\u{200c}",
+        "\u{645}\u{6cc}\u{200c}\u{200c}\u{646}\u{627}",
+        "\u{645}\u{6cc}\u{200c} \u{646}\u{627}",
+        "\u{200d}",
+        // A presentation selector follows a visible character, one at a time; the
+        // other variation selectors aren't read.
+        "\u{2764}\u{fe0f}\u{fe0f}",
+        "\u{fe0f}a",
+        "a \u{fe0f}",
+        "a\u{fe00}",
+        "\u{2764}\u{e0100}",
+        // Egyptian hieroglyph format controls show nothing on their own.
+        "a\u{13430}b",
+        "\u{13430}",
     ] {
         assert!(!is_valid_tag(tag), "{tag:?}");
     }

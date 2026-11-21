@@ -268,20 +268,23 @@ pub fn is_valid_tag(tag: &str) -> bool {
 
 /// Whether `text` is a short label on one line, such as a tag or a display name
 /// (entry-format.md, Fields: `tags`): at most `max_chars` characters, with something
-/// that shows, and no line break, other control character or invisible character.
+/// that shows, no control character, no U+2028 or U+2029, and nothing hidden (see
+/// [`shown_name`] for what a label may hold that shows nothing by itself).
 pub fn is_label(text: &str, max_chars: usize) -> bool {
     text.chars().count() <= max_chars
         && !shows_nothing(text)
         && !text
             .chars()
-            .any(|c| c.is_control() || matches!(c, '\u{2028}' | '\u{2029}') || is_invisible(c))
+            .any(|c| c.is_control() || matches!(c, '\u{2028}' | '\u{2029}'))
+        && without_hidden(text) == text
 }
 
 /// Whether `c` is a character that shows nothing where text is read: a
 /// bidirectional control, a zero-width or other format character, a blank filler, or
 /// a tag character, which a model may read as a letter though no person sees it
-/// (entry-format.md, The card). The variation selectors U+FE00 to U+FE0F are not
-/// among them, since an emoji may end in one.
+/// (entry-format.md, The card). The zero-width joiner and non-joiner are among them,
+/// though a label keeps them between visible characters (see [`without_hidden`]);
+/// the variation selectors U+FE00 to U+FE0F are not, since an emoji may end in one.
 fn is_invisible(c: char) -> bool {
     matches!(
         c,
@@ -300,6 +303,7 @@ fn is_invisible(c: char) -> bool {
             | '\u{ffa0}'
             | '\u{fff0}'..='\u{fffb}'
             | '\u{16fe4}'
+            | '\u{13430}'..='\u{1343f}'
             | '\u{1bca0}'..='\u{1bca3}'
             | '\u{1d159}'
             | '\u{1d173}'..='\u{1d17a}'
@@ -308,14 +312,58 @@ fn is_invisible(c: char) -> bool {
 }
 
 /// A display name as it is printed beside the server's own words, on card line 11
-/// and above the delimiter (entry-format.md, The card): without its invisible
-/// characters, or "(no name)" when nothing of it then shows.
+/// and above the delimiter (entry-format.md, The card): without what it hides, or
+/// "(no name)" when nothing of it then shows. It keeps a zero-width joiner or
+/// non-joiner between two letters that aren't both ASCII, as Persian words, Indic
+/// half forms and emoji sequences hold them, and a presentation selector (U+FE0E,
+/// U+FE0F) right after a letter, as an emoji may end in one.
 pub fn shown_name(display_name: &str) -> String {
-    let name: String = display_name.chars().filter(|c| !is_invisible(*c)).collect();
+    let name = without_hidden(display_name);
     if shows_nothing(&name) {
         return "(no name)".to_string();
     }
     name
+}
+
+/// `text` without its invisible characters, except the joiners and presentation
+/// selectors real text needs (see [`shown_name`]). A joiner or selector anywhere
+/// else could only carry text nobody sees.
+fn without_hidden(text: &str) -> String {
+    let is_joiner = |c: char| matches!(c, '\u{200c}' | '\u{200d}');
+    let is_selector = |c: char| ('\u{fe00}'..='\u{fe0f}').contains(&c);
+    let shows = |c: char| {
+        !(c.is_whitespace()
+            || c.is_control()
+            || is_invisible(c)
+            || is_selector(c)
+            || matches!(c, '\u{2028}' | '\u{2029}'))
+    };
+    let chars: Vec<char> = text.chars().collect();
+    let mut kept = String::with_capacity(text.len());
+    for (at, &c) in chars.iter().enumerate() {
+        let last = kept.chars().next_back();
+        // The letter a joiner or selector attaches to, past one kept selector.
+        let base = kept
+            .chars()
+            .rev()
+            .find(|&before| !is_selector(before))
+            .filter(|&before| shows(before) && !last.is_some_and(is_joiner));
+        let keep = if is_joiner(c) {
+            let next = chars.get(at + 1).copied().filter(|&next| shows(next));
+            match (base, next) {
+                (Some(before), Some(after)) => !(before.is_ascii() && after.is_ascii()),
+                _ => false,
+            }
+        } else if is_selector(c) {
+            matches!(c, '\u{fe0e}' | '\u{fe0f}') && last.is_some_and(shows)
+        } else {
+            !is_invisible(c)
+        };
+        if keep {
+            kept.push(c);
+        }
+    }
+    kept
 }
 
 /// Whether `text` shows nothing: it is empty, or holds only spaces, line breaks,

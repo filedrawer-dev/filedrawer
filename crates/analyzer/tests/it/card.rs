@@ -708,4 +708,12 @@ fn a_display_name_loses_its_invisible_characters_on_line_11() {
         last_line("Ada \u{2764}\u{fe0f}"),
         "Ada \u{2764}\u{fe0f}, account a-91x"
     );
+    // A joiner between letters of a word stays, as Persian writes it; one that joins
+    // nothing, or two ASCII letters, goes, and so does a run of selectors.
+    assert_eq!(
+        last_line(
+            "\u{645}\u{6cc}\u{200c}\u{646}\u{627}\u{200c} A\u{200d}da\u{2764}\u{fe0f}\u{fe0f}\u{fe0e}"
+        ),
+        "\u{645}\u{6cc}\u{200c}\u{646}\u{627} Ada\u{2764}\u{fe0f}, account a-91x"
+    );
 }

@@ -850,6 +850,8 @@ async fn signup_refuses_a_display_name_with_invisible_characters() {
         "Ada\u{2028}Lovelace",
         "\u{3164}",
         "\u{fe0f}",
+        "Ada\u{200c}",
+        "A\u{200d}da",
     ] {
         let reply = app
             .form(
@@ -870,6 +872,31 @@ async fn signup_refuses_a_display_name_with_invisible_characters() {
         );
     }
     assert!(app.sent().await.is_empty());
+}
+
+/// Persian names hold a zero-width non-joiner inside a word, and emoji sequences a
+/// zero-width joiner: neither hides anything, so signup takes them.
+#[tokio::test]
+async fn signup_takes_a_name_with_joiners_between_letters() {
+    let app = test_app().await;
+    for (email, name) in [
+        ("mina@example.com", "\u{645}\u{6cc}\u{200c}\u{646}\u{627}"),
+        ("dev@example.com", "Ada \u{1f469}\u{200d}\u{1f4bb}"),
+    ] {
+        let reply = app
+            .form(
+                "/signup",
+                &[
+                    ("email", email),
+                    ("password", PASSWORD),
+                    ("display_name", name),
+                ],
+                None,
+            )
+            .await;
+        assert_eq!(reply.status, StatusCode::OK, "{name:?}: {}", reply.body);
+    }
+    assert_eq!(app.sent().await.len(), 2);
 }
 
 /// A name stored before signup refused invisible characters is printed without

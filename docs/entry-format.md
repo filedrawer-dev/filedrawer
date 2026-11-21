@@ -127,6 +127,7 @@ The server warns about both.
   When none does, write the alias, such as `alias:haiku`, and the server maps aliases to IDs by date (design.md, [Agent interface](design.md#agent-interface)).
 - `tags` are short labels.
   The server reads an entry's first 20, and skips, with a warning, a tag over 60 characters or one holding a line break, another control character or an invisible character, such as a zero-width space.
+  A zero-width joiner or non-joiner between two letters that aren't both ASCII, as in Persian words and emoji sequences, isn't invisible in this sense, nor is a presentation selector (U+FE0E, U+FE0F) right after a letter or an emoji.
   Reason: `GET /tags` starts each line with a tag, with none of the server's words before it.
 - `positive_control` describes a check that the pipeline, or the manipulation itself, can produce an effect known to exist: its outcome, whether it checks the pipeline (the judge finds instructed collusion) or the manipulation (the treatment moves the metric somewhere), and where it ran.
   `mixed` means it passed for some models and failed or wasn't run for others.
@@ -288,7 +289,7 @@ Each line has a cap, and longer text ends in "…".
 11. The author: display name, account ID, and any linked GitHub or ORCID handle, up to 100 characters.
     Once the account is deleted, "account deleted" and the account ID, with no name.
 
-Lines 2 and 3 are author text from their first character, and line 11 starts with the author's display name, without any invisible characters.
+Lines 2 and 3 are author text from their first character, and line 11 starts with the author's display name, without any invisible characters (with the joiners and selectors a tag may hold).
 On every other line, the server's own words come before author text, and author text is cut to fit what remains, so it can never push a server note off the card.
 No line is blank, since a blank line ends a card where cards are listed: where a stored entry's title or hypothesis shows nothing, the line reads "(no title)" or "(no hypothesis)", and a display name that shows nothing reads "(no name)".
 A value in a field whose values the server knows, such as `positive_control.outcome`, that it doesn't recognize renders as "unrecognized <field>", never as written.

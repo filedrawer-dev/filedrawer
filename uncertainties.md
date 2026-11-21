@@ -141,15 +141,18 @@ Add a new entry at the end of the topic it belongs to, or start a topic when non
   Reason: `/tags` starts each line with a tag and has no delimiter, so a tag with a line break wrote whole lines of that reply.
   The longest tag in the field test's entries is 35 characters, and the most tags on one entry is 9.
 - Against: the bounds are an agent's.
-  A tag with a zero-width joiner or non-joiner, as some emoji and Persian words have, is skipped.
   A read tag is still up to 60 characters of an author's words at the start of a `/tags` line, which only a change to that reply's format would mark.
 
 #### Which characters count as invisible
 
 - Options: only the bidirectional controls the card already dropped, or every character that shows nothing where text is read.
-- Chosen: the second, in the analyzer's `is_invisible`: the bidirectional controls, the soft hyphen, zero-width and other format characters (U+200B to U+200F, U+2060 to U+206F, U+FEFF and a few more), blank fillers such as U+3164 and U+2800, and U+E0000 to U+E0FFF, the tag characters and the variation selectors supplement, which can spell text no person sees.
+- Chosen: the second, in the analyzer's `is_invisible`: the bidirectional controls, the soft hyphen, zero-width and other format characters (U+200B to U+200F, U+2060 to U+206F, U+FEFF, the Egyptian hieroglyph format controls and a few more), blank fillers such as U+3164 and U+2800, and U+E0000 to U+E0FFF, the tag characters and the variation selectors supplement, which can spell text no person sees.
   A required field made only of these, spaces and control characters counts as missing; a tag or a display name holding one is not read, or refused.
-- Against: the variation selectors U+FE00 to U+FE0F pass, since an emoji may end in one, and the list is kept by hand rather than taken from Unicode's `Default_Ignorable_Code_Point`.
+  Two exceptions, for text that needs them: a zero-width joiner or non-joiner between two letters that aren't both ASCII (Persian and other Arabic-script words, Indic half forms, emoji sequences), and U+FE0E or U+FE0F right after a letter (an emoji's presentation); a name stored before the rule is printed keeping only those.
+  The rest stay out because no name or tag needs them: the zero-width space and word joiner mark line breaks in running text, the soft hyphen shows only at a break, the Hangul fillers pad incomplete syllables, and the other variation selectors (U+FE00 to U+FE0D) and each one of the supplement can carry hidden bits.
+- Against: the list is kept by hand rather than taken from Unicode's `Default_Ignorable_Code_Point` and general category Cf, which would need a dependency.
+  Subdivision flags (a tag-character sequence), ideographic variation sequences (the supplement, used in some Japanese names), Mongolian's free variation selectors (U+180B to U+180F) and the variation sequences of math symbols are refused or dropped.
+  A kept joiner or selector can still carry a bit at each place it may stand.
   Elsewhere in an entry's text these characters are kept as written.
 
 ### Search
@@ -309,7 +312,7 @@ The owner set 10 an hour and 50 a day per account (#60); an agent chose the rest
 - Options: refuse a display name that holds an invisible character (see "Which characters count as invisible") or a line or paragraph separator; or remove them at signup and keep the rest.
 - Chosen: refuse, with a message that says why, so the holder knows what the name will be.
   A name stored before the rule is printed without them, on the `author:` and `account:` lines, a series' `by` and the card's last line.
-- Against: a name typed with a zero-width non-joiner, as some Persian names are, is refused until its holder removes it; removing it at signup would let them through with a name that looks nearly the same.
+- Against: a name with a character on the invisible list that real text needs (see "Which characters count as invisible", Against) is refused until its holder removes it; removing it at signup would let them through with a name that looks nearly the same.
   The name still comes before the account ID on the `author:` line and the card's last line, so a name holding ", account a-..." puts an ID of its holder's choosing first; closing that needs the ID before the name, a change to both lines.
 
 #### What a password reset ends
