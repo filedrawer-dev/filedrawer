@@ -68,6 +68,16 @@ Add a new entry at the end of the topic it belongs to, or start a topic when non
   "unrecognized published_in" also drops the words "now part of a paper", which were true whatever the value.
   An author's own `superseded_by: <id>` still reads like the server's record of a newer version; telling the two apart needs different words on the card.
 
+#### The screening note's own quote marks
+
+- Options: print the note between the server's quotes as the model wrote it; swap the characters that could end the quotes or start a flag, as here; or move the note to the end of line 10, so nothing of the server's follows it.
+- Chosen: where the card prints the note, `"` and a backtick become `'`, `;` becomes `,`, a run of `'` shrinks to one, and outside ASCII only letters, digits, a combining mark on one of those, and a few signs numbers use (± − × ≤ ≥ → and the like) stay; anything else becomes a space, the modifier letters of a few blocks included.
+  entry-format.md gives the label and the quotes so that a reader won't take the note for the server's words, and a note that quotes the body in double quotes ended them early.
+  The stored note is kept as written, and the analyzer's version stays 1, since only a card with such a note reads differently.
+- Against: a note loses the punctuation of scripts other than Latin, and its quotations read `'so'`.
+  The list of letters that look like a quote mark can't be complete, though none of them is the `"` that ends the note.
+  A phrase worded like a flag can still sit inside the quotes after a comma; only moving the note last, a change to the card's layout, ends that.
+
 ### Entries and the analyzer
 
 #### The 100 KB entry cap

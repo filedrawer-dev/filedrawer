@@ -254,6 +254,22 @@ async fn a_doubt_about_the_outcome_shows_on_the_card_as_a_screening_note() {
 }
 
 #[tokio::test]
+async fn a_screening_note_that_quotes_the_body_stays_inside_the_cards_quotes() {
+    let models = FakeModels::default();
+    let app = app_with(&models).await;
+    let (_, status) = publish(&app, &marked("FAKE-DOUBT-QUOTING", "")).await;
+    assert_eq!(status, "public");
+    let cards = app.get("/cards.txt").await.body;
+    // The server's own flag follows the one closing quote.
+    assert!(
+        cards.contains(
+            "; screening note: \"The body says 'an effect', the outcome says none.\"; no code"
+        ),
+        "{cards}"
+    );
+}
+
+#[tokio::test]
 async fn an_unreadable_reply_is_retried_and_after_three_goes_to_review() {
     let models = FakeModels::default();
     let app = app_with(&models).await;

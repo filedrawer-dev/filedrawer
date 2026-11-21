@@ -510,6 +510,54 @@ fn not_tried(analysis: &Analysis) -> Vec<Part> {
     vec![server("not tried: "), author(first.join("; "))]
 }
 
+/// Whether `c` is a combining mark of the block Latin and Greek letters take theirs
+/// from.
+fn is_combining_mark(c: char) -> bool {
+    ('\u{300}'..='\u{36f}').contains(&c)
+}
+
+/// Signs outside ASCII that a note about numbers may hold.
+const NOTE_SIGNS: &str = "±−×÷≤≥≈≠→←…–—°µ·‰";
+
+/// The screen's note as it goes between the server's quotes on line 10. A model
+/// wrote it from the author's text, so nothing in it may end the quotes or begin
+/// what reads as the server's next flag. `"` and a backtick become `'`, and `;`
+/// becomes `,`. Outside ASCII only letters, digits, a combining mark on one of
+/// those, and [`NOTE_SIGNS`] stay; anything else becomes a space, which takes every
+/// other script's quote marks and semicolons with it, and the modifier letters,
+/// some of which look like quote marks. A run of `'` shrinks to one, so two can't
+/// stand in for `"`.
+fn quotable(note: &str) -> String {
+    let mut kept = String::with_capacity(note.len());
+    for c in note.chars() {
+        let c = match c {
+            '"' | '`' => '\'',
+            ';' => ',',
+            c if c.is_ascii() => c,
+            // Modifier letters, which count as letters.
+            '\u{2b0}'..='\u{2ff}'
+            | '\u{a700}'..='\u{a721}'
+            | '\u{a788}'..='\u{a78c}'
+            | '\u{ff70}'
+            | '\u{ff9e}'..='\u{ff9f}' => ' ',
+            // A combining mark alone, or on a space, can draw a quote mark, so one
+            // stays only on a letter or digit, or on another mark that does.
+            c if is_combining_mark(c) => {
+                let on_a_letter = kept.ends_with(|before: char| {
+                    before.is_alphanumeric() || is_combining_mark(before)
+                });
+                if on_a_letter { c } else { ' ' }
+            }
+            c if c.is_alphanumeric() || NOTE_SIGNS.contains(c) => c,
+            _ => ' ',
+        };
+        if !(c == '\'' && kept.ends_with('\'')) {
+            kept.push(c);
+        }
+    }
+    kept
+}
+
 /// Line 10: the analyzer version, the screening note, and the flags that apply.
 fn flags(analysis: &Analysis, context: &CardContext) -> Vec<Part> {
     let fields = &analysis.fields;
@@ -517,7 +565,7 @@ fn flags(analysis: &Analysis, context: &CardContext) -> Vec<Part> {
     if let Some(note) = &context.screening_note {
         parts.extend([
             server("; screening note: \""),
-            author(note.as_str()),
+            author(quotable(note)),
             server("\""),
         ]);
     }

@@ -322,6 +322,70 @@ fn author_text_cant_push_the_servers_note_off_line_4() {
     assert_eq!(line.chars().count(), 300);
 }
 
+/// The flags line of the example's card when the screen's note is `note` and code
+/// is attached.
+fn flags_with_note(note: &str) -> String {
+    let context = CardContext {
+        screening_note: Some(note.into()),
+        code_attached: true,
+        ..CardContext::default()
+    };
+    let card = render_card(&analyze(EXAMPLE), &context);
+    let line = card.lines().find(|line| line.starts_with("analyzer v"));
+    line.unwrap().to_string()
+}
+
+#[test]
+fn a_screening_note_keeps_its_words_inside_the_servers_quotes() {
+    assert_eq!(
+        flags_with_note("The body says \"a strong effect\"; `outcome` says no_effect."),
+        "analyzer v1; screening note: \"The body says 'a strong effect', 'outcome' says no_effect.\"; code attached"
+    );
+    // Marks that look like a quote or a semicolon go too, a combining mark stays
+    // only on a letter, and two single quotes can't stand in for a double one.
+    assert_eq!(
+        flags_with_note(
+            "An effe\u{301}ct\u{201d}\u{ff1b} as said\u{37e} \u{30e}\u{201c}''see''\u{ff9e}\u{a78c}\u{a78c}"
+        ),
+        "analyzer v1; screening note: \"An effe\u{301}ct as said 'see'\"; code attached"
+    );
+    // Letters of any script, digits and the signs numbers are written with stay.
+    assert_eq!(
+        flags_with_note(
+            "L'effet est de +0.3 \u{b1} 0.1 (p<0.05), \u{2212}2 \u{2264} d; pas nul \u{2192} contredit"
+        ),
+        "analyzer v1; screening note: \"L'effet est de +0.3 \u{b1} 0.1 (p<0.05), \u{2212}2 \u{2264} d, pas nul \u{2192} contredit\"; code attached"
+    );
+}
+
+proptest! {
+    #[test]
+    fn no_screening_note_ends_its_quotes_or_adds_a_flag(
+        // Any text, salted with quote marks and semicolons of many scripts.
+        note in "(\\PC|[\"'`; \u{30b}\u{30e}\u{37e}\u{61b}\u{204f}\u{1364}\u{2e35}\u{fe14}\u{fe54}\u{ff1b}\u{a6f6}\u{ab}\u{bb}\u{2ba}\u{2dd}\u{2ee}\u{5f4}\u{201c}\u{201d}\u{201e}\u{201f}\u{2033}\u{2036}\u{275d}\u{275e}\u{2e42}\u{3003}\u{301d}\u{301e}\u{301f}\u{a78c}\u{ff02}\u{ff9e}]){0,120}",
+    ) {
+        let line = flags_with_note(&note);
+        let rest = line.strip_prefix("analyzer v1; screening note: \"");
+        prop_assert!(rest.is_some(), "{}", line);
+        // The first quote mark after the server's opening one is the server's
+        // closing one, and only the server's flag follows it.
+        let (inside, after) = rest.unwrap().split_once('"').unwrap();
+        prop_assert_eq!(after, "; code attached", "{}", line);
+        let kept = |c: char| c.is_alphanumeric() || c.is_ascii() || "\u{b1}\u{2212}\u{d7}\u{f7}\u{2264}\u{2265}\u{2248}\u{2260}\u{2192}\u{2190}\u{2026}\u{2013}\u{2014}\u{b0}\u{b5}\u{b7}\u{2030}".contains(c) || ('\u{300}'..='\u{36f}').contains(&c);
+        prop_assert!(inside.chars().all(kept), "{}", inside);
+        prop_assert!(!inside.contains([';', '`', '\u{2ba}', '\u{2dd}', '\u{2ee}', '\u{a78c}', '\u{ff9e}']), "{}", inside);
+        prop_assert!(!inside.contains("''"), "{}", inside);
+        // No combining mark stands alone or on a space, where two would draw a
+        // quote mark: each sits on a letter or digit, or on a mark that does.
+        let mark = |c: char| ('\u{300}'..='\u{36f}').contains(&c);
+        let mut before = ' ';
+        for c in inside.chars() {
+            prop_assert!(!mark(c) || before.is_alphanumeric() || mark(before), "{}", inside);
+            before = c;
+        }
+    }
+}
+
 /// A JSON string literal, which YAML reads as a double-quoted scalar.
 fn yaml_quote(text: &str) -> String {
     let mut quoted = String::from("\"");

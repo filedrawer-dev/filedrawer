@@ -26,7 +26,8 @@ pub const USAGE: Usage = Usage {
 ///   `FAKE-SONNET-NOCATEGORY`. Without a hazard the category is `"none"` too, as
 ///   the schema has it.
 /// - `FAKE-REFUSE`: Haiku declines; Sonnet declines too with `FAKE-SONNET-REFUSE`.
-/// - `FAKE-DOUBT`: a doubt about `outcome`.
+/// - `FAKE-DOUBT`: a doubt about `outcome`; with `FAKE-DOUBT-QUOTING`, one that
+///   quotes the body and holds a semicolon.
 /// - `FAKE-ERROR`: every call fails, as in an outage.
 /// - `FAKE-BAD-KEY`: every call fails with a 401, as with a revoked key.
 /// - `FAKE-REFUSED-REQUEST`: every call fails with a 400, the API's answer to a
@@ -180,7 +181,11 @@ impl ModelClient for FakeModels {
                     "hazard_quote": quote,
                     "pipes_download_to_shell": has("FAKE-PIPE"),
                     "reasons": reasons,
-                    "outcome_doubt": has("FAKE-DOUBT").then_some("The body reports an effect."),
+                    "outcome_doubt": if has("FAKE-DOUBT-QUOTING") {
+                        Some("The body says \"an effect\"; the outcome says none.")
+                    } else {
+                        has("FAKE-DOUBT").then_some("The body reports an effect.")
+                    },
                 })),
                 usage: USAGE,
             })
