@@ -276,6 +276,7 @@ Each line has a cap, and longer text ends in "…".
    A value the server doesn't recognize shows as "unrecognized <field>".
    An entry that follows up other work ends the line with how many items `replicates` and `reanalyzes` hold, then the first item as the server reads it, `replicates` first: "reanalyzes 5: arXiv:2609.18346", or "replicates 1, reanalyzes 2: 10.2139/ssrn.7439840".
    A first item in no form the server reads shows as "unrecognized reference".
+   A `;` in a DOI or a URL shows percent-encoded, as `%3b` in a DOI and `%3B` in a URL, which is also how `cites` matches it, so the line's own `;` stays the server's; so does one in line 10's `published_in`.
 2. The title, up to 200 characters.
 3. The hypothesis, up to 300 characters.
 4. The primary row: first the server's note on whether the interval includes the no-effect value, the claim and "and N more rows", then the estimate, interval, `n` and unit as written, in what is left of 300 characters.

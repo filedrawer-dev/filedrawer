@@ -109,6 +109,33 @@ fn a_doi_is_keyed_bare_and_lowercased_however_it_is_written() {
     }
 }
 
+/// A key never holds `;`, which joins the parts of card line 1: a DOI's or a URL's
+/// own `;` is percent-encoded, and the work written either way has one key.
+#[test]
+fn a_semicolon_in_a_key_is_percent_encoded() {
+    for written in [
+        "10.5555/a;b",
+        "doi:10.5555/A;B",
+        "10.5555/a%3Bb",
+        "10.5555/a%3bb",
+        "https://doi.org/10.5555/a%3Bb",
+        "https://doi.org/10.5555/a;b",
+    ] {
+        assert_eq!(key(written).as_deref(), Some("10.5555/a%3bb"), "{written}");
+    }
+    for written in [
+        "https://example.com/a;b?c=1;d",
+        "https://example.com/a%3Bb?c=1%3bd",
+        "https://example.com/a%3bb?c=1%3Bd",
+    ] {
+        assert_eq!(
+            key(written).as_deref(),
+            Some("https://example.com/a%3Bb?c=1%3Bd"),
+            "{written}"
+        );
+    }
+}
+
 #[test]
 fn an_entry_is_named_by_its_id_its_url_or_a_slug() {
     assert_eq!(

@@ -68,6 +68,15 @@ Add a new entry at the end of the topic it belongs to, or start a topic when non
   "unrecognized published_in" also drops the words "now part of a paper", which were true whatever the value.
   An author's own `superseded_by: <id>` still reads like the server's record of a newer version; telling the two apart needs different words on the card.
 
+#### A `;` in a reference key
+
+- Options: show a DOI or URL key as written; replace its `;` only where the card prints it; refuse or mark such a key as unrecognized; or have the key itself write `;` percent-encoded.
+- Chosen: the key writes it percent-encoded, `%3b` in a DOI (whose key is lower case) and `%3B` in a URL, and a DOI written with `%3B` reads as the same DOI, so card line 1 and line 10 show the key `cites` matches and no author `;` among the server's.
+  The keys stored before are rebuilt at the next start (`INDEX_VERSION` 3).
+  The 100-character cap on line 10's paper counts each escape as one character.
+- Against: a DOI shown as `10.5555/x%3bcode` isn't the DOI as its registrant writes it, though doi.org resolves it, and a URL's `;` and `%3B` aren't always the same page to its server, though both name one work for `cites`.
+  A key still holds `:` and `,` as written, which a URL needs; with no `; ` the key stays one token at the end of line 1.
+
 #### The screening note's own quote marks
 
 - Options: print the note between the server's quotes as the model wrote it; swap the characters that could end the quotes or start a flag, as here; or move the note to the end of line 10, so nothing of the server's follows it.

@@ -57,7 +57,9 @@ impl Reference {
     }
 
     /// The key search's `cites` matches (entry-format.md, Fields): the same work
-    /// written another way has the same key, and a key read back gives itself.
+    /// written another way has the same key, and a key read back gives itself. A key
+    /// holds no `;`, which joins the parts of card line 1, where it is shown: a DOI's
+    /// or a URL's own `;` is percent-encoded, as a link writes it.
     pub fn key(&self) -> String {
         match self {
             Reference::Entry(id) => id.clone(),
@@ -68,8 +70,9 @@ impl Reference {
     }
 }
 
-/// The longest key of a paper the card shows. A DOI's suffix has no length of its
-/// own and may hold `;` and `:`, so a longer one could read as more than an ID.
+/// The longest key of a paper the card shows, counting each escaped `;` as the one
+/// character it stands for. A DOI's suffix has no length of its own and may hold `;`
+/// and `:`, so a longer one could read as more than an ID.
 pub(crate) const MAX_PAPER_KEY_CHARS: usize = 100;
 
 /// The key of the paper `published_in` names, an arXiv ID or a DOI, as card line 10
@@ -85,7 +88,7 @@ pub(crate) fn paper_key(text: &str) -> Option<String> {
         paper @ (Reference::Arxiv(_) | Reference::Doi(_)) => paper.key(),
         _ => return None,
     };
-    (key.chars().count() <= MAX_PAPER_KEY_CHARS).then_some(key)
+    (key.replace(DOI_SEMICOLON, ";").chars().count() <= MAX_PAPER_KEY_CHARS).then_some(key)
 }
 
 /// The key of the entry `superseded_by` names, an entry ID or `slug:<name>`, as
@@ -159,10 +162,15 @@ fn without_version(id: &str) -> &str {
 /// The DOI arXiv gives each paper, which names the paper as its arXiv ID does.
 const ARXIV_DOI: &str = "10.48550/arxiv.";
 
+/// How a DOI's key writes a `;` of its suffix: percent-encoded, in the lower case
+/// the rest of the key is in.
+const DOI_SEMICOLON: &str = "%3b";
+
 /// A DOI, `10.<4 to 9 digits>/<suffix>`, with the suffix in the characters Crossref
-/// recommends; arXiv's own DOIs read as the arXiv paper.
+/// recommends; arXiv's own DOIs read as the arXiv paper. A `;` may be written
+/// `%3B`, as its key writes it.
 fn doi_reference(doi: &str) -> Option<Reference> {
-    let lower = doi.to_ascii_lowercase();
+    let lower = doi.to_ascii_lowercase().replace(DOI_SEMICOLON, ";");
     if lower.starts_with(ARXIV_DOI) {
         // Sliced from the DOI as written: the old scheme's subject class is uppercase.
         return arxiv_id(&doi[ARXIV_DOI.len()..]).map(Reference::Arxiv);
@@ -174,7 +182,7 @@ fn doi_reference(doi: &str) -> Option<Reference> {
         && suffix
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b"-._;()/:".contains(&b));
-    (registrant_ok && suffix_ok).then_some(Reference::Doi(lower))
+    (registrant_ok && suffix_ok).then(|| Reference::Doi(lower.replace(';', DOI_SEMICOLON)))
 }
 
 /// A web page: arXiv's and doi.org's read as their paper, File Drawer's entry pages
@@ -222,5 +230,7 @@ fn page_reference(text: &str) -> Option<Reference> {
     if url.path() == "/" && url.query().is_none() {
         key.pop();
     }
-    Some(Reference::Url(key))
+    Some(Reference::Url(
+        key.replace(';', "%3B").replace("%3b", "%3B"),
+    ))
 }

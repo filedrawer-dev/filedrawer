@@ -256,7 +256,7 @@ pub fn is_valid_slug(slug: &str) -> bool {
 /// The version of what the server indexes from an entry's text: the keys
 /// [`Reference::key`] gives, and which tags [`Fields::tags`] holds (entry-format.md,
 /// Fields). Bump it whenever either changes, so the server rebuilds what it stored.
-pub const INDEX_VERSION: u32 = 2;
+pub const INDEX_VERSION: u32 = 3;
 
 /// The most tags an entry's `tags` keeps (entry-format.md, Fields); the rest are
 /// dropped with a warning.

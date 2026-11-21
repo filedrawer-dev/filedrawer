@@ -257,6 +257,22 @@ fn with_both_relations_both_counts_come_first_and_the_key_is_the_first_replicate
     );
 }
 
+/// Line 1's parts are joined by `;`, so the key that ends it writes a `;` of its own
+/// percent-encoded, as a link would.
+#[test]
+fn line_1_shows_a_semicolon_in_a_key_escaped() {
+    for (written, key) in [
+        (
+            "https://evil.example/x;effect;main;rows:9",
+            "https://evil.example/x%3Beffect%3Bmain%3Brows:9",
+        ),
+        ("\"10.5555/x;effect;main\"", "10.5555/x%3beffect%3bmain"),
+    ] {
+        let (line, plain) = first_lines(&format!("replicates: {written}\n"));
+        assert_eq!(line, format!("{plain}; replicates 1: {key}"), "{written}");
+    }
+}
+
 #[test]
 fn a_first_item_in_no_known_form_shows_as_unrecognized_never_as_written() {
     let (line, plain) =
@@ -666,13 +682,26 @@ fn line_10_shows_a_paper_or_successor_only_as_the_server_reads_it() {
         flags("published_in: https://doi.org/10.1234/ABC.5"),
         "analyzer v1; no code; now part of a paper 10.1234/abc.5"
     );
+    // A `;` in a DOI's suffix is shown escaped, so it can't start a flag of its own.
+    assert_eq!(
+        flags("published_in: \"10.5555/x;code;attached;replication:0000000000(effect)\""),
+        "analyzer v1; no code; now part of a paper 10.5555/x%3bcode%3battached%3breplication:0000000000(effect)"
+    );
+    // An arXiv ID has no room for one.
+    assert_eq!(
+        flags("published_in: \"arXiv:2601.00001;code\""),
+        "analyzer v1; no code; unrecognized published_in"
+    );
     // A DOI's suffix may hold `;` and `:`, so a key long enough to hold a sentence
-    // isn't shown.
+    // isn't shown. The cap counts the DOI, not its escapes.
     let longest = format!("10.1234/{}", "x;".repeat(46));
     assert_eq!(longest.chars().count(), 100);
     assert_eq!(
         flags(&format!("published_in: \"{longest}\"")),
-        format!("analyzer v1; no code; now part of a paper {longest}")
+        format!(
+            "analyzer v1; no code; now part of a paper 10.1234/{}",
+            "x%3b".repeat(46)
+        )
     );
     assert_eq!(
         flags(&format!("published_in: \"{longest}x\"")),
