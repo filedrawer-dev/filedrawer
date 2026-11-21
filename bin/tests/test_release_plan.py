@@ -103,8 +103,8 @@ if tool == "cargo":
 if tool == "gh":
     path = args[1]
     github = json.loads((state / "github.json").read_text())
-    if path.endswith("/commits/main"):
-        print(json.dumps({"sha": github["tip"]}))
+    if path.endswith("/git/ref/heads/main"):
+        print(json.dumps({"ref": "refs/heads/main", "object": {"sha": github["tip"]}}))
     elif m := re.search(r"/actions/runs/(\d+)/jobs$", path):
         print(json.dumps({"jobs": github["jobs"].get(m.group(1), [])}))
     elif "/actions/runs?" in path:

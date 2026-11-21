@@ -259,7 +259,9 @@ def check_passed(repo: str, run: int) -> bool:
 
 
 def gate(repo: str, run: int | None, sha: str | None) -> dict[str, str]:
-    tip = gh(f"repos/{repo}/commits/main")["sha"]
+    # The branch's own ref: `commits/main` would leave it to GitHub which ref the
+    # name means, were a tag ever called main too.
+    tip = gh(f"repos/{repo}/git/ref/heads/main")["object"]["sha"]
     if run is None:
         runs = gh(f"repos/{repo}/actions/runs?head_sha={tip}&event=push")[
             "workflow_runs"
