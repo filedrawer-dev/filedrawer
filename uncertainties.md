@@ -593,6 +593,16 @@ The owner set 10 an hour and 50 a day per account (#60); an agent chose the rest
   A minimum would change what "10 MB a day" means: a set of 150 small files would cost 600 KB of it.
 - Against: a file of a few bytes takes a 4 KiB block and an inode, so the bytes counted understate the disk a set of small files takes, and the disk floor measures free bytes, not free inodes.
 
+#### Unpacking: archives other tools read differently from the server
+
+- Options: pass whatever the server's readers give up on as "nothing hidden", as before; send every archive a reader can't finish to the owner's review; or read on the way the common tools do where that is cheap, and send to review only what the server can't read and they can.
+- Chosen: the third.
+  Read on: a zip behind other bytes (found by its end record, as `unzip` and Python find it), a zip cut short before its directory (member by member), a tar with nothing around it, a tar past a block that is no header (as `tar` skips one), and a gzip member behind zero padding (as Python reads one).
+  To review: a zip whose directory can't be read, lists no member though one is there, lists members that take more bytes than the archive has, or says it is split over disks; a tar with more than 16 headers that can't be read; and an xz stream of 32 bytes or more that the reader can't finish, since `xz` prints what precedes the fault and the server's reader gives none of the last chunk.
+  A gzip, bzip2 or zlib stream cut short keeps what came out, since their tools stop at the same byte.
+- Against: an honest xz literal split over several quoted lines of a source file now sends its entry to review; none of the field test's attached files holds one.
+  Not covered: forms design.md doesn't list (`.lzma`, zstd, `.Z`), a zip whose directory and members disagree, blocks `bzip2recover` could salvage, and a blob split across runs.
+
 ### Link checks
 
 #### What a link check counts as dead

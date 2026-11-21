@@ -27,8 +27,8 @@ pub use choice::{
     HypothesisSet, Kind, Outcome, Role, SetWhen, Stage, Vocabulary,
 };
 pub use encoded::{
-    Compression, Decoded, Encoding, compression, decodings, decodings_with_zlib, reads_as_text,
-    starts_zlib,
+    Compression, Decoded, Encoding, compression, decodings, decodings_holding, decodings_with_zlib,
+    reads_as_text, starts_zlib,
 };
 pub use fields::{DataItem, Fields, Model, PositiveControl, SmallestEffect, Writer};
 pub use file_mentions::file_mentions;

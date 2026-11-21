@@ -43,9 +43,9 @@ const MIN_DECODED: usize = 24;
 const MIN_ESCAPES: usize = 6;
 /// The shortest line that may be part of a blob wrapped over several lines.
 const MIN_WRAPPED_LINE: usize = 16;
-/// The shortest base64 run tried as a zlib stream: one that inflates to
-/// [`MIN_DECODED`] characters is rarely shorter.
-const MIN_ZLIB_RUN: usize = 24;
+/// The shortest run tried as a zlib stream, or as whatever else a caller opens: a
+/// stream that inflates to [`MIN_DECODED`] characters is rarely shorter.
+const MIN_HELD_RUN: usize = 24;
 /// The shortest `<~ ... ~>` token refused as base85.
 const MIN_BASE85: usize = 24;
 /// How many characters of a refused run its reason shows.
@@ -112,16 +112,26 @@ pub fn compression(bytes: &[u8]) -> Option<Compression> {
 /// A random hash starts with one about once in a few thousand, so only a caller
 /// that then inflates the stream to see what it holds should ask.
 pub fn decodings_with_zlib(text: &str) -> Vec<Decoded> {
-    find(text, true)
+    decodings_holding(text, starts_zlib)
+}
+
+/// Like [`decodings`], with each run whose bytes `holds` accepts too: bytes the
+/// caller knows how to open, such as an archive with no signature at its start.
+/// Only a caller that then opens them to see what they hold should ask.
+pub fn decodings_holding(text: &str, holds: impl Fn(&[u8]) -> bool) -> Vec<Decoded> {
+    find(text, Some(&holds))
 }
 
 /// Every long encoded run in `text` that hides text or a compressed stream, decoded,
 /// base64 runs first.
 pub fn decodings(text: &str) -> Vec<Decoded> {
-    find(text, false)
+    find(text, None)
 }
 
-fn find(text: &str, with_zlib: bool) -> Vec<Decoded> {
+/// A caller's test of what a run decodes to.
+type Holds<'a> = &'a dyn Fn(&[u8]) -> bool;
+
+fn find(text: &str, holds: Option<Holds>) -> Vec<Decoded> {
     let text = without_invisible(text);
     let mut found = Vec::new();
     let mut add = |kind: Encoding, run: &str, bytes: Vec<u8>| {
@@ -132,7 +142,7 @@ fn find(text: &str, with_zlib: bool) -> Vec<Decoded> {
         });
     };
     let decode = |run: &str, decode: fn(&str) -> Vec<u8>| {
-        hidden(run, decode).or_else(|| with_zlib.then(|| zlib_stream(run, decode)).flatten())
+        hidden(run, decode).or_else(|| held(run, decode, holds?))
     };
     // A blob wrapped over lines is decoded whole, and its lines then not one by one,
     // so the screen reads it once. The lines are a set: a megabyte of them is looked
@@ -271,11 +281,14 @@ fn hidden(run: &str, decode: fn(&str) -> Vec<u8>) -> Option<Vec<u8>> {
         .find(|bytes| is_text(bytes))
 }
 
-/// What `run` decodes to by `decode`, when that starts with a zlib header and the
-/// run is long enough to hold a stream worth inflating.
-fn zlib_stream(run: &str, decode: fn(&str) -> Vec<u8>) -> Option<Vec<u8>> {
+/// What `run` decodes to by `decode`, when `holds` accepts that and the run is long
+/// enough to hold a stream worth opening.
+fn held(run: &str, decode: fn(&str) -> Vec<u8>, holds: Holds) -> Option<Vec<u8>> {
+    if run.len() < MIN_HELD_RUN {
+        return None;
+    }
     let bytes = decode(run.trim_matches('='));
-    (run.len() >= MIN_ZLIB_RUN && starts_zlib(&bytes)).then_some(bytes)
+    holds(&bytes).then_some(bytes)
 }
 
 /// Whether `bytes` start with a zlib header for a deflate stream with no preset

@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use std::fmt;
 use std::io::{self, Read};
 
-use analyzer::{Compression, compression, decodings_with_zlib, reads_as_text, starts_zlib};
+use analyzer::{Compression, compression, decodings_holding, reads_as_text, starts_zlib};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
@@ -25,6 +25,11 @@ pub const TEXT_FLOOR: usize = 256 * 1024;
 /// The most memory, in KiB, an xz stream's decoder may take: enough for `xz -7`'s
 /// 16 MiB dictionary. A stream that declares more isn't opened.
 const XZ_MEMORY_KIB: u32 = 32 * 1024;
+/// The shortest xz stream there is: its header, an empty index and its footer.
+/// Fewer bytes are a signature alone, as code that tests for one holds.
+const XZ_SHORTEST: usize = 32;
+/// A tar's block, and its header's size.
+const TAR_BLOCK: usize = 512;
 
 /// Text found inside a file, and how it was reached.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,8 +102,26 @@ pub fn unpack(text: &str, budget: &mut TextBudget) -> Result<Vec<Unpacked>, Limi
         budget,
         seen: HashSet::new(),
     };
-    unpacker.search(text, "", 0)?;
+    // Depth first, in the order found, over a stack of its own: tars nest as deep
+    // as the output limit lets them, and that must cost no call stack.
+    let mut waiting = unpacker.runs(text, "", 0);
+    waiting.reverse();
+    while let Some(next) = waiting.pop() {
+        let inside = unpacker.open(next)?;
+        waiting.extend(inside.into_iter().rev());
+    }
     Ok(unpacker.found)
+}
+
+/// Bytes still to open.
+struct Pending {
+    bytes: Vec<u8>,
+    /// How they were reached, as their header says.
+    how: String,
+    /// How many layers they are the output of.
+    layers: usize,
+    /// Whether they still have to be counted against the output limit.
+    uncounted: bool,
 }
 
 struct Unpacker<'a> {
@@ -112,64 +135,121 @@ struct Unpacker<'a> {
 }
 
 impl Unpacker<'_> {
-    /// Opens what each encoded run in `text`, the output of `layers` layers, decodes
-    /// to.
-    fn search(&mut self, text: &str, how: &str, layers: usize) -> Result<(), Limit> {
-        for run in decodings_with_zlib(text) {
-            self.spend(run.bytes.len())?;
-            let how = format!("{how}{} run starting {:?}", run.kind, run.start);
-            self.open(&run.bytes, &how, layers + 1)?;
-        }
-        Ok(())
+    /// What each encoded run in `text`, the output of `layers` layers, decodes to,
+    /// each a layer more.
+    fn runs(&self, text: &str, how: &str, layers: usize) -> Vec<Pending> {
+        // Runs that start with no signature are opened too when they hold an archive
+        // (a tar has none, and a zip is found by its end) or may be a zlib stream.
+        let opened = |bytes: &[u8]| Form::of(bytes).is_some_and(|form| form != Form::Text);
+        decodings_holding(text, opened)
+            .into_iter()
+            .map(|run| Pending {
+                how: format!("{how}{} run starting {:?}", run.kind, run.start),
+                bytes: run.bytes,
+                layers: layers + 1,
+                uncounted: true,
+            })
+            .collect()
     }
 
-    /// Keeps `bytes`, the output of `layers` layers, when they are text, and opens
-    /// them when they are a stream or an archive.
-    fn open(&mut self, bytes: &[u8], how: &str, layers: usize) -> Result<(), Limit> {
-        let Some(form) = Form::of(bytes) else {
-            return Ok(());
+    /// Keeps `next` when its bytes are text, and returns what they hold, in order:
+    /// the runs of a text, what a stream decompresses to, an archive's members.
+    fn open(&mut self, next: Pending) -> Result<Vec<Pending>, Limit> {
+        let Pending {
+            bytes,
+            how,
+            layers,
+            uncounted,
+        } = next;
+        if uncounted {
+            self.spend(bytes.len())?;
+        }
+        let Some(form) = Form::of(&bytes) else {
+            return Ok(Vec::new());
         };
         // A zlib header is two bytes, so only what it inflates to counts as a layer;
         // a tar is no layer, so only its members count.
-        if layers > MAX_LAYERS && !matches!(form, Form::Stream(Stream::Zlib) | Form::Tar) {
+        let too_deep = layers > MAX_LAYERS;
+        if too_deep
+            && !matches!(
+                form,
+                Form::Stream(Stream::Zlib) | Form::Archive(Archive::Tar(_))
+            )
+        {
             return Err(Limit::TooDeep);
         }
-        if !self.seen.insert(Sha256::digest(bytes).into()) {
-            return Ok(());
+        if !self.seen.insert(Sha256::digest(&bytes).into()) {
+            return Ok(Vec::new());
         }
         match form {
             Form::Text => {
                 // Its header is read with it, so counts too, as does the line end
                 // after it.
-                self.budget.spend(header(how).len() + bytes.len() + 1)?;
-                let text = String::from_utf8_lossy(bytes).into_owned();
-                self.found.push(Unpacked {
-                    how: how.to_string(),
-                    text: text.clone(),
-                });
-                self.search(&text, &format!("{how}, then "), layers)
+                self.budget.spend(header(&how).len() + bytes.len() + 1)?;
+                let text = String::from_utf8_lossy(&bytes).into_owned();
+                let runs = self.runs(&text, &format!("{how}, then "), layers);
+                self.found.push(Unpacked { how, text });
+                Ok(runs)
             }
-            Form::Stream(stream) => match self.decompress(stream, bytes)? {
-                Some(out) => self.open(&out, &format!("{how}, {stream}"), layers + 1),
-                None => Ok(()),
-            },
-            Form::Zip => {
-                for (name, data) in self.zip_members(bytes)? {
-                    let name = shown_name(&name);
-                    self.open(&data, &format!("{how}, zip member {name}"), layers + 1)?;
+            Form::Stream(stream) => {
+                let mut inside = Vec::new();
+                if let Some(out) = self.decompress(stream, &bytes)? {
+                    // Past the layers allowed, only a zlib header gets this far, and
+                    // one that inflates to anything but noise was a layer: it is
+                    // opened no further, so zlib can't nest in zlib without end.
+                    if too_deep && Form::of(&out).is_some() {
+                        return Err(Limit::TooDeep);
+                    }
+                    inside.push(Pending {
+                        bytes: out,
+                        how: format!("{how}, {stream}"),
+                        layers: layers + 1,
+                        uncounted: false,
+                    });
                 }
-                Ok(())
-            }
-            Form::Tar => {
-                for (name, data) in tar_members(bytes) {
-                    // A tar is no layer, so its members count against the output
-                    // limit instead: that bounds tars nested in tars.
-                    self.spend(data.len())?;
-                    let name = shown_name(&name);
-                    self.open(&data, &format!("{how}, tar member {name}"), layers)?;
+                // Bytes that start as a stream may still hold an archive that other
+                // tools find, whatever the stream gave.
+                if let Some(archive) = Archive::behind(&bytes) {
+                    inside.extend(self.members(archive, &bytes, &how, layers)?);
                 }
-                Ok(())
+                Ok(inside)
             }
+            Form::Archive(archive) => self.members(archive, &bytes, &how, layers),
+        }
+    }
+
+    /// The members of the `archive` that `bytes`, the output of `layers` layers,
+    /// hold.
+    fn members(
+        &mut self,
+        archive: Archive,
+        bytes: &[u8],
+        how: &str,
+        layers: usize,
+    ) -> Result<Vec<Pending>, Limit> {
+        match archive {
+            Archive::Zip if layers > MAX_LAYERS => Err(Limit::TooDeep),
+            Archive::Zip => Ok(self
+                .zip_members(bytes)?
+                .into_iter()
+                .map(|(name, data)| Pending {
+                    bytes: data,
+                    how: format!("{how}, zip member {}", shown_name(&name)),
+                    layers: layers + 1,
+                    uncounted: false,
+                })
+                .collect()),
+            // A tar is no layer, so its members count against the output limit
+            // instead, as they are read: that bounds tars nested in tars.
+            Archive::Tar(start) => Ok(tar_members(bytes, start, &mut self.left)?
+                .into_iter()
+                .map(|(name, data)| Pending {
+                    bytes: data,
+                    how: format!("{how}, tar member {}", shown_name(&name)),
+                    layers,
+                    uncounted: false,
+                })
+                .collect()),
         }
     }
 
@@ -180,9 +260,7 @@ impl Unpacker<'_> {
         let mut out = Vec::new();
         // A stream cut short or corrupt keeps what came out before the fault.
         let read = match stream {
-            Stream::Gzip => flate2::read::MultiGzDecoder::new(bytes)
-                .take(limit)
-                .read_to_end(&mut out),
+            Stream::Gzip => gunzip(bytes, limit, &mut out),
             Stream::Zlib => flate2::read::ZlibDecoder::new(bytes)
                 .take(limit)
                 .read_to_end(&mut out),
@@ -193,10 +271,20 @@ impl Unpacker<'_> {
                 .take(limit)
                 .read_to_end(&mut out),
         };
-        if read.is_err_and(|error| error.kind() == io::ErrorKind::OutOfMemory) {
-            return Err(Limit::Unopened(format!(
-                "an {stream} stream that needs more memory to decompress than the server allows"
-            )));
+        if let Err(error) = read {
+            if error.kind() == io::ErrorKind::OutOfMemory {
+                return Err(Limit::Unopened(format!(
+                    "an {stream} stream that needs more memory to decompress than the server allows"
+                )));
+            }
+            // The xz reader gives nothing of a chunk it can't read whole, and stops
+            // at a check it doesn't know, where `xz` itself prints what it has and
+            // reads on: so an xz stream it can't finish may hide what it didn't give.
+            if stream == Stream::Xz && bytes.len() >= XZ_SHORTEST {
+                return Err(Limit::Unopened(
+                    "an xz stream it can't read to the end".into(),
+                ));
+            }
         }
         self.spend(out.len())?;
         Ok((!out.is_empty()).then_some(out))
@@ -205,11 +293,35 @@ impl Unpacker<'_> {
     /// The files of the zip archive `bytes`, decompressed within what's left. A
     /// member stored some other way than plain, deflate or bzip2, or encrypted,
     /// isn't opened: lzma and xz decoders take what memory the member asks for.
+    /// Nor is an archive whose directory can't be read, or doesn't say what other
+    /// tools would read from it. One cut short before its directory gives the
+    /// members that precede the cut.
     fn zip_members(&mut self, bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>, Limit> {
+        let end = zip_end(bytes);
+        // Other tools read the last end record. The reader passes over one that
+        // names another disk, for an earlier record or for none.
+        let disks = end.and_then(|end| bytes.get(end + 4..end + 8));
+        if disks.is_some_and(|disks| disks != [0; 4]) {
+            return Err(Limit::Unopened(
+                "a zip archive that says it is split over disks".into(),
+            ));
+        }
         let Ok(mut archive) = zip::ZipArchive::new(io::Cursor::new(bytes)) else {
-            return Ok(Vec::new());
+            return match end {
+                Some(_) => Err(Limit::Unopened(
+                    "a zip archive whose directory it can't read".into(),
+                )),
+                None => self.zip_members_in_order(bytes),
+            };
         };
+        if archive.is_empty() && bytes.starts_with(ZIP_MEMBER) {
+            return Err(Limit::Unopened(
+                "a zip archive whose directory lists none of its members".into(),
+            ));
+        }
         let mut members = Vec::new();
+        // How many bytes of the archive its members take, by what it says of each.
+        let mut packed: u64 = 0;
         for index in 0..archive.len() {
             let name = archive
                 .name_for_index(index)
@@ -217,35 +329,78 @@ impl Unpacker<'_> {
                 .map_or_else(|| "?".to_string(), |name| name.into_owned());
             let shown = shown_name(&name);
             let unopened = || Limit::Unopened(format!("a zip member {shown} it can't read"));
-            let method = archive
-                .by_index_raw(index)
-                .map_err(|_| unopened())?
-                .compression();
-            if !matches!(
-                method,
-                zip::CompressionMethod::Stored
-                    | zip::CompressionMethod::Deflated
-                    | zip::CompressionMethod::Bzip2
-            ) {
-                return Err(Limit::Unopened(format!(
-                    "a zip member {shown} compressed with {method}"
-                )));
+            let raw = archive.by_index_raw(index).map_err(|_| unopened())?;
+            let method = raw.compression();
+            packed = packed.saturating_add(raw.compressed_size());
+            drop(raw);
+            // Members that share bytes would each be read again in full, so the
+            // work would grow with their number times their size.
+            if packed > bytes.len() as u64 {
+                return Err(Limit::Unopened(
+                    "a zip archive whose members take more bytes than it has".into(),
+                ));
             }
+            opened_method(method, &shown)?;
             let file = archive.by_index(index).map_err(|_| unopened())?;
             if !file.is_file() {
                 continue;
             }
-            let mut data = Vec::new();
-            let _ = file.take(self.left as u64 + 1).read_to_end(&mut data);
-            self.spend(data.len())?;
-            members.push((name, data));
+            members.push((name, self.member_data(file)?));
         }
         Ok(members)
+    }
+
+    /// The files of a zip archive with no directory, read member by member from
+    /// its start, as far as they go.
+    fn zip_members_in_order(&mut self, bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>, Limit> {
+        let mut members = Vec::new();
+        let mut rest = bytes;
+        loop {
+            let file = match zip::read::read_zipfile_from_stream(&mut rest) {
+                Ok(Some(file)) => file,
+                // The directory, the cut, or a member only the directory gives
+                // the size of.
+                Ok(None) | Err(_) => return Ok(members),
+            };
+            let name = file
+                .name()
+                .map_or_else(|_| "?".to_string(), |name| name.into_owned());
+            opened_method(file.compression(), &shown_name(&name))?;
+            if file.is_file() {
+                members.push((name, self.member_data(file)?));
+            }
+        }
+    }
+
+    /// What a zip member decompresses to, as far as it goes, within what's left.
+    fn member_data(&mut self, file: impl Read) -> Result<Vec<u8>, Limit> {
+        let mut data = Vec::new();
+        let _ = file.take(self.left as u64 + 1).read_to_end(&mut data);
+        self.spend(data.len())?;
+        Ok(data)
     }
 
     fn spend(&mut self, bytes: usize) -> Result<(), Limit> {
         self.left = self.left.checked_sub(bytes).ok_or(Limit::TooBig)?;
         Ok(())
+    }
+}
+
+/// Decompresses the gzip members `bytes` hold, one after another, onto `out`, until
+/// it holds `limit` bytes. Zero bytes between members are passed over, as Python's
+/// `gzip` passes over them, so a member behind padding is read too.
+fn gunzip(bytes: &[u8], limit: u64, out: &mut Vec<u8>) -> io::Result<usize> {
+    let mut rest = bytes;
+    loop {
+        let mut member = flate2::bufread::GzDecoder::new(rest);
+        let left = limit.saturating_sub(out.len() as u64);
+        member.by_ref().take(left).read_to_end(out)?;
+        rest = member.into_inner();
+        let padding = rest.iter().take_while(|byte| **byte == 0).count();
+        rest = rest.get(padding..).unwrap_or_default();
+        if out.len() as u64 >= limit || compression(rest) != Some(Compression::Gzip) {
+            return Ok(out.len());
+        }
     }
 }
 
@@ -263,30 +418,152 @@ fn shown_name(name: &str) -> String {
     format!("{shown:?}")
 }
 
-/// The files of the tar archive `bytes`, as far as it reads.
-fn tar_members(bytes: &[u8]) -> Vec<(String, Vec<u8>)> {
+/// Whether the server opens a zip member compressed with `method`; `shown` is the
+/// member's name as a header shows it.
+fn opened_method(method: zip::CompressionMethod, shown: &str) -> Result<(), Limit> {
+    if matches!(
+        method,
+        zip::CompressionMethod::Stored
+            | zip::CompressionMethod::Deflated
+            | zip::CompressionMethod::Bzip2
+    ) {
+        Ok(())
+    } else {
+        Err(Limit::Unopened(format!(
+            "a zip member {shown} compressed with {method}"
+        )))
+    }
+}
+
+/// The signature that starts a zip member, and so most zip archives.
+const ZIP_MEMBER: &[u8] = b"PK\x03\x04";
+
+/// Where the end record of the zip archive `bytes` starts, if they hold one where
+/// other tools look for it: the last in their final 22 bytes and 64 KiB, the
+/// longest a record and its comment run.
+fn zip_end(bytes: &[u8]) -> Option<usize> {
+    const RECORD: usize = 22;
+    const COMMENT: usize = u16::MAX as usize;
+    let last = bytes.len().checked_sub(RECORD)?;
+    (last.saturating_sub(COMMENT)..=last)
+        .rev()
+        .find(|at| closes_zip(bytes, *at))
+}
+
+/// Whether a zip's end record starts at `at`: its signature, and a directory that
+/// by its own account lies before it, since the four bytes alone turn up by chance
+/// in a megabyte of anything.
+fn closes_zip(bytes: &[u8], at: usize) -> bool {
+    let field = |from: usize| {
+        let field = bytes.get(at.checked_add(from)?..)?.first_chunk::<4>()?;
+        Some(u64::from(u32::from_le_bytes(*field)))
+    };
+    if bytes
+        .get(at..)
+        .is_none_or(|rest| !rest.starts_with(b"PK\x05\x06"))
+    {
+        return false;
+    }
+    // A zip64 archive keeps the directory's place in a record of its own, which a
+    // locator just before this one points to.
+    let zip64 = at
+        .checked_sub(20)
+        .and_then(|locator| bytes.get(locator..at))
+        .is_some_and(|locator| locator.starts_with(b"PK\x06\x07"));
+    let before = field(12)
+        .zip(field(16))
+        .is_some_and(|(size, offset)| size + offset <= at as u64);
+    zip64 || before
+}
+
+/// How many headers that can't be read a tar is read past.
+const TAR_RESUMES: usize = 16;
+
+/// The files of the tar archive `bytes` hold from `start`, as far as it reads,
+/// each counted against `left`, what the output limit still allows. Past a header
+/// that can't be read, it goes on from the next block that reads as one, as `tar`
+/// does, so a member behind a damaged one comes out too; an archive with more such
+/// headers than [`TAR_RESUMES`] isn't passed, since each costs a reading of what
+/// follows it.
+fn tar_members(
+    bytes: &[u8],
+    mut start: usize,
+    left: &mut usize,
+) -> Result<Vec<(String, Vec<u8>)>, Limit> {
     let mut members = Vec::new();
+    for _ in 0..=TAR_RESUMES {
+        let rest = bytes.get(start..).unwrap_or_default();
+        let Some(read) = read_tar(rest, &mut members, left)? else {
+            return Ok(members);
+        };
+        // The block after the last member read is the one that failed.
+        let next = start
+            .checked_add(read)
+            .and_then(|failed| failed.checked_add(TAR_BLOCK))
+            .and_then(|after| tar_from(bytes, after));
+        match next {
+            Some(next) => start = next,
+            None => return Ok(members),
+        }
+    }
+    Err(Limit::Unopened(format!(
+        "a tar archive with more than {TAR_RESUMES} headers it can't read"
+    )))
+}
+
+/// Adds the files of the tar archive `bytes` to `members`, each counted against
+/// `left`. `None` when it read to the archive's end; when a header or a member
+/// can't be read, how many bytes the members before it take.
+fn read_tar(
+    bytes: &[u8],
+    members: &mut Vec<(String, Vec<u8>)>,
+    left: &mut usize,
+) -> Result<Option<usize>, Limit> {
+    let mut read = 0;
     let mut archive = tar::Archive::new(bytes);
     let Ok(entries) = archive.entries() else {
-        return members;
+        return Ok(Some(read));
     };
     for entry in entries {
-        let Ok(mut entry) = entry else { break };
+        let Ok(mut entry) = entry else {
+            return Ok(Some(read));
+        };
         let kind = entry.header().entry_type();
-        if !(kind.is_file() || kind == tar::EntryType::Continuous) {
-            continue;
+        if kind.is_file() || kind == tar::EntryType::Continuous {
+            let name = entry.path().map_or_else(
+                |_| "?".to_string(),
+                |path| path.to_string_lossy().into_owned(),
+            );
+            let mut data = Vec::new();
+            // A member cut short keeps what there is of it. One byte past what's
+            // left is the most read, since a sparse member's holes cost no bytes
+            // of the archive.
+            let whole = entry
+                .by_ref()
+                .take(*left as u64 + 1)
+                .read_to_end(&mut data)
+                .is_ok();
+            *left = left.checked_sub(data.len()).ok_or(Limit::TooBig)?;
+            members.push((name, data));
+            if !whole {
+                return Ok(Some(read));
+            }
         }
-        let name = entry.path().map_or_else(
-            |_| "?".to_string(),
-            |path| path.to_string_lossy().into_owned(),
-        );
-        let mut data = Vec::new();
-        if entry.read_to_end(&mut data).is_err() {
-            break;
-        }
-        members.push((name, data));
+        let end = entry.raw_file_position().saturating_add(entry.size());
+        // A size past the archive's end leaves nothing behind it to read.
+        read = usize::try_from(end)
+            .ok()
+            .and_then(|end| end.checked_next_multiple_of(TAR_BLOCK))
+            .map_or(bytes.len(), |end| end.min(bytes.len()));
     }
-    members
+    Ok(None)
+}
+
+/// Where the first block at or after `from` that reads as a tar header starts.
+fn tar_from(bytes: &[u8], from: usize) -> Option<usize> {
+    (from.checked_next_multiple_of(TAR_BLOCK)?..bytes.len())
+        .step_by(TAR_BLOCK)
+        .find(|at| bytes.get(*at..).is_some_and(is_tar))
 }
 
 /// What some bytes are, as far as unpacking goes.
@@ -294,8 +571,27 @@ fn tar_members(bytes: &[u8]) -> Vec<(String, Vec<u8>)> {
 enum Form {
     Text,
     Stream(Stream),
+    Archive(Archive),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Archive {
     Zip,
-    Tar,
+    /// A tar, and where in the bytes its first header starts.
+    Tar(usize),
+}
+
+impl Archive {
+    /// The archive `bytes` hold behind something else, where other tools find
+    /// one: a zip by the end record that closes it, whatever comes before, and a
+    /// tar by the first block that reads as a header.
+    fn behind(bytes: &[u8]) -> Option<Archive> {
+        if zip_end(bytes).is_some() {
+            Some(Archive::Zip)
+        } else {
+            tar_from(bytes, TAR_BLOCK).map(Archive::Tar)
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -319,23 +615,24 @@ impl fmt::Display for Stream {
 
 impl Form {
     /// What `bytes` are, or `None` for bytes to leave alone. A zlib header is tried
-    /// last, and only inflating it tells a stream from noise.
+    /// after the forms known by their start, and only inflating it tells a stream
+    /// from noise; an archive behind other bytes is looked for last.
     fn of(bytes: &[u8]) -> Option<Form> {
         match compression(bytes) {
             Some(Compression::Gzip) => return Some(Form::Stream(Stream::Gzip)),
             Some(Compression::Bzip2) => return Some(Form::Stream(Stream::Bzip2)),
             Some(Compression::Xz) => return Some(Form::Stream(Stream::Xz)),
-            Some(Compression::Zip) => return Some(Form::Zip),
+            Some(Compression::Zip) => return Some(Form::Archive(Archive::Zip)),
             None => {}
         }
         if is_tar(bytes) {
-            Some(Form::Tar)
+            Some(Form::Archive(Archive::Tar(0)))
         } else if reads_as_text(bytes) {
             Some(Form::Text)
         } else if starts_zlib(bytes) {
             Some(Form::Stream(Stream::Zlib))
         } else {
-            None
+            Archive::behind(bytes).map(Form::Archive)
         }
     }
 }
@@ -343,7 +640,7 @@ impl Form {
 /// Whether `bytes` start with a tar header: ustar's magic, or, for an old-style
 /// header, which has none, a checksum that adds up.
 fn is_tar(bytes: &[u8]) -> bool {
-    let Some(header) = bytes.get(..512) else {
+    let Some(header) = bytes.get(..TAR_BLOCK) else {
         return false;
     };
     if header.get(257..262) == Some(b"ustar") {
@@ -605,10 +902,42 @@ mod tests {
         assert_eq!(super::unpack(&file, &mut floor), Err(Limit::TooMuchText));
     }
 
+    /// Bytes that are neither text nor any stream or archive.
+    const NOISE: [u8; 18] = [
+        0xff, 0xfe, 0xfd, 0x00, 0x01, 0x02, 0xff, 0xfe, 0xfd, 0x00, 0x01, 0x02, 0xff, 0xfe, 0xfd,
+        0x00, 0x01, 0x02,
+    ];
+
     #[test]
-    fn tars_nested_in_tars_stop_at_the_output_limit() {
+    fn zlib_nested_in_zlib_is_too_deep_whatever_the_innermost_holds() {
+        // The base64 run and three streams are four layers, so the fourth stream
+        // holding a fifth is too deep before anyone looks further in.
+        for streams in [5, 20, 850] {
+            let mut nested = NOISE.to_vec();
+            for _ in 0..streams {
+                nested = zlib(&nested);
+            }
+            let file = format!("x = '{}'", b64(&nested));
+            assert_eq!(unpack_alone(&file), Err(Limit::TooDeep), "{streams}");
+        }
+    }
+
+    #[test]
+    fn noise_that_starts_like_zlib_past_the_last_layer_is_left_alone() {
+        // base64, gzip, base64: the third layer's text holds a run whose bytes start
+        // with a zlib header and inflate to nothing.
+        let mut noise = vec![0x78, 0x9c];
+        noise.extend(NOISE);
+        let third = format!("checksum: {}", b64(&noise));
+        let second = format!("note: {}", b64(third.as_bytes()));
+        let file = format!("x = '{}'", b64(&gzip(second.as_bytes())));
+        assert_eq!(texts(&file), [second, third]);
+    }
+
+    /// A tar holding `a.txt`, inside `depth` tars each holding only the last.
+    fn tar_nested(depth: usize) -> Vec<u8> {
         let mut nested = tar(&[("a.txt", "first hidden file")]);
-        for n in 0..300 {
+        for n in 0..depth {
             let mut builder = tar::Builder::new(Vec::new());
             let mut header = tar::Header::new_ustar();
             header.set_size(nested.len() as u64);
@@ -619,8 +948,202 @@ mod tests {
                 .unwrap();
             nested = builder.into_inner().unwrap();
         }
-        let file = format!("x = '{}'", b64(&gzip(&nested)));
+        nested
+    }
+
+    #[test]
+    fn tars_nested_in_tars_stop_at_the_output_limit() {
+        let file = format!("x = '{}'", b64(&gzip(&tar_nested(300))));
         assert_eq!(unpack_alone(&file), Err(Limit::TooBig));
+    }
+
+    #[test]
+    fn tars_nested_as_deep_as_the_output_limit_allows_need_no_deep_stack() {
+        let file = format!("x = '{}'", b64(&gzip(&tar_nested(60))));
+        let found = std::thread::Builder::new()
+            .stack_size(SMALL_STACK)
+            .spawn(move || texts(&file))
+            .unwrap()
+            .join()
+            .unwrap();
+        assert_eq!(found, ["first hidden file"]);
+    }
+
+    /// A stack a tenth the size of a thread's usual 2 MiB.
+    const SMALL_STACK: usize = 200 * 1024;
+
+    #[test]
+    fn a_gzip_member_behind_zero_padding_is_read_too() {
+        let mut members = gzip(b"first hidden file, then: ");
+        members.extend([0; 8]);
+        members.extend(gzip(HIDDEN.as_bytes()));
+        assert_eq!(
+            texts(&format!("x = '{}'", b64(&members))),
+            [format!("first hidden file, then: {HIDDEN}")]
+        );
+    }
+
+    #[test]
+    fn a_tar_with_nothing_around_it_is_opened() {
+        let files = [("a.txt", "first hidden file"), ("b.txt", HIDDEN)];
+        assert_eq!(
+            texts(&format!("x = '{}'", b64(&tar(&files)))),
+            ["first hidden file", HIDDEN]
+        );
+    }
+
+    #[test]
+    fn a_tar_is_read_on_past_a_block_that_is_no_header() {
+        // A block of something else in front, as `tar` skips.
+        let mut behind = vec![0xff; 512];
+        behind.extend(tar(&[("a.txt", HIDDEN)]));
+        assert_eq!(texts(&format!("x = '{}'", b64(&behind))), [HIDDEN]);
+        // The second of three headers with a checksum that doesn't add up: each
+        // member takes a header block and a block of data.
+        let mut damaged = tar(&[
+            ("a.txt", "first hidden file"),
+            ("b.txt", "second hidden file"),
+            ("c.txt", HIDDEN),
+        ]);
+        damaged[1024 + 148] ^= 1;
+        assert_eq!(
+            texts(&format!("x = '{}'", b64(&gzip(&damaged)))),
+            ["first hidden file", HIDDEN]
+        );
+    }
+
+    #[test]
+    fn a_zip_behind_other_bytes_is_opened() {
+        let noise = NOISE.repeat(60);
+        for prefix in [&[0][..], b"#", &[0x1f, 0x8b, 0x08], &[0x78, 0x9c], &noise] {
+            let mut bytes = prefix.to_vec();
+            bytes.extend(zip(&[("a.txt", HIDDEN)]));
+            assert_eq!(
+                texts(&format!("x = '{}'", b64(&bytes))),
+                [HIDDEN],
+                "{prefix:?}"
+            );
+        }
+    }
+
+    /// `archive`, a zip with no comment, with its end record saying it is the
+    /// second disk of a set.
+    fn split_over_disks(mut archive: Vec<u8>) -> Vec<u8> {
+        let end = archive.len() - 22;
+        assert_eq!(&archive[end..end + 4], b"PK\x05\x06");
+        archive[end + 4] = 1;
+        archive[end + 6] = 1;
+        archive
+    }
+
+    #[test]
+    fn a_zip_whose_directory_the_server_cant_read_isnt_passed() {
+        let split = split_over_disks(zip(&[("a.txt", HIDDEN)]));
+        // A whole archive in front doesn't answer for the one whose record is last.
+        let mut second = zip(&[("b.txt", "first hidden file")]);
+        second.extend(&split);
+        // A directory entry whose signature is gone.
+        let mut damaged = zip(&[("a.txt", HIDDEN)]);
+        let directory = damaged
+            .windows(4)
+            .position(|bytes| bytes == b"PK\x01\x02")
+            .unwrap();
+        damaged[directory] = b'Q';
+        // An end record that lists no members, after one.
+        let mut emptied = zip(&[("a.txt", HIDDEN)]);
+        let end = emptied.len() - 22;
+        emptied[end + 8..end + 16].fill(0);
+        for archive in [split, second, damaged, emptied] {
+            let found = unpack_alone(&format!("x = '{}'", b64(&archive)));
+            assert!(matches!(found, Err(Limit::Unopened(_))), "{found:?}");
+        }
+    }
+
+    #[test]
+    fn a_zip_that_lists_one_member_many_times_over_isnt_passed() {
+        let numbers: String = (0..600).map(|n| format!("{} ", n * 7919 % 1000)).collect();
+        let once = zip(&[("a.txt", &numbers)]);
+        let directory = once
+            .windows(4)
+            .position(|bytes| bytes == b"PK\x01\x02")
+            .unwrap();
+        let end = once.len() - 22;
+        let entry = &once[directory..end];
+        const TIMES: u16 = 40;
+        let mut many = once[..directory].to_vec();
+        for n in 0..TIMES {
+            // Each under a name of its own, which starts 46 bytes into the entry.
+            let mut entry = entry.to_vec();
+            entry[46] = b'0' + u8::try_from(n).unwrap();
+            many.extend(entry);
+        }
+        let mut record = once[end..].to_vec();
+        record[8..10].copy_from_slice(&TIMES.to_le_bytes());
+        record[10..12].copy_from_slice(&TIMES.to_le_bytes());
+        let size = u32::try_from(entry.len()).unwrap() * u32::from(TIMES);
+        record[12..16].copy_from_slice(&size.to_le_bytes());
+        many.extend(record);
+        let found = unpack_alone(&format!("x = '{}'", b64(&many)));
+        assert!(matches!(found, Err(Limit::Unopened(_))), "{found:?}");
+    }
+
+    #[test]
+    fn a_tar_member_sized_past_the_archives_end_ends_the_reading() {
+        // A folder, which isn't read, whose header gives a size no archive holds:
+        // as for `tar`, nothing lies behind it.
+        let mut archive = tar(&[("a", ""), ("b.txt", HIDDEN)]);
+        let mut header = tar::Header::from_byte_slice(&archive[..512]).clone();
+        header.set_entry_type(tar::EntryType::Directory);
+        header.set_size(u64::MAX - 1024);
+        header.set_cksum();
+        archive[..512].copy_from_slice(header.as_bytes());
+        assert_eq!(
+            unpack_alone(&format!("x = '{}'", b64(&gzip(&archive)))),
+            Ok(vec![])
+        );
+    }
+
+    #[test]
+    fn a_tar_with_too_many_headers_that_cant_be_read_isnt_passed() {
+        let mut archive = Vec::new();
+        for _ in 0..=TAR_RESUMES {
+            let mut member = tar(&[("a.txt", "first hidden file")]);
+            member.truncate(1024);
+            member[148] ^= 1;
+            archive.extend(member);
+        }
+        archive.extend(tar(&[("b.txt", HIDDEN)]));
+        let whole = tar(&[("c.txt", "second hidden file")]);
+        let mut file = whole[..1024].to_vec();
+        file.extend(archive);
+        let found = unpack_alone(&format!("x = '{}'", b64(&gzip(&file))));
+        assert!(matches!(found, Err(Limit::Unopened(_))), "{found:?}");
+    }
+
+    #[test]
+    fn a_zip_cut_short_gives_the_members_before_the_cut() {
+        let whole = zip(&[("a.txt", HIDDEN), ("b.txt", "second hidden file")]);
+        // Cut inside its directory, as a literal split over lines is.
+        let cut = &whole[..whole.len() - 30];
+        assert_eq!(
+            texts(&format!("x = '{}'", b64(cut))),
+            [HIDDEN, "second hidden file"]
+        );
+        // A signature alone, as code that tests for one holds, hides nothing.
+        let sniffed = "if blob.startswith('UEsDBBQAAAAIAAAA'): unzip(blob)";
+        assert_eq!(unpack_alone(sniffed), Ok(vec![]));
+    }
+
+    #[test]
+    fn an_xz_stream_the_server_cant_read_to_the_end_isnt_passed() {
+        let whole = xz(HIDDEN.repeat(20).as_bytes());
+        for cut in [whole.len() / 2, whole.len() - 14] {
+            let found = unpack_alone(&format!("x = '{}'", b64(&whole[..cut])));
+            assert!(matches!(found, Err(Limit::Unopened(_))), "{cut}: {found:?}");
+        }
+        // A signature alone, as code that tests for one holds, hides nothing.
+        let sniffed = "if blob.startswith('/Td6WFoAAAAA'): unxz(blob)";
+        assert_eq!(unpack_alone(sniffed), Ok(vec![]));
     }
 
     #[test]
