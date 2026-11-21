@@ -14,7 +14,9 @@
 name: Release CLI
 
 on:
-  workflow_run:
+  # The gate job takes only a push's CI run on this repo, and every job after it
+  # checks out the commit that run checked, never the ref that started this one.
+  workflow_run: # zizmor: ignore[dangerous-triggers]
     workflows: [CI]
     types: [completed]
     branches: [main]
@@ -200,9 +202,10 @@ jobs:
           path: dist/*.whl
       # The npm package of this runner's platform, around the binary maturin built,
       # installed beside the launcher and run through npx, as an agent's npx would.
-      # --offline: the launcher's other platform packages aren't fetched.
+      # --offline: the launcher's other platform packages aren't fetched. What npm
+      # installs with no lockfile is the two packages the step just packed.
       - name: Pack and run the npm packages
-        run: |
+        run: | # zizmor: ignore[adhoc-packages]
           exe=target/${{ matrix.target }}/release/filedrawer
           if [ "$RUNNER_OS" = Windows ]; then exe=$exe.exe; fi
           mkdir npm-dist npm-launcher npx-run

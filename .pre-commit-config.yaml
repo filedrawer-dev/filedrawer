@@ -62,6 +62,18 @@ repos:
         entry: uvx --from actionlint-py==1.7.12.25 --with shellcheck-py==0.11.0.1 actionlint
         language: system
         files: ^\.github/workflows/.*\.ya?ml$
+      # zizmor reads the workflows and Dependabot's settings for what a pull request,
+      # an action or a cache could do with them: text from an event in a script, a
+      # token left in a checkout, wider permissions than a job needs. Offline, so it
+      # asks GitHub nothing and takes about a second. A finding that is meant gets
+      # `# zizmor: ignore[audit]` and why on its line, as release-cli.yml's
+      # workflow_run has.
+      - id: zizmor
+        name: zizmor (GitHub workflows)
+        entry: uvx zizmor==1.32.0 --offline --quiet .github
+        language: system
+        files: ^\.github/
+        pass_filenames: false
       # The repo's own shell scripts, which pre-commit finds by a .sh name or an
       # executable's shebang. Pinned as actionlint's shellcheck is. --norc, so a
       # ~/.shellcheckrc or a .shellcheckrc in the repo can't make a host's verdict differ
