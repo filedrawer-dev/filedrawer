@@ -16,6 +16,8 @@ REPO = Path(__file__).resolve().parents[2]
 AUDIT = REPO / "ops/audit-vps"
 FACTS = REPO / "ops/remote/audit-facts.sh"
 INSTALL = "/usr/local/sbin/filedrawer-install"
+# The heading audit-facts.sh prints above the hashes of the repo's installed scripts.
+SCRIPTS = "\n== installed scripts ==\n"
 
 
 def git(cwd: Path, *args: str) -> str:
@@ -103,15 +105,34 @@ def test_the_facts_come_from_one_ssh_round_running_the_facts_script(audit):
 def test_a_servers_script_is_current_behind_or_no_revision_of_mains(
     audit, served, verdict
 ):
-    audit.facts = f"sha256 {INSTALL} {sha256(served)}\n"
+    audit.facts = f"{SCRIPTS}sha256 {INSTALL} {sha256(served)}\n"
     result = audit.run()
     assert result.returncode == 0, result.stderr
     drift = result.stdout.split("== drift from origin/main ==")[1]
     assert f"{INSTALL}: {verdict.format(old=audit.old)}" in drift
 
 
+def test_a_file_the_repo_doesnt_hold_gets_no_drift_verdict(audit):
+    """A generated unit or config, even one named like a script of the repo's."""
+    generated = "/etc/sudoers.d/filedrawer-install"
+    audit.facts = (
+        f"{SCRIPTS}sha256 {INSTALL} {sha256('new' + chr(10))}\n"
+        f"\n== installed units and configs ==\nsha256 {generated} {'ab' * 32}\n"
+    )
+    drift = audit.run().stdout.split("== drift from origin/main ==")[1]
+    assert f"{INSTALL}: current" in drift
+    assert generated not in drift
+    assert "MATCHES NO REVISION" not in drift
+
+
+def test_an_installed_script_the_repo_never_held_matches_no_revision(audit):
+    gone = "/usr/local/sbin/filedrawer-gone"
+    audit.facts = f"{SCRIPTS}sha256 {gone} {'ab' * 32}\n"
+    assert f"{gone}: MATCHES NO REVISION on origin/main" in audit.run().stdout
+
+
 def test_a_script_the_server_lacks_is_called_absent(audit):
-    audit.facts = f"sha256 {INSTALL} none\n"
+    audit.facts = f"{SCRIPTS}sha256 {INSTALL} none\n"
     assert f"{INSTALL}: absent from the server" in audit.run().stdout
 
 

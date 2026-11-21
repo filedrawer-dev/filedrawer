@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Collects the facts a security review of the server checks and the repo can't show.
-# The owner runs it from their own checkout, over their own SSH as root; it changes
-# nothing on the server or here, and prints no secret.
+# The owner runs it from their own checkout, over their own SSH as root. It changes
+# no file the server keeps, runs nothing here that writes but `git fetch`, and
+# prints no secret.
 set -euo pipefail
 
 usage() {
@@ -100,9 +101,11 @@ echo "origin/main: $(in_repo rev-parse origin/main)"
 echo "$facts"
 
 printf '\n== drift from origin/main ==\n'
+# Only the facts' "installed scripts" are compared: the facts also hash the units
+# and configs the repo's scripts generate, which no revision holds.
 while read -r _ path hash; do
   echo "$path: $(drift "$(basename "$path")" "$hash")"
-done < <(grep '^sha256 ' <<< "$facts" || true)
+done < <(sed -n '/^== installed scripts ==$/,/^== /p' <<< "$facts" | grep '^sha256 ' || true)
 printf 'Caddy pinned by bin/caddy on origin/main: %s\n' \
   "$(in_repo show origin/main:bin/caddy 2>/dev/null | sed -n 's/^VERSION = "\(.*\)"$/\1/p')"
 

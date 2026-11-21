@@ -41,7 +41,7 @@ A binary that answers `/tags` passes, and it runs as `filedrawer` with staging's
 The server takes each Caddy release through unattended-upgrades, and `ops/remote/caddy-upgrade-check` (`-h`), which `ops/provision-vps caddy-upgrades` installs, checks the sites after each one and rolls back and holds one that breaks them (#100).
 The owner deploys production from their own machine with `ops/deploy-production [COMMIT]` (`-h`), which promotes the binary CI built for the commit staging runs, or for an older one to roll back to; the install copies production's database first and puts it back if the new binary doesn't answer.
 An older binary runs on a newer schema, so a migration adds only what it can ignore unless `crates/server/migration-rollback.txt` says otherwise (CODING_STANDARDS.md, SQL).
-`ops/audit-vps` (`-h`), which the owner also runs from their own machine, prints a report of the server's state for a security review and changes nothing: sockets, firewall, sshd, sudo rules, owners and modes, unit hardening and pending upgrades, with no secret in it, and whether each root-owned script on the server is `origin/main`'s.
+`ops/audit-vps` (`-h`), which the owner also runs from their own machine, prints a report of the server's state for a security review and changes no file the server keeps: sockets, firewall, sshd, sudo rules, owners and modes, unit hardening and pending upgrades, with no secret in it, and whether each root-owned script on the server is `origin/main`'s.
 
 The field test's entries and logs are in `field-test/`, git-excluded and local only; never commit or publish them without the owner's say.
 
