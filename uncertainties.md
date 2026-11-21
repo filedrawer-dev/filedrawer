@@ -764,6 +764,19 @@ The owner settled the email's sections and the rules in design.md's Admin sectio
   It has no boundary at which an account gets two hours' worth at once, and a restart forgets at most one hour's count.
 - Against: a deploy hands every account a full share again.
 
+#### An account's link checks an hour
+
+- Options: no limit of its own, leaving the daily allowance and the 60 writes a minute to bound the fetches; a per-account count of link checks an hour, refusing a request past it with a 429 or accepting it with its links unchecked until a recheck; or a server-wide rate per host.
+- Chosen: each account's requests may cause 1,200 link checks an hour, a token bucket in memory beside its share of GitHub's API calls.
+  A request's checks are each distinct URL it has the server fetch, plus each `code` link whose pin check asks GitHub or Zenodo; redirect hops aren't counted, and the server's own rechecks take none.
+  They are taken together before the first fetch, and a request that needs more than the account has left is refused whole, with a 429 and `Retry-After`, as every limit answers.
+  1,200 is what the largest request needs, 100 entries with 10 `logs` links and a `code` link each, so a full hour's checks never refuse one request.
+  Reason: the allowance is read before the fetches, but a submission can still be refused after them, for a Zenodo concept record, and such a request takes no allowance, so without a count a refused request's fetches would cost its account nothing.
+  Refusing, rather than accepting with the links unchecked, keeps a Zenodo concept record from being accepted because the account spent its checks first.
+- Against: an agent submitting several large batches with many links in one hour is told to wait, up to an hour.
+  A full bucket still lets one request send a host more than it allows a client that isn't logged in (Hugging Face about 100 pages in 5 minutes, Zenodo 60 a minute), so the host may ask the server to wait after a large batch, as before; a server-wide rate per host isn't built.
+  The count is in memory, so a deploy hands every account a full hour again.
+
 #### Pauses for hosts that ask the server to wait
 
 - Options: keep the pauses in memory or in SQLite; treat every GitHub 403 as a rate limit, or only one that says so; cap the waits or not.

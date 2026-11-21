@@ -432,3 +432,57 @@ async fn stagings_test_accounts_have_no_allowance() {
         }
     }
 }
+
+/// A submission the allowance refuses stores nothing, so the allowance is read
+/// before the link checks and it fetches nothing either (design.md, Submission and
+/// screening, step 2).
+#[tokio::test]
+async fn a_submission_past_the_allowance_fetches_no_links() {
+    let app = test_app().await;
+    let public = app.submit(&entry("Steering", "")).await;
+    // A new account's 10 days hold 7 x 20 + 3 x 50 = 290 units.
+    let mut pending = String::new();
+    for (prefix, count) in [("a", 100), ("b", 100), ("c", 89)] {
+        let filled = post_batch(&app, prefix, count).await;
+        assert_eq!(filled.status, StatusCode::CREATED, "{}", filled.body);
+        pending = filled
+            .body
+            .lines()
+            .find_map(|line| line.strip_prefix("entry: "))
+            .and_then(|member| member.split(' ').next())
+            .expect("the reply lists its members")
+            .to_string();
+    }
+    let linked = |title: &str, slug: &str| {
+        entry(
+            title,
+            &format!("slug: {slug}\nlogs: [https://github.com/ada/logs/tree/{slug}]\n"),
+        )
+    };
+    let members = serde_json::json!({ "entries": [linked("One", "d-0"), linked("Two", "d-1")] });
+    let refused = [
+        app.post("/entries", linked("Linked", "new")).await,
+        app.put_as(
+            &format!("/e/{pending}"),
+            &app.token,
+            linked("Steering c 0", "c-0"),
+        )
+        .await,
+        app.post(
+            &format!("/e/{public}/versions"),
+            linked("Steering, corrected", "v2"),
+        )
+        .await,
+        app.post("/entries/batch", members.to_string()).await,
+    ];
+    for reply in refused {
+        assert_eq!(
+            reply.status,
+            StatusCode::TOO_MANY_REQUESTS,
+            "{}",
+            reply.body
+        );
+        assert!(reply.body.contains("daily allowance"), "{}", reply.body);
+    }
+    assert_eq!(app.web.fetched(), Vec::<String>::new());
+}

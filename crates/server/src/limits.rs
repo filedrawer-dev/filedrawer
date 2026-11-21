@@ -94,10 +94,11 @@ fn daily(count: i64) -> Window {
 const LONGEST_WINDOW_SECONDS: i64 = 86_400;
 
 /// How many buckets are kept before the full ones are dropped: the per-minute ones,
-/// and each account's hourly share of GitHub's API calls (`link_checks`). A full
-/// bucket is what a new one would be, so dropping it changes nothing; if none is
-/// full, all go, which forgives at most a minute's requests, or an hour's GitHub
-/// calls, and only happens to a server that 100,000 clients reach within a minute.
+/// and each account's hourly link checks and share of GitHub's API calls
+/// (`link_checks`). A full bucket is what a new one would be, so dropping it changes
+/// nothing; if none is full, all go, which forgives at most a minute's requests, or
+/// an hour's link checks and GitHub calls, and only happens to a server that 100,000
+/// clients reach within a minute.
 pub const MAX_BUCKETS: usize = 100_000;
 
 /// The limits and the per-minute counts.
@@ -118,6 +119,19 @@ impl RateLimits {
     /// Takes one request from `key`'s bucket at `rate`, or says how long until one
     /// is free.
     pub fn take(&self, key: &str, rate: Rate, now: Instant) -> Result<(), Duration> {
+        self.take_many(key, rate, 1, now)
+    }
+
+    /// Takes `count` requests at once from `key`'s bucket at `rate`, all or none, or
+    /// says how long until that many are free. More than the bucket holds counts as
+    /// all it holds, so a full bucket never refuses.
+    pub fn take_many(
+        &self,
+        key: &str,
+        rate: Rate,
+        count: u32,
+        now: Instant,
+    ) -> Result<(), Duration> {
         let mut buckets = self.buckets.lock().expect("no thread panics holding it");
         if buckets.len() >= MAX_BUCKETS {
             buckets.retain(|_, bucket| !bucket.is_full(now));
@@ -130,7 +144,14 @@ impl RateLimits {
             tokens: f64::from(rate.count),
             at: now,
         });
-        bucket.take(now)
+        bucket.take(f64::from(count.min(rate.count)), now)
+    }
+
+    /// Counts `count` link checks that a request by `account_id` is about to cause
+    /// (design.md, Submission and screening, step 2), all or none.
+    pub fn link_checks_by(&self, account_id: &str, rate: Rate, count: u32) -> Result<(), AppError> {
+        self.take_many(&format!("links:{account_id}"), rate, count, Instant::now())
+            .map_err(|wait| too_many("this account's link checks for the hour", wait))
     }
 
     /// Counts a token-authenticated write by `account_id`.
@@ -163,15 +184,16 @@ impl Bucket {
         self.refilled(now) >= f64::from(self.rate.count)
     }
 
-    fn take(&mut self, now: Instant) -> Result<(), Duration> {
+    /// Takes `count` tokens, all or none.
+    fn take(&mut self, count: f64, now: Instant) -> Result<(), Duration> {
         self.tokens = self.refilled(now);
         self.at = now;
-        if self.tokens >= 1.0 {
-            self.tokens -= 1.0;
+        if self.tokens >= count {
+            self.tokens -= count;
             return Ok(());
         }
         Err(Duration::from_secs_f64(
-            (1.0 - self.tokens) / self.per_second(),
+            (count - self.tokens) / self.per_second(),
         ))
     }
 }

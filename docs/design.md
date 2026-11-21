@@ -201,8 +201,9 @@ A submission goes through these steps in order: the first two when it is submitt
    - wandb.ai isn't listed.
      Every wandb.ai link redirects to forge.coreweave.com, which answers 200 with the same page for a real project, a made-up project and a made-up run, so no fetch can tell a dead link from a live one, and a wandb link draws the unlisted-host warning (the owner's decision, 2026-11-07).
    - The checks run in the submission request, after every check on the entry's text and on what it cites, so a submission refused for those spends no fetches.
-     The daily allowance is taken after them, in the transaction that stores the entry, so a submission past it has spent its fetches, and GitHub calls only from its own account's share.
+     The daily allowance is read before them too, so a submission past it is refused without a fetch; it is taken after them, in the transaction that stores the entry.
      One request fetches each URL once, at most 8 at a time, and stops waiting after 20 seconds; what is still unanswered then counts as "retry later".
+     An account's requests may cause a set number of link checks an hour, and a request that needs more than the account has left is refused with a 429 before anything is fetched, since a check can still refuse a submission after its fetches, as a Zenodo concept record does (the number and what counts are in uncertainties.md).
      Reason: the warnings arrive in the submission response, where the agent acts on them, and a bad pin can be refused.
    - A `code` link is pinned when it carries a 40-character commit hash on GitHub or Hugging Face, or names a Zenodo version record rather than its concept DOI.
      A branch, a tag or a revision name doesn't count, since each can move.

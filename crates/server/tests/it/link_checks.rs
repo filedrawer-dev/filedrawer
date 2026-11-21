@@ -1442,3 +1442,73 @@ async fn a_commit_the_commit_page_verified_costs_nothing_the_next_time() {
     app.submit_held(&with_code(&github_code())).await;
     assert_eq!(app.web.json_fetched().len(), 1);
 }
+
+/// A batch of `members` entries whose slugs start with `prefix`, each with `logs`
+/// distinct links.
+fn members_with_logs(prefix: &str, members: usize, logs: usize) -> Vec<String> {
+    (0..members)
+        .map(|n| {
+            let links: Vec<String> = (0..logs)
+                .map(|l| format!("https://github.com/ada/logs/blob/{SHA}/{prefix}/{n}/{l}.log"))
+                .collect();
+            member(
+                &format!("{prefix}-{n}"),
+                &format!("logs: [{}]\n", links.join(", ")),
+            )
+        })
+        .collect()
+}
+
+/// An account's requests may cause 1,200 link checks an hour: one for each link the
+/// server fetches, and one more for a `code` link's pin check. A request that needs
+/// more than the account has left is refused before anything is fetched (design.md,
+/// Submission and screening, step 2). The refused request here needs 90, which
+/// take over 4 minutes to come back, so a slow run can't hand them to it; its 90
+/// entries fit in what the first 200 left of a new account's allowance.
+#[tokio::test]
+async fn an_account_past_its_hours_link_checks_is_refused_and_nothing_is_fetched() {
+    let app = test_app().await;
+    let (status, json) = batch(&app, &members_with_logs("a", 100, 10)).await;
+    assert_eq!(status, StatusCode::CREATED, "{json}");
+    // 200 are left: 100 `code` links, each fetched and its commit checked.
+    let pinned: Vec<String> = (0..100)
+        .map(|n| {
+            member(
+                &format!("b-{n}"),
+                &format!("code: https://github.com/ada/steering/tree/{n:040x}\n"),
+            )
+        })
+        .collect();
+    let (status, json) = batch(&app, &pinned).await;
+    assert_eq!(status, StatusCode::CREATED, "{json}");
+    let fetched = app.web.fetched().len();
+
+    let refused = app
+        .post(
+            "/entries/batch",
+            serde_json::json!({ "entries": members_with_logs("c", 90, 1) }).to_string(),
+        )
+        .await;
+    assert_eq!(
+        refused.status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "{}",
+        refused.body
+    );
+    assert!(
+        refused.body.contains("this account's link checks"),
+        "{}",
+        refused.body
+    );
+    let wait = common::through_caddy::retry_after(&refused);
+    assert!((1..=300).contains(&wait), "{wait}");
+    assert_eq!(app.web.fetched().len(), fetched);
+
+    // Another account has its own, and an entry without links needs none.
+    let other = app.other_token().await;
+    let logs = "https://github.com/ada/logs/blob/main/last.log";
+    let reply = app.post_as("/entries", Some(&other), with_logs(logs)).await;
+    assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
+    let reply = app.post("/entries", entry("No links", "")).await;
+    assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
+}

@@ -174,12 +174,14 @@ pub async fn submit_batch(
     if !problems.is_empty() {
         return Err(refused(problems));
     }
-    // Last, so a batch refused for anything else spends no fetches.
+    // The link checks come last, so a batch refused for anything else spends no
+    // fetches: one the allowance has no room for is refused here, as `store` would.
+    allowance::check_room(&state, &account.id, accepted.len(), time::now_utc().date()).await?;
     let fields: Vec<_> = accepted
         .iter()
         .map(|member| &member.analysis.fields)
         .collect();
-    let links = link_checks::check(&state, &fields, Some(&account.id)).await;
+    let links = link_checks::check(&state, &fields, &account.id).await?;
     for (member_links, label) in links.iter().zip(&labels) {
         problems.extend(
             link_checks::refusals(member_links)

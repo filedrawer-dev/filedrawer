@@ -21,8 +21,8 @@ use std::time::Duration;
 use time::OffsetDateTime;
 
 use analyzer::{
-    CardContext, Fields, LISTED_HOSTS, Pin, PinFlag, code_pin, github_commit, listed_host,
-    zenodo_record,
+    CardContext, Fields, GithubCommit, LISTED_HOSTS, Pin, PinFlag, code_pin, github_commit,
+    listed_host, zenodo_record,
 };
 use futures::StreamExt;
 use reqwest::Url;
@@ -34,7 +34,9 @@ pub use fetch::{
 pub use stored::{RECHECK_DAYS, pin_flag, recheck_due, store, stored};
 
 use crate::AppState;
+use crate::error::AppError;
 use crate::event_log::EventLog;
+use crate::limits::Rate;
 use crate::respond::one_line;
 
 /// The fetcher and what the server knows of its GitHub API calls.
@@ -283,31 +285,115 @@ fn is_download_host(host: &str) -> bool {
             .any(|suffix| host.ends_with(suffix))
 }
 
-/// Checks the `code` and `logs` links of each entry, in order. `account` is charged
-/// for the GitHub API calls; `None` for the server's own rechecks.
+/// The links one request's checks look at.
+struct Asked {
+    /// Each entry's links, in order.
+    entries: Vec<Vec<(Field, String)>>,
+    /// The URLs to fetch, each once. A Zenodo DOI isn't fetched; its pin check finds
+    /// whether it answers.
+    urls: BTreeSet<String>,
+}
+
+impl Asked {
+    fn of(state: &AppState, entries: &[&Fields]) -> Asked {
+        let entries: Vec<Vec<(Field, String)>> = entries
+            .iter()
+            .map(|fields| {
+                if state.link_checker.off {
+                    Vec::new()
+                } else {
+                    checked_links(fields)
+                }
+            })
+            .collect();
+        let urls = entries
+            .iter()
+            .flatten()
+            .filter(|(_, url)| listed_host(url).is_some())
+            .map(|(_, url)| url.clone())
+            .collect();
+        Asked { entries, urls }
+    }
+
+    /// The `code` links, each once.
+    fn code_urls(&self) -> BTreeSet<&String> {
+        self.entries
+            .iter()
+            .flatten()
+            .filter(|(field, _)| *field == Field::Code)
+            .map(|(_, url)| url)
+            .collect()
+    }
+
+    /// How many link checks these are: one for each URL fetched, and one for each
+    /// `code` link whose pin check asks its host, GitHub or Zenodo.
+    fn checks(&self) -> u32 {
+        let pins = self
+            .code_urls()
+            .into_iter()
+            .filter(|url| online_pin(url).is_some())
+            .count();
+        u32::try_from(self.urls.len() + pins).unwrap_or(u32::MAX)
+    }
+}
+
+/// What the pin check of a `code` link asks a host about.
+enum OnlinePin {
+    /// Zenodo, about the record the link names, if the server can read one from it.
+    Zenodo(Option<u64>),
+    /// GitHub, about a commit.
+    Github(GithubCommit),
+}
+
+/// What the pin check of `code: url` asks a host about; `None` when it asks nothing,
+/// as for a Hugging Face link.
+fn online_pin(url: &str) -> Option<OnlinePin> {
+    if code_pin(url) == Pin::CheckedOnline {
+        return Some(OnlinePin::Zenodo(zenodo_record(url)));
+    }
+    github_commit(url).map(OnlinePin::Github)
+}
+
+/// The link checks one account's requests may cause in an hour (uncertainties.md,
+/// "An account's link checks an hour"): what the largest request needs, a batch of
+/// 100 entries with 10 `logs` links and a `code` link each.
+const ACCOUNT_CHECKS: Rate = Rate {
+    count: 1200,
+    per: Duration::from_secs(60 * 60),
+};
+
+/// Checks the `code` and `logs` links of each entry, in order, for a request by
+/// `account`, which is charged for the checks and for the GitHub API calls. Refuses
+/// the request, fetching nothing, when it needs more link checks than the account has
+/// left this hour.
 pub async fn check(
     state: &AppState,
     entries: &[&Fields],
-    account: Option<&str>,
-) -> Vec<Vec<CheckedLink>> {
-    let asked: Vec<Vec<(Field, String)>> = entries
-        .iter()
-        .map(|fields| {
-            if state.link_checker.off {
-                Vec::new()
-            } else {
-                checked_links(fields)
-            }
-        })
-        .collect();
+    account: &str,
+) -> Result<Vec<Vec<CheckedLink>>, AppError> {
+    let asked = Asked::of(state, entries);
+    let checks = asked.checks();
+    if checks > 0 {
+        state
+            .rate_limits
+            .link_checks_by(account, ACCOUNT_CHECKS, checks)?;
+    }
+    Ok(run(state, asked, Some(account)).await)
+}
+
+/// [`check`] for the server's own rechecks, which no account is charged for.
+async fn check_uncounted(state: &AppState, entries: &[&Fields]) -> Vec<Vec<CheckedLink>> {
+    run(state, Asked::of(state, entries), None).await
+}
+
+/// Runs the checks of `asked`. `account` is charged for the GitHub API calls; `None`
+/// for the server's own rechecks.
+async fn run(state: &AppState, asked: Asked, account: Option<&str>) -> Vec<Vec<CheckedLink>> {
+    let Asked {
+        entries: asked,
+        urls,
+    } = asked;
     let deadline = tokio::time::Instant::now() + CHECK_BUDGET;
-    // A Zenodo DOI isn't fetched; its pin check finds whether it answers.
-    let urls: BTreeSet<String> = asked
-        .iter()
-        .flatten()
-        .filter(|(_, url)| listed_host(url).is_some())
-        .map(|(_, url)| url.clone())
-        .collect();
     let reaches: HashMap<String, Reach> = futures::stream::iter(urls)
         .map(|url| reach_by(state, url, deadline))
         .buffer_unordered(CONCURRENT_FETCHES)
@@ -500,23 +586,24 @@ async fn pin(
     reach: Option<&Reach>,
     account: Option<&str>,
 ) -> PinOutcome {
-    if code_pin(url) == Pin::CheckedOnline {
-        let Some(record) = zenodo_record(url) else {
+    let commit = match online_pin(url) {
+        None => return PinOutcome::default(),
+        Some(OnlinePin::Zenodo(None)) => {
             return PinOutcome {
                 pin: Some(PinCheck::NotVerified(
                     "it names no Zenodo record the server can look up".into(),
                 )),
                 reach: Some(Reach::Dead("names no Zenodo record".into())),
             };
-        };
-        let (record_reach, pin) = zenodo_pin(state, record).await;
-        return PinOutcome {
-            pin: Some(pin),
-            reach: Some(record_reach),
-        };
-    }
-    let Some(commit) = github_commit(url) else {
-        return PinOutcome::default();
+        }
+        Some(OnlinePin::Zenodo(Some(record))) => {
+            let (record_reach, pin) = zenodo_pin(state, record).await;
+            return PinOutcome {
+                pin: Some(pin),
+                reach: Some(record_reach),
+            };
+        }
+        Some(OnlinePin::Github(commit)) => commit,
     };
     let pin = if let Some(Reach::Dead(_)) = reach {
         PinCheck::NotVerified(format!(

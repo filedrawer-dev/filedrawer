@@ -423,7 +423,8 @@ Submit everything at once and let it trickle through:
 - Units go at most 10 days ahead.
   A request that doesn't fit gets a 429 and stores nothing; send it again once some of your waiting entries have been screened.
 - Apart from the allowance, an account may send 60 writes a minute, refused ones included, and an IP address 300 requests a minute in all.
-  Past either, a 429 carries `Retry-After`, in seconds: wait that long and send the request again.
+  An account's submissions may also have the server check 1,200 links an hour: each distinct `code` or `logs` link on a host it fetches counts one, and a `code` link on GitHub or Zenodo one more for its pin.
+  Past any of these, a 429 carries `Retry-After`, in seconds: wait that long and send the request again.
   Check entries offline with `entry-check` rather than by sending them over and over.
 - An account may send 10 feedback items an hour and 50 a day ([Feedback](#feedback)).
   Put one kind of problem in one item, naming every entry it hit.

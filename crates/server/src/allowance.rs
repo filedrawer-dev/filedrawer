@@ -97,28 +97,7 @@ pub async fn take(
     if exempt(state, account_id) {
         return Ok(true);
     }
-    let start = start_of(conn, account_id, today).await?;
-    let from = day_text(today);
-    let used = sqlx::query!(
-        r#"SELECT day, COUNT(*) AS "units!: i64" FROM allowance_units
-           WHERE account_id = ? AND day >= ? GROUP BY day"#,
-        account_id,
-        from
-    )
-    .fetch_all(&mut *conn)
-    .await?;
-    let mut days: Vec<String> = Vec::with_capacity(entries.len());
-    for offset in 0..WINDOW_DAYS {
-        let day = today + Duration::days(offset);
-        let text = day_text(day);
-        let taken = used
-            .iter()
-            .find(|row| row.day == text)
-            .map_or(0, |row| row.units);
-        let room = usize::try_from(start.units_on(day) - taken).unwrap_or(0);
-        let wanted = entries.len() - days.len();
-        days.extend(std::iter::repeat_n(text, room.min(wanted)));
-    }
+    let days = days_with_room(conn, account_id, entries.len(), today).await?;
     if days.len() < entries.len() {
         return Ok(false);
     }
@@ -133,6 +112,63 @@ pub async fn take(
         .await?;
     }
     Ok(true)
+}
+
+/// The days `count` new units of `account_id` would be dated to, the earliest with
+/// room from `today` on: fewer than `count` when they don't all fit in the window.
+async fn days_with_room(
+    conn: &mut SqliteConnection,
+    account_id: &str,
+    count: usize,
+    today: Date,
+) -> Result<Vec<String>, sqlx::Error> {
+    let start = start_of(conn, account_id, today).await?;
+    let from = day_text(today);
+    let used = sqlx::query!(
+        r#"SELECT day, COUNT(*) AS "units!: i64" FROM allowance_units
+           WHERE account_id = ? AND day >= ? GROUP BY day"#,
+        account_id,
+        from
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    let mut days: Vec<String> = Vec::with_capacity(count);
+    for offset in 0..WINDOW_DAYS {
+        let day = today + Duration::days(offset);
+        let text = day_text(day);
+        let taken = used
+            .iter()
+            .find(|row| row.day == text)
+            .map_or(0, |row| row.units);
+        let room = usize::try_from(start.units_on(day) - taken).unwrap_or(0);
+        let wanted = count - days.len();
+        days.extend(std::iter::repeat_n(text, room.min(wanted)));
+    }
+    Ok(days)
+}
+
+/// Refuses, with [`refusal`], `count` entries of `account_id` that wouldn't fit in
+/// its allowance as it stands. It takes nothing: a submission asks this before its
+/// links are fetched, so one past the allowance costs no fetches, and [`take`] still
+/// decides in the transaction that stores it, since two requests can both pass here.
+pub async fn check_room(
+    state: &AppState,
+    account_id: &str,
+    count: usize,
+    today: Date,
+) -> Result<(), AppError> {
+    if exempt(state, account_id) {
+        return Ok(());
+    }
+    let mut conn = state.pool.acquire().await?;
+    if days_with_room(&mut conn, account_id, count, today)
+        .await?
+        .len()
+        < count
+    {
+        return Err(refusal(count));
+    }
+    Ok(())
 }
 
 /// The refusal for `count` entries that don't fit in the allowance's window.

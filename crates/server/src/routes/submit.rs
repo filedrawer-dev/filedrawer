@@ -158,14 +158,21 @@ async fn one_cite(
         })
 }
 
+/// Refuses one entry the account's allowance has no room for, which would be
+/// refused when stored anyway: asked before its links are checked, so it costs no
+/// fetches.
+async fn one_room(state: &AppState, account: &TokenAccount) -> Result<(), AppError> {
+    allowance::check_room(state, &account.id, 1, time::now_utc().date()).await
+}
+
 /// Checks one entry's `code` and `logs` links online, refusing it when a pin is bad.
 async fn one_check(
     state: &AppState,
     account: &TokenAccount,
     accepted: &Accepted,
 ) -> Result<Vec<CheckedLink>, AppError> {
-    let links = link_checks::check(state, &[&accepted.analysis.fields], Some(&account.id))
-        .await
+    let links = link_checks::check(state, &[&accepted.analysis.fields], &account.id)
+        .await?
         .pop()
         .unwrap_or_default();
     let reasons = link_checks::refusals(&links);
@@ -277,6 +284,7 @@ pub async fn submit(
     check_references(&state, &account, &accepted, SlugRule::New).await?;
     let cited = one_cite(&state, &account, &accepted).await?;
     let set = one_set(&state, &account, &accepted).await?;
+    one_room(&state, &account).await?;
     let links = one_check(&state, &account, &accepted).await?;
     let now = time::now_utc();
     let publish_at = hold_until(now);
@@ -347,6 +355,7 @@ pub async fn new_version(
     check_references(&state, &account, &accepted, SlugRule::Version(chain_slug)).await?;
     let cited = one_cite(&state, &account, &accepted).await?;
     let set = one_set(&state, &account, &accepted).await?;
+    one_room(&state, &account).await?;
     let links = one_check(&state, &account, &accepted).await?;
     let now = time::now_utc();
     let publish_at = hold_until(now);
@@ -472,6 +481,7 @@ pub async fn resubmit(
     check_references(&state, &account, &accepted, SlugRule::Put(kept)).await?;
     let cited = one_cite(&state, &account, &accepted).await?;
     let set = one_set(&state, &account, &accepted).await?;
+    one_room(&state, &account).await?;
     let links = one_check(&state, &account, &accepted).await?;
     let now = time::now_utc();
     let publish_at = hold_until(now);

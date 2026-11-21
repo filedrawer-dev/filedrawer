@@ -8,7 +8,7 @@ use time::{Duration, OffsetDateTime};
 
 use analyzer::PinFlag;
 
-use super::{CheckedLink, Field, PinCheck, Reach, check};
+use super::{CheckedLink, Field, PinCheck, Reach, check_uncounted};
 use crate::AppState;
 use crate::time::stamp;
 
@@ -276,7 +276,7 @@ async fn recheck_entry(
     if hold_github && super::github::may_call_github(state, &analysis.fields).await {
         return Ok(false);
     }
-    let links = check(state, &[&analysis.fields], None)
+    let links = check_uncounted(state, &[&analysis.fields])
         .await
         .pop()
         .unwrap_or_default();
