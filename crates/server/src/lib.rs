@@ -46,6 +46,7 @@ mod routes;
 pub mod screening;
 pub mod search_log;
 mod series;
+pub mod serve;
 mod skills;
 mod suspension;
 mod time;

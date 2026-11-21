@@ -1,4 +1,5 @@
 //! Rate limits (design.md, Limits and abuse; issue #14): every request per client IP,
+//! by the minute and by how many are in progress at once,
 //! token-authenticated writes per account, and signups and account emails per IP
 //! and per address, and stored feedback per account (#60). The per-minute limits
 //! keep their counts in memory, where a restart forgets at most a minute's; the
@@ -6,14 +7,18 @@
 
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
-use std::sync::Mutex;
+use std::pin::Pin;
+use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
+use axum::body::{Body, Bytes};
 use axum::extract::{ConnectInfo, FromRequestParts, Request, State};
 use axum::http::HeaderMap;
 use axum::http::request::Parts;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
+use hyper::body::{Frame, SizeHint};
 use sqlx::SqlitePool;
 use time::OffsetDateTime;
 
@@ -41,6 +46,10 @@ pub struct Window {
 pub struct Limits {
     /// Every request, read or write, per client IP.
     pub per_ip: Rate,
+    /// Requests one client IP may have in progress at once: a request counts from
+    /// its headers until the last of its reply is written, so one a client sends
+    /// or reads slowly counts for as long as it takes.
+    pub in_flight_per_ip: u32,
     /// Token-authenticated writes per account, refused ones included (#14).
     pub writes_per_account: Rate,
     pub signups_per_ip: Vec<Window>,
@@ -59,6 +68,7 @@ impl Limits {
     pub fn site() -> Self {
         Limits {
             per_ip: per_minute(300),
+            in_flight_per_ip: 32,
             writes_per_account: per_minute(60),
             signups_per_ip: vec![hourly(10), daily(40)],
             emails_per_address: vec![hourly(5), daily(20)],
@@ -106,6 +116,31 @@ pub const MAX_BUCKETS: usize = 100_000;
 pub struct RateLimits {
     pub limits: Limits,
     buckets: Mutex<HashMap<String, Bucket>>,
+    /// How many requests each client IP has in progress; no entry for none.
+    in_flight: Mutex<HashMap<String, u32>>,
+}
+
+/// One request in progress, counted against its client IP until this is dropped.
+#[derive(Debug)]
+pub struct InFlight {
+    limits: Arc<RateLimits>,
+    ip: String,
+}
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        let mut in_flight = self
+            .limits
+            .in_flight
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(count) = in_flight.get_mut(&self.ip) {
+            *count -= 1;
+            if *count == 0 {
+                in_flight.remove(&self.ip);
+            }
+        }
+    }
 }
 
 impl RateLimits {
@@ -113,7 +148,27 @@ impl RateLimits {
         RateLimits {
             limits,
             buckets: Mutex::new(HashMap::new()),
+            in_flight: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Counts a request from `ip` as in progress until what it returns is dropped,
+    /// or returns `None` when the client has as many as it may. The map holds only
+    /// clients with a request in progress, so the server's connections bound it.
+    pub fn begin(self: &Arc<Self>, ip: &str) -> Option<InFlight> {
+        let mut in_flight = self
+            .in_flight
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let count = in_flight.get(ip).copied().unwrap_or(0);
+        if count >= self.limits.in_flight_per_ip {
+            return None;
+        }
+        in_flight.insert(ip.to_string(), count + 1);
+        Some(InFlight {
+            limits: self.clone(),
+            ip: ip.to_string(),
+        })
     }
 
     /// Takes one request from `key`'s bucket at `rate`, or says how long until one
@@ -258,23 +313,65 @@ fn key_of(ip: IpAddr) -> String {
     }
 }
 
-/// Middleware: every request counts against its client IP's rate.
+/// How long a client with too many requests in progress is told to wait: most
+/// requests end within a second.
+const IN_FLIGHT_RETRY: Duration = Duration::from_secs(1);
+
+/// A reply's body that keeps its request counted as in progress until the last of
+/// it is written or the connection closes.
+struct CountedBody {
+    body: Body,
+    _in_flight: InFlight,
+}
+
+impl hyper::body::Body for CountedBody {
+    type Data = Bytes;
+    type Error = axum::Error;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, axum::Error>>> {
+        Pin::new(&mut self.body).poll_frame(cx)
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.body.is_end_stream()
+    }
+
+    fn size_hint(&self) -> SizeHint {
+        self.body.size_hint()
+    }
+}
+
+/// Middleware: every request counts against its client IP's rate, and, until the
+/// last of its reply is written, against the requests the IP may have in progress.
+/// A request refused for either takes nothing from the other.
 pub async fn per_ip(
     State(state): State<AppState>,
     ClientIp(ip): ClientIp,
     request: Request,
     next: Next,
 ) -> Response {
-    let rate = state.rate_limits.limits.per_ip;
-    match state
-        .rate_limits
-        .take(&format!("ip:{ip}"), rate, Instant::now())
-    {
-        Ok(()) => next.run(request).await,
-        Err(wait) => {
+    let limits = &state.rate_limits;
+    let admitted = match limits.begin(&ip) {
+        None => Err(too_many(
+            "requests in progress from this IP address",
+            IN_FLIGHT_RETRY,
+        )),
+        Some(in_flight) => limits
+            .take(&format!("ip:{ip}"), limits.limits.per_ip, Instant::now())
+            .map(|()| in_flight)
+            .map_err(|wait| too_many("requests from this IP address", wait)),
+    };
+    match admitted {
+        Ok(_in_flight) => next
+            .run(request)
+            .await
+            .map(|body| Body::new(CountedBody { body, _in_flight })),
+        Err(refusal) => {
             let asked = crate::respond::Asked::of(request.headers());
-            let refusal = too_many("requests from this IP address", wait).into_response();
-            asked.shape(refusal).await
+            asked.shape(refusal.into_response()).await
         }
     }
 }

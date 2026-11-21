@@ -8,6 +8,7 @@ use filedrawer_server::daily_email::HttpPinger;
 use filedrawer_server::file_store::FileStore;
 use filedrawer_server::link_checks::LinkChecker;
 use filedrawer_server::request_log::RequestLog;
+use filedrawer_server::serve::Bounds;
 use std::sync::Arc;
 
 use filedrawer_server::mail::{LogMailer, Mailer, SmtpMailer};
@@ -340,13 +341,6 @@ async fn serve() -> ExitCode {
         }
         tracing::info!("shutting down");
     };
-    // The peer's address reaches the rate limits, which key on the client's IP.
-    let router = router.into_make_service_with_connect_info::<std::net::SocketAddr>();
-    match axum::serve(listener, router)
-        .with_graceful_shutdown(shutdown)
-        .await
-    {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(error) => fail(&format!("the server stopped: {error}")),
-    }
+    filedrawer_server::serve::serve(listener, router, Bounds::site(), shutdown).await;
+    ExitCode::SUCCESS
 }

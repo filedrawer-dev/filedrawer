@@ -45,6 +45,7 @@ mod review;
 mod screening;
 mod search_log;
 mod series;
+mod serve;
 mod skill;
 mod skill_folders;
 mod smoke;

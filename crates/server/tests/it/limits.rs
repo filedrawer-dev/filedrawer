@@ -13,6 +13,7 @@ use common::through_caddy::{
 };
 use common::{Reply, TestApp, test_app};
 use filedrawer_server::limits::Limits;
+use tower::ServiceExt;
 
 async fn log_in(app: &TestApp, email: &str, password: &str) -> Reply {
     app.form("/login", &[("email", email), ("password", password)], None)
@@ -129,6 +130,96 @@ async fn a_client_past_its_rate_waits_and_others_dont() {
         refused.body
     );
     assert_eq!(read_as(&app, "203.0.113.6").await.status, StatusCode::OK);
+}
+
+/// A login from `forwarded` through Caddy whose body never finishes arriving.
+fn unfinished_login(forwarded: &str) -> Request<Body> {
+    let never = futures::stream::pending::<Result<Vec<u8>, std::io::Error>>();
+    Request::post("/login")
+        .header("x-forwarded-for", forwarded)
+        .header("content-type", "application/x-www-form-urlencoded")
+        .header("origin", common::PUBLIC_URL)
+        .body(Body::from_stream(never))
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_client_with_its_share_of_requests_in_progress_waits_and_others_dont() {
+    let app = test_app().await.with_limits(Limits {
+        in_flight_per_ip: 2,
+        ..wide()
+    });
+    let mut held = Vec::new();
+    for _ in 0..2 {
+        let mut request = Box::pin(app.send_from(CADDY, unfinished_login("203.0.113.5")));
+        assert!(futures::poll!(request.as_mut()).is_pending());
+        held.push(request);
+    }
+    let refused = read_as(&app, "203.0.113.5").await;
+    assert_eq!(
+        refused.status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "{}",
+        refused.body
+    );
+    assert_eq!(retry_after(&refused), 1);
+    assert!(
+        refused.body.contains("requests in progress"),
+        "{}",
+        refused.body
+    );
+    assert_eq!(read_as(&app, "203.0.113.6").await.status, StatusCode::OK);
+    // A request that ends, or whose client goes away, gives its place back.
+    held.pop();
+    assert_eq!(read_as(&app, "203.0.113.5").await.status, StatusCode::OK);
+    assert_eq!(read_as(&app, "203.0.113.5").await.status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_request_stays_in_progress_until_its_reply_is_read() {
+    let app = test_app().await.with_limits(Limits {
+        in_flight_per_ip: 1,
+        ..wide()
+    });
+    let mut request = Request::get("/tags")
+        .header("x-forwarded-for", "203.0.113.5")
+        .body(Body::empty())
+        .unwrap();
+    let caddy: std::net::SocketAddr = CADDY.parse().unwrap();
+    request
+        .extensions_mut()
+        .insert(axum::extract::ConnectInfo(caddy));
+    let unread = app.router.clone().oneshot(request).await.unwrap();
+    assert_eq!(unread.status(), StatusCode::OK);
+    let refused = read_as(&app, "203.0.113.5").await;
+    assert!(
+        refused.body.contains("requests in progress"),
+        "{}",
+        refused.body
+    );
+    drop(unread);
+    assert_eq!(read_as(&app, "203.0.113.5").await.status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_request_refused_for_those_in_progress_takes_nothing_from_the_rate() {
+    let app = test_app().await.with_limits(Limits {
+        per_ip: per_minute(2),
+        in_flight_per_ip: 1,
+        ..wide()
+    });
+    let mut held = Box::pin(app.send_from(CADDY, unfinished_login("203.0.113.5")));
+    assert!(futures::poll!(held.as_mut()).is_pending());
+    for _ in 0..3 {
+        let refused = read_as(&app, "203.0.113.5").await;
+        assert!(
+            refused.body.contains("requests in progress"),
+            "{}",
+            refused.body
+        );
+    }
+    drop(held);
+    assert_eq!(read_as(&app, "203.0.113.5").await.status, StatusCode::OK);
 }
 
 #[tokio::test]

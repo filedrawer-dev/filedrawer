@@ -869,8 +869,44 @@ The owner settled the email's sections and the rules in design.md's Admin sectio
   A request waits up to 5 s for its place, then gets a 429 with `Retry-After: 5`, the shape every limit answers with.
   Login, signup, password reset and account deletion share the places, and a login for an address with no account takes one like any other.
   A request takes its place before it counts against any hourly or daily limit, so a refusal for want of a place costs it nothing.
-- Against: 20 logins a second is far more than people need, but a burst of logins from a few addresses can keep the queue past 5 s, and then honest logins get the 429 too; the queue is first come, first served across all clients.
+- Against: 20 logins a second is far more than people need, but the queue is shared and first come, first served, so a busy period refuses honest logins too.
   A place per client in the queue would stop that, at the cost of more state.
+  A request holds its place while it reads its limits and its account from the database, not only while it hashes, so a slow write delays every login behind it.
+
+#### Requests in progress per client
+
+- Options: only the per-minute rate, as before; or also a bound on how many requests one client IP has in progress at once.
+- Chosen: 32 in progress per client IP (IPv6 by /64), counted from a request's headers until the last of its reply is written; past that, a 429 with `Retry-After: 1`.
+  A refused request takes nothing from the per-minute rate.
+  Reason: the rate counts a request when it arrives, however long it then stays open, as a slow upload or download does; with this, one client holds at most 32 of the 512 connections.
+  A browser opens about 6 connections to a host, and an agent sends its requests one after another.
+- Against: a room behind one address, such as a sprint, shares the 32.
+  Requests take milliseconds, so 32 at once is hundreds a second, but 32 people uploading attachments on a slow link at the same moment would see a 429 and retry.
+  Unlike signups, an invite code doesn't lift it.
+
+#### How long a request's headers and body may take
+
+- Options: no limits in the server, relying on Caddy, as before; or the server's own.
+  For the body: one fixed time, a time that grows with the declared length, or a lowest rate.
+- Chosen: the server's own, whatever stands in front of it.
+  Headers: 150 s from when the connection opens or from the reply before, which is also how long a connection may sit idle.
+  It is longer than the 2 minutes Caddy keeps an idle connection to the server for reuse, so Caddy closes an idle connection first; were the server first, a POST that Caddy sent into the closing connection would fail, since Caddy doesn't send a POST's body twice.
+  Caddy's 2 minutes is its default, which `ops/remote/caddy.sh` doesn't pin.
+  Body: 60 s for each MiB the `Content-Length` starts, at least 1 and at most 4 (the largest body any route reads), and 60 s with no declared length; past it, a 408 that says so, and the connection closes.
+  A link of 140 kbit/s keeps up with that.
+  The time runs from the headers and bytes that keep arriving buy no more; a handler that has its whole body takes as long as it needs, as a series' screening does.
+- Against: 150 s is long for a header.
+  It rests on the server's port being open to the same machine only, where Caddy sends a request on once its headers are complete; a server reachable directly would want about 30 s and Caddy's reuse time set below it.
+  A chunked upload with no declared length gets 60 s however large it is.
+
+#### How many connections are open at once
+
+- Options: no bound, as before, up to the 1,024 file descriptors systemd gives the service; a bound in the server; or a higher `LimitNOFILE` in the unit, or both.
+- Chosen: 512 in the server; further connections wait, unaccepted, until one closes.
+  The other half of the descriptors stays free for the database's 8 connections, attached files, which are read on up to 512 blocking threads, outbound calls and the log.
+  The unit's limit stays as it is.
+- Against: the deploy's health check shares the bound.
+  Raising `LimitNOFILE` and the bound together would give more room, at the cost of a provisioning rerun.
 
 ### Staging and checks
 

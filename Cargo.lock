@@ -577,6 +577,8 @@ dependencies = [
  "flate2",
  "futures",
  "http-body-util",
+ "hyper",
+ "hyper-util",
  "lettre",
  "lzma-rust2",
  "pulldown-cmark",

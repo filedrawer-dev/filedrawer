@@ -32,6 +32,7 @@ pub fn hourly(count: i64) -> Vec<Window> {
 pub fn wide() -> Limits {
     Limits {
         per_ip: per_minute(10_000),
+        in_flight_per_ip: 10_000,
         writes_per_account: per_minute(10_000),
         signups_per_ip: hourly(10_000),
         emails_per_address: hourly(10_000),
