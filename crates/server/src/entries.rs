@@ -4,7 +4,7 @@ use analyzer::{
     Analysis, Author, CardContext, Choice, Claim, Kind, Outcome, REFERENCE_KEYS_VERSION, Reference,
     Results, Role, Stage, Vocabulary, analyze, render_card,
 };
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::time::Duration;
 
 use sqlx::SqlitePool;
@@ -1017,26 +1017,37 @@ pub async fn successor(
     Ok(row.map(|row| (row.id, row.status)))
 }
 
-/// The entry a slug names for `account_id`: the latest public version of the chain
-/// it was given to, if one is public.
-pub async fn public_by_slug(
+/// The entry each of `names` names as a slug of `account_id`'s: the latest public
+/// version of the chain the slug was given to, for those that have one. One
+/// statement whatever `names` holds, since an entry's text sets how many there are:
+/// it reads the account's slugs, which the account's own entries bound.
+pub async fn public_by_slugs(
     pool: &SqlitePool,
     account_id: &str,
-    slug: &str,
-) -> Result<Option<String>, sqlx::Error> {
-    sqlx::query_scalar!(
-        r#"WITH RECURSIVE chain(seq) AS (
-               SELECT entry_seq FROM slugs WHERE account_id = ?1 AND slug = ?2
+    names: &BTreeSet<String>,
+) -> Result<BTreeMap<String, String>, sqlx::Error> {
+    if names.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    let rows = sqlx::query!(
+        r#"WITH RECURSIVE chain(slug, seq) AS (
+               SELECT slug, entry_seq FROM slugs WHERE account_id = ?1
                UNION ALL
-               SELECT e.seq FROM entries e JOIN chain c ON e.previous_seq = c.seq
+               SELECT c.slug, e.seq FROM entries e JOIN chain c ON e.previous_seq = c.seq
            )
-           SELECT e.id AS "id!" FROM entries e JOIN chain c ON c.seq = e.seq
-           WHERE e.status = 'public' ORDER BY e.seq DESC LIMIT 1"#,
-        account_id,
-        slug
+           -- With MAX, SQLite takes `id` from the row that holds the largest seq.
+           SELECT c.slug AS "slug!", e.id AS "id!", MAX(e.seq) AS "seq!: i64"
+           FROM entries e JOIN chain c ON c.seq = e.seq
+           WHERE e.status = 'public' GROUP BY c.slug"#,
+        account_id
     )
-    .fetch_optional(pool)
-    .await
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .filter(|row| names.contains(&row.slug))
+        .map(|row| (row.slug, row.id))
+        .collect())
 }
 
 /// Whether `id` names a public entry, or any entry of `account_id`'s.

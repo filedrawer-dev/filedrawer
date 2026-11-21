@@ -1,0 +1,45 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH RECURSIVE chain(slug, seq) AS (\n               SELECT slug, entry_seq FROM slugs WHERE account_id = ?1\n               UNION ALL\n               SELECT c.slug, e.seq FROM entries e JOIN chain c ON e.previous_seq = c.seq\n           )\n           -- With MAX, SQLite takes `id` from the row that holds the largest seq.\n           SELECT c.slug AS \"slug!\", e.id AS \"id!\", MAX(e.seq) AS \"seq!: i64\"\n           FROM entries e JOIN chain c ON c.seq = e.seq\n           WHERE e.status = 'public' GROUP BY c.slug",
+  "describe": {
+    "columns": [
+      {
+        "name": "slug!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "chain",
+            "name": "slug"
+          }
+        }
+      },
+      {
+        "name": "id!",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "seq!: i64",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "eeec0cb1c6dd4ef3a4a7e1533104f585b63260845eb008747d50a8a89b73b0de"
+}

@@ -279,6 +279,14 @@ The owner set 10 an hour and 50 a day per account (#60); an agent chose the rest
 - Against: a reader scanning cards sees a slug, not an ID, and has to open the entry to follow it.
   Resolving there costs a lookup per card.
 
+#### What resolving an entry's slugs costs
+
+- Options: one statement per slug the entry mentions; one statement that reads every slug of the author's account and keeps the mentioned ones; or statements for the mentioned slugs in groups of a fixed size, with a cap on how many an entry's page resolves.
+- Chosen: one statement over the account's slugs.
+  The entry's text then never sets how many statements a read runs, and the format needs no cap on mentions.
+- Against: a read of an entry that mentions one slug walks every slug chain of its account, so an account with thousands of slugged entries makes each such read slower than a lookup of the one slug would be.
+  Groups of a fixed size would follow the entry's mentions instead, at the price of a cap on them.
+
 #### Slugs and run IDs
 
 - Options: 1 to 64 of `A-Za-z0-9._-`, as here, or any one-line text.

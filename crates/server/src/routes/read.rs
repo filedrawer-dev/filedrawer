@@ -12,6 +12,7 @@ use serde_json::json;
 
 use analyzer::render_card;
 use axum::http::HeaderMap;
+use std::collections::BTreeMap;
 
 use crate::auth::{TokenAccount, optional_token_account};
 use crate::entries::{self, Filters, MAX_QUERY_CHARS, MAX_QUERY_WORDS, Order, PublicEntry};
@@ -77,20 +78,18 @@ pub async fn entry(
     };
     // `slug:<name>` references resolve here, at read time (design.md, Agent
     // interface), to the latest public entry with that slug in the author's account.
-    let mut links = Vec::new();
-    for name in slug_references(&entry.source) {
-        if let Some(id) = entries::public_by_slug(&state.pool, &entry.account_id, &name).await? {
-            links.push((name, id));
-        }
-    }
+    let links = entries::public_by_slugs(
+        &state.pool,
+        &entry.account_id,
+        &slug_references(&entry.source),
+    )
+    .await?;
     let successor_slug = analysis
         .fields
         .superseded_by
         .as_deref()
         .and_then(|value| value.strip_prefix("slug:"));
-    let resolved_successor = successor_slug
-        .and_then(|name| links.iter().find(|(slug, _)| slug == name))
-        .map(|(_, id)| id.clone());
+    let resolved_successor = successor_slug.and_then(|name| links.get(name)).cloned();
     let card = entry.card_from(
         &analysis,
         entry.superseded_by.clone().or(resolved_successor),
@@ -257,7 +256,7 @@ fn entry_page(
     entry: &entries::PublicEntry,
     analysis: &analyzer::Analysis,
     text: &str,
-    links: &[(String, String)],
+    links: &BTreeMap<String, String>,
     parts: EntryParts,
 ) -> Response {
     let base = Url::parse(&format!("{}/e/{}", state.public_url, entry.id)).ok();
@@ -267,7 +266,7 @@ fn entry_page(
         let (title, description) = cited.shown.as_ref()?;
         let href = format!("/series/{}", cited.cite.text());
         let base = Url::parse(&format!("{}{href}", state.public_url)).ok();
-        let rendered = markdown::to_html(description, base.as_ref(), &[]);
+        let rendered = markdown::to_html(description, base.as_ref(), &BTreeMap::new());
         Some((
             SeriesBlock {
                 cite: cited.cite.text(),

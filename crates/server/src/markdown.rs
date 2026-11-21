@@ -4,6 +4,8 @@
 //! runs, styles the page as the server's, or makes a reader's browser fetch from
 //! another host.
 
+use std::collections::BTreeMap;
+
 use pulldown_cmark::{
     Alignment, CowStr, Event, HeadingLevel, LinkType, Parser, Tag, TagEnd, TextMergeStream,
 };
@@ -21,7 +23,7 @@ pub struct Rendered {
 /// (without one, only absolute links are kept). A `slug:<name>` link, or a bare
 /// `slug:<name>` in text outside code, goes to the entry `slugs` names for it, or
 /// stays text.
-pub fn to_html(markdown: &str, base: Option<&Url>, slugs: &[(String, String)]) -> Rendered {
+pub fn to_html(markdown: &str, base: Option<&Url>, slugs: &BTreeMap<String, String>) -> Rendered {
     let mut dropped = false;
     // Each open link or image, and whether its tag was written, so its end matches.
     let mut open: Vec<bool> = Vec::new();
@@ -114,10 +116,10 @@ pub fn to_html(markdown: &str, base: Option<&Url>, slugs: &[(String, String)]) -
 
 /// `text` as events, with each `slug:<name>` that `slugs` resolves turned into a link
 /// to its entry; one that doesn't resolve stays text, as a `[text](slug:name)` does.
-fn link_slugs(text: &str, slugs: &[(String, String)], events: &mut Vec<Event<'_>>) {
+fn link_slugs(text: &str, slugs: &BTreeMap<String, String>, events: &mut Vec<Event<'_>>) {
     let mut done = 0;
     for (range, name) in analyzer::slug_mentions(text) {
-        let Some((_, id)) = slugs.iter().find(|(slug, _)| slug == name) else {
+        let Some(id) = slugs.get(name) else {
             continue;
         };
         if range.start > done {
@@ -135,9 +137,13 @@ fn link_slugs(text: &str, slugs: &[(String, String)], events: &mut Vec<Event<'_>
 
 /// Where a link to `dest` goes: resolved against `base`, and kept only when it is
 /// `http` or `https`. A `slug:<name>` goes to the entry `slugs` names for it.
-fn destination(dest: &CowStr, base: Option<&Url>, slugs: &[(String, String)]) -> Option<String> {
+fn destination(
+    dest: &CowStr,
+    base: Option<&Url>,
+    slugs: &BTreeMap<String, String>,
+) -> Option<String> {
     if let Some(name) = dest.strip_prefix("slug:") {
-        let (_, id) = slugs.iter().find(|(slug, _)| slug == name)?;
+        let id = slugs.get(name)?;
         return Some(format!("/e/{id}"));
     }
     let url = match base {

@@ -3,6 +3,8 @@
 //! a page for a browser, and plain text for every client with `.txt` after it.
 //! Every series is public from the start.
 
+use std::collections::BTreeMap;
+
 use analyzer::{SeriesText, read_series};
 use axum::body::Bytes;
 use axum::extract::{Path, State};
@@ -325,9 +327,9 @@ pub async fn read(
     }
     if as_page {
         let base = url::Url::parse(&format!("{}/series/{}", state.public_url, found.id)).ok();
-        let description = visible
-            .as_ref()
-            .map(|version| markdown::to_html(&version.description, base.as_ref(), &[]));
+        let description = visible.as_ref().map(|version| {
+            markdown::to_html(&version.description, base.as_ref(), &BTreeMap::new())
+        });
         return Ok(page(
             StatusCode::OK,
             &SeriesPage {
