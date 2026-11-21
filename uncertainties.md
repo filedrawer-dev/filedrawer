@@ -1078,6 +1078,14 @@ An agent chose these on 2026-11-20, with the owner away.
 - Against: with `admin off` there would be no admin API at all, where now a process running as `caddy` or root still has one; but each field-test key change would then restart Caddy and drop its connections.
 - The nftables table (`ops/remote/loopback.sh`) could also reject loopback's port 2019 for every user but `caddy` and root, a second layer should a hand-written Caddyfile ever bring the default back; not built, since `ops/audit-vps` already shows who reaches the port.
 
+#### Caddy's limit on a request body
+
+- Options: Caddy's defaults, which end a request whose headers take over a minute or whose body stops arriving for a minute, but put no limit on a body that keeps arriving; a limit on the whole body (`read_body`); or a lowest rate (`read_body_idle` with a rate).
+- Chosen: `read_body 5m` for the whole server, both environments, in the Caddyfile's global options, since Caddy takes it per server and not per site.
+  It sits above the server's own longest limit for a body, 4 minutes, so a client gets the server's 408 and its reason; Caddy's limit holds if the server's ever doesn't.
+- Against: one run of either environment's Caddy stage changes the limit for both.
+  A lowest rate would end a slow body sooner than 5 minutes.
+
 ### Packages
 
 #### The analyzer's library name

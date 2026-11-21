@@ -536,6 +536,8 @@ def test_the_real_caddy_marker_selects_every_test_using_the_fixture():
         "test_a_real_caddy_listens_for_its_admin_api_on_the_socket_alone_and_reloads",
         "test_remote_environments.py::"
         "test_a_real_caddy_answers_503_while_production_is_down_and_redirects_www",
+        "test_remote_environments.py::"
+        "test_a_real_caddy_stops_reading_a_request_body_that_takes_too_long",
     }
 
 

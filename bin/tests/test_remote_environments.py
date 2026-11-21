@@ -4,9 +4,11 @@ and ops/remote/loopback.sh (staging's user can't reach production's port). They 
 against a temp root, with fakes of the tools that need root first on PATH.
 """
 
+import http.server
 import os
 import re
 import socket
+import threading
 import time
 import stat
 import subprocess
@@ -525,6 +527,11 @@ def test_the_admin_api_is_a_socket_only_caddy_and_root_can_open(
     assert lines == [
         "{",
         f"\tadmin unix/{ADMIN_SOCKET}|0200",
+        "\tservers {",
+        "\t\ttimeouts {",
+        "\t\t\tread_body 5m",
+        "\t\t}",
+        "\t}",
         "}",
         "import /etc/caddy/sites/*.caddy",
     ]
@@ -893,6 +900,113 @@ def test_a_real_caddy_listens_for_its_admin_api_on_the_socket_alone_and_reloads(
     finally:
         server.terminate()
         server.wait()
+
+
+class CountingServer(http.server.BaseHTTPRequestHandler):
+    """Answers a GET with `up` and a POST with its body's length."""
+
+    def do_GET(self):
+        self.answer(b"up")
+
+    def do_POST(self):
+        body = self.rfile.read(int(self.headers["Content-Length"]))
+        self.answer(str(len(body)).encode())
+
+    def answer(self, text: bytes):
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(text)))
+        self.end_headers()
+        self.wfile.write(text)
+
+    def log_message(self, format, *args):
+        pass
+
+
+class QuietServer(http.server.ThreadingHTTPServer):
+    daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        """Nothing: Caddy hanging up mid-request is what the test is after."""
+
+
+def test_a_real_caddy_stops_reading_a_request_body_that_takes_too_long(
+    box, caddy, tmp_path, real_caddy
+):
+    """The Caddyfile as caddy.sh writes it, with its paths moved and the 5 minutes
+    cut to 2 seconds. Bytes that keep arriving buy a body no more time, which Caddy's
+    defaults alone would give it for as long as they came."""
+    assert caddy.run("production").returncode == 0
+    upstream = QuietServer(("127.0.0.1", 0), CountingServer)
+    threading.Thread(target=upstream.serve_forever, daemon=True).start()
+    apex, www = free_port(), free_port()
+    site = caddy.dir / "sites/production.caddy"
+    site.write_text(
+        site.read_text()
+        .replace("127.0.0.1:8080", f"127.0.0.1:{upstream.server_port}")
+        .replace("\nfiledrawer.dev {", f"\n:{apex} {{")
+        .replace("www.filedrawer.dev {", f":{www} {{")
+        .replace("files.filedrawer.dev {", "(files_unused) {")
+    )
+    home = tmp_path / "home"
+    home.mkdir()
+    config = tmp_path / "Caddyfile"
+    config.write_text(
+        (caddy.dir / "Caddyfile")
+        .read_text()
+        .replace("/etc/caddy", str(caddy.dir))
+        .replace(f"unix/{ADMIN_SOCKET}", "unix/admin.sock")
+        .replace("read_body 5m", "read_body 2s")
+    )
+    assert "\t\t\tread_body 2s\n" in config.read_text()
+    server = subprocess.Popen(
+        [real_caddy, "run", "--config", str(config), "--adapter", "caddyfile"],
+        cwd=home,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+
+        def answer(*curl_args: str) -> str:
+            done = subprocess.run(
+                ["curl", "-s", *curl_args, f"http://127.0.0.1:{apex}/tags"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            return done.stdout
+
+        while answer() != "up":
+            assert server.poll() is None, "caddy stopped"
+            time.sleep(0.1)
+        # A body that arrives at once is passed on whole.
+        assert answer("--data-binary", "a" * 3000) == "3000"
+
+        slow = socket.create_connection(("127.0.0.1", apex))
+        start = time.monotonic()
+        slow.sendall(
+            b"POST /tags HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 3000\r\n\r\na"
+        )
+
+        def trickle():
+            try:
+                while True:
+                    slow.sendall(b"a")
+                    time.sleep(0.2)
+            except OSError:
+                pass
+
+        threading.Thread(target=trickle, daemon=True).start()
+        # No limit of this test's own: a Caddy that reads on for ever hangs here
+        # until pytest's per-test timeout.
+        reply = slow.recv(4096)
+        assert time.monotonic() - start >= 2
+        assert not reply.startswith(b"HTTP/1.1 200"), reply
+        slow.close()
+        assert answer() == "up"
+    finally:
+        server.terminate()
+        server.wait()
+        upstream.shutdown()
 
 
 # An empty secret keeps the one stored (#112): the wizard sends one when the owner

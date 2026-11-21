@@ -14,6 +14,13 @@
 # user included. A Caddy that isn't listening on the socket yet, as on the first
 # run, is restarted, since a reload goes through the address the new config names.
 #
+# A request's body has 5 minutes to arrive, on every site of both environments, since
+# Caddy takes the setting for the whole server and not per site. The server's own
+# limit is shorter (crates/server/src/serve.rs: at most 4 minutes), so its answer is
+# the one a client gets; this one holds if the server's ever doesn't. Caddy's own
+# defaults already end a request whose headers take over a minute, or whose body
+# stops arriving for a minute.
+#
 # Production: filedrawer.dev and files.filedrawer.dev, open to all, and
 # www.filedrawer.dev redirecting to filedrawer.dev. While the server doesn't answer,
 # before the first deploy or during a restart, they answer a plain 503 with
@@ -234,6 +241,11 @@ swap_in "$caddyfile" "# Written by ops/remote/caddy.sh; edits here are lost on t
 # environment alone.
 {
 	admin unix/$admin_socket|0200
+	servers {
+		timeouts {
+			read_body 5m
+		}
+	}
 }
 $import_line"
 
