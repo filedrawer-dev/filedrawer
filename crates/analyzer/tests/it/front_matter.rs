@@ -460,6 +460,11 @@ fn reproduce_fetching_a_moving_ref_with_a_hash_beside_it_is_refused() {
         // A branch named `x/<hash>`.
         format!("curl -LO https://github.com/a/b/archive/refs/heads/x/{hash}.zip"),
         format!("curl -O https://raw.githubusercontent.com/a/b/main/steer.py?v={hash}"),
+        // GitHub's sites spelled another way.
+        "curl -LO https://www.github.com/a/b/archive/main.zip".to_string(),
+        "curl -LO https://github.com./a/b/archive/main.zip".to_string(),
+        "curl -O https://raw.githubusercontent.com./a/b/main/steer.py".to_string(),
+        "curl -LO https://codeload.github.com./a/b/zip/main".to_string(),
     ] {
         let text = example_with(
             "`python steer.py",

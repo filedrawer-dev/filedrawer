@@ -586,11 +586,13 @@ fn flags(analysis: &Analysis, context: &CardContext) -> Vec<Part> {
     if context.logs_link_dead {
         parts.push(server("; logs link dead"));
     }
+    // A link the pin rule refuses can be on the card only of an entry stored before
+    // the rule, so nothing checked its pin either.
     let unlisted = || {
         fields
             .code
             .as_deref()
-            .is_some_and(|url| code_pin(url) == Pin::HostNotListed)
+            .is_some_and(|url| matches!(code_pin(url), Pin::HostNotListed | Pin::Unpinned))
     };
     match context.pin {
         Some(PinFlag::Failed) => parts.push(server("; code pin failed")),

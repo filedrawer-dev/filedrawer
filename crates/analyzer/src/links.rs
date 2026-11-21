@@ -26,18 +26,59 @@ pub enum Pin {
 }
 
 /// The pin of a `code` link, judged by the URL's shape (design.md, Submission and
-/// screening, step 2).
+/// screening, step 2). A link to GitHub's or Hugging Face's site spelled another way
+/// (see [`site_host`]), or as pip writes it (`git+https://...@<commit>`), takes the
+/// same rule, so one at no commit is refused; a pinned one is `HostNotListed`, since
+/// the server fetches and checks only the listed hosts as written.
 pub fn code_pin(url: &str) -> Pin {
+    let url = url.trim();
+    if let Some(url) = url.strip_prefix("git+") {
+        return git_pin(url);
+    }
     let Some((host, path)) = host_and_path(url) else {
         return Pin::HostNotListed;
     };
     let path = path.as_str();
-    match host.as_str() {
-        "github.com" | "huggingface.co" if commit_in_path(&host, path).is_some() => Pin::Pinned,
-        "github.com" | "huggingface.co" => Pin::Unpinned,
-        "zenodo.org" => Pin::CheckedOnline,
-        "doi.org" if path.starts_with("10.5281/zenodo.") => Pin::CheckedOnline,
+    match site_host(&host) {
+        site @ ("github.com" | "huggingface.co") => match commit_in_path(site, path) {
+            None => Pin::Unpinned,
+            Some(_) if site == host => Pin::Pinned,
+            Some(_) => Pin::HostNotListed,
+        },
+        _ => match host.as_str() {
+            "zenodo.org" => Pin::CheckedOnline,
+            "doi.org" if path.starts_with("10.5281/zenodo.") => Pin::CheckedOnline,
+            _ => Pin::HostNotListed,
+        },
+    }
+}
+
+/// The pin of a `git+` link, `url` without that prefix: pip clones the ref after `@`
+/// in the path, and the default branch when there is none.
+fn git_pin(url: &str) -> Pin {
+    let url = url.split('#').next().unwrap_or(url);
+    let (repo, reference) = match url.rsplit_once('@') {
+        Some((repo, reference)) if !reference.contains('/') => (repo, Some(reference)),
+        _ => (url, None),
+    };
+    let Some((host, _)) = host_and_path(repo) else {
+        return Pin::HostNotListed;
+    };
+    match site_host(&host) {
+        "github.com" | "huggingface.co" if !reference.is_some_and(is_commit_hash) => Pin::Unpinned,
         _ => Pin::HostNotListed,
+    }
+}
+
+/// `host`, lowercased, as the site it names: without a final dot, GitHub's and
+/// Hugging Face's sites without `www.`, and `hf.co` as `huggingface.co`, each a name
+/// those sites answer to.
+fn site_host(host: &str) -> &str {
+    let host = host.strip_suffix('.').unwrap_or(host);
+    match host.strip_prefix("www.").unwrap_or(host) {
+        "github.com" => "github.com",
+        "huggingface.co" | "hf.co" => "huggingface.co",
+        _ => host,
     }
 }
 
@@ -275,11 +316,12 @@ fn fetches_moving_ref(word: &str) -> bool {
         return false;
     };
     let segments: Vec<&str> = path.split('/').collect();
-    match (host.as_str(), segments.as_slice()) {
+    let host = site_host(&host);
+    match (host, segments.as_slice()) {
         ("raw.githubusercontent.com", [_, _, reference, ..]) => {
             !is_commit_hash(reference) && is_script(&path)
         }
-        ("github.com", [_, _, "archive", ..]) => commit_in_path(&host, &path).is_none(),
+        ("github.com", [_, _, "archive", ..]) => commit_in_path(host, &path).is_none(),
         ("codeload.github.com", [_, _, _, reference, ..]) => !is_commit_hash(reference),
         _ => false,
     }

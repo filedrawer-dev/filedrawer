@@ -122,6 +122,17 @@ Add a new entry at the end of the topic it belongs to, or start a topic when non
   An entry stored with such a link keeps it, but its next PUT or version is refused until the link is rewritten, and its GitHub pin is no longer rechecked.
   Hugging Face pins aren't checked online.
 
+#### GitHub's and Hugging Face's other spellings in a `code` link
+
+- Options: treat `www.github.com`, `github.com.`, `hf.co` and the like as unlisted hosts, as design.md's "matched exactly" reads; hold them to the pin rule but leave them unfetched; or rewrite them to the listed host and fetch and check them there.
+- Chosen: the second.
+  An unpinned link spelled so is refused, as on `github.com`, since it serves the same moving branch; a pinned one keeps the unlisted host's warning and "pin not verified", since the server fetches only the hosts as written.
+  A pip-style `git+https://` link is read the same way, pinned only by a commit hash after `@`.
+  A stored entry whose link a pin rule now refuses shows "pin not verified".
+- Against: design.md says a link on a host outside the list only warns and flags; this refuses some of them.
+  Rewriting and fetching would check a pinned link fully, at the cost of a change to the server's fetching.
+  GitHub's download hosts (`codeload.github.com`, `raw.githubusercontent.com`, `gist.github.com`) also serve a moving branch, and stay unlisted hosts that only warn.
+
 #### Zenodo `code` links
 
 - Options: accept with a note that the server checks the record online, or refuse a link the analyzer can't prove is a version record.

@@ -137,6 +137,7 @@ The server warns about both.
 - `code` and `logs` belong on the allowed hosts listed in design.md, [Submission and screening](design.md#submission-and-screening); a link elsewhere draws a warning.
   The server fetches each link on those hosts at submission, and a dead one draws a warning and the card's flag.
   Only an unpinned `code` link is refused, or a Zenodo concept record.
+  A `code` link to GitHub or Hugging Face spelled another way, with `www.`, a final dot, as `hf.co`, or as pip's `git+https://...@<commit>`, is held to the same pin, but isn't fetched, so a pinned one gets the unlisted host's warning and "pin not verified"; write it as above to have it checked.
   A pinned link has the 40-character commit hash in its path, where it selects what the link opens: `https://github.com/<owner>/<repo>/tree/<commit>`, or `blob/<commit>/<file>` or `commit/<commit>`, and the same on Hugging Face.
   A hash in the query or the fragment, or after a branch's name, pins nothing.
   A GitHub commit on no branch or tag of the repository it names draws a warning and the card's flag instead.

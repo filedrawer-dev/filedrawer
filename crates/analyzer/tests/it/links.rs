@@ -3,7 +3,9 @@
 //! about (entry-format.md, Fields: `code`): the owner and the repository go into an
 //! API path sent with the server's token, so only plain names pass.
 
-use filedrawer_analyzer::{Pin, Refusal, analyze, code_pin, github_commit};
+use filedrawer_analyzer::{
+    CardContext, Pin, Refusal, analyze, code_pin, github_commit, render_card,
+};
 
 const SHA: &str = "0123456789abcdef0123456789abcdef01234567";
 
@@ -125,4 +127,69 @@ fn a_commit_hash_where_hugging_face_selects_the_revision_pins_the_link() {
     ] {
         assert_eq!(code_pin(&link), Pin::Pinned, "{link}");
     }
+}
+
+/// GitHub's and Hugging Face's own sites go by other spellings too: `www.`, a final
+/// dot, `hf.co`, and a pip-style `git+https://` link. A link spelled so takes the
+/// pin rule, so one at no commit is refused as it is on `github.com`. The server
+/// fetches only the exact listed hosts, so a pinned one keeps the unlisted host's
+/// "pin not verified" rather than lose its flag without its check.
+#[test]
+fn another_spelling_of_a_listed_site_takes_the_pin_rule() {
+    for link in [
+        "https://www.github.com/owner/repo".to_string(),
+        "https://github.com./owner/repo".to_string(),
+        "https://WWW.GitHub.COM./owner/repo/tree/main".to_string(),
+        "https://www.huggingface.co/owner/model".to_string(),
+        "https://huggingface.co./owner/model/tree/main".to_string(),
+        "https://hf.co/owner/model".to_string(),
+        "git+https://github.com/owner/repo".to_string(),
+        "git+https://github.com/owner/repo@main".to_string(),
+        format!("git+https://github.com/owner/repo#egg=x@{SHA}"),
+    ] {
+        assert_eq!(code_pin(&link), Pin::Unpinned, "{link}");
+        let text = format!("---\ncode: {link}\n---\n");
+        assert_eq!(
+            analyze(&text)
+                .refusals
+                .iter()
+                .filter(|refusal| matches!(refusal, Refusal::UnpinnedCode { .. }))
+                .count(),
+            1,
+            "{link}"
+        );
+    }
+    for link in [
+        format!("https://www.github.com/owner/repo/tree/{SHA}"),
+        format!("https://github.com./owner/repo/commit/{SHA}"),
+        format!("https://hf.co/owner/model/tree/{SHA}"),
+        format!("git+https://github.com/owner/repo@{SHA}"),
+        format!("git+https://github.com/owner/repo@{SHA}#egg=x"),
+    ] {
+        assert_eq!(code_pin(&link), Pin::HostNotListed, "{link}");
+        assert_eq!(github_commit(&link), None, "{link}");
+    }
+}
+
+/// A host that serves a repository's files under another name, as GitHub's download
+/// hosts do, isn't a listed host for a `code` link (design.md, Submission and
+/// screening, step 2), so a link there draws the unlisted host's flag.
+#[test]
+fn a_download_host_is_not_a_listed_host() {
+    for link in [
+        "https://codeload.github.com/owner/repo/zip/refs/heads/main",
+        "https://raw.githubusercontent.com/owner/repo/main/x.py",
+        "https://gist.github.com/owner/0123",
+    ] {
+        assert_eq!(code_pin(link), Pin::HostNotListed, "{link}");
+    }
+}
+
+/// An entry stored before a pin rule may hold a link the rule now refuses; its card
+/// says the pin isn't verified, since no check ran on it.
+#[test]
+fn the_card_flags_an_unpinned_link_as_not_verified() {
+    let text = "---\ncode: https://www.github.com/owner/repo\n---\n";
+    let card = render_card(&analyze(text), &CardContext::default());
+    assert!(card.contains("; pin not verified"), "{card}");
 }
