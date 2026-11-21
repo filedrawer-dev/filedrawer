@@ -1076,6 +1076,16 @@ An agent chose these with #87's fix, after its brief review.
   A released package's publisher has been used, so it is left alone.
 - Against: each rerun before the first release asks for up to three second factors a package, eighteen in all, where most reruns come within the 2 days and need none.
 
+#### Where the npm launcher looks for its binary
+
+An agent chose this on 2026-11-20, with the owner away.
+
+- Options: find the platform package with node's `require.resolve`, as 0.1.0 does; or look by path only where the launcher's own install puts it.
+- Chosen: by path, in the launcher's own `node_modules` and in the `@filedrawer` folder beside it, which covers npm (local, global and `npx`), pnpm, Bun and Yarn's `node_modules` linker.
+  `require.resolve` goes on to the `node_modules` of every folder above and to `$NODE_PATH` when npm installed no platform package, and would run a same-named package it found there.
+- Against: Yarn's Plug'n'Play keeps no `node_modules`, so the launcher finds nothing there and says no binary was installed; and a launcher installed under an alias (`npm install fd@npm:@filedrawer/cli`) no longer finds the package npm put under `@filedrawer`.
+  It takes effect with the next CLI release.
+
 #### Where login lands
 
 - Options: always the account page; the page a GET with no session asked for, carried as `/login?next=`, or in a cookie.

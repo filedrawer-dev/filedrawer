@@ -167,6 +167,60 @@ def test_without_its_platform_package_the_launcher_says_which_there_are(tmp_path
     assert "cargo install filedrawer --locked" in done.stderr
 
 
+def plant_platform_package(node_modules: Path) -> None:
+    """A platform package for this machine, as npm would lay it out, whose binary
+    says it ran."""
+    name = PLATFORMS[HOST_TARGET][0]
+    package = node_modules / name
+    (package / "bin").mkdir(parents=True)
+    (package / "package.json").write_text(json.dumps({"name": name, "version": "9"}))
+    planted = package / "bin/filedrawer"
+    planted.write_text("#!/bin/sh\necho planted\n")
+    planted.chmod(0o755)
+
+
+@pytest.mark.skipif(HOST_TARGET is None, reason="no package for this platform")
+def test_the_launcher_runs_only_a_platform_package_of_its_own_install(tmp_path):
+    """Node's module search goes on to every folder above the project and to
+    $NODE_PATH; a package there isn't one this install put in."""
+    out = tmp_path / "out"
+    out.mkdir()
+    project = tmp_path / "above/project"
+    project.parent.mkdir()
+    install(project, pack(out, "launcher"))
+    plant_platform_package(project.parent / "node_modules")
+    plant_platform_package(tmp_path / "elsewhere")
+    done = subprocess.run(
+        [str(project / "node_modules/.bin/filedrawer"), "check", "x.md"],
+        env={**os.environ, "NODE_PATH": str(tmp_path / "elsewhere")},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert (done.returncode, done.stdout) == (1, "")
+    assert "installed no binary" in done.stderr
+
+
+@pytest.mark.skipif(HOST_TARGET is None, reason="no package for this platform")
+def test_the_launcher_finds_a_platform_package_npm_nested_inside_it(tmp_path):
+    """npm puts a dependency in the launcher's own node_modules when the folder
+    beside it is taken, as a global install does."""
+    out = tmp_path / "out"
+    out.mkdir()
+    binary = stand_in_binary(tmp_path)
+    project = tmp_path / "project"
+    install(
+        project, pack(out, "platform", HOST_TARGET, str(binary)), pack(out, "launcher")
+    )
+    scope = project / "node_modules/@filedrawer"
+    platform_package = scope / PLATFORMS[HOST_TARGET][0].split("/")[1]
+    nested = scope / "cli/node_modules/@filedrawer"
+    nested.mkdir(parents=True)
+    platform_package.rename(nested / platform_package.name)
+    done = filedrawer(project, "check", "x.md")
+    assert (done.returncode, done.stdout) == (3, "given: check x.md\n")
+
+
 @pytest.mark.parametrize("target", PLATFORMS)
 def test_a_platform_package_holds_its_binary_for_its_os_and_cpu(tmp_path, target):
     name, os_, cpu, exe = PLATFORMS[target]
