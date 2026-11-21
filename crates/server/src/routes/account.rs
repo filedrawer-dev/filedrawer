@@ -104,19 +104,6 @@ fn page_on_this_site(next: &str) -> Option<&str> {
     on_site.then_some(next)
 }
 
-/// Hashes on a blocking thread: argon2id takes tens of milliseconds of CPU.
-async fn hash_password(password: String) -> String {
-    tokio::task::spawn_blocking(move || passwords::hash(&password))
-        .await
-        .expect("hashing a password doesn't panic")
-}
-
-async fn password_matches(password: String, stored: Option<String>) -> bool {
-    tokio::task::spawn_blocking(move || passwords::matches(&password, stored.as_deref()))
-        .await
-        .expect("checking a password doesn't panic")
-}
-
 #[derive(Deserialize)]
 pub struct SignupQuery {
     invite: Option<String>,
@@ -174,6 +161,8 @@ pub async fn signup(
     let (None, Some(display_name)) = (&problem, display_name) else {
         return Ok(again(&problem.unwrap_or_default()));
     };
+    // Before anything is counted, so a refusal for want of a place costs no signup.
+    let place = state.passwords.place().await?;
     // A code is checked before the limits it lifts; sign_up checks it again, with
     // the account's insert, for its last use.
     if let Some(code) = invite
@@ -197,7 +186,7 @@ pub async fn signup(
         counts.push(Counted::emails_from(limits, &ip));
     }
     limits::count_event(&state.pool, &counts, now_utc()).await?;
-    let hash = hash_password(form.password).await;
+    let hash = place.hash(form.password).await;
     match accounts::sign_up(&state.pool, &email, &hash, display_name, invite).await? {
         Signup::BadInvite => return Ok(again(BAD_INVITE)),
         Signup::Created(id) => mail_queue::queue(&state, &id, Queued::Verify).await?,
@@ -296,6 +285,8 @@ pub async fn login(
 ) -> Result<Response, AppError> {
     let next = page_on_this_site(&form.next);
     let email = accounts::normalize_email(&form.email);
+    // Before the attempt is counted, so a refusal for want of a place costs none.
+    let place = state.passwords.place().await?;
     // Failed logins count per address, known or not; once full, even the right
     // password waits (design.md, Limits and abuse). Each attempt takes its place
     // before the password is checked, and a right one gives it back.
@@ -306,7 +297,7 @@ pub async fn login(
         None => (None, None),
     };
     // An unknown email still checks a decoy hash, so the answer takes as long.
-    let matched = password_matches(form.password, stored).await;
+    let matched = place.matches(form.password, stored).await;
     let Some(account_id) = account_id.filter(|_| matched) else {
         let template = LoginPage {
             error: Some("The email or the password is wrong."),
@@ -397,7 +388,8 @@ pub async fn reset_confirm(
         };
         return Ok(page(StatusCode::UNPROCESSABLE_ENTITY, &template));
     }
-    let hash = hash_password(form.password).await;
+    let place = state.passwords.place().await?;
+    let hash = place.hash(form.password).await;
     if !accounts::reset_with_link(&state.pool, &form.token, &hash).await? {
         return Ok(link_used_or_expired());
     }
@@ -519,7 +511,8 @@ pub async fn delete_account(
     Form(form): Form<DeleteForm>,
 ) -> Result<Response, AppError> {
     let stored = deletion::password_hash(&state.pool, &session.id).await?;
-    if !password_matches(form.password, stored).await {
+    let place = state.passwords.place().await?;
+    if !place.matches(form.password, stored).await {
         let error = "The password is wrong.";
         return delete_form(&state, &session.id, StatusCode::UNAUTHORIZED, Some(error)).await;
     }

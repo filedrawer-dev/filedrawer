@@ -858,6 +858,20 @@ The owner settled the email's sections and the rules in design.md's Admin sectio
   The recheck job holds the entries that may call GitHub's API while it is paused, so a long wait costs them no retries; a link on another host is rechecked meanwhile, and counts its own.
 - Against: a restart forgets a pause, so a deploy during GitHub's secondary limit sends one call too soon; and a rate-limit 403 worded otherwise is read as a plain error, retried at the next submission.
 
+### The server's own bounds
+
+#### How many passwords are hashed at once
+
+- Options: no bound, as before; a fixed number; or a number from the machine's cores.
+  A request that finds no place free can wait without limit, wait a while and then be refused, or be refused at once.
+- Chosen: a hash for every core the process may use but one, at least 1 and at most 4, so 1 on the 2-core VPS, where staging and production share the cores with Caddy.
+  Each argon2id hash fills 19 MiB and takes a core for tens of milliseconds, so one at a time is about 20 logins a second, and 4 at once is 76 MiB.
+  A request waits up to 5 s for its place, then gets a 429 with `Retry-After: 5`, the shape every limit answers with.
+  Login, signup, password reset and account deletion share the places, and a login for an address with no account takes one like any other.
+  A request takes its place before it counts against any hourly or daily limit, so a refusal for want of a place costs it nothing.
+- Against: 20 logins a second is far more than people need, but a burst of logins from a few addresses can keep the queue past 5 s, and then honest logins get the 429 too; the queue is first come, first served across all clients.
+  A place per client in the queue would stop that, at the cost of more state.
+
 ### Staging and checks
 
 #### Usability runs' public leftovers

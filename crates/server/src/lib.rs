@@ -32,7 +32,7 @@ pub mod mail_queue;
 mod markdown;
 pub mod outbound;
 mod pages;
-mod passwords;
+pub mod passwords;
 mod provenance;
 mod queue;
 pub mod reads;
@@ -117,6 +117,8 @@ pub struct AppState {
     pub started_at: ::time::OffsetDateTime,
     /// Staging's record of the headers requests sent (`request_log`); none elsewhere.
     pub request_log: Option<std::sync::Arc<request_log::RequestLog>>,
+    /// Runs every password hash and check, a few at a time.
+    pub passwords: std::sync::Arc<passwords::Hasher>,
     /// Today's readers of each entry, for Most read, and the salt they're hashed with.
     pub reads: std::sync::Arc<reads::ReadCounter>,
 }

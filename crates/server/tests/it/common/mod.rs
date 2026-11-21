@@ -16,6 +16,7 @@ use std::sync::{Arc, Mutex};
 use filedrawer_server::file_store::FileStore;
 use filedrawer_server::limits::{Limits, RateLimits};
 use filedrawer_server::mail::{Email, MailError, Mailer, Sending};
+use filedrawer_server::passwords::Hasher;
 use filedrawer_server::request_log::RequestLog;
 use filedrawer_server::{AppState, Screener, admin, app, db};
 
@@ -251,6 +252,7 @@ pub fn state(pool: sqlx::SqlitePool, outbox: &Outbox, files_dir: &std::path::Pat
         backups_dir: files_dir.join("backups"),
         started_at: time::OffsetDateTime::UNIX_EPOCH,
         request_log: None,
+        passwords: Default::default(),
         reads: Default::default(),
     }
 }
@@ -459,6 +461,13 @@ impl TestApp {
     /// The app with these rate limits, and its counts so far forgotten.
     pub fn with_limits(mut self, limits: Limits) -> TestApp {
         self.state.rate_limits = Arc::new(RateLimits::new(limits));
+        self.router = app(self.state.clone());
+        self
+    }
+
+    /// The app with this hasher for its passwords.
+    pub fn with_passwords(mut self, hasher: Hasher) -> TestApp {
+        self.state.passwords = Arc::new(hasher);
         self.router = app(self.state.clone());
         self
     }

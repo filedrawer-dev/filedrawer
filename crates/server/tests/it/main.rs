@@ -34,6 +34,7 @@ mod mail_queue;
 mod migration_rollback;
 mod migrations;
 mod pages;
+mod passwords;
 mod provenance;
 mod read;
 mod reader_warnings;
