@@ -137,14 +137,21 @@ fn gone_before_accepted(error: &std::io::Error) -> bool {
     )
 }
 
-/// How long the body of a request with `headers` may take to arrive.
-fn body_time(per_mib: Duration, headers: &HeaderMap) -> Duration {
-    let largest = (crate::MAX_ATTACHMENT_BODY_BYTES as u64).div_ceil(MIB);
-    let declared = headers
+/// The body length a request's headers declare, if they declare one the server
+/// reads. Both the time a body gets and a route's refusal of a body too large for it
+/// go by this.
+pub(crate) fn declared_length(headers: &HeaderMap) -> Option<u64> {
+    headers
         .get(header::CONTENT_LENGTH)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.parse::<u64>().ok())
-        .map_or(1, |bytes| bytes.div_ceil(MIB).clamp(1, largest));
+}
+
+/// How long the body of a request with `headers` may take to arrive.
+fn body_time(per_mib: Duration, headers: &HeaderMap) -> Duration {
+    let largest = (crate::MAX_ATTACHMENT_BODY_BYTES as u64).div_ceil(MIB);
+    let declared =
+        declared_length(headers).map_or(1, |bytes| bytes.div_ceil(MIB).clamp(1, largest));
     per_mib.saturating_mul(u32::try_from(declared).unwrap_or(u32::MAX))
 }
 

@@ -73,6 +73,48 @@ const MAX_BODY_BYTES: usize = 1024 * 1024;
 /// more than double, so the set's own 1 MiB cap is what refuses with a reason.
 const MAX_ATTACHMENT_BODY_BYTES: usize = 4 * 1024 * 1024;
 
+/// The largest body the forms of signup, verification, login and password reset
+/// send: the longest, a signup, holds a password of at most 1,024 characters, which
+/// percent-encoding makes at most 12 KiB, beside an email address and a name.
+const MAX_FORM_BYTES: usize = 64 * 1024;
+
+/// `method_router` reading bodies of at most `limit` bytes ([`declared_within`]).
+fn limited(method_router: MethodRouter<AppState>, limit: usize) -> MethodRouter<AppState> {
+    method_router
+        .layer(DefaultBodyLimit::max(limit))
+        .layer(axum::middleware::from_fn_with_state(limit, declared_within))
+}
+
+/// Middleware: a request whose `Content-Length` is past `limit`, the most its route
+/// reads, is refused before any of its body is read, and its connection closes.
+/// So a body the server waits for is one its route takes, and the time it may take
+/// to arrive (`serve::Bounds`) follows from that route's limit. A body with no
+/// declared length is cut at the limit as it arrives.
+async fn declared_within(
+    axum::extract::State(limit): axum::extract::State<usize>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::http::{HeaderValue, StatusCode, header};
+    use axum::response::IntoResponse;
+    match serve::declared_length(request.headers()) {
+        Some(bytes) if bytes > u64::try_from(limit).unwrap_or(u64::MAX) => {
+            let mut refusal = error::AppError::Refused {
+                status: StatusCode::PAYLOAD_TOO_LARGE,
+                reasons: vec![format!(
+                    "the body declares {bytes} bytes, and this route takes at most {limit}"
+                )],
+            }
+            .into_response();
+            refusal
+                .headers_mut()
+                .insert(header::CONNECTION, HeaderValue::from_static("close"));
+            refusal
+        }
+        _ => next.run(request).await,
+    }
+}
+
 /// What every request handler shares.
 #[derive(Clone)]
 pub struct AppState {
@@ -200,14 +242,41 @@ fn build(state: AppState) -> Routes<Router> {
     // A build whose skills lack a version stops here, at start, not on a request.
     skills::versions(", ");
     let accounts = Routes::new()
-        .route("/signup", get(account::signup_page).post(account::signup))
-        .route("/verify", get(account::verify_page).post(account::verify))
-        .route("/login", get(account::login_page).post(account::login))
+        .route(
+            "/signup",
+            limited(
+                get(account::signup_page).post(account::signup),
+                MAX_FORM_BYTES,
+            ),
+        )
+        .route(
+            "/verify",
+            limited(
+                get(account::verify_page).post(account::verify),
+                MAX_FORM_BYTES,
+            ),
+        )
+        .route(
+            "/login",
+            limited(
+                get(account::login_page).post(account::login),
+                MAX_FORM_BYTES,
+            ),
+        )
         .route("/logout", post(account::logout))
-        .route("/reset", get(account::reset_page).post(account::reset))
+        .route(
+            "/reset",
+            limited(
+                get(account::reset_page).post(account::reset),
+                MAX_FORM_BYTES,
+            ),
+        )
         .route(
             "/reset/confirm",
-            get(account::reset_confirm_page).post(account::reset_confirm),
+            limited(
+                get(account::reset_confirm_page).post(account::reset_confirm),
+                MAX_FORM_BYTES,
+            ),
         )
         .route("/account", get(account::account))
         .route("/account/tokens", post(account::create_token))
@@ -278,11 +347,6 @@ fn build(state: AppState) -> Routes<Router> {
         .route("/e/{id}/versions", post(routes::submit::new_version))
         .route("/entries/batch", post(routes::batch::submit_batch))
         .route("/entries/mine", get(routes::mine::list))
-        .route(
-            "/attachments",
-            post(routes::attachments::upload)
-                .layer(DefaultBodyLimit::max(MAX_ATTACHMENT_BODY_BYTES)),
-        )
         .route("/batches/{id}", delete(routes::delete::batch))
         .route("/batches/{id}/publish", post(routes::batch::publish_batch))
         .route("/search", get(routes::read::search))
@@ -316,6 +380,20 @@ fn build(state: AppState) -> Routes<Router> {
         .route("/install.sh", get(routes::docs::installer))
         .route("/skills/{name}/{*path}", get(routes::docs::skill_file))
         .route("/entry-format.md", get(routes::docs::entry_format))
+        // Every route above reads at most `MAX_BODY_BYTES`; a route_layer reaches only
+        // the routes added before it, so the one route that reads more follows.
+        .map_router(|router| {
+            router
+                .route_layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
+                .route_layer(axum::middleware::from_fn_with_state(
+                    MAX_BODY_BYTES,
+                    declared_within,
+                ))
+        })
+        .route(
+            "/attachments",
+            limited(post(routes::attachments::upload), MAX_ATTACHMENT_BODY_BYTES),
+        )
         .map_router(|router| {
             let files_host =
                 axum::middleware::from_fn_with_state(state.clone(), routes::files::files_host);

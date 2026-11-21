@@ -986,9 +986,12 @@ The owner settled the email's sections and the rules in design.md's Admin sectio
   Body: 60 s for each MiB the `Content-Length` starts, at least 1 and at most 4 (the largest body any route reads), and 60 s with no declared length; past it, a 408 that says so, and the connection closes.
   A link of 140 kbit/s keeps up with that.
   The time runs from the headers and bytes that keep arriving buy no more; a handler that has its whole body takes as long as it needs, as a series' screening does.
+  Each route refuses a declared length past the largest body it reads at once, with a 413, before reading any of it: 4 MiB for `POST /attachments`, 1 MiB for every other route, and 64 KiB for the forms of signup, verification, login and password reset, whose longest, a signup, is at most about 13 KiB.
+  So a body the server waits for is one its route takes, and only an attachment set can be given more than 60 s.
 - Against: 150 s is long for a header.
   It rests on the server's port being open to the same machine only, where Caddy sends a request on once its headers are complete; a server reachable directly would want about 30 s and Caddy's reuse time set below it.
   A chunked upload with no declared length gets 60 s however large it is.
+  A form gets the 60 s of a MiB, though it is a few KiB; a time counted by the byte, with a floor of some seconds, would hold a stalled form for less, and change the time every other body gets.
 
 #### How many connections are open at once
 
