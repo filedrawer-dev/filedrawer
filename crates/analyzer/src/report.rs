@@ -27,9 +27,10 @@ pub enum Refusal {
         /// How many it lists.
         count: usize,
     },
-    /// `code` names GitHub or Hugging Face without a 40-character commit (design.md,
-    /// Submission and screening, step 2). A Zenodo concept record is refused by the
-    /// server's online check instead.
+    /// `code` names GitHub or Hugging Face without a 40-character commit in the part
+    /// of its path that selects what the link opens (design.md, Submission and
+    /// screening, step 2). A Zenodo concept record is refused by the server's online
+    /// check instead.
     UnpinnedCode {
         /// The link as written.
         url: String,
@@ -81,8 +82,12 @@ impl fmt::Display for Refusal {
             }
             Refusal::UnpinnedCode { url } => write!(
                 f,
-                "the `code` link isn't pinned to a commit or version: {url}. Link a \
-                 40-character commit hash, or a Zenodo version record"
+                "the `code` link isn't pinned to a commit or version: {url}. Put the \
+                 40-character commit hash in the link's path, where it selects what the \
+                 link opens, as in https://github.com/<owner>/<repo>/tree/<commit> or \
+                 https://huggingface.co/<owner>/<repo>/tree/<commit> (`blob/<commit>/<file>` \
+                 and `commit/<commit>` count too); a hash in the query or fragment, or \
+                 after a branch's name, pins nothing. Or link a Zenodo version record"
             ),
             Refusal::SeriesCite(value) => write!(
                 f,

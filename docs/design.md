@@ -206,6 +206,7 @@ A submission goes through these steps in order: the first two when it is submitt
      Reason: the warnings arrive in the submission response, where the agent acts on them, and a bad pin can be refused.
    - A `code` link is pinned when it carries a 40-character commit hash on GitHub or Hugging Face, or names a Zenodo version record rather than its concept DOI.
      A branch, a tag or a revision name doesn't count, since each can move.
+     The hash counts only in the part of the path that selects what the link opens, as in `github.com/<owner>/<repo>/tree/<commit>`: one in the query or the fragment, or after a branch's name, leaves the link on the branch, so it isn't pinned, and the commit the server asks GitHub about is the one the link opens (the path forms are in uncertainties.md).
      An unpinned link fails the entry, with a reason, and so does a `## Reproduce` command that fetches code at a moving ref.
      A link on an unlisted host gets a "pin not verified" note.
      Reason: readers run the code, and a later push to an unpinned repo could plant something malicious.

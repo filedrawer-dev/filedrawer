@@ -14,7 +14,8 @@ pub const LISTED_HOSTS: [&str; 3] = ["github.com", "huggingface.co", "zenodo.org
 /// How far a `code` link can be checked offline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pin {
-    /// A 40-character commit hash on GitHub or Hugging Face.
+    /// A 40-character commit hash on GitHub or Hugging Face, in the part of the path
+    /// that selects what the link opens.
     Pinned,
     /// On a listed host but not at a commit: the server refuses it.
     Unpinned,
@@ -32,7 +33,7 @@ pub fn code_pin(url: &str) -> Pin {
     };
     let path = path.as_str();
     match host.as_str() {
-        "github.com" | "huggingface.co" if at_commit(&host, path) => Pin::Pinned,
+        "github.com" | "huggingface.co" if commit_in_path(&host, path).is_some() => Pin::Pinned,
         "github.com" | "huggingface.co" => Pin::Unpinned,
         "zenodo.org" => Pin::CheckedOnline,
         "doi.org" if path.starts_with("10.5281/zenodo.") => Pin::CheckedOnline,
@@ -50,20 +51,20 @@ pub struct GithubCommit {
     pub sha: String,
 }
 
-/// The commit a GitHub link is pinned to, or `None` if it isn't a pinned GitHub link
-/// whose owner and repository GitHub's API could be asked about (entry-format.md,
-/// Fields: `code`).
+/// The commit a GitHub link is pinned to, which is the one it opens, or `None` if it
+/// isn't a pinned GitHub link whose owner and repository GitHub's API could be asked
+/// about (entry-format.md, Fields: `code`).
 pub fn github_commit(url: &str) -> Option<GithubCommit> {
     let (host, path) = host_and_path(url)?;
     if host != "github.com" {
         return None;
     }
-    let segments: Vec<&str> = path.split(['/', '?', '#']).collect();
-    let [owner, repo, rest @ ..] = segments.as_slice() else {
+    let sha = commit_in_path(&host, &path)?;
+    let segments: Vec<&str> = path.split('/').collect();
+    let [owner, repo, ..] = segments.as_slice() else {
         return None;
     };
     let repo = repo.strip_suffix(".git").unwrap_or(repo);
-    let sha = rest.iter().find(|segment| is_commit_hash(segment))?;
     let name = |part: &str| {
         !part.is_empty()
             && part != "."
@@ -83,7 +84,7 @@ pub fn github_commit(url: &str) -> Option<GithubCommit> {
 /// (entry-format.md, Fields: `code`).
 pub fn zenodo_record(url: &str) -> Option<u64> {
     let (host, path) = host_and_path(url)?;
-    let path = path.split(['?', '#']).next().unwrap_or_default();
+    let path = path.as_str();
     let number = match host.as_str() {
         "zenodo.org" => {
             let path = path.strip_prefix("api/").unwrap_or(path);
@@ -162,39 +163,61 @@ pub fn listed_host(url: &str) -> Option<String> {
         .filter(|host| LISTED_HOSTS.contains(&host.as_str()))
 }
 
-/// The lowercased host of an http(s) URL, and everything after it without the
-/// leading `/`. The URL is parsed as browsers parse it, so `https://a.example\@b.com`
-/// is on a.example, as a browser opening it finds.
+/// The lowercased host of an http(s) URL, and its path without the leading `/`. The
+/// query and the fragment are left out: neither selects the commit a host serves. The
+/// URL is parsed as browsers parse it, so `https://a.example\@b.com` is on a.example,
+/// as a browser opening it finds, and `..` segments are resolved as a browser
+/// resolves them before it asks.
 fn host_and_path(url: &str) -> Option<(String, String)> {
     let parsed = url::Url::parse(url.trim()).ok()?;
     if !matches!(parsed.scheme(), "https" | "http") {
         return None;
     }
     let host = parsed.host_str()?.to_ascii_lowercase();
-    let mut path = parsed.path().trim_start_matches('/').to_string();
-    if let Some(query) = parsed.query() {
-        path.push('?');
-        path.push_str(query);
-    }
-    if let Some(fragment) = parsed.fragment() {
-        path.push('#');
-        path.push_str(fragment);
-    }
+    let path = parsed.path().trim_start_matches('/').to_string();
     Some((host, path))
 }
 
-/// Whether a GitHub or Hugging Face path names a commit after the owner and repo, as in
-/// `<owner>/<repo>/tree/<hash>`. Hugging Face datasets and spaces carry a prefix.
-fn at_commit(host: &str, path: &str) -> bool {
-    let segments: Vec<&str> = path.split(['/', '?', '#']).collect();
-    let repo_end = match segments.first() {
-        Some(&("datasets" | "spaces")) if host == "huggingface.co" => 3,
-        _ => 2,
+/// The commit a GitHub or Hugging Face path opens: the 40-character hash in the
+/// segment that selects what the host serves, right after the repository and one of
+/// the host's words for a view of it, as in `<owner>/<repo>/tree/<hash>`. A hash
+/// anywhere else, such as after a branch's name, selects nothing.
+fn commit_in_path<'a>(host: &str, path: &'a str) -> Option<&'a str> {
+    let segments: Vec<&str> = path.split('/').collect();
+    let hash = match (host, segments.as_slice()) {
+        (
+            "github.com",
+            [
+                _,
+                _,
+                "tree" | "blob" | "raw" | "blame" | "commit" | "zipball" | "tarball",
+                hash,
+                ..,
+            ],
+        ) => hash,
+        ("github.com", [_, _, "pull", _, "commits", hash, ..]) => hash,
+        ("github.com", [_, _, "archive", file]) => file
+            .strip_suffix(".zip")
+            .or_else(|| file.strip_suffix(".tar.gz"))?,
+        // Datasets and spaces carry a prefix before the repository.
+        ("huggingface.co", ["datasets" | "spaces", repo @ ..]) => hugging_face_revision(repo)?,
+        ("huggingface.co", repo) => hugging_face_revision(repo)?,
+        _ => return None,
     };
-    segments
-        .iter()
-        .skip(repo_end)
-        .any(|segment| is_commit_hash(segment))
+    is_commit_hash(hash).then_some(hash)
+}
+
+/// The revision a Hugging Face path names after its repository, which is
+/// `<owner>/<name>` or, for some older models, a bare name.
+fn hugging_face_revision<'a>(segments: &[&'a str]) -> Option<&'a str> {
+    const VIEWS: [&str; 7] = [
+        "tree", "blob", "resolve", "raw", "commit", "commits", "blame",
+    ];
+    match segments {
+        [_, _, view, revision, ..] if VIEWS.contains(view) => Some(revision),
+        [_, view, revision, ..] if VIEWS.contains(view) => Some(revision),
+        _ => None,
+    }
 }
 
 fn is_commit_hash(text: &str) -> bool {
@@ -242,10 +265,10 @@ fn is_script(path: &str) -> bool {
 fn fetches_moving_ref(word: &str) -> bool {
     let word = word.trim_matches(|c: char| matches!(c, '`' | '"' | '\'' | '(' | ')' | ','));
     if let Some(url) = word.strip_prefix("git+") {
+        // pip reads the ref before the fragment: `@<ref>#egg=<name>`.
+        let url = url.split('#').next().unwrap_or(url);
         let after_path = url.split_once("://").map_or(url, |(_, rest)| rest);
-        let reference = after_path
-            .rsplit_once('@')
-            .map(|(_, reference)| reference.split(['#', '&']).next().unwrap_or(reference));
+        let reference = after_path.rsplit_once('@').map(|(_, reference)| reference);
         return !reference.is_some_and(is_commit_hash);
     }
     let Some((host, path)) = host_and_path(word) else {
@@ -256,9 +279,7 @@ fn fetches_moving_ref(word: &str) -> bool {
         ("raw.githubusercontent.com", [_, _, reference, ..]) => {
             !is_commit_hash(reference) && is_script(&path)
         }
-        ("github.com", [_, _, "archive", rest @ ..]) => !rest
-            .iter()
-            .any(|segment| is_commit_hash(segment.split('.').next().unwrap_or(segment))),
+        ("github.com", [_, _, "archive", ..]) => commit_in_path(&host, &path).is_none(),
         ("codeload.github.com", [_, _, _, reference, ..]) => !is_commit_hash(reference),
         _ => false,
     }

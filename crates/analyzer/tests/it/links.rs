@@ -1,8 +1,9 @@
-//! Seam: `github_commit`, which names the repository and commit the server asks
-//! GitHub about (entry-format.md, Fields: `code`): the owner and the repository go
-//! into an API path sent with the server's token, so only plain names pass.
+//! Seam: `code_pin`, which says whether a `code` link is pinned by its shape, and
+//! `github_commit`, which names the repository and commit the server asks GitHub
+//! about (entry-format.md, Fields: `code`): the owner and the repository go into an
+//! API path sent with the server's token, so only plain names pass.
 
-use filedrawer_analyzer::github_commit;
+use filedrawer_analyzer::{Pin, Refusal, analyze, code_pin, github_commit};
 
 const SHA: &str = "0123456789abcdef0123456789abcdef01234567";
 
@@ -30,4 +31,98 @@ fn a_plain_owner_and_repository_are_lower_cased_without_dot_git() {
 
     assert_eq!(commit.repo, "owner/re-po_1.x");
     assert_eq!(commit.sha, SHA);
+}
+
+/// A hash pins a link only where it selects what the link opens: the path segment
+/// after `tree`, `blob` and the like. Anywhere else the link still opens a branch,
+/// which a later push moves (design.md, Submission and screening, step 2).
+#[test]
+fn a_commit_hash_outside_the_place_that_selects_the_commit_pins_nothing() {
+    for link in [
+        format!("https://github.com/owner/repo#{SHA}"),
+        format!("https://github.com/owner/repo?{SHA}"),
+        format!("https://github.com/owner/repo/tree/main#{SHA}"),
+        format!("https://github.com/owner/repo/tree/main?{SHA}"),
+        format!("https://github.com/owner/repo/tree/main/{SHA}"),
+        format!("https://github.com/owner/repo/blob/main/{SHA}/x.py"),
+        format!("https://github.com/owner/repo/issues/{SHA}"),
+        format!("https://github.com/owner/repo/{SHA}"),
+        format!("https://github.com/owner/repo/archive/refs/heads/main.zip?{SHA}"),
+        // A browser resolves `..` before it asks, so these open `tree/main`.
+        format!("https://github.com/owner/repo/tree/{SHA}/../../tree/main"),
+        format!("https://github.com/owner/repo/tree/{SHA}/%2e%2e/%2e%2e/tree/main"),
+        format!("https://huggingface.co/owner/model#{SHA}"),
+        format!("https://huggingface.co/owner/model/tree/main?{SHA}"),
+        format!("https://huggingface.co/owner/model/tree/main/{SHA}"),
+        format!("https://huggingface.co/datasets/owner/data/{SHA}"),
+        format!("https://huggingface.co/datasets/owner/data/tree/main#{SHA}"),
+    ] {
+        assert_eq!(code_pin(&link), Pin::Unpinned, "{link}");
+        assert_eq!(github_commit(&link), None, "{link}");
+    }
+}
+
+#[test]
+fn a_commit_hash_where_github_selects_the_commit_pins_the_link() {
+    for link in [
+        format!("https://github.com/owner/repo/tree/{SHA}"),
+        format!("https://github.com/owner/repo/tree/{SHA}/src"),
+        format!("https://github.com/owner/repo/tree/{SHA}?tab=readme-ov-file#usage"),
+        format!("https://github.com/owner/repo/blob/{SHA}/src/x.py#L3"),
+        format!("https://github.com/owner/repo/raw/{SHA}/src/x.py"),
+        format!("https://github.com/owner/repo/blame/{SHA}/src/x.py"),
+        format!("https://github.com/owner/repo/commit/{SHA}"),
+        format!("https://github.com/owner/repo/pull/7/commits/{SHA}"),
+        format!("https://github.com/owner/repo/archive/{SHA}.zip"),
+        format!("https://github.com/owner/repo/archive/{SHA}.tar.gz"),
+        format!("https://github.com/owner/repo/zipball/{SHA}"),
+        format!("https://github.com/owner/repo/tarball/{SHA}"),
+    ] {
+        assert_eq!(code_pin(&link), Pin::Pinned, "{link}");
+        let commit = github_commit(&link).expect("a pinned GitHub link");
+        assert_eq!(commit.repo, "owner/repo", "{link}");
+        assert_eq!(commit.sha, SHA, "{link}");
+    }
+}
+
+/// The refusal tells an author where the hash goes, since `entry-check` prints it
+/// to agents that have a hash and put it in the wrong place.
+#[test]
+fn the_refusal_of_an_unpinned_link_shows_how_to_write_a_pinned_one() {
+    let url = format!("https://github.com/owner/repo#{SHA}");
+    let analysis = analyze(&format!("---\ncode: {url}\n---\n"));
+    let refusal = analysis
+        .refusals
+        .iter()
+        .find(|refusal| **refusal == Refusal::UnpinnedCode { url: url.clone() })
+        .expect("the link is refused as unpinned")
+        .to_string();
+    for part in [
+        url.as_str(),
+        "https://github.com/<owner>/<repo>/tree/<commit>",
+        "https://huggingface.co/<owner>/<repo>/tree/<commit>",
+        "query or fragment",
+    ] {
+        assert!(refusal.contains(part), "{part}: {refusal}");
+    }
+}
+
+#[test]
+fn a_commit_hash_where_hugging_face_selects_the_revision_pins_the_link() {
+    for link in [
+        format!("https://huggingface.co/owner/model/tree/{SHA}"),
+        format!("https://huggingface.co/owner/model/blob/{SHA}/config.json"),
+        format!("https://huggingface.co/owner/model/resolve/{SHA}/config.json?download=true"),
+        format!("https://huggingface.co/owner/model/raw/{SHA}/config.json"),
+        format!("https://huggingface.co/owner/model/commit/{SHA}"),
+        format!("https://huggingface.co/owner/model/commits/{SHA}"),
+        format!("https://huggingface.co/owner/model/blame/{SHA}/train.py"),
+        // A model with a bare name.
+        format!("https://huggingface.co/gpt2/tree/{SHA}"),
+        format!("https://huggingface.co/datasets/owner/data/tree/{SHA}"),
+        format!("https://huggingface.co/datasets/owner/data/resolve/{SHA}/run.jsonl"),
+        format!("https://huggingface.co/spaces/owner/demo/blob/{SHA}/app.py"),
+    ] {
+        assert_eq!(code_pin(&link), Pin::Pinned, "{link}");
+    }
 }

@@ -131,6 +131,8 @@ The server warns about both.
 - `code` and `logs` belong on the allowed hosts listed in design.md, [Submission and screening](design.md#submission-and-screening); a link elsewhere draws a warning.
   The server fetches each link on those hosts at submission, and a dead one draws a warning and the card's flag.
   Only an unpinned `code` link is refused, or a Zenodo concept record.
+  A pinned link has the 40-character commit hash in its path, where it selects what the link opens: `https://github.com/<owner>/<repo>/tree/<commit>`, or `blob/<commit>/<file>` or `commit/<commit>`, and the same on Hugging Face.
+  A hash in the query or the fragment, or after a branch's name, pins nothing.
   A GitHub commit on no branch or tag of the repository it names draws a warning and the card's flag instead.
   Code can also be attached to the entry instead (design.md, [Attached code](design.md#attached-code)).
   `code_state` says whether the code that ran is in any commit, because attached or pinned code is often a later version.

@@ -72,6 +72,19 @@ Add a new entry at the end of the topic it belongs to, or start a topic when non
   A false positive refuses an honest entry.
 - Against: `git clone URL && cd repo && python run.py` runs the default branch, the commonest moving ref, and passes.
 
+#### Where a `code` link's commit hash counts
+
+- Options: a 40-character hash anywhere after the repository's name, the query and the fragment included; only in the path; or only in the path segment that selects what the link opens.
+- Chosen: only in that segment, right after the repository and the host's word for a view of it.
+  On GitHub: `tree`, `blob`, `raw`, `blame`, `commit`, `zipball` or `tarball`, then the hash; `archive/<hash>.zip` or `.tar.gz`; and `pull/<n>/commits/<hash>`.
+  On Hugging Face, after an optional `datasets/` or `spaces/` and a repository of one or two names: `tree`, `blob`, `resolve`, `raw`, `commit`, `commits` or `blame`, then the hash.
+  `github.com/<owner>/<repo>#<hash>` and `.../tree/main?<hash>` open the branch, which a later push moves, and the server's GitHub check would confirm a commit the link doesn't open.
+  `## Reproduce`'s rule reads URLs the same way, and a `git+` URL's ref before its `#fragment`, as pip does.
+  All 288 `code` links in the field test are `tree/<hash>`.
+- Against: a form that does serve a fixed commit and isn't listed is refused, though the refusal says how to write the link: GitHub's `commits/<hash>` history page is left out because the server can't fetch that page reliably; `pull/<n>/changes/<hash>`, which GitHub may use for a pull request's commit, isn't confirmed and isn't listed; and a Hugging Face API URL (`api/models/<repo>/revision/<hash>`) no longer counts.
+  An entry stored with such a link keeps it, but its next PUT or version is refused until the link is rewritten, and its GitHub pin is no longer rechecked.
+  Hugging Face pins aren't checked online.
+
 #### Zenodo `code` links
 
 - Options: accept with a note that the server checks the record online, or refuse a link the analyzer can't prove is a version record.

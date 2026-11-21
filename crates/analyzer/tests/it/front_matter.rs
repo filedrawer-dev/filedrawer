@@ -426,6 +426,44 @@ fn reproduce_fetching_code_at_a_moving_ref_is_refused() {
     assert_eq!(analyze(&text).refusals, vec![]);
 }
 
+/// A hash in a command's query or fragment selects nothing: the command still
+/// fetches the branch.
+#[test]
+fn reproduce_fetching_a_moving_ref_with_a_hash_beside_it_is_refused() {
+    let hash = "0123456789abcdef0123456789abcdef01234567";
+    for moving in [
+        format!("pip install git+https://github.com/a/b#egg=b@{hash}"),
+        format!("curl -LO https://github.com/a/b/archive/main.zip?x/{hash}"),
+        format!("curl -LO https://github.com/a/b/archive/main.zip#/{hash}"),
+        // A branch named `x/<hash>`.
+        format!("curl -LO https://github.com/a/b/archive/refs/heads/x/{hash}.zip"),
+        format!("curl -O https://raw.githubusercontent.com/a/b/main/steer.py?v={hash}"),
+    ] {
+        let text = example_with(
+            "`python steer.py",
+            &format!("`{moving}`\n\n`python steer.py"),
+        );
+        assert_eq!(
+            analyze(&text).refusals,
+            vec![Refusal::MovingRef {
+                command: moving.clone()
+            }],
+            "{moving}"
+        );
+    }
+    for pinned in [
+        format!("pip install git+https://github.com/a/b@{hash}#egg=b"),
+        format!("curl -LO https://github.com/a/b/archive/{hash}.zip?download=1"),
+        format!("curl -O https://raw.githubusercontent.com/a/b/{hash}/steer.py?raw=1"),
+    ] {
+        let text = example_with(
+            "`python steer.py",
+            &format!("`{pinned}`\n\n`python steer.py"),
+        );
+        assert_eq!(analyze(&text).refusals, vec![], "{pinned}");
+    }
+}
+
 #[test]
 fn yaml_aliases_are_refused_before_they_expand() {
     let mut bomb = String::from("a0: &a0 [x,x,x,x,x,x,x,x,x,x]\n");
