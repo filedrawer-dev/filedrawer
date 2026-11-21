@@ -99,6 +99,10 @@ async fn every_route_that_hashes_a_password_is_refused_while_no_place_is_free() 
     let app = test_app().await;
     common::signed_up_and_verified(&app, "grace@example.com").await;
     let cookie = common::logged_in(&app, "grace@example.com", PASSWORD).await;
+    app.form("/reset", &[("email", "grace@example.com")], None)
+        .await;
+    let link = app.link_in_last_email_to("grace@example.com").await;
+    let token = link.strip_prefix("/reset/confirm?token=").expect(&link);
     let app = app.with_passwords(full());
 
     let login = [("email", "grace@example.com"), ("password", PASSWORD)];
@@ -112,10 +116,25 @@ async fn every_route_that_hashes_a_password_is_refused_while_no_place_is_free() 
         ("display_name", "Ada"),
     ];
     assert_busy(&app.form("/signup", &signup, None).await);
-    let reset = [("token", "no-such-link"), ("password", PASSWORD)];
+    let reset = [("token", token), ("password", PASSWORD)];
     assert_busy(&app.form("/reset/confirm", &reset, None).await);
     let delete = [("password", PASSWORD)];
     assert_busy(&app.form("/account/delete", &delete, Some(&cookie)).await);
+}
+
+/// A reset link that doesn't work is answered before any hashing, so it takes no
+/// place from the logins waiting for one.
+#[tokio::test]
+async fn a_reset_with_a_link_that_doesnt_work_takes_no_place() {
+    let app = test_app().await.with_passwords(full());
+    let reset = [("token", "no-such-link"), ("password", PASSWORD)];
+    let reply = app.form("/reset/confirm", &reset, None).await;
+    assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{}", reply.body);
+    assert!(
+        reply.body.contains("It was used or expired."),
+        "{}",
+        reply.body
+    );
 }
 
 #[tokio::test]

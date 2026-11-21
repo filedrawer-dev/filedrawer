@@ -388,8 +388,14 @@ pub async fn reset_confirm(
         };
         return Ok(page(StatusCode::UNPROCESSABLE_ENTITY, &template));
     }
+    // A dead link costs no hash. Answering it sooner tells nothing the form's page,
+    // which says at once whether a link works, doesn't already.
+    if !accounts::email_link_works(&state.pool, &form.token, Purpose::Reset).await? {
+        return Ok(link_used_or_expired());
+    }
     let place = state.passwords.place().await?;
     let hash = place.hash(form.password).await;
+    // The link is spent here, so one spent while the hash ran still doesn't work.
     if !accounts::reset_with_link(&state.pool, &form.token, &hash).await? {
         return Ok(link_used_or_expired());
     }
