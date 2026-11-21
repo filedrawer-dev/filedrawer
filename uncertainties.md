@@ -836,6 +836,17 @@ The owner settled the email's sections and the rules in design.md's Admin sectio
 - Chosen: no drop-ins exist, and a probe that misses one could pass a unit that fails; the binary is the deploy key holder's code, so only `reached`, `skipped` and `can't reach` lines of printable ASCII, and a few such lines of its stderr, reach CI's log.
 - Against: a drop-in added by hand makes every deploy exit 3 until it is folded into service.sh, and a binary's own diagnostics beyond those lines are only in the journal.
 
+#### Where Caddy's admin API listens
+
+An agent chose these on 2026-11-20, with the owner away.
+
+- Options: turn the admin API off (`admin off`), with a systemd drop-in that makes a reload a restart; a unix socket in `/run/caddy`, with a drop-in that makes the folder (`RuntimeDirectory=`); or a unix socket in Caddy's home, `/var/lib/caddy/admin.sock`, which the package already makes.
+- Chosen: the socket in Caddy's home, mode 0200, so `caddy` and root alone open it.
+  The packaged unit's reload runs as `caddy` and takes the address from the Caddyfile, so it works unchanged, and with no drop-in a package upgrade has nothing to lose and Caddy nothing it can't start without.
+  The first run after the change restarts Caddy, a few seconds without the sites, since the running Caddy doesn't listen on the socket yet; later runs reload.
+- Against: with `admin off` there would be no admin API at all, where now a process running as `caddy` or root still has one; but each field-test key change would then restart Caddy and drop its connections.
+- The nftables table (`ops/remote/loopback.sh`) could also reject loopback's port 2019 for every user but `caddy` and root, a second layer should a hand-written Caddyfile ever bring the default back; not built, since `ops/audit-vps` already shows who reaches the port.
+
 ### Packages
 
 #### The analyzer's library name

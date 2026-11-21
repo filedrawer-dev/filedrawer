@@ -15,8 +15,9 @@ file in /run. Here it runs `git fetch origin`, and nothing else that writes.
 
 From the server, in one ssh round as root (ops/remote/audit-facts.sh): the Debian
 and kernel versions and whether a reboot is due; listening sockets; ufw's and
-nftables' rules; which user reaches Caddy's admin port and each environment's port
-on loopback; sshd's effective settings, for anyone and for root and deploy;
+nftables' rules; which user reaches Caddy's admin API, on loopback's port 2019 and
+on its socket, and each environment's port on loopback; sshd's effective settings,
+for anyone and for root and deploy;
 authorized_keys lines without their keys; users with a shell; the sudo rules; owner
 and mode of the secrets, databases, binaries and backups; the SHA-256, owner and
 mode of each unit and config the repo's scripts generate that holds no secret;

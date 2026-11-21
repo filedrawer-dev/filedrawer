@@ -106,6 +106,25 @@ reach() {
   fi
 }
 
+# reach_socket USER SOCKET: whether USER can open Caddy's admin API on the unix
+# socket SOCKET, and the HTTP status its GET of the config answers. Only curl's own
+# "couldn't connect" (exit 7) counts as no connection.
+reach_socket() {
+  local user="$1" socket="$2" code status=0
+  if [[ ! -S "$root$socket" ]]; then
+    echo "$user -> $socket: (no such socket)"
+  elif ! as_user "$user" true 2>/dev/null; then
+    echo "$user -> $socket: (can't run as $user)"
+  else
+    code=$(as_user "$user" curl -q -s -o /dev/null -w '%{http_code}' --max-time 5 --unix-socket "$root$socket" http://localhost/config/ 2>/dev/null) || status=$?
+    case "$status" in
+      0) echo "$user -> $socket: CONNECTS, GET /config/ answers $code" ;;
+      7) echo "$user -> $socket: no connection" ;;
+      *) echo "$user -> $socket: (the probe failed: curl exit $status)" ;;
+    esac
+  fi
+}
+
 heading "system"
 run cat "$root/etc/debian_version"
 run uname -r
@@ -130,9 +149,14 @@ run nft list ruleset
 run systemctl is-enabled filedrawer-loopback.service
 
 heading "loopback reach, by user"
-# Caddy's admin API, production's port and staging's: which user reaches which.
+# Caddy's admin API, on its default port and on the socket ops/remote/caddy.sh
+# gives it, production's port and staging's: which user reaches which. Root reaches
+# the socket, which shows the probe itself works.
+admin_socket=/var/lib/caddy/admin.sock
+reach_socket root "$admin_socket"
 for user in "$STAGING_USER" "$PRODUCTION_USER" deploy nobody; do
   reach "$user" 2019 /config/
+  reach_socket "$user" "$admin_socket"
   reach "$user" 8080
   reach "$user" 8081
 done

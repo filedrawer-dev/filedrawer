@@ -542,8 +542,10 @@ def test_a_real_caddy_serves_the_gate_and_snippet_as_meant(
     gate_body = gate[
         gate.index("(staging_gate) {") : gate.index("\nstaging.filedrawer.dev {")
     ]
+    # On stdin, as caddy.sh gives it the password.
     hashed = subprocess.run(
-        [real_caddy, "hash-password", "--plaintext", "pw"],
+        [real_caddy, "hash-password"],
+        input="pw",
         capture_output=True,
         text=True,
         check=True,

@@ -14,6 +14,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from conftest import unix_listener
 
 REPO = Path(__file__).resolve().parents[2]
 SERVICE_USER = REPO / "ops/remote/service-user.sh"
@@ -463,13 +464,16 @@ OLD_HASH = "$2a$14$abcdefghijklmnopqrstuuABCDEFGHIJKLMNOPQRSTUVWXYZ01234"
 @pytest.fixture
 def caddy(box):
     """caddy.sh against the box, with a fake caddy whose validate fails while the
-    file `invalid` exists, and which notes the site files it validated with."""
+    file `invalid` exists, and which notes the site files it validated with. Asked
+    to hash a password it reads from stdin, it keeps what it read in `hashed`."""
     (box.root / "etc/caddy").mkdir(parents=True)
     fakes = Path(box.env["PATH"].split(":")[0])
     invalid = box.root.parent / "invalid"
+    hashed = box.root.parent / "hashed"
     executable(
         fakes / "caddy",
         f'#!/bin/sh\necho "caddy $*" >> {box.log}\n'
+        f'[ "$*" = hash-password ] && cat > {hashed}\n'
         f"[ \"$1\" = hash-password ] && echo '{NEW_HASH}'\n"
         f'[ "$1" = validate ] && [ -e {invalid} ] && exit 1\n'
         "exit 0\n",
@@ -486,7 +490,12 @@ def caddy(box):
             }
         return run(box, CADDY, **env)
 
-    return SimpleNamespace(run=run_caddy, invalid=invalid, dir=box.root / "etc/caddy")
+    return SimpleNamespace(
+        run=run_caddy, invalid=invalid, hashed=hashed, dir=box.root / "etc/caddy"
+    )
+
+
+ADMIN_SOCKET = "/var/lib/caddy/admin.sock"
 
 
 def site_blocks(text: str) -> dict[str, str]:
@@ -498,6 +507,74 @@ def test_the_caddyfile_imports_each_environments_site_file(box, caddy):
     caddyfile = (caddy.dir / "Caddyfile").read_text()
     assert "import /etc/caddy/sites/*.caddy" in caddyfile
     assert "filedrawer.dev {" not in caddyfile
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_the_admin_api_is_a_socket_only_caddy_and_root_can_open(
+    box, caddy, environment
+):
+    """Caddy's admin API reads and replaces the whole config, every site's, so no
+    other local user may reach it: not on loopback, Caddy's default, where every
+    user connects, but on a socket in Caddy's home that its owner alone may write."""
+    assert caddy.run(environment).returncode == 0
+    lines = [
+        line
+        for line in (caddy.dir / "Caddyfile").read_text().splitlines()
+        if not line.startswith("#")
+    ]
+    assert lines == [
+        "{",
+        f"\tadmin unix/{ADMIN_SOCKET}|0200",
+        "}",
+        "import /etc/caddy/sites/*.caddy",
+    ]
+
+
+def test_caddy_restarts_while_its_admin_socket_isnt_there_to_reload_through(box, caddy):
+    """A reload goes through the admin API the new config names, which a Caddy
+    started with another config, or none, isn't listening on."""
+    assert caddy.run("production").returncode == 0
+    calls = [
+        line
+        for line in box.log.read_text().splitlines()
+        if line.startswith("systemctl") and line.endswith(" caddy")
+    ]
+    assert calls == ["systemctl enable caddy", "systemctl restart caddy"]
+
+
+def test_caddy_reloads_through_its_admin_socket_once_it_listens_there(box, caddy):
+    with unix_listener(box.root / ADMIN_SOCKET.lstrip("/")):
+        assert caddy.run("production").returncode == 0
+    calls = [
+        line
+        for line in box.log.read_text().splitlines()
+        if line.startswith("systemctl") and line.endswith(" caddy")
+    ]
+    assert calls == ["systemctl enable caddy", "systemctl reload-or-restart caddy"]
+
+
+def test_a_reload_that_fails_says_how_to_load_the_config_caddy_took(box, caddy):
+    """The files stay, since Caddy validated them; a Caddy started with another
+    config, whose socket file is left over, can't be reloaded into this one."""
+    fakes = Path(box.env["PATH"].split(":")[0])
+    executable(
+        fakes / "systemctl",
+        f'#!/bin/sh\necho "systemctl $*" >> {box.log}\n[ "$1" != reload-or-restart ]\n',
+    )
+    with unix_listener(box.root / ADMIN_SOCKET.lstrip("/")):
+        result = caddy.run("production")
+    assert result.returncode == 1
+    assert "systemctl restart caddy" in result.stderr
+    assert (caddy.dir / "sites/production.caddy").exists()
+
+
+def test_the_password_reaches_caddy_on_stdin_and_never_in_a_command_line(box, caddy):
+    """Any local user can read another process's arguments while it runs."""
+    assert caddy.run("staging", password="correct horse").returncode == 0
+    log = box.log.read_text()
+    assert "caddy hash-password\n" in log
+    assert "correct horse" not in log
+    assert caddy.hashed.read_text() == "correct horse"
 
 
 @pytest.mark.parametrize("environment", ["staging", "production"])
@@ -731,6 +808,88 @@ def test_a_real_caddy_answers_503_while_production_is_down_and_redirects_www(
         status, head, _ = fetch(www, "/e/x?y=1")
         assert status == 301
         assert "Location: https://filedrawer.dev/e/x?y=1" in head
+    finally:
+        server.terminate()
+        server.wait()
+
+
+def listening_ports(pid: int) -> set[int]:
+    """The TCP ports the process listens on, on any address."""
+    done = subprocess.run(
+        ["ss", "-H", "-ltnp"], capture_output=True, text=True, check=True
+    )
+    return {
+        int(line.split()[3].rsplit(":", 1)[1])
+        for line in done.stdout.splitlines()
+        if f"pid={pid}," in line
+    }
+
+
+def test_a_real_caddy_listens_for_its_admin_api_on_the_socket_alone_and_reloads(
+    box, caddy, tmp_path, real_caddy
+):
+    """The Caddyfile as caddy.sh writes it, with only its paths moved: /etc/caddy
+    to the box, and the socket to the folder Caddy runs in, since a temp path runs
+    past the 107 bytes a socket's address holds."""
+    assert caddy.run("production").returncode == 0
+    apex, www, down = free_port(), free_port(), free_port()
+    site = caddy.dir / "sites/production.caddy"
+    site.write_text(
+        site.read_text()
+        .replace("127.0.0.1:8080", f"127.0.0.1:{down}")
+        .replace("\nfiledrawer.dev {", f"\n:{apex} {{")
+        .replace("www.filedrawer.dev {", f":{www} {{")
+        .replace("files.filedrawer.dev {", "(files_unused) {")
+    )
+    home = tmp_path / "home"
+    home.mkdir()
+    config = tmp_path / "Caddyfile"
+    config.write_text(
+        (caddy.dir / "Caddyfile")
+        .read_text()
+        .replace("/etc/caddy", str(caddy.dir))
+        .replace(f"unix/{ADMIN_SOCKET}", "unix/admin.sock")
+    )
+    assert "\tadmin unix/admin.sock|0200\n" in config.read_text()
+    server = subprocess.Popen(
+        [real_caddy, "run", "--config", str(config), "--adapter", "caddyfile"],
+        cwd=home,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+
+        def retry_after() -> str:
+            done = subprocess.run(
+                ["curl", "-s", "-D", "-", f"http://127.0.0.1:{apex}/tags"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            found = re.search(r"^Retry-After: (\d+)$", done.stdout, re.M)
+            return found.group(1) if found else ""
+
+        while not retry_after():
+            assert server.poll() is None, "caddy stopped"
+            time.sleep(0.1)
+        assert listening_ports(server.pid) == {apex, www}
+        admin = (home / "admin.sock").stat()
+        assert stat.S_ISSOCK(admin.st_mode)
+        # A connection needs write access, which only the owner has.
+        assert stat.S_IMODE(admin.st_mode) == 0o200
+
+        # As the packaged unit's ExecReload runs it: the address comes from the config.
+        site.write_text(site.read_text().replace("Retry-After 120", "Retry-After 121"))
+        reloaded = subprocess.run(
+            [real_caddy, "reload", "--config", str(config), "--force"],
+            cwd=home,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert reloaded.returncode == 0, reloaded.stderr[-2000:]
+        assert retry_after() == "121"
+        assert listening_ports(server.pid) == {apex, www}
     finally:
         server.terminate()
         server.wait()

@@ -526,6 +526,8 @@ def test_the_real_caddy_marker_selects_every_test_using_the_fixture():
         "test_remote_environments.py::"
         "test_a_real_caddy_takes_both_environments_site_files_together",
         "test_remote_environments.py::"
+        "test_a_real_caddy_listens_for_its_admin_api_on_the_socket_alone_and_reloads",
+        "test_remote_environments.py::"
         "test_a_real_caddy_answers_503_while_production_is_down_and_redirects_www",
     }
 

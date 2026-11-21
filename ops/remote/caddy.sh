@@ -7,6 +7,13 @@
 # reloaded. A Caddyfile from before the site files holds staging's sites itself, so
 # only staging's run replaces it; production's refuses until then.
 #
+# Caddy's admin API, which reads and replaces the whole config, listens on a unix
+# socket in Caddy's home, /var/lib/caddy/admin.sock, that only its owner may write:
+# `caddy`, which the packaged unit's reload runs as, and root. Caddy's default is
+# loopback's port 2019, which every local user reaches, each environment's service
+# user included. A Caddy that isn't listening on the socket yet, as on the first
+# run, is restarted, since a reload goes through the address the new config names.
+#
 # Production: filedrawer.dev and files.filedrawer.dev, open to all, and
 # www.filedrawer.dev redirecting to filedrawer.dev. While the server doesn't answer,
 # before the first deploy or during a restart, they answer a plain 503 with
@@ -23,7 +30,8 @@
 # Bearer token marks a request as an agent's (respond::wants_page); ops/smoke-staging
 # checks that a browser still gets the pages.
 # For staging, reads "<password><TAB><key>" as the first line of stdin, so neither
-# appears in a command line that `ps` could show; STAGING_USER names the basic-auth
+# appears in a command line that `ps` could show, and `caddy hash-password` reads
+# the password on its stdin for the same reason; STAGING_USER names the basic-auth
 # user. An empty password keeps the hash the server already holds for that user, in
 # staging's site file or, before the split into site files, the Caddyfile, as a
 # rerun of `ops/provision-vps` sends.
@@ -48,6 +56,7 @@ root="${FILEDRAWER_ROOT:-}"
 dir="$root/etc/caddy"
 caddyfile="$dir/Caddyfile"
 site="$dir/sites/$ENVIRONMENT.caddy"
+admin_socket=/var/lib/caddy/admin.sock
 
 if ! command -v caddy >/dev/null 2>&1; then
   # Caddy's own apt repository, as its install docs give it.
@@ -63,7 +72,8 @@ fi
 staging_site() {
   local hash old
   if [[ -n "$STAGING_PASSWORD" ]]; then
-    hash=$(caddy hash-password --plaintext "$STAGING_PASSWORD")
+    # Not a pipe: under pipefail a printf whose reader left early fails the line.
+    hash=$(caddy hash-password < <(printf '%s' "$STAGING_PASSWORD"))
   else
     hash=""
     for old in "$site" "$caddyfile"; do
@@ -222,6 +232,9 @@ swap_in "$site" "$text" caddy
 swap_in "$caddyfile" "# Written by ops/remote/caddy.sh; edits here are lost on the next run.
 # Each environment's sites are in a file of their own, which caddy.sh writes for that
 # environment alone.
+{
+	admin unix/$admin_socket|0200
+}
 $import_line"
 
 if ! caddy validate --config "$caddyfile" --adapter caddyfile; then
@@ -230,6 +243,13 @@ if ! caddy validate --config "$caddyfile" --adapter caddyfile; then
 fi
 accepted=1
 systemctl enable caddy
-systemctl reload-or-restart caddy
+if [[ -S "$root$admin_socket" ]]; then
+  if ! systemctl reload-or-restart caddy; then
+    echo "Caddy took the new config but didn't reload; 'journalctl -u caddy -n 50' on the server says why. If Caddy was started with another config, 'systemctl restart caddy' there loads this one" >&2
+    exit 1
+  fi
+else
+  systemctl restart caddy
+fi
 
 echo "caddy ($ENVIRONMENT): done"

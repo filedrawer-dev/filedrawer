@@ -1007,6 +1007,8 @@ Python is fine for scripts and internal tools.
   The deploy user's sudo rule is a regular expression that admits only `staging <sha256>`.
 - Caddy's config imports one site file per environment, `/etc/caddy/sites/<env>.caddy`, so provisioning one never rewrites the other's sites; a file Caddy refuses is put back as it was.
   Each site file is root:caddy 0640, set before it is swapped in, since staging's holds the staging key and the basic-auth hash, which the user CI's binaries run as must not read (#101).
+  Caddy's admin API, which reads and replaces the whole config, listens only on a unix socket in Caddy's home, `/var/lib/caddy/admin.sock`, which `caddy` and root alone can open; `systemctl reload caddy` goes through it as before (an agent's choice, 2026-11-20; uncertainties.md, "Where Caddy's admin API listens").
+  Reason: Caddy's default is loopback's port 2019, which every local user reaches, and the API belongs to no environment: it holds every site's config.
   While production's server doesn't answer, before its first deploy or during a restart, filedrawer.dev answers a plain 503 with `Retry-After` instead of a bare 502 (the owner's decision, 2026-11-10).
 - The server takes each Caddy release as it comes: unattended-upgrades also follows Caddy's apt repository (the owner's decision, 2026-11-18, #100).
   Reason: Caddy keeps only its latest release, and ships its security fixes beside breaking changes, even in patch releases (2.11.6, 2.11.8 and 2.11.9 list both), so no pin or hold keeps the server both safe and unchanged; and the owner may not watch GitHub for a couple of weeks.

@@ -10,6 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from conftest import unix_listener
 
 REPO = Path(__file__).resolve().parents[2]
 AUDIT = REPO / "ops/audit-vps"
@@ -285,9 +286,63 @@ def test_a_probe_that_cant_run_as_the_user_says_so_and_claims_nothing(server):
     assert "no connection" not in out
 
 
+ADMIN_SOCKET = "/var/lib/caddy/admin.sock"
+# A runuser that runs the command as the test's own user.
+AS_ITSELF = 'shift 3; exec "$@"'
+
+
+@pytest.fixture
+def admin_socket(server):
+    """Caddy's admin socket in the fake root."""
+    with unix_listener(server.root / ADMIN_SOCKET.lstrip("/")):
+        yield
+
+
+def test_a_server_without_caddys_admin_socket_says_so_for_each_user(server):
+    out = server.run(runuser=AS_ITSELF).stdout
+    assert f"filedrawer -> {ADMIN_SOCKET}: (no such socket)\n" in out
+    assert f"nobody -> {ADMIN_SOCKET}: (no such socket)\n" in out
+
+
+def test_a_user_who_reads_caddys_config_through_its_admin_socket_is_named(
+    server, admin_socket
+):
+    out = server.run(runuser=AS_ITSELF, curl="echo 200").stdout
+    for user in ("root", "filedrawer", "filedrawer-prod", "deploy", "nobody"):
+        assert f"{user} -> {ADMIN_SOCKET}: CONNECTS, GET /config/ answers 200\n" in out
+
+
+def test_a_user_the_admin_socket_refuses_gets_no_connection(server, admin_socket):
+    # curl's status line for a connection it couldn't make, and its exit status.
+    out = server.run(runuser=AS_ITSELF, curl="echo 000; exit 7").stdout
+    for user in ("filedrawer", "filedrawer-prod", "deploy", "nobody"):
+        assert f"{user} -> {ADMIN_SOCKET}: no connection\n" in out
+
+
+@pytest.mark.parametrize(
+    ("curl", "status"), [("echo 000; exit 28", 28), ("exit 127", 127)]
+)
+def test_a_socket_probe_that_fails_another_way_isnt_read_as_no_connection(
+    server, admin_socket, curl, status
+):
+    """A curl that timed out after connecting, or isn't there, refused no one."""
+    out = server.run(runuser=AS_ITSELF, curl=curl).stdout
+    assert (
+        f"filedrawer -> {ADMIN_SOCKET}: (the probe failed: curl exit {status})\n" in out
+    )
+    assert f"{ADMIN_SOCKET}: no connection" not in out
+
+
+def test_the_admin_socket_probe_claims_nothing_when_it_cant_run_as_the_user(
+    server, admin_socket
+):
+    out = server.run().stdout
+    assert f"filedrawer -> {ADMIN_SOCKET}: (can't run as filedrawer)\n" in out
+
+
 def test_a_service_user_that_reads_the_other_environment_is_named(server):
-    # A runuser that runs the command as the test's own user, who can read the file.
-    out = server.run(runuser='shift 3; exec "$@"').stdout
+    # As the test's own user, who can read the file.
+    out = server.run(runuser=AS_ITSELF).stdout
     assert "filedrawer CAN read /srv/filedrawer/production/data/filedrawer.db\n" in out
     assert (
         "filedrawer-prod can't read /srv/filedrawer/staging/data/filedrawer.db\n" in out

@@ -12,6 +12,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 from collections.abc import Iterable
@@ -139,6 +140,21 @@ def pytest_collection_modifyitems(items):
     for item in items:
         if "real_caddy" in getattr(item, "fixturenames", ()):
             item.add_marker("real_caddy")
+
+
+def unix_listener(path: Path) -> socket.socket:
+    """A unix socket listening at PATH, bound from its folder, since a temp path
+    runs past the 107 bytes a socket's address holds."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    listener = socket.socket(socket.AF_UNIX)
+    before = os.getcwd()
+    os.chdir(path.parent)
+    try:
+        listener.bind(path.name)
+    finally:
+        os.chdir(before)
+    listener.listen()
+    return listener
 
 
 def opened_urls() -> Path:
