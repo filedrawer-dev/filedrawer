@@ -127,6 +127,22 @@ Add a new entry at the end of the topic it belongs to, or start a topic when non
 - Chosen: the UTC day, so a row can't be lined up with the server's access logs by time; only searches that ran; a failed write is logged and the search still answers (#45).
 - Against: a refused search shows what agents try that the server doesn't read, which may matter more to the skills than the searches that worked.
 
+#### How long a search's `q` may be, and how long a search may run
+
+- Options, for `q`: no limit; a limit past which the rest is dropped without a word; or a limit past which the search is refused.
+  For the limit: a few dozen words, or a few hundred.
+- Chosen: `q` takes at most 50 words and at most 500 characters, and a longer one is a 400 whose text gives both limits and how much `q` held; the search skill names them.
+  Each word is a term SQLite looks up in the index, so the length of `q` sets what a search costs, and anyone may send one.
+  50 words is a long sentence, and 500 characters is where the search log already cuts a query.
+  Refusing tells the agent its search wasn't the one it wrote; dropping words would answer a different question in silence.
+- Also chosen: the statement behind a search, and behind the home page's tabs, which run the same one, is stopped after 5 seconds and the request answers 500.
+  A statement keeps running after its client has gone, so the stop is what bounds how long one holds a database connection.
+  Searches take milliseconds today, so nothing should reach it.
+- Against: an agent that pastes a whole hypothesis as `q` is refused and has to shorten it, where 100 or 200 words would cost little more.
+  Words split at every character that isn't a letter or a digit, so `gpt-4o-mini` counts as three, and a repeated word counts each time.
+  A stopped search answers "internal error", not a status of its own that says to narrow the search or try again; a 503 with a reason would need a new error kind.
+  The stop covers search only.
+
 #### Which request's skill and User-Agent an entry keeps
 
 - Options: the request that wrote its current text, so a PUT overwrites the submission's; or the first submission's for good; or every request's, in a table of its own.

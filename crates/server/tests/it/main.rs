@@ -17,6 +17,7 @@ mod cli;
 mod common;
 mod config;
 mod daily_email;
+mod db;
 mod deletion;
 mod entries_mine;
 mod entry_deletion;

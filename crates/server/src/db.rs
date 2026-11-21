@@ -1,9 +1,42 @@
-//! The SQLite database: opening it and running the migrations.
+//! The SQLite database: opening it, running the migrations, and the time limit on a
+//! connection's statements.
 
 use std::str::FromStr;
+use std::time::{Duration, Instant};
 
+use sqlx::pool::PoolConnection;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use sqlx::{Sqlite, SqlitePool, Transaction};
+
+/// How many of SQLite's virtual-machine steps run between two looks at a deadline.
+const DEADLINE_CHECK_STEPS: i32 = 1000;
+
+/// SQLite's result code for a statement its progress handler stopped
+/// (`SQLITE_INTERRUPT`).
+const SQLITE_INTERRUPT: &str = "9";
+
+/// A connection whose statements SQLite stops once `budget` has passed, counted from
+/// now, for a query whose cost a stranger's request sets. A statement keeps running
+/// after the request that started it is gone, so the budget is what bounds how long
+/// it holds the connection. The deadline ends when the connection goes back to the
+/// pool.
+pub async fn with_deadline(
+    pool: &SqlitePool,
+    budget: Duration,
+) -> Result<PoolConnection<Sqlite>, sqlx::Error> {
+    let mut connection = pool.acquire().await?;
+    let deadline = Instant::now() + budget;
+    connection
+        .lock_handle()
+        .await?
+        .set_progress_handler(DEADLINE_CHECK_STEPS, move || Instant::now() < deadline);
+    Ok(connection)
+}
+
+/// Whether `error` is a statement stopped at its deadline ([`with_deadline`]).
+pub fn timed_out(error: &sqlx::Error) -> bool {
+    matches!(error, sqlx::Error::Database(error) if error.code().as_deref() == Some(SQLITE_INTERRUPT))
+}
 
 /// A transaction that holds SQLite's write lock from its first statement (`BEGIN
 /// IMMEDIATE`). Every transaction is one of these: a deferred transaction that reads
@@ -31,6 +64,15 @@ pub async fn open(path: &str) -> Result<SqlitePool, sqlx::Error> {
     // Every connection to `:memory:` opens a database of its own, so tests use one.
     let pool = SqlitePoolOptions::new()
         .max_connections(if in_memory { 1 } else { 8 })
+        // Ends a deadline `with_deadline` set. Taking the handle waits for the
+        // connection's statement, so one abandoned mid-run still stops at its
+        // deadline, and the next user of the connection starts with none.
+        .after_release(|connection, _| {
+            Box::pin(async move {
+                connection.lock_handle().await?.remove_progress_handler();
+                Ok(true)
+            })
+        })
         .connect_with(options)
         .await?;
     // A rollback runs an older binary on the schema a newer one migrated, so the

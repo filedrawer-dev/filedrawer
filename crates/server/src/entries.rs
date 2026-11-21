@@ -5,9 +5,11 @@ use analyzer::{
     Results, Role, Stage, Vocabulary, analyze, render_card,
 };
 use std::collections::HashMap;
+use std::time::Duration;
 
 use sqlx::SqlitePool;
 
+use crate::db;
 use crate::link_checks::{self, LinkFlags};
 use crate::provenance::Provenance;
 use crate::screening::Verdict;
@@ -777,6 +779,10 @@ pub struct Found {
     readers: HashMap<i64, i64>,
 }
 
+/// How long one search's statement may run (`db::with_deadline`). Searches take
+/// milliseconds; this only keeps one that doesn't from holding a connection.
+const SEARCH_BUDGET: Duration = Duration::from_secs(5);
+
 /// Public entries matching `filters`: best match first when there are search words
 /// (bm25, with the title weighted most), otherwise newest first.
 pub async fn search(
@@ -795,8 +801,15 @@ pub async fn search(
     let kind = filters.kind.map(Kind::name);
     let stage = filters.stage.map(Stage::name);
     let row_claim = filters.row_claim.map(Claim::name);
+    let mut connection = db::with_deadline(pool, SEARCH_BUDGET).await?;
     let rows = sqlx::query!(
         r#"WITH RECURSIVE
+             -- The entries the words match, each with its rank, from one run of the
+             -- MATCH: materialized, so the join below can't run it again per entry.
+             -- The first term keeps MATCH from running on NULL, which is an error.
+             matched(seq, rank) AS MATERIALIZED (
+               SELECT rowid, bm25(entries_fts, 10.0, 5.0, 2.0, 1.0) FROM entries_fts
+               WHERE ?1 IS NOT NULL AND entries_fts MATCH ?1),
              -- `cites` names a public entry: the public versions of its chain, and
              -- its slug if a public version registered it, stand for it too. A
              -- version that isn't public never widens the match (design.md, Agent
@@ -843,11 +856,12 @@ pub async fn search(
            FROM entries e JOIN authors a ON a.id = e.account_id
            LEFT JOIN link_flags f ON f.entry_seq = e.seq
            LEFT JOIN read_counts rc ON rc.seq = e.seq
+           LEFT JOIN matched m ON m.seq = e.seq
            WHERE e.status = 'public'
              AND (?12 <> 'read' OR rc.readers > 0)
              -- Only the latest version in each chain (design.md, Entry lifecycle).
              AND NOT EXISTS (SELECT 1 FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public')
-             AND (?1 IS NULL OR e.seq IN (SELECT rowid FROM entries_fts WHERE entries_fts MATCH ?1))
+             AND (?1 IS NULL OR m.seq IS NOT NULL)
              AND (?2 IS NULL OR e.outcome = ?2)
              AND (?3 IS NULL OR e.kind = ?3)
              AND (?4 IS NULL OR e.stage = ?4)
@@ -865,10 +879,7 @@ pub async fn search(
            ORDER BY
              CASE WHEN ?12 = 'random' THEN random() END,
              CASE WHEN ?12 = 'read' THEN -rc.readers END,
-             -- CASE runs the MATCH only when there are words; MATCH NULL is an error.
-             CASE WHEN ?1 IS NULL THEN NULL ELSE (
-               SELECT bm25(entries_fts, 10.0, 5.0, 2.0, 1.0) FROM entries_fts
-               WHERE entries_fts MATCH ?1 AND rowid = e.seq) END,
+             m.rank,
              e.published_at DESC, e.seq DESC
            LIMIT ?9 OFFSET ?10"#,
         filters.words,
@@ -885,7 +896,7 @@ pub async fn search(
         order_name,
         since
     )
-    .fetch_all(pool)
+    .fetch_all(&mut *connection)
     .await?;
     let total = rows.first().map_or(0, |row| row.total);
     let readers = match order {
@@ -958,14 +969,36 @@ pub async fn tags(pool: &SqlitePool) -> Result<Vec<(String, i64)>, sqlx::Error> 
 /// Turns free text into an FTS5 query that matches any of its words, each quoted so a
 /// reader's text is never read as query syntax. Agents ask in sentences, and bm25
 /// ranks entries with more of the words, and rarer ones, first. `None` when it has no
-/// words.
-pub fn fts_query(text: &str) -> Option<String> {
+/// words. Text past [`MAX_QUERY_CHARS`] or [`MAX_QUERY_WORDS`] is refused: each word
+/// is a term SQLite looks up, so the text's size is the search's cost.
+pub fn fts_query(text: &str) -> Result<Option<String>, QueryTooLong> {
+    let chars = text.chars().count();
+    if chars > MAX_QUERY_CHARS {
+        return Err(QueryTooLong::Chars(chars));
+    }
     let words: Vec<String> = text
         .split(|c: char| !c.is_alphanumeric())
         .filter(|word| !word.is_empty())
         .map(|word| format!("\"{word}\""))
         .collect();
-    (!words.is_empty()).then(|| words.join(" OR "))
+    if words.len() > MAX_QUERY_WORDS {
+        return Err(QueryTooLong::Words(words.len()));
+    }
+    Ok((!words.is_empty()).then(|| words.join(" OR ")))
+}
+
+/// The most words a search's text may hold.
+pub const MAX_QUERY_WORDS: usize = 50;
+/// The most characters a search's text may hold.
+pub const MAX_QUERY_CHARS: usize = 500;
+
+/// A search's text past a limit, with how much it held.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum QueryTooLong {
+    #[error("{0} words")]
+    Words(usize),
+    #[error("{0} characters")]
+    Chars(usize),
 }
 
 /// The live version that replaced entry `seq`, if any: its ID and status. A rejected,

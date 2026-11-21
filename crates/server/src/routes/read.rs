@@ -14,7 +14,7 @@ use analyzer::render_card;
 use axum::http::HeaderMap;
 
 use crate::auth::{TokenAccount, optional_token_account};
-use crate::entries::{self, Filters, Order, PublicEntry};
+use crate::entries::{self, Filters, MAX_QUERY_CHARS, MAX_QUERY_WORDS, Order, PublicEntry};
 use crate::error::AppError;
 use crate::limits::ClientIp;
 use crate::link_checks::{self, LinkFlags};
@@ -532,7 +532,7 @@ pub async fn search(
         query.outcome = None;
     }
     let filters = Filters {
-        words: query.q.as_deref().and_then(entries::fts_query),
+        words: search_words(query.q.as_deref())?,
         outcome: known::<Outcome>("outcome", query.outcome.as_deref())?,
         kind: known::<Kind>("kind", query.kind.as_deref())?,
         stage: known::<Stage>("stage", query.stage.as_deref())?,
@@ -625,6 +625,16 @@ impl SearchQuery {
         }
         query
     }
+}
+
+/// `q` as the full-text query it asks for, or the refusal of one past search's
+/// limits, which says both and how much `q` held.
+fn search_words(q: Option<&str>) -> Result<Option<String>, AppError> {
+    entries::fts_query(q.unwrap_or("")).map_err(|held| {
+        AppError::BadRequest(format!(
+            "`q` holds {held}; a search takes at most {MAX_QUERY_WORDS} words and at most {MAX_QUERY_CHARS} characters, so keep the words that name the experiment and use the filters for the rest"
+        ))
+    })
 }
 
 /// A filter value checked against the field's vocabulary. Empty means no filter.

@@ -258,3 +258,42 @@ async fn errors_answer_in_json_when_asked_and_q0_is_not_asking() {
         .await;
     assert!(reply.body.starts_with("id: "), "{}", reply.body);
 }
+
+/// `/search?q=` of `count` made-up words.
+fn words(count: usize) -> String {
+    let words: Vec<String> = (0..count).map(|n| format!("w{n}")).collect();
+    format!("/search?q={}", words.join("%20"))
+}
+
+#[tokio::test]
+async fn a_search_of_more_words_than_the_limit_is_refused_with_the_limit() {
+    let app = test_app().await;
+    let zebra = app.submit(&entry("Zebrafinch probes", "")).await;
+    let at_the_limit = app.get(&format!("{}%20zebrafinch", words(49))).await;
+    assert_eq!(at_the_limit.status, StatusCode::OK, "{}", at_the_limit.body);
+    assert!(at_the_limit.body.contains(&zebra), "{}", at_the_limit.body);
+    let past_it = app.get(&format!("{}%20zebrafinch", words(50))).await;
+    assert_eq!(past_it.status, StatusCode::BAD_REQUEST, "{}", past_it.body);
+    assert!(past_it.body.contains("51 words"), "{}", past_it.body);
+    assert!(
+        past_it.body.contains("at most 50 words"),
+        "{}",
+        past_it.body
+    );
+}
+
+#[tokio::test]
+async fn a_search_of_more_characters_than_the_limit_is_refused_with_the_limit() {
+    let app = test_app().await;
+    // A two-byte character, so the count is of characters, not bytes.
+    let at_the_limit = app.get(&format!("/search?q={}", "é".repeat(500))).await;
+    assert_eq!(at_the_limit.status, StatusCode::OK, "{}", at_the_limit.body);
+    let past_it = app.get(&format!("/search?q={}", "é".repeat(501))).await;
+    assert_eq!(past_it.status, StatusCode::BAD_REQUEST, "{}", past_it.body);
+    assert!(past_it.body.contains("501 characters"), "{}", past_it.body);
+    assert!(
+        past_it.body.contains("at most 500 characters"),
+        "{}",
+        past_it.body
+    );
+}
