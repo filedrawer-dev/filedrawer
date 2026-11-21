@@ -127,7 +127,7 @@ The server warns about both.
   When none does, write the alias, such as `alias:haiku`, and the server maps aliases to IDs by date (design.md, [Agent interface](design.md#agent-interface)).
 - `tags` are short labels.
   The server reads an entry's first 20, and skips, with a warning, a tag over 60 characters or one holding a line break, another control character or an invisible character, such as a zero-width space.
-  A zero-width joiner or non-joiner between two letters that aren't both ASCII, as in Persian words and emoji sequences, isn't invisible in this sense, nor is a presentation selector (U+FE0E, U+FE0F) right after a letter or an emoji.
+  A zero-width joiner or non-joiner between two visible characters that aren't both ASCII, as in Persian words and emoji sequences, isn't invisible in this sense, nor is a presentation selector (U+FE0E, U+FE0F) right after a visible character outside ASCII, such as an emoji, or after a keycap's digit, `#` or `*`.
   Reason: `GET /tags` starts each line with a tag, with none of the server's words before it.
 - `positive_control` describes a check that the pipeline, or the manipulation itself, can produce an effect known to exist: its outcome, whether it checks the pipeline (the judge finds instructed collusion) or the manipulation (the treatment moves the metric somewhere), and where it ran.
   `mixed` means it passed for some models and failed or wasn't run for others.

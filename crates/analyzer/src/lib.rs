@@ -319,9 +319,10 @@ fn is_invisible(c: char) -> bool {
 /// A display name as it is printed beside the server's own words, on card line 11
 /// and above the delimiter (entry-format.md, The card): without what it hides, or
 /// "(no name)" when nothing of it then shows. It keeps a zero-width joiner or
-/// non-joiner between two letters that aren't both ASCII, as Persian words, Indic
-/// half forms and emoji sequences hold them, and a presentation selector (U+FE0E,
-/// U+FE0F) right after a letter, as an emoji may end in one.
+/// non-joiner between two visible characters that aren't both ASCII, as Persian
+/// words, Indic half forms and emoji sequences hold them, and a presentation
+/// selector (U+FE0E, U+FE0F) right after a visible character outside ASCII or a
+/// keycap's base (a digit, `#` or `*`), as an emoji may end in one.
 pub fn shown_name(display_name: &str) -> String {
     let name = without_hidden(display_name);
     if shows_nothing(&name) {
@@ -335,32 +336,28 @@ pub fn shown_name(display_name: &str) -> String {
 /// else could only carry text nobody sees.
 fn without_hidden(text: &str) -> String {
     let is_joiner = |c: char| matches!(c, '\u{200c}' | '\u{200d}');
-    let is_selector = |c: char| ('\u{fe00}'..='\u{fe0f}').contains(&c);
-    let shows = |c: char| {
-        !(c.is_whitespace()
-            || c.is_control()
-            || is_invisible(c)
-            || is_selector(c)
-            || matches!(c, '\u{2028}' | '\u{2029}'))
-    };
     let chars: Vec<char> = text.chars().collect();
     let mut kept = String::with_capacity(text.len());
     for (at, &c) in chars.iter().enumerate() {
         let last = kept.chars().next_back();
-        // The letter a joiner or selector attaches to, past one kept selector.
-        let base = kept
-            .chars()
-            .rev()
-            .find(|&before| !is_selector(before))
-            .filter(|&before| shows(before) && !last.is_some_and(is_joiner));
         let keep = if is_joiner(c) {
-            let next = chars.get(at + 1).copied().filter(|&next| shows(next));
-            match (base, next) {
+            // What it joins: the visible character before it, past one kept
+            // selector, and the visible one after it.
+            let before = kept
+                .chars()
+                .rev()
+                .find(|&before| !is_selector(before))
+                .filter(|&before| shows(before));
+            let after = chars.get(at + 1).copied().filter(|&after| shows(after));
+            match (before, after) {
                 (Some(before), Some(after)) => !(before.is_ascii() && after.is_ascii()),
                 _ => false,
             }
         } else if is_selector(c) {
-            matches!(c, '\u{fe0e}' | '\u{fe0f}') && last.is_some_and(shows)
+            matches!(c, '\u{fe0e}' | '\u{fe0f}')
+                && last.is_some_and(|before| {
+                    shows(before) && (!before.is_ascii() || matches!(before, '0'..='9' | '#' | '*'))
+                })
         } else {
             !is_invisible(c)
         };
@@ -375,12 +372,19 @@ fn without_hidden(text: &str) -> String {
 /// control characters, invisible characters and variation selectors
 /// (entry-format.md, Required). A field with such a value reads as absent.
 pub(crate) fn shows_nothing(text: &str) -> bool {
-    text.chars().all(|c| {
-        c.is_whitespace()
-            || c.is_control()
-            || is_invisible(c)
-            || ('\u{fe00}'..='\u{fe0f}').contains(&c)
-    })
+    !text.chars().any(shows)
+}
+
+/// Whether `c` shows: it is no space, line break, control character, invisible
+/// character or variation selector.
+fn shows(c: char) -> bool {
+    !(c.is_whitespace() || c.is_control() || is_invisible(c) || is_selector(c))
+}
+
+/// Whether `c` is one of the variation selectors U+FE00 to U+FE0F, which change how
+/// the character before them looks.
+fn is_selector(c: char) -> bool {
+    ('\u{fe00}'..='\u{fe0f}').contains(&c)
 }
 
 /// Every `slug:<name>` an entry's text refers to (design.md, Agent interface), in

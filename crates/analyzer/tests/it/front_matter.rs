@@ -829,6 +829,8 @@ fn a_valid_tag_is_a_short_label_on_one_line() {
         "\u{2764}\u{fe0f}",
         "\u{1f441}\u{fe0f}\u{200d}\u{1f5e8}\u{fe0f}",
         "1\u{fe0f}\u{20e3}",
+        "#\u{fe0f}\u{20e3}",
+        "*\u{fe0f}\u{20e3}",
     ] {
         assert!(is_valid_tag(tag), "{tag:?}");
     }
@@ -860,6 +862,9 @@ fn a_valid_tag_is_a_short_label_on_one_line() {
         "a \u{fe0f}",
         "a\u{fe00}",
         "\u{2764}\u{e0100}",
+        // After an ASCII character only a keycap's base takes one.
+        "a\u{fe0f}",
+        "x\u{fe0e}",
         // Egyptian hieroglyph format controls show nothing on their own.
         "a\u{13430}b",
         "\u{13430}",
