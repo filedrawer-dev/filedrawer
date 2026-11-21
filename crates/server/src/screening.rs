@@ -264,15 +264,28 @@ fn short_line(text: &str) -> String {
 pub struct AnthropicClient {
     http: reqwest::Client,
     api_key: String,
+    url: String,
 }
 
 impl AnthropicClient {
     pub fn new(api_key: String) -> AnthropicClient {
+        AnthropicClient::with_url(api_key, API_URL)
+    }
+
+    /// As [`AnthropicClient::new`], but calling `url`, so a test can stand in for
+    /// the API. The client follows no redirect: each request carries the API key,
+    /// which goes to `url` and nowhere a reply points.
+    pub fn with_url(api_key: String, url: &str) -> AnthropicClient {
         let http = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(300))
+            .redirect(reqwest::redirect::Policy::none())
             .build()
-            .expect("a client with only a timeout set builds");
-        AnthropicClient { http, api_key }
+            .expect("a client with only a timeout and a redirect policy builds");
+        AnthropicClient {
+            http,
+            api_key,
+            url: url.to_string(),
+        }
     }
 }
 
@@ -281,7 +294,7 @@ impl ModelClient for AnthropicClient {
         Box::pin(async move {
             let response = self
                 .http
-                .post(API_URL)
+                .post(&self.url)
                 .header("x-api-key", &self.api_key)
                 .header("anthropic-version", API_VERSION)
                 .json(&request_body(request))

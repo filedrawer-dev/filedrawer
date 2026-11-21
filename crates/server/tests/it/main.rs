@@ -9,6 +9,7 @@ mod admin_series;
 mod admin_suspension;
 mod admin_unknown_fields;
 mod allowance;
+mod anthropic_client;
 mod attachments;
 mod batches;
 mod cites;
