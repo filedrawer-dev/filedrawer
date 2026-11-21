@@ -7,8 +7,9 @@
 # it, checks its hashes, and runs the real-Caddy tests with it; the `report` job opens
 # an issue for that release, or comments on the open one when the verdict changed.
 # bin/caddy-latest (-h) does each step. The new Caddy runs only in `test`, which holds
-# no token that can write. A release whose tag, asset or digest isn't where it should
-# be fails the run red.
+# no token that can write, and gives its read-only one only to the steps that ask
+# GitHub. A release whose tag, asset or digest isn't where it should be fails the run
+# red. A run started by hand on another branch tests, and reports nothing.
 name: Caddy latest
 
 on:
@@ -34,16 +35,17 @@ jobs:
       pinned: ${{ steps.versions.outputs.pinned }}
       needed: ${{ steps.versions.outputs.needed }}
       verdict: ${{ steps.tests.outputs.verdict }}
-    env:
-      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - id: versions
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: bin/caddy-latest versions >> "$GITHUB_OUTPUT"
       - if: steps.versions.outputs.needed == 'true'
         env:
+          GH_TOKEN: ${{ github.token }}
           LATEST: ${{ steps.versions.outputs.latest }}
         run: echo "FILEDRAWER_TEST_CADDY=$(bin/caddy-latest fetch "$LATEST" "$RUNNER_TEMP/caddy")" >> "$GITHUB_ENV"
       - if: steps.versions.outputs.needed == 'true'
@@ -57,7 +59,7 @@ jobs:
 
   report:
     needs: test
-    if: always() && needs.test.outputs.needed == 'true'
+    if: always() && needs.test.outputs.needed == 'true' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

@@ -1,6 +1,9 @@
 """Tests for bin/caddy-latest, which .github/workflows/caddy-latest.yml runs (#100),
 with fakes of gh and curl first on PATH: gh answers from a JSON world and notes the
 issues it opens and the comments it adds; curl serves files from a folder.
+
+The fake gh, fake_gh_issues.py, lists every issue and comment whatever `creator` the
+call names, so these tests show what the script itself counts as its own.
 """
 
 import hashlib
@@ -17,42 +20,10 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "bin/caddy-latest"
 RUN = "https://github.com/filedrawer-dev/filedrawer/actions/runs/7"
+BOT = "github-actions[bot]"
 TITLE = "Caddy 2.12.0 is out; bin/caddy pins 2.11.9"
+FAKE_GH = Path(__file__).with_name("fake_gh_issues.py")
 
-FAKE_GH = """#!/usr/bin/env python3
-import json, sys
-from pathlib import Path
-world_path = Path({world!r})
-world = json.loads(world_path.read_text())
-args = sys.argv[1:]
-with open({log!r}, "a") as log:
-    log.write(json.dumps(args) + "\\n")
-def answer(value):
-    print(json.dumps(value))
-    sys.exit(0)
-if args[:1] == ["api"]:
-    path = args[1]
-    if path in world["api"]:
-        answer(world["api"][path])
-    print("gh: Not Found (HTTP 404)", file=sys.stderr)
-    sys.exit(1)
-if args[:2] == ["issue", "list"]:
-    answer([{{k: i[k] for k in ("number", "title", "state")}} for i in world["issues"]])
-if args[:2] == ["issue", "view"]:
-    [issue] = [i for i in world["issues"] if str(i["number"]) == args[2]]
-    answer({{"body": issue["body"], "comments": [{{"body": c}} for c in issue["comments"]]}})
-if args[:2] == ["issue", "create"]:
-    title = args[args.index("--title") + 1]
-    body = args[args.index("--body") + 1]
-    world["issues"].append({{"number": len(world["issues"]) + 1, "title": title,
-        "state": "OPEN", "body": body, "comments": []}})
-elif args[:2] == ["issue", "comment"]:
-    [issue] = [i for i in world["issues"] if str(i["number"]) == args[2]]
-    issue["comments"].append(args[args.index("--body") + 1])
-else:
-    sys.exit(2)
-world_path.write_text(json.dumps(world))
-"""
 
 FAKE_CURL = """#!/bin/sh
 # Serves URL's last path part from the files folder into -o's path.
@@ -118,7 +89,9 @@ def ci(tmp_path):
     fakes.mkdir()
     world_path = tmp_path / "world.json"
     log = tmp_path / "gh.log"
-    executable(fakes / "gh", FAKE_GH.format(world=str(world_path), log=str(log)))
+    executable(
+        fakes / "gh", f'#!/bin/sh\nexec python3 {FAKE_GH} {world_path} {log} "$@"\n'
+    )
     executable(fakes / "curl", FAKE_CURL.format(files=files))
     state = SimpleNamespace(world=world, files=files, data=data, asset=asset)
 
@@ -127,7 +100,10 @@ def ci(tmp_path):
         result = subprocess.run(
             [str(SCRIPT), *args],
             cwd=checkout,
-            env={"PATH": f"{fakes}:/usr/bin:/bin"},
+            env={
+                "PATH": f"{fakes}:/usr/bin:/bin",
+                "GH_REPO": "filedrawer-dev/filedrawer",
+            },
             stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
@@ -167,7 +143,7 @@ def test_versions_needs_nothing_for_a_release_at_or_behind_the_pin(ci, tag):
     assert "nothing to test" in result.stderr
 
 
-@pytest.mark.parametrize("tag", ["2.12.0", "v2.12.0-beta.1", "", "v2.12"])
+@pytest.mark.parametrize("tag", ["2.12.0", "v2.12.0-beta.1", "", "v2.12", "v2.12.0\n"])
 def test_versions_fails_on_a_tag_it_doesnt_expect(ci, tag):
     ci.world["api"]["repos/caddyserver/caddy/releases/latest"] = {"tag_name": tag}
     result = ci.run("versions")
@@ -207,6 +183,12 @@ def test_fetch_refuses_a_missing_or_wrong_digest(ci, digest):
     assert not (ci.out / "caddy").exists()
 
 
+def test_fetch_takes_only_a_version(ci):
+    result = ci.run("fetch", "2.12.0\n", str(ci.out))
+    assert result.returncode == 2
+    assert not ci.out.exists()
+
+
 def test_fetch_fails_on_a_renamed_asset(ci):
     (ci.files / ci.asset).rename(ci.files / "caddy_2.12.0_linux_x86_64.tar.gz")
     result = ci.run("fetch", "2.12.0", str(ci.out))
@@ -244,14 +226,24 @@ def test_report_comments_when_the_verdict_changes(ci):
     ci.run("report", "2.12.0", "2.11.9", "passed", RUN)
     ci.run("report", "2.12.0", "2.11.9", "passed", RUN)
     [issue] = ci.world["issues"]
-    assert len(issue["comments"]) == 1
-    assert "passed" in issue["comments"][0]
+    [comment] = issue["comments"]
+    assert "passed" in comment["body"]
+
+
+def an_issue(number: int, title: str = TITLE, **fields) -> dict:
+    """An issue as the fake gh keeps it, the workflow's own unless `author` says."""
+    return {
+        "number": number,
+        "title": title,
+        "state": "open",
+        "body": "x",
+        "author": BOT,
+        "comments": [],
+    } | fields
 
 
 def test_report_leaves_a_closed_issue_for_the_release_closed(ci):
-    ci.world["issues"].append(
-        {"number": 1, "title": TITLE, "state": "CLOSED", "body": "x", "comments": []}
-    )
+    ci.world["issues"].append(an_issue(1, state="closed"))
     result = ci.run("report", "2.12.0", "2.11.9", "failed", RUN)
     assert result.returncode == 0, result.stderr
     assert "#1 is closed" in result.stdout
@@ -260,15 +252,50 @@ def test_report_leaves_a_closed_issue_for_the_release_closed(ci):
 
 
 def test_report_matches_the_title_exactly(ci):
-    ci.world["issues"].append(
-        {
-            "number": 1,
-            "title": "Caddy 2.12.0 is out; bin/caddy pins 2.11.8",
-            "state": "OPEN",
-            "body": "x",
-            "comments": [],
-        }
-    )
+    ci.world["issues"].append(an_issue(1, "Caddy 2.12.0 is out; bin/caddy pins 2.11.8"))
     ci.run("report", "2.12.0", "2.11.9", "passed", RUN)
     assert [i["title"] for i in ci.world["issues"]][-1] == TITLE
     assert len(ci.world["issues"]) == 2
+
+
+@pytest.mark.parametrize(
+    "theirs",
+    [
+        {"state": "closed"},
+        {"body": f"The real-Caddy tests failed against Caddy 2.12.0 ({RUN})."},
+        # A user can't take the workflow's name, but another app could have a like one.
+        {"author": "github-actions-x[bot]", "state": "closed"},
+    ],
+)
+def test_report_counts_only_an_issue_the_workflow_opened(ci, theirs):
+    """Anyone may open an issue with the title a release will get, and close it."""
+    ci.world["issues"].append(an_issue(1, **{"author": "someone", **theirs}))
+    result = ci.run("report", "2.12.0", "2.11.9", "failed", RUN)
+    assert result.returncode == 0, result.stderr
+    theirs, ours = ci.world["issues"]
+    assert theirs["comments"] == []
+    assert (ours["author"], ours["title"], ours["state"]) == (BOT, TITLE, "open")
+    assert "failed" in ours["body"]
+
+
+def test_report_takes_no_pull_request_for_its_issue(ci):
+    ci.world["issues"].append(an_issue(1, state="closed", pull_request={"url": "x"}))
+    ci.run("report", "2.12.0", "2.11.9", "failed", RUN)
+    assert len(ci.world["issues"]) == 2
+
+
+@pytest.mark.parametrize(("said", "comments"), [("passed", 1), ("failed", 0)])
+def test_report_reads_the_last_verdict_only_from_its_own_comments(ci, said, comments):
+    """A comment anyone adds in the report's words changes nothing: the verdict
+    that differs from the workflow's last is still said, and the same one isn't."""
+    ci.run("report", "2.12.0", "2.11.9", "failed", RUN)
+    [ours] = ci.world["issues"]
+    ours["comments"].append(
+        {
+            "author": "someone",
+            "body": f"The real-Caddy tests {said} against Caddy 2.12.0 ({RUN}).",
+        }
+    )
+    ci.run("report", "2.12.0", "2.11.9", said, RUN)
+    [ours] = ci.world["issues"]
+    assert [c["author"] for c in ours["comments"]].count(BOT) == comments

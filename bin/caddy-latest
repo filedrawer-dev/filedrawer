@@ -16,7 +16,10 @@
         opens the issue "Caddy LATEST is out; bin/caddy pins PINNED", saying whether
         the real-Caddy tests passed or failed against it (VERDICT; anything else means
         they didn't finish), and links the run. When an open issue has that title, it
-        comments only if the verdict changed; a closed one is left closed.
+        comments only if the verdict changed; a closed one is left closed. Only an
+        issue the workflow opened counts, and only its own comments say what the
+        last verdict was: anyone may open an issue with that title, or comment in
+        the report's words. The repo is $GH_REPO.
 
 It reaches GitHub through gh, with GH_TOKEN, and downloads with curl.
 """
@@ -32,7 +35,10 @@ from pathlib import Path
 
 CADDY = "repos/caddyserver/caddy"
 DOWNLOADS = "https://github.com/caddyserver/caddy/releases/download"
-VERSION = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
+VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)")
+# Who a workflow's GITHUB_TOKEN writes as, in the REST API's spelling. No user can
+# have the name: a login takes no brackets.
+WORKFLOW = "github-actions[bot]"
 
 
 def fail(message: str) -> None:
@@ -53,11 +59,11 @@ def key(version: str) -> tuple[int, ...]:
 
 def versions() -> None:
     tag = json.loads(gh("api", f"{CADDY}/releases/latest")).get("tag_name", "")
-    if not (tag.startswith("v") and VERSION.match(tag[1:])):
+    if not (tag.startswith("v") and VERSION.fullmatch(tag[1:])):
         fail(f"Caddy's latest release is tagged '{tag}', not vX.Y.Z")
     latest = tag[1:]
     found = re.search(r'^VERSION = "(.*)"$', Path("bin/caddy").read_text(), re.M)
-    if not (found and VERSION.match(found.group(1))):
+    if not (found and VERSION.fullmatch(found.group(1))):
         fail("can't read the VERSION bin/caddy pins")
     pinned = found.group(1)
     needed = key(latest) > key(pinned)
@@ -111,22 +117,31 @@ def verdict_line(latest: str, verdict: str, run: str) -> str:
     return f"The real-Caddy tests didn't finish against Caddy {latest} ({run})."
 
 
+def own(items: list[dict]) -> list[dict]:
+    """Those of the issues or comments the workflow wrote."""
+    return [
+        item
+        for item in items
+        if (item.get("user") or {}).get("login") == WORKFLOW
+        and item["user"].get("type") == "Bot"
+    ]
+
+
+def listed(path: str, *fields: str) -> list[dict]:
+    """Every item of a list in GitHub's API, whose pages gh prints as a list each."""
+    args = [arg for field in fields for arg in ("-f", field)]
+    pages = gh(
+        "api", "--method", "GET", "--paginate", "--slurp", path, "-f", "per_page=100", *args
+    )  # fmt: skip
+    return [item for page in json.loads(pages) for item in page]
+
+
 def report(latest: str, pinned: str, verdict: str, run: str) -> None:
     title = f"Caddy {latest} is out; bin/caddy pins {pinned}"
     line = verdict_line(latest, verdict, run)
-    issues = json.loads(
-        gh(
-            "issue",
-            "list",
-            "--state",
-            "all",
-            "--limit",
-            "500",
-            "--json",
-            "number,title,state",
-        )
-    )
-    same = [i for i in issues if i["title"] == title]
+    # gh fills {owner} and {repo} from $GH_REPO. The list holds pull requests too.
+    issues = listed("repos/{owner}/{repo}/issues", "state=all", f"creator={WORKFLOW}")
+    same = [i for i in own(issues) if i["title"] == title and "pull_request" not in i]
     if not same:
         body = (
             f"{line}\n\n"
@@ -140,16 +155,14 @@ def report(latest: str, pinned: str, verdict: str, run: str) -> None:
         gh("issue", "create", "--title", title, "--body", body)
         print(f"opened: {title}")
         return
-    issue = same[0]
-    if issue["state"] != "OPEN":
+    issue = max(same, key=lambda i: i["number"])
+    if issue["state"] != "open":
         print(f"#{issue['number']} is closed; leaving it.")
         return
-    thread = json.loads(
-        gh("issue", "view", str(issue["number"]), "--json", "body,comments")
-    )
+    comments = listed(f"repos/{{owner}}/{{repo}}/issues/{issue['number']}/comments")
     said = [
         text
-        for text in [thread["body"], *(c["body"] for c in thread["comments"])]
+        for text in [issue["body"] or "", *(c["body"] for c in own(comments))]
         if text.startswith("The real-Caddy tests ")
     ]
     # The verdict, without the run's link, as the last one said it.
@@ -164,7 +177,7 @@ def main(args: list[str]) -> None:
     match args:
         case ["versions"]:
             versions()
-        case ["fetch", version, dest] if VERSION.match(version):
+        case ["fetch", version, dest] if VERSION.fullmatch(version):
             fetch(version, Path(dest))
         case ["report", latest, pinned, verdict, run]:
             report(latest, pinned, verdict, run)
