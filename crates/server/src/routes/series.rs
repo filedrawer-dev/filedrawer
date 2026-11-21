@@ -17,7 +17,7 @@ use crate::error::AppError;
 use crate::markdown;
 use crate::pages::{SeriesPage, fields_above, page};
 use crate::queue::Screened;
-use crate::respond::{DELIMITER, Format, Reading, author_name, one_line};
+use crate::respond::{DELIMITER, Format, Reading, author_name, one_line, shown_name};
 use crate::screening::Verdict;
 use crate::series::{self, Series, Version};
 use crate::{AppState, allowance, queue, time};
@@ -26,7 +26,7 @@ use crate::{AppState, allowance, queue, time};
 /// last so nothing in it can pass for the account, or "account deleted".
 fn byline(display_name: Option<&str>) -> String {
     match display_name {
-        Some(name) => format!("by {}", one_line(name)),
+        Some(name) => format!("by {}", shown_name(name)),
         None => author_name(None),
     }
 }

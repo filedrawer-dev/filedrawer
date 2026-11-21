@@ -5,7 +5,7 @@ use axum::http::request::Parts;
 use axum::http::{HeaderMap, Method, header};
 
 use crate::error::AppError;
-use crate::respond::one_line;
+use crate::respond::shown_name;
 use crate::{AppState, ids, suspension};
 
 /// The account a request's `Authorization: Bearer` token belongs to. Only an account
@@ -23,7 +23,11 @@ impl TokenAccount {
     /// The reply line that names the account, above the delimiter: its ID and its
     /// display name on one line.
     pub fn line(&self) -> String {
-        format!("account: {} ({})\n", self.id, one_line(&self.display_name))
+        format!(
+            "account: {} ({})\n",
+            self.id,
+            shown_name(&self.display_name)
+        )
     }
 
     /// The account, as a JSON reply names it.

@@ -47,10 +47,17 @@ pub fn echoed(text: &str) -> String {
     shown
 }
 
+/// A display name beside the server's own words, as on a line above the delimiter:
+/// on one line and without invisible characters, which a model may read though no
+/// person sees them. A name that then shows nothing is "(no name)".
+pub fn shown_name(display_name: &str) -> String {
+    one_line(&analyzer::shown_name(display_name))
+}
+
 /// An author's display name for a line above the delimiter, or "account deleted"
 /// once the account is deleted and its name gone.
 pub fn author_name(display_name: Option<&str>) -> String {
-    display_name.map_or_else(|| "account deleted".to_string(), one_line)
+    display_name.map_or_else(|| "account deleted".to_string(), shown_name)
 }
 
 /// The card, indented, then each warning on a line of its own: the part of a

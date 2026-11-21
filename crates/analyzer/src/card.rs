@@ -7,7 +7,7 @@ use crate::choice::{
 };
 use crate::fields::Fields;
 use crate::links::{Pin, code_pin};
-use crate::references::Reference;
+use crate::references::{Reference, paper_key, successor_key};
 use crate::results::{Reading, Results, Row};
 
 /// The analyzer version every card names.
@@ -84,8 +84,8 @@ pub fn render_card(analysis: &Analysis, context: &CardContext) -> String {
     let is_effect = fields.outcome.known() == Some(Outcome::Effect);
     let lines = [
         Some(header(analysis, context)),
-        Some(vec![author(fields.title.as_deref().unwrap_or(""))]),
-        Some(vec![author(fields.hypothesis.as_deref().unwrap_or(""))]),
+        Some(whole_line(fields.title.as_deref(), "(no title)")),
+        Some(whole_line(fields.hypothesis.as_deref(), "(no hypothesis)")),
         Some(primary_row(analysis)),
         Some(labels(analysis)),
         Some(interval_details(analysis)),
@@ -170,6 +170,16 @@ fn one_line(text: &str) -> String {
         })
         .collect();
     spaced.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// A line that is author text alone, lines 2 and 3, or the server's `absent` when
+/// there is none or it shows nothing: a blank line would end the card where cards
+/// are listed one after another.
+fn whole_line(text: Option<&str>, absent: &str) -> Vec<Part> {
+    match text.filter(|text| !crate::shows_nothing(text)) {
+        Some(text) => vec![author(text)],
+        None => vec![server(absent)],
+    }
 }
 
 /// A known value's words, or "unrecognized <field>", or `absent` when it's missing.
@@ -544,8 +554,13 @@ fn flags(analysis: &Analysis, context: &CardContext) -> Vec<Part> {
     if fields.data.is_empty() && reanalyzes_stored_data(analysis) {
         parts.push(server("; no data"));
     }
+    // The flags are the server's own, so the two fields shown among them appear
+    // only as the server read them, never as written.
     if let Some(paper) = &fields.published_in {
-        parts.extend([server("; now part of a paper "), author(paper.as_str())]);
+        match paper_key(paper) {
+            Some(key) => parts.extend([server("; now part of a paper "), author(key)]),
+            None => parts.push(server("; unrecognized published_in")),
+        }
     }
     if let Some(version) = &context.superseded_by_version {
         parts.push(server(format!("; superseded by {version}")));
@@ -553,7 +568,10 @@ fn flags(analysis: &Analysis, context: &CardContext) -> Vec<Part> {
     // The server's own record of a successor, a newer version or a resolved
     // `slug:` reference, replaces the author's text for it.
     if let (Some(successor), None) = (&fields.superseded_by, &context.superseded_by_version) {
-        parts.extend([server("; superseded by "), author(successor.as_str())]);
+        match successor_key(successor) {
+            Some(key) => parts.extend([server("; superseded by "), author(key)]),
+            None => parts.push(server("; unrecognized superseded_by")),
+        }
     }
     for replication in &context.replications {
         let kind = if replication.self_replication {
@@ -579,7 +597,8 @@ fn reanalyzes_stored_data(analysis: &Analysis) -> bool {
 }
 
 /// Line 11: the author's display name, account ID and linked handles, or "account
-/// deleted" and the account ID once the account is deleted.
+/// deleted" and the account ID once the account is deleted. The name loses its
+/// invisible characters, and one that then shows nothing is the server's "(no name)".
 fn byline(context: &CardContext) -> Vec<Part> {
     let Some(person) = &context.author else {
         return vec![server("<author>")];
@@ -588,7 +607,7 @@ fn byline(context: &CardContext) -> Vec<Part> {
         return vec![server(format!("account deleted, {}", person.account_id))];
     };
     let mut parts = vec![
-        author(name.as_str()),
+        author(crate::shown_name(name)),
         server(format!(", account {}", person.account_id)),
     ];
     if !person.handles.is_empty() {

@@ -683,8 +683,12 @@ pub async fn cards(State(state): State<AppState>) -> Result<String, AppError> {
     Ok(cards_text(cards.iter().map(String::as_str)))
 }
 
+/// The tags in use, with counts. A tag starts its line, with nothing of the server's
+/// before it, so only a tag the format takes is listed: one stored before the
+/// analyzer skipped the others can't add a line or carry text nobody sees.
 pub async fn tags(State(state): State<AppState>, format: Format) -> Result<Response, AppError> {
-    let tags = entries::tags(&state.pool).await?;
+    let mut tags = entries::tags(&state.pool).await?;
+    tags.retain(|(tag, _)| analyzer::is_valid_tag(tag));
     let text: String = tags
         .iter()
         .map(|(tag, count)| format!("{tag} {count}\n"))

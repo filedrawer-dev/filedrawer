@@ -127,6 +127,18 @@ pub fn one_line_name(text: &str, max: usize) -> Option<&str> {
     (length >= 1 && length <= max && !text.contains(char::is_control)).then_some(text)
 }
 
+/// The longest display name, in characters (design.md, Accounts).
+pub const DISPLAY_NAME_CHARS: usize = 50;
+
+/// `text` trimmed, if it can be a display name: 1 to [`DISPLAY_NAME_CHARS`]
+/// characters on one line that show something, with no invisible character. The name is printed beside the
+/// server's own words, on the `author:` line and the card's last line, so it holds
+/// nothing a reader can't see.
+pub fn display_name(text: &str) -> Option<&str> {
+    let text = text.trim();
+    analyzer::is_label(text, DISPLAY_NAME_CHARS).then_some(text)
+}
+
 /// A new email link's secret for `account_id`, and its hash, which is all that is
 /// stored.
 pub async fn new_email_link(

@@ -700,3 +700,91 @@ async fn every_account_form_needs_this_sites_origin() {
         assert_eq!(reply.status, StatusCode::FORBIDDEN, "{path}");
     }
 }
+
+/// The display name stands in the `author:` line above the delimiter and on the
+/// card's last line, so it is a label on one line that holds nothing invisible.
+#[tokio::test]
+async fn signup_refuses_a_display_name_with_invisible_characters() {
+    let app = test_app().await;
+    for name in [
+        "Ada\u{e0061}\u{e0062}",
+        "Ada\u{200b}",
+        "Ada\u{202e}",
+        "Ada\u{2028}Lovelace",
+        "\u{3164}",
+        "\u{fe0f}",
+    ] {
+        let reply = app
+            .form(
+                "/signup",
+                &[
+                    ("email", "mallory@example.com"),
+                    ("password", PASSWORD),
+                    ("display_name", name),
+                ],
+                None,
+            )
+            .await;
+        assert_eq!(reply.status, StatusCode::UNPROCESSABLE_ENTITY, "{name:?}");
+        assert!(
+            error_on(&reply.body).contains("invisible characters"),
+            "{name:?}: {}",
+            reply.body
+        );
+    }
+    assert!(app.sent().await.is_empty());
+}
+
+/// A name stored before signup refused invisible characters is printed without
+/// them, and one that then shows nothing as the server's "(no name)".
+#[tokio::test]
+async fn a_stored_display_name_is_printed_without_its_invisible_characters() {
+    let app = test_app().await;
+    let hidden = "\u{e0061}\u{e0062}\u{200b}\u{202e}";
+    for (stored, shown) in [
+        (format!("Ada{hidden} Lovelace"), "Ada Lovelace"),
+        (hidden.to_string(), "(no name)"),
+    ] {
+        sqlx::query("UPDATE accounts SET display_name = ? WHERE id = ?")
+            .bind(&stored)
+            .bind(&app.account)
+            .execute(&app.pool)
+            .await
+            .unwrap();
+        let reply = app.post("/entries", entry(shown, "")).await;
+        let account = &app.account;
+        assert!(
+            reply
+                .body
+                .contains(&format!("account: {account} ({shown})\n")),
+            "{}",
+            reply.body
+        );
+        let id = common::id_in(&reply.body);
+        app.post(&format!("/e/{id}/publish"), "").await;
+        let body = app.get(&format!("/e/{id}")).await.body;
+        let (server, _) = body.split_once(common::DELIMITER).expect(&body);
+        assert!(
+            server.contains(&format!("author: {shown}, account {account}\n")),
+            "{server:?}"
+        );
+        let cards = app.get("/cards.txt").await.body;
+        assert!(
+            cards.contains(&format!("\n{shown}, account {account}\n")),
+            "{cards:?}"
+        );
+        assert!(!server.contains('\u{e0061}'), "{server:?}");
+        assert!(!cards.contains('\u{e0061}'), "{cards:?}");
+        let made = app
+            .post("/series", common::series::series_doc(shown, "About it."))
+            .await;
+        let series = app
+            .get_as_author(&format!("/series/{}", common::id_in(&made.body)))
+            .await
+            .body;
+        assert!(
+            series.contains(&format!("member: {account}, by {shown}\n")),
+            "{series:?}"
+        );
+    }
+}

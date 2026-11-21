@@ -253,6 +253,83 @@ pub fn is_valid_slug(slug: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
 }
 
+/// The most tags an entry's `tags` keeps (entry-format.md, Fields); the rest are
+/// dropped with a warning.
+pub const MAX_TAGS: usize = 20;
+/// The longest a tag may be, in characters (entry-format.md, Fields).
+pub const MAX_TAG_CHARS: usize = 60;
+
+/// Whether `tag` is a tag the format takes (entry-format.md, Fields): a label of 1
+/// to [`MAX_TAG_CHARS`] characters. `GET /tags` lists each tag at the start of a
+/// line with nothing of the server's before it, so nothing else is read as one.
+pub fn is_valid_tag(tag: &str) -> bool {
+    is_label(tag, MAX_TAG_CHARS)
+}
+
+/// Whether `text` is a short label on one line, such as a tag or a display name
+/// (entry-format.md, Fields: `tags`): at most `max_chars` characters, with something
+/// that shows, and no line break, other control character or invisible character.
+pub fn is_label(text: &str, max_chars: usize) -> bool {
+    text.chars().count() <= max_chars
+        && !shows_nothing(text)
+        && !text
+            .chars()
+            .any(|c| c.is_control() || matches!(c, '\u{2028}' | '\u{2029}') || is_invisible(c))
+}
+
+/// Whether `c` is a character that shows nothing where text is read: a
+/// bidirectional control, a zero-width or other format character, a blank filler, or
+/// a tag character, which a model may read as a letter though no person sees it
+/// (entry-format.md, The card). The variation selectors U+FE00 to U+FE0F are not
+/// among them, since an emoji may end in one.
+fn is_invisible(c: char) -> bool {
+    matches!(
+        c,
+        '\u{ad}'
+            | '\u{34f}'
+            | '\u{61c}'
+            | '\u{115f}'..='\u{1160}'
+            | '\u{17b4}'..='\u{17b5}'
+            | '\u{180b}'..='\u{180f}'
+            | '\u{200b}'..='\u{200f}'
+            | '\u{202a}'..='\u{202e}'
+            | '\u{2060}'..='\u{206f}'
+            | '\u{2800}'
+            | '\u{3164}'
+            | '\u{feff}'
+            | '\u{ffa0}'
+            | '\u{fff0}'..='\u{fffb}'
+            | '\u{16fe4}'
+            | '\u{1bca0}'..='\u{1bca3}'
+            | '\u{1d159}'
+            | '\u{1d173}'..='\u{1d17a}'
+            | '\u{e0000}'..='\u{e0fff}'
+    )
+}
+
+/// A display name as it is printed beside the server's own words, on card line 11
+/// and above the delimiter (entry-format.md, The card): without its invisible
+/// characters, or "(no name)" when nothing of it then shows.
+pub fn shown_name(display_name: &str) -> String {
+    let name: String = display_name.chars().filter(|c| !is_invisible(*c)).collect();
+    if shows_nothing(&name) {
+        return "(no name)".to_string();
+    }
+    name
+}
+
+/// Whether `text` shows nothing: it is empty, or holds only spaces, line breaks,
+/// control characters, invisible characters and variation selectors
+/// (entry-format.md, Required). A field with such a value reads as absent.
+pub(crate) fn shows_nothing(text: &str) -> bool {
+    text.chars().all(|c| {
+        c.is_whitespace()
+            || c.is_control()
+            || is_invisible(c)
+            || ('\u{fe00}'..='\u{fe0f}').contains(&c)
+    })
+}
+
 /// Every `slug:<name>` an entry's text refers to (design.md, Agent interface), in
 /// its fields or its body.
 pub fn slug_references(text: &str) -> std::collections::BTreeSet<String> {

@@ -72,6 +72,35 @@ impl Reference {
     }
 }
 
+/// The longest key of a paper the card shows. A DOI's suffix has no length of its
+/// own and may hold `;` and `:`, so a longer one could read as more than an ID.
+pub(crate) const MAX_PAPER_KEY_CHARS: usize = 100;
+
+/// The key of the paper `published_in` names, an arXiv ID or a DOI, as card line 10
+/// shows it beside the server's own flags (entry-format.md, The card), or `None`
+/// when the server reads the value as neither. A space after `arXiv:` is allowed.
+pub(crate) fn paper_key(text: &str) -> Option<String> {
+    let text = text.trim();
+    let paper = match strip_prefix_ignoring_case(text, "arXiv:") {
+        Some(id) => arxiv_id(id.trim_start()).map(Reference::Arxiv),
+        None => Reference::parse(text),
+    };
+    let key = match paper? {
+        paper @ (Reference::Arxiv(_) | Reference::Doi(_)) => paper.key(),
+        _ => return None,
+    };
+    (key.chars().count() <= MAX_PAPER_KEY_CHARS).then_some(key)
+}
+
+/// The key of the entry `superseded_by` names, an entry ID or `slug:<name>`, as
+/// card line 10 shows it (entry-format.md, The card), or `None` when it is neither.
+pub(crate) fn successor_key(text: &str) -> Option<String> {
+    match Reference::parse(text)? {
+        successor @ (Reference::Entry(_) | Reference::Slug(_)) => Some(successor.key()),
+        _ => None,
+    }
+}
+
 /// Crockford's base32 in lowercase, the alphabet of the server's IDs.
 const ID_ALPHABET: &str = "0123456789abcdefghjkmnpqrstvwxyz";
 

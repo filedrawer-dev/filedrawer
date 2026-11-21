@@ -148,7 +148,7 @@ pub async fn signup(
     Form(form): Form<SignupForm>,
 ) -> Result<Response, AppError> {
     let email = accounts::normalize_email(&form.email);
-    let display_name = accounts::one_line_name(&form.display_name, 50);
+    let display_name = accounts::display_name(&form.display_name);
     let invite = Some(form.invite.trim()).filter(|code| !code.is_empty());
     let again = |problem: &str| {
         let template = SignupPage {
@@ -164,7 +164,10 @@ pub async fn signup(
     } else if let Some(problem) = passwords::problem(&form.password) {
         Some(problem)
     } else if display_name.is_none() {
-        Some("A display name is 1 to 50 characters on one line.".to_string())
+        Some(format!(
+            "A display name is 1 to {} characters on one line, with no invisible characters.",
+            accounts::DISPLAY_NAME_CHARS
+        ))
     } else {
         None
     };

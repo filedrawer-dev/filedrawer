@@ -7,8 +7,9 @@ use yaml_rust2::{Yaml, YamlLoader};
 
 use crate::choice::{Choice, Vocabulary};
 use crate::fields::{DataItem, Fields, Model, PositiveControl, SmallestEffect, Writer};
-use crate::references::{MAX_REFERENCES, Reference};
+use crate::references::{MAX_PAPER_KEY_CHARS, MAX_REFERENCES, Reference, paper_key, successor_key};
 use crate::report::{Refusal, Warning, WarningKind};
+use crate::{MAX_TAG_CHARS, MAX_TAGS, is_valid_tag};
 
 /// The front matter's fields, the names it didn't recognize, and what it found wrong.
 pub(crate) struct FrontMatter {
@@ -258,10 +259,10 @@ impl Reader {
             "hypothesis_source" => self.fields.hypothesis_source = self.text(name, value),
             "stage" => self.fields.stage = self.choice(value),
             "stopped_because" => self.fields.stopped_because = self.text(name, value),
-            "superseded_by" => self.fields.superseded_by = self.text(name, value),
+            "superseded_by" => self.fields.superseded_by = self.superseded_by(value),
             "run_dates" => self.fields.run_dates = self.list(name, value),
             "models" => self.fields.models = self.mapping_list(name, value, Self::model),
-            "tags" => self.fields.tags = self.list(name, value),
+            "tags" => self.fields.tags = self.tags(value),
             "positive_control" => {
                 self.fields.positive_control = self.mapping(name, value, Self::positive_control)
             }
@@ -307,8 +308,8 @@ impl Reader {
         }
     }
 
-    /// A scalar as text. Empty text, `null` and collections read as absent; a
-    /// collection also warns.
+    /// A scalar as text. Text that shows nothing, `null` and collections read as
+    /// absent; a collection also warns.
     fn text(&mut self, name: &str, value: &Yaml) -> Option<String> {
         match value {
             Yaml::Array(_) | Yaml::Hash(_) => {
@@ -395,15 +396,84 @@ impl Reader {
         kept
     }
 
+    /// `published_in`, kept as written. The card shows it beside the server's own
+    /// flags, and so only as the paper the server reads it as; a value it reads as
+    /// none is warned.
     fn published_in(&mut self, value: &Yaml) -> Option<String> {
         let text = self.paper("published_in", value)?;
-        if !is_paper_id(&text) && !matches!(value, Yaml::Real(_) | Yaml::Integer(_)) {
+        if paper_key(&text).is_none() && !matches!(value, Yaml::Real(_) | Yaml::Integer(_)) {
             self.warn(
                 WarningKind::NotAPaper,
-                format!("`published_in: {text}` is not a DOI or `arXiv:<id>`; other links go in the body"),
+                format!(
+                    "`published_in: {text}` is not a DOI or `arXiv:<id>` of at most {MAX_PAPER_KEY_CHARS} characters; other links go in the body"
+                ),
             );
         }
         Some(text)
+    }
+
+    /// `superseded_by`, kept as written, and warned when the card can't show it.
+    fn superseded_by(&mut self, value: &Yaml) -> Option<String> {
+        let text = self.text("superseded_by", value)?;
+        if successor_key(&text).is_none() {
+            self.warn(
+                WarningKind::UnrecognizedValue,
+                format!(
+                    "`superseded_by: {text}` is not an entry ID or `slug:<name>`, so the card can't show it"
+                ),
+            );
+        }
+        Some(text)
+    }
+
+    /// `tags`: the first [`MAX_TAGS`], each trimmed. A tag that is no short label
+    /// (see [`is_valid_tag`]) is skipped. The warnings name a tag by its place in
+    /// the list as written, never by its text.
+    fn tags(&mut self, value: &Yaml) -> Vec<String> {
+        let mut items: Vec<&Yaml> = match value {
+            Yaml::Array(items) => items.iter().collect(),
+            Yaml::Hash(_) => {
+                self.warn(
+                    WarningKind::MalformedField,
+                    "`tags` should be a list".to_string(),
+                );
+                return Vec::new();
+            }
+            scalar => vec![scalar],
+        };
+        if items.len() > MAX_TAGS {
+            self.warn(
+                WarningKind::MalformedField,
+                format!(
+                    "`tags` lists {} tags; only the first {MAX_TAGS} were read",
+                    items.len()
+                ),
+            );
+            items.truncate(MAX_TAGS);
+        }
+        let mut kept = Vec::new();
+        for (position, item) in (1..).zip(items) {
+            let tag = match item {
+                // A list or mapping is no label.
+                Yaml::Array(_) | Yaml::Hash(_) => None,
+                scalar => match written_text(scalar) {
+                    // An empty item is no tag at all.
+                    None => continue,
+                    Some(text) if text.trim().is_empty() => continue,
+                    Some(text) => Some(text.trim().to_string()).filter(|tag| is_valid_tag(tag)),
+                },
+            };
+            match tag {
+                Some(tag) => kept.push(tag),
+                None => self.warn(
+                    WarningKind::MalformedField,
+                    format!(
+                        "tag {position} in `tags` was not read: a tag is at most {MAX_TAG_CHARS} characters on one line, with no invisible characters"
+                    ),
+                ),
+            }
+        }
+        kept
     }
 
     fn choice<T: Vocabulary>(&mut self, value: &Yaml) -> Choice<T> {
@@ -549,19 +619,26 @@ fn get<'a>(map: &'a yaml_rust2::yaml::Hash, key: &str) -> &'a Yaml {
     map.get(&Yaml::String(key.into())).unwrap_or(&NULL)
 }
 
-/// A scalar's text as written; `None` for null, empty text and collections.
+/// A scalar's text as written; `None` for null, collections and text that shows
+/// nothing, such as spaces, control characters or invisible ones alone.
 fn scalar_text(value: &Yaml) -> Option<String> {
-    let text = match value {
-        Yaml::String(text) | Yaml::Real(text) => text.clone(),
-        Yaml::Integer(number) => number.to_string(),
-        Yaml::Boolean(flag) => flag.to_string(),
-        _ => return None,
-    };
-    (!text.trim().is_empty()).then_some(text)
+    written_text(value).filter(|text| !crate::shows_nothing(text))
+}
+
+/// A scalar's text as written, whatever it shows; `None` for null and collections.
+fn written_text(value: &Yaml) -> Option<String> {
+    match value {
+        Yaml::String(text) | Yaml::Real(text) => Some(text.clone()),
+        Yaml::Integer(number) => Some(number.to_string()),
+        Yaml::Boolean(flag) => Some(flag.to_string()),
+        _ => None,
+    }
 }
 
 /// Whether `text` is `arXiv:<id>` or a DOI (`10.<registrant>/<suffix>`, bare or as a
-/// doi.org URL).
+/// doi.org URL), by its shape alone, for telling a `data` item that names a paper
+/// from a link. `published_in` is read more strictly, by `paper_key`, since the
+/// card shows it.
 pub(crate) fn is_paper_id(text: &str) -> bool {
     let text = text.trim();
     if let Some(id) = text.strip_prefix("arXiv:") {

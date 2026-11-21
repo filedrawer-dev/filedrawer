@@ -14,7 +14,7 @@ Add a new entry at the end of the topic it belongs to, or start a topic when non
 
 - Options: the server's note and the claim first (`interval includes 0; null: +0.012 [−0.047, +0.070], n 520/520, fraction`), or the numbers first as the Example in entry-format.md shows (`+0.012 [−0.047, +0.070], n 520/520, fraction: no_effect; interval includes 0`).
 - Chosen: note first.
-  The card's rules say so for line 4 and for every line ("the server's own words come before author text"), and a long unit can then never cut the note.
+  The card's rules say so for line 4 and for every line that isn't author text alone ("the server's own words come before author text"), and a long unit can then never cut the note.
 - Against: the Example is the only worked line 4, and readers may scan for the number first.
   If the Example is right, the line 4 rule needs rewording instead.
 
@@ -49,6 +49,24 @@ Add a new entry at the end of the topic it belongs to, or start a topic when non
 - Options: count rows that claim nothing in line 1's tally ("rows: 1 effect, 2 null, 1 no claim"), or leave them out as the spec's example does.
 - Chosen: count them, so a reader sees how many rows the tally covers.
 - Against: the example lists only the three claims, and the "and N more rows" on line 4 already says how many rows there are.
+
+#### A card line with nothing to show
+
+- Options: let a title or hypothesis that shows nothing leave its line blank; drop the line; or write the server's own placeholder.
+- Chosen: the placeholders "(no title)" and "(no hypothesis)", and "(no name)" for a display name that shows nothing.
+  A blank line ends a card in `/cards.txt` and `/search`, and a dropped line would move every line after it.
+  New entries can't get there, since such a field now counts as missing; the placeholders cover entries and names already stored.
+- Against: the wording is an agent's, and a reader may take "(no title)" for a title someone wrote.
+
+#### `published_in` and `superseded_by` on line 10
+
+- Options: show them as written; show them as written with `;` replaced; or show only what the server reads, an arXiv ID or DOI for `published_in` and an entry ID or `slug:<name>` for `superseded_by`, and "unrecognized published_in" or "unrecognized superseded_by" otherwise.
+- Chosen: only what the server reads, as the key `replicates` would give it (`arXiv:2601.00001` for the paper's page on arxiv.org), and no key over 100 characters.
+  Line 10 holds the server's findings about an entry, joined by "; ", and design.md limits `published_in` to DOIs and arXiv IDs because the card puts it beside the server's own words.
+  The submission warns about a value the card can't show.
+- Against: a DOI with characters outside Crossref's recommended set, such as `<` or `[` in some old ones, shows as unrecognized, and so does one over 100 characters.
+  "unrecognized published_in" also drops the words "now part of a paper", which were true whatever the value.
+  An author's own `superseded_by: <id>` still reads like the server's record of a newer version; telling the two apart needs different words on the card.
 
 ### Entries and the analyzer
 
@@ -103,6 +121,26 @@ Add a new entry at the end of the topic it belongs to, or start a topic when non
 - Options: store `experiment`, as entry-format.md says a missing `kind` means, or store nothing.
 - Chosen: `experiment`, so `/search?kind=experiment` finds entries that left it out.
 - Against: an unrecognized `kind` is stored as nothing, and a reader can't tell it from the default.
+
+#### What a tag may be
+
+- Options: free text of any length, as the format said; refuse an entry with a tag that is no short label; or read only short labels and skip the rest with a warning.
+- Chosen: skip with a warning, as items past 10 in `replicates` are dropped.
+  A tag is read when it is 1 to 60 characters on one line with no control or invisible character, and an entry's first 20 tags are read.
+  `GET /tags` lists only such tags, so each listed tag still matches `tag=` exactly.
+  Reason: `/tags` starts each line with a tag and has no delimiter, so a tag with a line break wrote whole lines of that reply.
+  The longest tag in the field test's entries is 35 characters, and the most tags on one entry is 9.
+- Against: the bounds are an agent's.
+  A tag with a zero-width joiner or non-joiner, as some emoji and Persian words have, is skipped.
+  A read tag is still up to 60 characters of an author's words at the start of a `/tags` line, which only a change to that reply's format would mark.
+
+#### Which characters count as invisible
+
+- Options: only the bidirectional controls the card already dropped, or every character that shows nothing where text is read.
+- Chosen: the second, in the analyzer's `is_invisible`: the bidirectional controls, the soft hyphen, zero-width and other format characters (U+200B to U+200F, U+2060 to U+206F, U+FEFF and a few more), blank fillers such as U+3164 and U+2800, and U+E0000 to U+E0FFF, the tag characters and the variation selectors supplement, which can spell text no person sees.
+  A required field made only of these, spaces and control characters counts as missing; a tag or a display name holding one is not read, or refused.
+- Against: the variation selectors U+FE00 to U+FE0F pass, since an emoji may end in one, and the list is kept by hand rather than taken from Unicode's `Default_Ignorable_Code_Point`.
+  Elsewhere in an entry's text these characters are kept as written.
 
 ### Search
 
@@ -246,6 +284,14 @@ The owner set 10 an hour and 50 a day per account (#60); an agent chose the rest
 - Options: deleting an account deletes the record of the entries it deleted by token or withdrawal, or keeps it.
 - Chosen: deletes it, with the tokens and sessions that could read it.
 - Against: the record holds only random IDs and times, and the owner might want it kept for analysis, as removed entries are.
+
+#### Invisible characters in a display name
+
+- Options: refuse a display name that holds an invisible character (see "Which characters count as invisible") or a line or paragraph separator; or remove them at signup and keep the rest.
+- Chosen: refuse, with a message that says why, so the holder knows what the name will be.
+  A name stored before the rule is printed without them, on the `author:` and `account:` lines, a series' `by` and the card's last line.
+- Against: a name typed with a zero-width non-joiner, as some Persian names are, is refused until its holder removes it; removing it at signup would let them through with a name that looks nearly the same.
+  The name still comes before the account ID on the `author:` line and the card's last line, so a name holding ", account a-..." puts an ID of its holder's choosing first; closing that needs the ID before the name, a change to both lines.
 
 ### Versions and batches
 

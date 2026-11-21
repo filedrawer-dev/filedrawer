@@ -38,6 +38,8 @@ The server refuses an entry that lacks any of these.
   Reason for the value's name: YAML reads a bare `null` as no value at all.
 - A body with `## Setup` and `## Reproduce` sections (see [Body](#body)).
 
+A field whose text shows nothing, such as only spaces, control characters or invisible characters, counts as missing.
+
 Every other field is optional, and a missing field never gets an entry refused.
 The server accepts and stores fields it doesn't recognize, except one asking for an embargo, which it refuses, and an admin report lists them so that a field agents keep adding can become a real one (design.md, [Feedback](design.md#feedback-and-usability-cycles)).
 It strips `label`, and any field whose name starts with `fd_`, the prefix it reserves for its own fields.
@@ -62,7 +64,7 @@ models:               # one item per model and role:
   - name:             #   the model ID the provider served, or alias:<name> when no log recorded it
     role:             #   subject | judge | monitor | other
     route:            #   how it was reached, such as api, claude-cli, codex, openrouter or weights
-tags:                 # free text; reuse tags from GET /tags where they fit
+tags:                 # up to 20 short labels, each at most 60 characters on one line; reuse tags from GET /tags where they fit
 positive_control:
   outcome:            #   passed | failed | not_run | mixed
   checks:             #   pipeline | manipulation
@@ -123,6 +125,9 @@ The server warns about both.
   A model whose validation is the result, such as a judge checked against a gold set, is the `subject`.
   Write the ID the provider served whenever a log records it.
   When none does, write the alias, such as `alias:haiku`, and the server maps aliases to IDs by date (design.md, [Agent interface](design.md#agent-interface)).
+- `tags` are short labels.
+  The server reads an entry's first 20, and skips, with a warning, a tag over 60 characters or one holding a line break, another control character or an invisible character, such as a zero-width space.
+  Reason: `GET /tags` starts each line with a tag, with none of the server's words before it.
 - `positive_control` describes a check that the pipeline, or the manipulation itself, can produce an effect known to exist: its outcome, whether it checks the pipeline (the judge finds instructed collusion) or the manipulation (the treatment moves the metric somewhere), and where it ran.
   `mixed` means it passed for some models and failed or wasn't run for others.
   Its description, and for `mixed` the breakdown, goes in `## Setup`.
@@ -283,8 +288,11 @@ Each line has a cap, and longer text ends in "…".
 11. The author: display name, account ID, and any linked GitHub or ORCID handle, up to 100 characters.
     Once the account is deleted, "account deleted" and the account ID, with no name.
 
-On every line, the server's own words come before author text, and author text is cut to fit what remains, so it can never push a server note off the card.
+Lines 2 and 3 are author text from their first character, and line 11 starts with the author's display name, without any invisible characters.
+On every other line, the server's own words come before author text, and author text is cut to fit what remains, so it can never push a server note off the card.
+No line is blank, since a blank line ends a card where cards are listed: where a stored entry's title or hypothesis shows nothing, the line reads "(no title)" or "(no hypothesis)", and a display name that shows nothing reads "(no name)".
 A value in a field whose values the server knows, such as `positive_control.outcome`, that it doesn't recognize renders as "unrecognized <field>", never as written.
+So do, among line 10's flags, a `published_in` the server reads as neither a DOI nor an arXiv ID of at most 100 characters, and a `superseded_by` that is neither an entry ID nor `slug:<name>`; the submission response warns about each.
 
 ## Example
 

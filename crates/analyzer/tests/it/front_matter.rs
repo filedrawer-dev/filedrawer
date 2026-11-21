@@ -294,6 +294,28 @@ fn published_in_must_be_a_doi_or_arxiv_id() {
         warning_kinds(&entry("published_in: https://example.com/paper\n", "")),
         vec![WarningKind::NotAPaper]
     );
+    // Text after the ID makes it no ID: the card shows the value beside the
+    // server's own flags, so it must be one the server reads.
+    assert_eq!(
+        warning_kinds(&entry(
+            "published_in: \"arXiv:2507.01410; code attached\"\n",
+            ""
+        )),
+        vec![WarningKind::NotAPaper]
+    );
+    // A paper's page reads as the paper, and so does a space after `arXiv:`.
+    for read in ["https://arxiv.org/abs/2507.01410", "\"arXiv: 2507.01410\""] {
+        assert_eq!(
+            warning_kinds(&entry(&format!("published_in: {read}\n"), "")),
+            vec![],
+            "{read}"
+        );
+    }
+    // A bare number is warned about once, as a number.
+    assert_eq!(
+        warning_kinds(&entry("published_in: 2507.01410\n", "")),
+        vec![WarningKind::NumberForPaper]
+    );
 }
 
 #[test]
@@ -671,4 +693,166 @@ fn a_series_cite_the_server_cant_read_is_refused() {
         let text = example_with("tags:", &format!("series: {good}\ntags:"));
         assert_eq!(analyze(&text).refusals, vec![], "{good}");
     }
+}
+
+/// A required field must show something (entry-format.md, Required): text of only
+/// spaces, control characters or invisible characters is no text.
+#[test]
+fn a_required_field_that_shows_nothing_is_missing() {
+    for nothing in [
+        "\\u202E",
+        "\\x01",
+        "\\x7F \\u0085",
+        "\u{200b}\u{2060}",
+        "\u{3164}",
+        "\u{fe0f}",
+        "\u{e0020}\u{e0041}",
+        "\u{2800}",
+    ] {
+        for (field, name) in [
+            ("title: T", "title"),
+            ("hypothesis: H", "hypothesis"),
+            ("safety_motivation: S", "safety_motivation"),
+        ] {
+            let text = entry("", "").replace(field, &format!("{name}: \"{nothing}\""));
+            assert_eq!(
+                analyze(&text).refusals,
+                vec![Refusal::MissingField(name)],
+                "{name}: {nothing:?}"
+            );
+        }
+    }
+    // Invisible characters beside text that shows are no reason to refuse.
+    let text = entry("", "").replace("title: T", "title: \"T\u{200b}\"");
+    assert_eq!(analyze(&text).refusals, vec![]);
+}
+
+/// A tag is a short label on one line (entry-format.md, Fields): one that isn't is
+/// skipped with a warning that doesn't repeat it.
+#[test]
+fn a_tag_that_is_no_short_label_is_skipped_with_a_warning() {
+    let long = "x".repeat(61);
+    let text = entry(
+        &format!(
+            "tags: [steering, \"x 1\\nsteering 99999\", \"  refusal \", \"hid\u{e0064}den\", \"zero\u{200b}width\", \"sep\\u2028arator\", {long}, {}]\n",
+            "y".repeat(60)
+        ),
+        "",
+    );
+    let analysis = analyze(&text);
+    assert_eq!(analysis.refusals, vec![]);
+    assert_eq!(
+        analysis.fields.tags,
+        vec![
+            "steering".to_string(),
+            "refusal".to_string(),
+            "y".repeat(60)
+        ]
+    );
+    let messages: Vec<&str> = analysis
+        .warnings
+        .iter()
+        .map(|warning| warning.message.as_str())
+        .collect();
+    let skipped = |position: usize| {
+        format!(
+            "tag {position} in `tags` was not read: a tag is at most 60 characters on one line, with no invisible characters"
+        )
+    };
+    assert_eq!(
+        messages,
+        vec![skipped(2), skipped(4), skipped(5), skipped(6), skipped(7)]
+    );
+    assert_eq!(warning_kinds(&text), vec![WarningKind::MalformedField; 5]);
+}
+
+/// A warning names a tag by its place in the list as written, and a tag that
+/// shows nothing is skipped like any other that is no label; an empty one is no tag.
+#[test]
+fn a_skipped_tag_is_named_by_its_place_as_written() {
+    let text = entry(
+        "tags: [steering, \"\", \"\u{200b}\", [nested], \"a\\nb\", refusal]\n",
+        "",
+    );
+    let analysis = analyze(&text);
+    assert_eq!(analysis.fields.tags, vec!["steering", "refusal"]);
+    let messages: Vec<&str> = analysis
+        .warnings
+        .iter()
+        .map(|warning| warning.message.as_str())
+        .collect();
+    assert_eq!(messages.len(), 3, "{messages:?}");
+    for (message, position) in messages.iter().zip([3, 4, 5]) {
+        assert!(
+            message.starts_with(&format!("tag {position} in `tags` was not read")),
+            "{message}"
+        );
+    }
+}
+
+#[test]
+fn tags_past_the_first_20_are_dropped_with_a_warning() {
+    let tags: Vec<String> = (1..=21).map(|n| format!("t{n}")).collect();
+    let text = entry(&format!("tags: [{}]\n", tags.join(", ")), "");
+    let analysis = analyze(&text);
+    assert_eq!(analysis.refusals, vec![]);
+    assert_eq!(analysis.fields.tags, tags[..20]);
+    assert_eq!(
+        analysis.warnings[0].message,
+        "`tags` lists 21 tags; only the first 20 were read"
+    );
+    assert_eq!(warning_kinds(&text), vec![WarningKind::MalformedField]);
+    let twenty = entry(&format!("tags: [{}]\n", tags[..20].join(", ")), "");
+    assert_eq!(analyze(&twenty).warnings, vec![]);
+}
+
+#[test]
+fn a_valid_tag_is_a_short_label_on_one_line() {
+    use filedrawer_analyzer::is_valid_tag;
+    for tag in [
+        "steering",
+        "sparse autoencoders",
+        "GPT-4o",
+        "\u{6a21}\u{578b}",
+        &"x".repeat(60),
+    ] {
+        assert!(is_valid_tag(tag), "{tag:?}");
+    }
+    for tag in [
+        "",
+        " ",
+        "a\nb",
+        "a\tb",
+        "a\u{85}b",
+        "a\u{2028}b",
+        "a\u{2029}b",
+        "a\u{200b}b",
+        "a\u{202e}b",
+        "a\u{e0041}b",
+        "\u{3164}",
+        &"x".repeat(61),
+    ] {
+        assert!(!is_valid_tag(tag), "{tag:?}");
+    }
+}
+
+#[test]
+fn superseded_by_must_be_an_entry_id_or_a_slug() {
+    for read in [
+        "abcdefghjk",
+        "slug:main-run",
+        "https://filedrawer.dev/e/0123456789",
+    ] {
+        assert_eq!(
+            warning_kinds(&entry(&format!("superseded_by: {read}\n"), "")),
+            vec![],
+            "{read}"
+        );
+    }
+    let text = entry("superseded_by: \"0123456789; code attached\"\n", "");
+    assert_eq!(warning_kinds(&text), vec![WarningKind::UnrecognizedValue]);
+    assert_eq!(
+        analyze(&text).warnings[0].message,
+        "`superseded_by: 0123456789; code attached` is not an entry ID or `slug:<name>`, so the card can't show it"
+    );
 }

@@ -346,7 +346,7 @@ fn yaml_quote(text: &str) -> String {
 proptest! {
     #[test]
     fn every_line_keeps_its_cap_and_author_text_adds_no_lines(
-        title in "\\PC*|[\n\r\u{2028}\u{85}a-z ]{0,400}",
+        title in "\\PC*|[\n\r\u{2028}\u{85}\u{202e}\u{200b}\u{e0041}a-z ]{0,400}",
         hypothesis in ".{0,600}",
         tag in "\\PC{0,80}",
         // Table cells: no pipe, backslash, backtick or control character, which no
@@ -371,6 +371,8 @@ proptest! {
         prop_assert_eq!(lines.len(), 11, "{}", card);
         for (line, cap) in lines.iter().zip(LINE_CAPS) {
             prop_assert!(line.chars().count() <= cap, "{} > {}: {}", line.chars().count(), cap, line);
+            // A blank line would end the card where cards are listed.
+            prop_assert!(!line.trim().is_empty(), "a blank line in\n{}", card);
         }
         let line_1 = lines[0].starts_with("<id>; experiment; effect; no stage; rows: 1 effect");
         prop_assert!(line_1, "{}", lines[0]);
@@ -523,4 +525,123 @@ fn a_deleted_accounts_card_says_so_and_shows_no_name() {
     };
     let card = render_card(&analyze(EXAMPLE), &context);
     assert_eq!(card.lines().last(), Some("account deleted, a-91x"));
+}
+
+/// Text that shows nothing: characters the card drops or turns into spaces, and
+/// ones that are kept but invisible.
+const SHOWS_NOTHING: [&str; 9] = [
+    "\\u202E",
+    "\\u2066\\u2069",
+    "\\x01",
+    "\\x7F \\x01",
+    "\\u2028",
+    "\u{200b}",
+    "\u{2060}\u{feff}",
+    "\u{3164}\u{fe0f}",
+    "\u{e0020}\u{e0041}",
+];
+
+/// `/cards.txt` and `/search` end each card at a blank line, so no card line may be
+/// blank, whatever the entry holds (entry-format.md, The card).
+#[test]
+fn a_title_or_hypothesis_that_shows_nothing_gets_the_servers_placeholder() {
+    for nothing in SHOWS_NOTHING {
+        for (field, placeholder) in [
+            ("title: T", "(no title)"),
+            ("hypothesis: H", "(no hypothesis)"),
+        ] {
+            let name = field.split_once(':').unwrap().0;
+            let text = with_results("no_effect", EFFECT_TABLE)
+                .replace(field, &format!("{name}: \"{nothing}\""));
+            let lines = lines(&text);
+            assert_eq!(lines.len(), 10, "{name}: {nothing:?}");
+            let at = if name == "title" { 1 } else { 2 };
+            assert_eq!(lines[at], placeholder, "{name}: {nothing:?}");
+        }
+    }
+    let neither = with_results("no_effect", EFFECT_TABLE)
+        .replace("title: T\n", "")
+        .replace("hypothesis: H\n", "");
+    assert_eq!(lines(&neither)[1..3], ["(no title)", "(no hypothesis)"]);
+}
+
+/// Line 10's flags are the server's, joined with "; ", so the two fields shown
+/// among them appear only as the server read them (entry-format.md, The card).
+#[test]
+fn line_10_shows_a_paper_or_successor_only_as_the_server_reads_it() {
+    let flags = |front: &str| {
+        let text = with_results("no_effect", EFFECT_TABLE)
+            .replace("hypothesis: H\n", &format!("hypothesis: H\n{front}\n"));
+        line_starting(&text, "analyzer v1")
+    };
+    assert_eq!(
+        flags("published_in: \"arXiv:2601.00001; code attached; replication 0000000000 (effect)\""),
+        "analyzer v1; no code; unrecognized published_in"
+    );
+    assert_eq!(
+        flags("superseded_by: \"0000000000; pin verified; self-replication 0000000000 (effect)\""),
+        "analyzer v1; no code; unrecognized superseded_by"
+    );
+    assert_eq!(
+        flags("published_in: https://example.com/paper"),
+        "analyzer v1; no code; unrecognized published_in"
+    );
+    // The same paper written other ways shows as its key.
+    for written in [
+        "\"arXiv: 2601.00001\"",
+        "https://arxiv.org/abs/2601.00001v2",
+        "10.48550/arXiv.2601.00001",
+    ] {
+        assert_eq!(
+            flags(&format!("published_in: {written}")),
+            "analyzer v1; no code; now part of a paper arXiv:2601.00001",
+            "{written}"
+        );
+    }
+    assert_eq!(
+        flags("published_in: https://doi.org/10.1234/ABC.5"),
+        "analyzer v1; no code; now part of a paper 10.1234/abc.5"
+    );
+    // A DOI's suffix may hold `;` and `:`, so a key long enough to hold a sentence
+    // isn't shown.
+    let longest = format!("10.1234/{}", "x;".repeat(46));
+    assert_eq!(longest.chars().count(), 100);
+    assert_eq!(
+        flags(&format!("published_in: \"{longest}\"")),
+        format!("analyzer v1; no code; now part of a paper {longest}")
+    );
+    assert_eq!(
+        flags(&format!("published_in: \"{longest}x\"")),
+        "analyzer v1; no code; unrecognized published_in"
+    );
+    assert_eq!(
+        flags("superseded_by: https://filedrawer.dev/e/0123456789"),
+        "analyzer v1; no code; superseded by 0123456789"
+    );
+}
+
+#[test]
+fn a_display_name_loses_its_invisible_characters_on_line_11() {
+    let last_line = |name: &str| {
+        let context = CardContext {
+            author: Some(Author {
+                display_name: Some(name.into()),
+                account_id: "a-91x".into(),
+                handles: Vec::new(),
+            }),
+            ..CardContext::default()
+        };
+        let card = render_card(&analyze(EXAMPLE), &context);
+        card.lines().last().unwrap().to_string()
+    };
+    assert_eq!(
+        last_line("Ada\u{e0061}\u{e0062}\u{200b}\u{202e} L\u{ad}ovelace"),
+        "Ada Lovelace, account a-91x"
+    );
+    assert_eq!(last_line("\u{200b}\u{e0061}"), "(no name), account a-91x");
+    // A variation selector after an emoji stays.
+    assert_eq!(
+        last_line("Ada \u{2764}\u{fe0f}"),
+        "Ada \u{2764}\u{fe0f}, account a-91x"
+    );
 }

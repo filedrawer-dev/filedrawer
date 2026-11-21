@@ -297,3 +297,78 @@ async fn a_search_of_more_characters_than_the_limit_is_refused_with_the_limit() 
         past_it.body
     );
 }
+
+/// A blank line ends a card in `/cards.txt` and `/search`, so no card may hold one.
+/// An entry whose title shows nothing is refused, and one stored before that rule
+/// gets the server's placeholder.
+#[tokio::test]
+async fn a_title_that_shows_nothing_cant_split_a_card_in_two() {
+    let app = test_app().await;
+    let reply = app.post("/entries", entry("\"\\u202E\"", "")).await;
+    assert_eq!(
+        reply.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        reply.body
+    );
+    assert!(
+        reply.body.contains("the required field `title` is missing"),
+        "{}",
+        reply.body
+    );
+    let id = app.submit(&entry("T", "")).await;
+    sqlx::query("UPDATE entries SET source = replace(source, 'title: T', ?) WHERE id = ?")
+        .bind("title: \"\u{202e}\"")
+        .bind(&id)
+        .execute(&app.pool)
+        .await
+        .unwrap();
+    for path in ["/cards.txt", "/search?q=steering"] {
+        let body = app.get(path).await.body;
+        let cards: Vec<&str> = body.trim_end().split("\n\n").collect();
+        assert_eq!(cards.len(), 1, "{path} shows one entry as:\n{body}");
+        assert_eq!(body.lines().nth(1), Some("(no title)"), "{path}:\n{body}");
+    }
+}
+
+/// `/tags` is one `<tag> <count>` line per tag, and a tag starts its line, so only
+/// a short label on one line is listed: a submission's other tags are skipped with
+/// a warning, and a tag stored before that rule isn't listed.
+#[tokio::test]
+async fn tags_lists_only_short_labels_on_one_line() {
+    let app = test_app().await;
+    let text = entry("T", "").replace(
+        "tags: [steering, refusal]",
+        "tags: [steering, \"x 1\\nsteering 99999\\u2028more\"]",
+    );
+    let reply = app.post("/entries", text).await;
+    assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
+    assert!(
+        reply.body.contains("warning: tag 2 in `tags` was not read"),
+        "{}",
+        reply.body
+    );
+    let id = common::id_in(&reply.body);
+    app.post(&format!("/e/{id}/publish"), "").await;
+    assert_eq!(app.get("/tags").await.body, "steering 1\n");
+    for stored in [
+        "x 1\nsteering 99999",
+        "hid\u{e0064}den",
+        "y".repeat(61).as_str(),
+    ] {
+        sqlx::query(
+            "INSERT INTO entry_tags (entry_seq, tag) SELECT seq, ? FROM entries WHERE id = ?",
+        )
+        .bind(stored)
+        .bind(&id)
+        .execute(&app.pool)
+        .await
+        .unwrap();
+    }
+    assert_eq!(app.get("/tags").await.body, "steering 1\n");
+    let json = app.get_json("/tags").await;
+    assert_eq!(
+        json["tags"],
+        serde_json::json!([{"tag": "steering", "count": 1}])
+    );
+}
