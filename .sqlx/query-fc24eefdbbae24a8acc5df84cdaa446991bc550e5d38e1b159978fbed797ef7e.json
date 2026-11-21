@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE accounts SET email_verified_at = ? WHERE id = ? AND email_verified_at IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "fc24eefdbbae24a8acc5df84cdaa446991bc550e5d38e1b159978fbed797ef7e"
+}

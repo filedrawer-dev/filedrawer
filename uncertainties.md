@@ -303,6 +303,24 @@ The owner set 10 an hour and 50 a day per account (#60); an agent chose the rest
 - Against: a name typed with a zero-width non-joiner, as some Persian names are, is refused until its holder removes it; removing it at signup would let them through with a name that looks nearly the same.
   The name still comes before the account ID on the `author:` line and the card's last line, so a name holding ", account a-..." puts an ID of its holder's choosing first; closing that needs the ID before the name, a change to both lines.
 
+#### What a password reset ends
+
+- Options: a reset ends the account's sessions only; or it also revokes the account's API tokens; or it asks, with a checkbox on the form.
+- Chosen: sessions and tokens both, with no question.
+  A reset is how the holder of the inbox takes an account back from someone who had its password, and a token that person made would otherwise keep acting for the account with nothing to point the holder at it.
+  The reset email and the form say so before the new password is set, and the page after says each agent needs a new token.
+- Against: someone who only forgot a password, or who resets to get past a stranger's hour-long login lockout (design.md, Limits and abuse: "its API tokens keep working"), now has to give every agent a new token.
+  The email says so only before the fact; one sent afterwards would be a new kind of queued mail.
+
+#### Sessions made before an address was verified
+
+- Options: leave them; end them when the address is verified; give no session until then; or have the verify button ask for the account's password.
+- Chosen: verifying ends every session the account has, so whoever verified logs in again.
+  A link pressed after the address is already verified ends nothing.
+- Against: it ends sessions only; the password set at signup is unchanged until a reset.
+  Asking for the password to verify would tie the address to the person who chose the password, at the cost of one more step in every signup.
+  No session before verification would not, and would take away "log in to send it again".
+
 ### Versions and batches
 
 #### Versions form one line

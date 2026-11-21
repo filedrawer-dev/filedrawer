@@ -620,6 +620,143 @@ async fn whoever_resets_an_address_gets_the_account_with_no_tokens_left() {
     assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
 }
 
+/// Signs up as Mallory with `email`, which is Grace's, and logs in before anyone
+/// verified it. Returns Mallory's session cookie.
+async fn mallory_signs_up_with(app: &common::TestApp, email: &str) -> String {
+    app.form(
+        "/signup",
+        &[
+            ("email", email),
+            ("password", "mallory's passphrase"),
+            ("display_name", "Mallory"),
+        ],
+        None,
+    )
+    .await;
+    logged_in(app, email, "mallory's passphrase").await
+}
+
+/// Presses the button of verification link `link`, as its email gave it.
+async fn press_verify(app: &common::TestApp, link: &str) -> common::Reply {
+    let token = link.strip_prefix("/verify?token=").expect(link);
+    app.form("/verify", &[("token", token)], None).await
+}
+
+/// Resets `email`'s password to `PASSWORD` through the link sent to it.
+async fn reset_password(app: &common::TestApp, email: &str) -> common::Reply {
+    app.form("/reset", &[("email", email)], None).await;
+    let token = app
+        .link_in_last_email_to(email)
+        .await
+        .replace("/reset/confirm?token=", "");
+    app.form(
+        "/reset/confirm",
+        &[("token", &token), ("password", PASSWORD)],
+        None,
+    )
+    .await
+}
+
+#[tokio::test]
+async fn verifying_an_address_ends_the_sessions_made_before_it_was_proved() {
+    let app = test_app().await;
+    let before = mallory_signs_up_with(&app, "grace@example.com").await;
+    let link = app.link_in_last_email_to("grace@example.com").await;
+    let verified = press_verify(&app, &link).await;
+    assert_eq!(verified.status, StatusCode::OK, "{}", verified.body);
+    assert_eq!(
+        app.page("/account", Some(&before)).await.location(),
+        Some("/login?next=%2Faccount")
+    );
+}
+
+#[tokio::test]
+async fn a_verification_link_pressed_after_the_address_was_proved_ends_no_session() {
+    let app = test_app().await;
+    let first = mallory_signs_up_with(&app, "grace@example.com").await;
+    let older = app.link_in_last_email_to("grace@example.com").await;
+    // A second link, from the account page, while the first still works.
+    app.form("/account/verify-email", &[], Some(&first)).await;
+    let newer = app.link_in_last_email_to("grace@example.com").await;
+    assert_ne!(older, newer);
+    press_verify(&app, &newer).await;
+    let after = logged_in(&app, "grace@example.com", "mallory's passphrase").await;
+    press_verify(&app, &older).await;
+    let page = app.page("/account", Some(&after)).await;
+    assert_eq!(page.status, StatusCode::OK, "{:?}", page.location());
+}
+
+#[tokio::test]
+async fn a_reset_revokes_every_token_the_account_has() {
+    let app = test_app().await;
+    signed_up_and_verified(&app, "grace@example.com").await;
+    let cookie = logged_in(&app, "grace@example.com", PASSWORD).await;
+    let token = new_token(&app, &cookie).await;
+    let reply = app.get_with_token("/entries/mine", &token).await;
+    assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
+    let done = reset_password(&app, "grace@example.com").await;
+    assert_eq!(done.status, StatusCode::OK, "{}", done.body);
+    assert!(
+        done.body.contains("API tokens are revoked"),
+        "{}",
+        done.body
+    );
+    let reply = app.get_with_token("/entries/mine", &token).await;
+    assert_eq!(reply.status, StatusCode::UNAUTHORIZED, "{}", reply.body);
+    // A token made after the reset works.
+    let cookie = logged_in(&app, "grace@example.com", PASSWORD).await;
+    let again = new_token(&app, &cookie).await;
+    let reply = app.get_with_token("/entries/mine", &again).await;
+    assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
+}
+
+#[tokio::test]
+async fn nothing_made_before_an_address_was_proved_outlives_its_owners_reset() {
+    // Mallory signs up with Grace's address and logs in. Grace presses the button in
+    // the verification email, and later resets the password through her inbox. As
+    // when she never verified, nothing Mallory made with the account still works.
+    let app = test_app().await;
+    mallory_signs_up_with(&app, "grace@example.com").await;
+    let link = app.link_in_last_email_to("grace@example.com").await;
+    press_verify(&app, &link).await;
+    let mallory = logged_in(&app, "grace@example.com", "mallory's passphrase").await;
+    let mallorys_token = new_token(&app, &mallory).await;
+    let done = reset_password(&app, "grace@example.com").await;
+    assert_eq!(done.status, StatusCode::OK, "{}", done.body);
+    assert_eq!(
+        app.page("/account", Some(&mallory)).await.location(),
+        Some("/login?next=%2Faccount")
+    );
+    let reply = app.get_with_token("/entries/mine", &mallorys_token).await;
+    assert_eq!(reply.status, StatusCode::UNAUTHORIZED, "{}", reply.body);
+    let relogin = app
+        .form(
+            "/login",
+            &[
+                ("email", "grace@example.com"),
+                ("password", "mallory's passphrase"),
+            ],
+            None,
+        )
+        .await;
+    assert_eq!(relogin.status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn the_reset_email_and_its_form_say_what_a_new_password_ends() {
+    let app = test_app().await;
+    signed_up_and_verified(&app, "grace@example.com").await;
+    app.form("/reset", &[("email", "grace@example.com")], None)
+        .await;
+    let sent = app.sent().await;
+    let email = sent.last().expect("the reset email");
+    assert!(email.body.contains("API tokens"), "{}", email.body);
+    let link = app.link_in_last_email_to("grace@example.com").await;
+    let form = app.page(&link, None).await;
+    assert_eq!(form.status, StatusCode::OK, "{}", form.body);
+    assert!(form.has_class("reset-ends"), "{}", form.body);
+}
+
 #[tokio::test]
 async fn a_reset_spends_every_reset_link_the_account_has() {
     let app = test_app().await;

@@ -222,36 +222,52 @@ async fn spend_link(
     .await
 }
 
+/// Marks the account's address verified. True when it wasn't before.
 async fn mark_verified(
     connection: &mut SqliteConnection,
     account_id: &str,
-) -> Result<(), sqlx::Error> {
+) -> Result<bool, sqlx::Error> {
     let verified_at = now();
-    sqlx::query!(
-        "UPDATE accounts SET email_verified_at = COALESCE(email_verified_at, ?) WHERE id = ?",
+    let done = sqlx::query!(
+        "UPDATE accounts SET email_verified_at = ? WHERE id = ? AND email_verified_at IS NULL",
         verified_at,
         account_id
     )
     .execute(&mut *connection)
     .await?;
+    Ok(done.rows_affected() == 1)
+}
+
+async fn end_sessions(
+    connection: &mut SqliteConnection,
+    account_id: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query!("DELETE FROM sessions WHERE account_id = ?", account_id)
+        .execute(&mut *connection)
+        .await?;
     Ok(())
 }
 
-/// Verifies the account a verification link was sent for. False when the link is
+/// Verifies the account a verification link was sent for, and ends its sessions:
+/// they were made before anyone had proved the address, so whoever proved it logs in
+/// again. A link for an address already verified ends none. False when the link is
 /// used, expired or unknown.
 pub async fn verify_with_link(pool: &SqlitePool, secret: &str) -> Result<bool, sqlx::Error> {
     let mut transaction = crate::db::write_tx(pool).await?;
     let Some(account_id) = spend_link(&mut transaction, secret, Purpose::Verify).await? else {
         return Ok(false);
     };
-    mark_verified(&mut transaction, &account_id).await?;
+    if mark_verified(&mut transaction, &account_id).await? {
+        end_sessions(&mut transaction, &account_id).await?;
+    }
     transaction.commit().await?;
     Ok(true)
 }
 
 /// Sets a new password through a reset link, in one transaction: spends every reset
-/// link the account has, ends all its sessions, and marks the address verified, since
-/// the link reached it. False when the link is used, expired or unknown.
+/// link the account has, ends all its sessions, revokes all its tokens, and marks the
+/// address verified, since the link reached it. Whoever held the account before
+/// keeps no way to act for it. False when the link is used, expired or unknown.
 pub async fn reset_with_link(
     pool: &SqlitePool,
     secret: &str,
@@ -277,9 +293,14 @@ pub async fn reset_with_link(
     )
     .execute(&mut *transaction)
     .await?;
-    sqlx::query!("DELETE FROM sessions WHERE account_id = ?", account_id)
-        .execute(&mut *transaction)
-        .await?;
+    end_sessions(&mut transaction, &account_id).await?;
+    sqlx::query!(
+        "UPDATE tokens SET revoked_at = ? WHERE account_id = ? AND revoked_at IS NULL",
+        used_at,
+        account_id
+    )
+    .execute(&mut *transaction)
+    .await?;
     mark_verified(&mut transaction, &account_id).await?;
     transaction.commit().await?;
     Ok(true)

@@ -397,7 +397,8 @@ pub async fn reset_confirm(
         StatusCode::OK,
         &Message {
             title: "Password changed",
-            text: "Every session on this account has ended. Log in with the new password.",
+            text: "Every session on this account has ended and its API tokens are revoked. \
+                   Log in with the new password, then make a new token for each agent.",
             link: Some(("/login", "Log in")),
         },
     ))
