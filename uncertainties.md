@@ -525,11 +525,24 @@ The owner set 10 an hour and 50 a day per account (#60); an agent chose the rest
 
 - Options: compare an installed folder with its version's tag as an install from this site would hold it, as the owner's ruling reads; or as an install from the site its own `SKILL.md` names; and refuse every extra file, or ignore some.
 - Chosen: the site the folder's `SKILL.md` names, in its line `File Drawer (<address>) is an archive`, which every tag of both skills has; `{{BASE}}` there means a copy straight from an old tag, compared with the tag's bytes.
-  So an unchanged install from another site (staging, then production; a dev server on another port) and a staging copy an old upgrade left naming production pass, and a rerun replaces them.
+  So an unchanged install from another site (staging, then production; a dev server on another port) and a staging copy an old upgrade left naming production pass, and a rerun replaces them, unless the copy is newer than the version the site names (below).
   An edited address line makes `SKILL.md` differ, which refuses.
   `.DS_Store`, which macOS Finder leaves in any folder it shows, is ignored as an extra file.
   A link at `~/.agents/skills/<name>` refuses, since the install would replace the link with a folder.
 - Against: a human who pointed a staging install at production by hand would see that edit replaced; and ignoring `.DS_Store` bends "a file the tag's list doesn't" hold.
+
+#### A rerun of the installer refuses a skill newer than the site names
+
+- Options: refuse the whole run when an installed skill is newer than the version the site names; or leave the newer skill, install the other and exit 0; or install the older version and say so.
+  And for the same version: install it again, or stop as the upgrade script does.
+- Chosen: refuse, installing neither skill, as the installer does for a folder with local changes; the same version installs again, since a rerun repairs a copy pointed at another site.
+  The comparison is the upgrade script's: versions are numbers of at most 9 digits, and the installer fails before fetching when the site names anything else, or one skill twice.
+  The local-change check runs first, so a newer folder with a human's edits is refused with its files named.
+  The refusal says the installed skills work as they are, and that a human who wants the older version moves the folder away and reruns; it gives no flag, since the page that names the version could also tell an agent to pass one.
+- Against: a machine ahead of the site for an honest reason gets exit 1 from a rerun until the site catches up: one that installed from staging and then runs production's installer, one whose human copied a newer tag into `~/.agents/skills/`, and every upgraded machine after production is rolled back to an older commit.
+  The agent then reports a failed install, though nothing is wrong with the skills in place.
+  Leaving the newer skill and exiting 0 would spare them that, at the cost of "both or neither".
+  The rule also covers only `~/.agents/skills/<name>`: a copy at `~/.claude/skills/<name>` with nothing at the first path is still replaced unchecked, as the next entry says.
 
 #### A copy at `~/.claude/skills/<name>` isn't checked
 

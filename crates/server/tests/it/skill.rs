@@ -1257,6 +1257,111 @@ async fn skill_md_never_pipes_or_chains_a_download_into_a_shell() {
     }
 }
 
+// A rerun never moves a skill back to an older version.
+
+/// A home where the installer ran once, in `ask` mode, and `name` has since moved on to
+/// the next version, whose tag GitHub holds. For a site at production, whose installs
+/// are their tags byte for byte.
+async fn home_ahead_of_the_site(site: &StandIn, name: &str) -> PathBuf {
+    let home = reinstall_home(site).await;
+    let newer = files_at(name, &next(name));
+    add_tag(&site.mirror, name, &next(name), &newer);
+    lay_out(&skill_folder(&home, name), &newer);
+    home
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rerun_never_replaces_a_skill_with_an_older_version() {
+    let site = StandIn::at(PRODUCTION).await;
+    let name = "filedrawer-search";
+    let home = home_ahead_of_the_site(&site, name).await;
+    let why = format!(
+        "{name} is installed at version {}, and {PRODUCTION}/skill.md names version {}, which is older",
+        next(name),
+        version(name)
+    );
+    assert_refused(&site, &home, name, &why).await;
+    assert_eq!(installed_version(&home, name), next(name));
+    // The advice for a folder with changes would be the way to the older version.
+    let said = text(&site.install(&home, "auto").await);
+    assert!(said.contains("work as they are"), "{said}");
+    assert!(!said.contains("move or remove"), "{said}");
+
+    // The human's way to the older version: with the folder moved away, it installs.
+    std::fs::rename(skill_folder(&home, name), home.join("kept")).unwrap();
+    let output = site.install(&home, "auto").await;
+    assert!(output.status.success(), "{}", text(&output));
+    for name in NAMES {
+        assert_installed(&site, &home, name).await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rerun_names_the_changed_files_of_a_skill_newer_than_the_sites() {
+    let site = StandIn::at(PRODUCTION).await;
+    let name = "filedrawer-submit";
+    let home = home_ahead_of_the_site(&site, name).await;
+    let script = skill_folder(&home, name).join("references/upgrade.sh");
+    std::fs::write(&script, read(&script) + "my note\n").unwrap();
+    assert_refused(&site, &home, name, "references/upgrade.sh").await;
+}
+
+/// Runs the installer as `site` serves it, with the site's reply to its question
+/// about the current versions naming `versions` instead.
+async fn install_when_the_site_names(site: &StandIn, home: &Path, versions: &str) -> Output {
+    let bin = site.root.path().join("names");
+    std::fs::create_dir_all(&bin).unwrap();
+    let curl = format!(
+        "#!/bin/sh\n\
+         case \"$*\" in\n\
+         \x20 *-fsSI*/skill.md)\n\
+         \x20   printf 'HTTP/1.1 200 OK\\r\\nX-Filedrawer-Skills: %s\\r\\n\\r\\n' '{versions}'\n\
+         \x20   exit 0 ;;\n\
+         esac\n\
+         exec '{}' \"$@\"\n",
+        site.root.path().join("bin/curl").display()
+    );
+    std::fs::write(bin.join("curl"), curl).unwrap();
+    std::fs::set_permissions(
+        bin.join("curl"),
+        std::os::unix::fs::PermissionsExt::from_mode(0o755),
+    )
+    .unwrap();
+    let file = site.root.path().join("install.sh");
+    std::fs::write(&file, site.get("/install.sh").await.body).unwrap();
+    shell(&format!("sh '{}' auto", file.display()), home)
+        .env("PATH", format!("{}:{}", bin.display(), site.path))
+        .output()
+        .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_installer_fetches_nothing_for_a_version_that_isnt_one_number() {
+    let search = version("filedrawer-search");
+    let submit = version("filedrawer-submit");
+    // The stand-in's reply is one the installer reads: these versions install.
+    let site = StandIn::at(PUBLIC_URL).await;
+    let home = site.home();
+    let current = format!("filedrawer-search/{search}, filedrawer-submit/{submit}");
+    let output = install_when_the_site_names(&site, &home, &current).await;
+    assert!(output.status.success(), "{}", text(&output));
+    for versions in [
+        format!("filedrawer-search/1, filedrawer-search/{search}, filedrawer-submit/{submit}"),
+        format!("filedrawer-search/{search}, filedrawer-submit/1234567890"),
+    ] {
+        let site = StandIn::at(PUBLIC_URL).await;
+        let home = site.home();
+        let output = install_when_the_site_names(&site, &home, &versions).await;
+        assert_installed_nothing(&output, &home, "isn't a version");
+        let fetched: Vec<String> = site
+            .calls()
+            .into_iter()
+            .filter(|call| call.contains("refs/tags"))
+            .collect();
+        assert!(fetched.is_empty(), "{versions}: {fetched:?}");
+    }
+}
+
 // The upgrade script each skill carries, `references/upgrade.sh`.
 
 /// The version after the one the repo holds.

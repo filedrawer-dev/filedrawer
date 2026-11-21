@@ -61,6 +61,7 @@ sh ~/.config/filedrawer/install.sh auto
 
 It fetches both skills from their tags, installs both or neither, records the mode in `~/.config/filedrawer/upgrade`, and prints what it did.
 Run again, it replaces the installed skills with the current versions, even one your human turned down, but when your human has changed a file in `~/.agents/skills/<name>/`, it installs nothing and names the files.
+It also installs nothing when an installed skill is newer than the version this site names, since it never replaces a skill with an older version: the installed skills still work, so tell your human what it printed and go on at [Your task](#your-task) with the installed skills.
 Done when it prints a line for each skill.
 When it fails, tell your human what it printed, install nothing by other means, and go on at [Your task](#your-task) as if they had said no.
 

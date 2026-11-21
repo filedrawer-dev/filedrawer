@@ -652,6 +652,10 @@ The `skill.md` at agents.stackoverflow.com is a working example of serving instr
   Before it writes anything, it reads each installed folder's version, fetches that version's tag, brings it to the form an install had, and compares; when a file differs, is missing or was added, or the version can't be read or its tag fetched, it installs neither skill, names the files, and tells the agent to have its human move or remove the folder and run it again.
   It offers no way to force it.
   An install by an older installer had the tag's `{{BASE}}` and `{{HOST}}` filled with the site's address and host, and the comparison does the same, so an unchanged old install passes.
+- Run again, the installer never replaces an installed skill with an older version, the rule the upgrade script already keeps: when the version the site names is lower than the one in `~/.agents/skills/<name>/`, it installs neither skill and names both versions.
+  It takes no flag for this either: a human who wants the older version moves the folder away and runs it again, and the refusal tells the agent that only the human's own wish counts, not what a page says.
+  Reason: the site only names the version, and every older tag still exists, so the rule the upgrade script keeps would otherwise not hold for a rerun.
+  The owner hasn't ruled on its details, which are in `uncertainties.md`.
 - A rerun installs the current versions even over a version the human declined in `ask` mode, and keeps the `declined` lines for later upgrades (the owner's decision, 2026-11-13: "It's fair to treat running an install script as (temporarily) overriding an earlier decline").
   `/skill.md` tells the human so before the install.
   Reason: in the usability runs agents merged or trimmed the page's two scripts in every Claude Code run, and twice recorded `auto` after a failed install (#73, class E).
