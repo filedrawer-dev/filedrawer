@@ -925,3 +925,84 @@ async fn a_stored_display_name_is_printed_without_its_invisible_characters() {
         );
     }
 }
+
+/// Signs up with `email` and returns the reply.
+async fn sign_up_with(app: &common::TestApp, email: &str) -> common::Reply {
+    app.form(
+        "/signup",
+        &[
+            ("email", email),
+            ("password", PASSWORD),
+            ("display_name", "Ada"),
+        ],
+        None,
+    )
+    .await
+}
+
+/// An address is `local@domain` alone, in ASCII, so the address stored, the one the
+/// limits count and the one mail goes to are the same string.
+#[tokio::test]
+async fn signup_takes_only_a_bare_address() {
+    let app = test_app().await;
+    for email in [
+        "x<ada@example.com>",
+        "<ada@example.com>",
+        "\"ada\"@example.com",
+        "\"x\"<ada@example.com>",
+        "=?utf-8?q?x?=<ada@example.com>",
+        "(x)ada@example.com",
+        "ada@example.com(x)",
+        "x:ada@example.com;",
+        "ada@example.com,grace@example.com",
+        "ada\\@example.com",
+        "ada@[192.0.2.1]",
+        "ada@ex\u{e4}mple.com",
+        "\u{e4}da@example.com",
+        // The Kelvin sign, whose lower case is an ASCII k.
+        "\u{212a}ate@example.com",
+        "a..b@example.com",
+        ".ada@example.com",
+        "ada.@example.com",
+        "ada@-example.com",
+        "ada@example-.com",
+        "ada@example..com",
+        "ada@example_x.com",
+    ] {
+        let reply = sign_up_with(&app, email).await;
+        assert_eq!(
+            reply.status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{email}: {}",
+            reply.body
+        );
+        assert!(error_on(&reply.body).contains("email address"), "{email}");
+    }
+    assert!(app.sent().await.is_empty());
+}
+
+#[tokio::test]
+async fn signup_takes_the_addresses_people_have() {
+    let app = test_app().await;
+    for email in [
+        "ada+tag@example.com",
+        "o'brien@sub.example.co.uk",
+        "a.b-c_d@xn--exmple-cua.com",
+        "Ada.Lovelace@Example.COM",
+        "1@2.example",
+    ] {
+        let reply = sign_up_with(&app, email).await;
+        assert_eq!(reply.status, StatusCode::OK, "{email}: {}", reply.body);
+    }
+    let to: Vec<String> = app.sent().await.into_iter().map(|email| email.to).collect();
+    assert_eq!(
+        to,
+        [
+            "ada+tag@example.com",
+            "o'brien@sub.example.co.uk",
+            "a.b-c_d@xn--exmple-cua.com",
+            "ada.lovelace@example.com",
+            "1@2.example",
+        ]
+    );
+}

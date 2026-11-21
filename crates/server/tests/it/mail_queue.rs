@@ -362,3 +362,52 @@ async fn status_shows_the_waiting_email_and_the_last_failures_class() {
     );
     assert!(!status.body.contains("grace"), "{}", status.body);
 }
+
+/// An account stored before signup took only a bare address may hold another
+/// spelling of one, which no email goes to: its row is deleted, not counted as
+/// dropped mail.
+#[tokio::test]
+async fn an_account_whose_stored_address_is_no_bare_address_gets_no_email() {
+    let app = test_app().await;
+    sign_up(&app, "grace@example.com").await;
+    let sent = app.sent().await.len();
+    let stored = "x<ada@example.com>";
+    sqlx::query("UPDATE accounts SET email = ? WHERE email = 'grace@example.com'")
+        .bind(stored)
+        .execute(&app.pool)
+        .await
+        .unwrap();
+    let reply = app.form("/reset", &[("email", stored)], None).await;
+    assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
+    assert_eq!(app.sent().await.len(), sent);
+    assert!(rows(&app).await.is_empty());
+    // Its password still logs it in.
+    logged_in(&app, stored, PASSWORD).await;
+}
+
+#[test]
+fn the_mailer_sends_to_the_address_signup_stored_and_to_no_other_spelling() {
+    use filedrawer_server::mail::recipient;
+    for address in [
+        "ada+tag@example.com",
+        "o'brien@sub.example.co.uk",
+        "a.b-c_d@xn--exmple-cua.com",
+        "!#$%&'*+-/=?^_`{|}~@example.com",
+    ] {
+        let mailbox = recipient(address).expect(address);
+        assert_eq!(mailbox.name, None, "{address}");
+        assert_eq!(mailbox.email.to_string(), address);
+    }
+    for other in [
+        "x<ada@example.com>",
+        "<ada@example.com>",
+        "\"ada\"@example.com",
+        "\"x\"<ada@example.com>",
+        "ada@example.com,grace@example.com",
+    ] {
+        assert!(
+            matches!(recipient(other), Err(MailError::Address(_))),
+            "{other}"
+        );
+    }
+}

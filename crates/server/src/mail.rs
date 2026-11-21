@@ -114,13 +114,22 @@ pub async fn check_login(
     }
 }
 
+/// The recipient for stored address `to`: that address alone, with no display name.
+/// Refuses whatever signup refuses (`accounts::looks_like_email`), so an address
+/// stored under an older rule is never read as some other mailbox.
+pub fn recipient(to: &str) -> Result<Mailbox, MailError> {
+    let refused = || MailError::Address(to.to_string());
+    if !crate::accounts::looks_like_email(to) {
+        return Err(refused());
+    }
+    let address: lettre::Address = to.parse().map_err(|_| refused())?;
+    Ok(Mailbox::new(None, address))
+}
+
 impl Mailer for SmtpMailer {
     fn send(&self, email: Email) -> Sending<'_> {
         Box::pin(async move {
-            let to: Mailbox = email
-                .to
-                .parse()
-                .map_err(|_| MailError::Address(email.to.clone()))?;
+            let to = recipient(&email.to)?;
             let message = Message::builder()
                 .from(self.from.clone())
                 .to(to)

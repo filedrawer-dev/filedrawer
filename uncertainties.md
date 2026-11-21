@@ -321,6 +321,16 @@ The owner set 10 an hour and 50 a day per account (#60); an agent chose the rest
   Asking for the password to verify would tie the address to the person who chose the password, at the cost of one more step in every signup.
   No session before verification would not, and would take away "log in to send it again".
 
+#### Which addresses signup takes
+
+- Options: anything with an `@` and a dotted domain, as before; whatever the mail library parses as a single address; or a narrow rule of the server's own.
+- Chosen: the server's own, checked after trimming and lower-casing: ASCII only; a local part of 1 to 64 letters, digits, dots and ``!#$%&'*+-/=?^_`{|}~``, with no dot first, last or doubled; a domain of two or more labels of letters, digits and hyphens.
+  So what is stored, what the email limits count and what the mailer sends to are one string, and a display name, angle brackets, quotes or comments can't make one mailbox many addresses.
+  The mail queue sends nothing to an account stored earlier with an address this rule refuses; it can still log in.
+- Against: an address with non-ASCII letters is refused as "not an email address", though its holder can type a domain's `xn--` form; delivery to one would depend on the mail provider's SMTPUTF8 support.
+  A quoted local part is valid and refused.
+  Plus-addressing and a provider's own aliases still give one inbox many addresses.
+
 ### Versions and batches
 
 #### Versions form one line

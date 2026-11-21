@@ -315,8 +315,9 @@ async fn next_due(pool: &SqlitePool, now: OffsetDateTime) -> Result<Option<Row>,
 }
 
 /// The email `row` stands for, with the hash of the link it minted, if any; or none,
-/// with the row deleted, when it has no one to go to: the account is deleted or has
-/// no address, its address is verified already, or it is no longer an admin. The
+/// with the row deleted, when it has no one to go to: the account is deleted, has no
+/// address or has one stored before signup took only a bare address, its address is
+/// verified already, or it is no longer an admin. The
 /// account is read and the link minted in one transaction, so a deletion can't come
 /// between them.
 async fn prepare(
@@ -333,7 +334,10 @@ async fn prepare(
     .fetch_optional(&mut *tx)
     .await?;
     let mail = Queued::stored(&row.kind, row.subject.clone(), row.body.clone());
-    let to = account.as_ref().and_then(|account| account.email.clone());
+    let to = account
+        .as_ref()
+        .and_then(|account| account.email.clone())
+        .filter(|to| accounts::looks_like_email(to));
     let wanted = account.as_ref().is_some_and(|account| match mail {
         Queued::Verify => !account.verified,
         Queued::Notice { .. } => account.is_admin,

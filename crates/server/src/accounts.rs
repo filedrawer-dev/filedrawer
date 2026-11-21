@@ -27,24 +27,41 @@ impl Purpose {
     }
 }
 
-/// Emails are compared trimmed and lower-cased.
+/// Emails are compared trimmed and lower-cased. Only ASCII letters change case, so
+/// no other character becomes one an address may hold.
 pub fn normalize_email(email: &str) -> String {
-    email.trim().to_lowercase()
+    email.trim().to_ascii_lowercase()
 }
 
-/// A plausible email address: one `@`, something on each side, a dot in the domain,
-/// and no spaces. The verification email checks the rest.
+/// The characters of an address's local part, besides letters, digits and dots.
+const LOCAL_PUNCTUATION: &str = "!#$%&'*+-/=?^_`{|}~";
+
+/// A bare email address, `local@domain` in ASCII and nothing around it: no display
+/// name, angle brackets, quotes, comments or address literal. A mail library reads
+/// those as other spellings of one mailbox, and the address stored, the one the email
+/// limits count and the one the mailer sends to must be the same string. The
+/// verification email checks that it exists.
 pub fn looks_like_email(email: &str) -> bool {
     let Some((local, domain)) = email.split_once('@') else {
         return false;
     };
-    !local.is_empty()
+    let local_part = |part: &str| {
+        !part.is_empty()
+            && part
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || LOCAL_PUNCTUATION.contains(c))
+    };
+    let label = |label: &str| {
+        (1..=63).contains(&label.len())
+            && !label.starts_with('-')
+            && !label.ends_with('-')
+            && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+    };
+    email.len() <= 254
+        && local.len() <= 64
+        && local.split('.').all(local_part)
         && domain.contains('.')
-        && !domain.starts_with('.')
-        && !domain.ends_with('.')
-        && !email.contains(char::is_whitespace)
-        && !domain.contains('@')
-        && email.len() <= 254
+        && domain.split('.').all(label)
 }
 
 fn later(duration: Duration) -> String {
