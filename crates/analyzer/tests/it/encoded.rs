@@ -241,6 +241,29 @@ mod decodings {
     }
 
     #[test]
+    fn a_blob_of_very_many_lines_takes_time_in_step_with_its_size() {
+        // Each group of four characters decodes to three letters, and each line is
+        // its number in octal. At this size only a pass that takes each line once
+        // ends within the runner's limit.
+        const GROUPS: [&str; 8] = [
+            "YWJj", "ZGVm", "Z2hp", "amts", "bW5v", "cHFy", "c3R1", "dnd4",
+        ];
+        const LINES: usize = 400_000;
+        let mut text = String::new();
+        for line in 0..LINES {
+            for digit in 0..7 {
+                text.push_str(GROUPS[(line >> (3 * digit)) & 7]);
+            }
+            text.push('\n');
+        }
+        let found = decoded(&text);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].0, Encoding::Base64);
+        assert_eq!(found[0].1.len(), LINES * 21);
+        assert!(found[0].1.starts_with(b"abcabcabcabcabcabcabc" as &[u8]));
+    }
+
+    #[test]
     fn hashes_and_ids_decode_to_nothing() {
         let text = "sha256:2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae \
             --hash=sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08 \

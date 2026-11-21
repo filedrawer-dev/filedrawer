@@ -5,6 +5,7 @@
 //! text. Hashes, keys, IDs and identifiers decode to noise and pass: a false refusal
 //! turns away an honest author.
 
+use std::collections::HashSet;
 use std::fmt;
 
 use crate::report::Refusal;
@@ -134,9 +135,10 @@ fn find(text: &str, with_zlib: bool) -> Vec<Decoded> {
         hidden(run, decode).or_else(|| with_zlib.then(|| zlib_stream(run, decode)).flatten())
     };
     // A blob wrapped over lines is decoded whole, and its lines then not one by one,
-    // so the screen reads it once.
+    // so the screen reads it once. The lines are a set: a megabyte of them is looked
+    // up once for each token.
     let mut wrapped = Vec::new();
-    let mut wrapped_lines = Vec::new();
+    let mut wrapped_lines = HashSet::new();
     for (blob, lines) in wrapped_blobs(&text) {
         if let Some(bytes) = decode(&blob, decode_base64) {
             wrapped.push((blob, bytes));
@@ -144,7 +146,7 @@ fn find(text: &str, with_zlib: bool) -> Vec<Decoded> {
         }
     }
     for token in text.split_whitespace() {
-        if wrapped_lines.contains(&token) {
+        if wrapped_lines.contains(token) {
             continue;
         }
         for run in runs(token, is_base64_char) {
