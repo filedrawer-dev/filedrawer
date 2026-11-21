@@ -372,6 +372,11 @@ async fn screen_file(
     budget: &mut unpack::TextBudget,
     now: OffsetDateTime,
 ) -> Result<Option<FileCall>, sqlx::Error> {
+    // Asked before the file is read: while the caps hold screening back, a waiting
+    // entry's files aren't unpacked again at each run of the queue.
+    if attachments_over_cap(state, &waiting.account_id, now).await? {
+        return Ok(None);
+    }
     let text = match state.files.read(&file.sha256).await {
         Ok(Some(text)) => text,
         Ok(None) => {
@@ -383,9 +388,19 @@ async fn screen_file(
             return Ok(None);
         }
     };
-    let text = match unpack::with_unpacked(&text, budget) {
-        Ok(text) => text,
-        Err(limit) => return Ok(Some(FileCall::Review(limit.to_string()))),
+    let text = match unpacked(text, budget).await {
+        Ok(Ok(text)) => text,
+        Ok(Err(limit)) => return Ok(Some(FileCall::Review(limit.to_string()))),
+        Err(error) if error.is_panic() => {
+            tracing::error!(sha256 = %file.sha256, %error, "unpacking an attached file panicked; its entry goes to review");
+            return Ok(Some(FileCall::Review(
+                "the server failed to unpack it".into(),
+            )));
+        }
+        Err(error) => {
+            tracing::error!(sha256 = %file.sha256, %error, "unpacking an attached file was cancelled; its entry waits");
+            return Ok(None);
+        }
     };
     let mut doubts = Vec::new();
     for chunk in attachments::chunks(&text) {
@@ -424,6 +439,23 @@ async fn screen_file(
     let doubt = (!doubts.is_empty()).then(|| doubts.join("; "));
     attachments::store_file_verdict(&state.pool, &file.sha256, "pass", doubt.as_deref()).await?;
     Ok(Some(FileCall::Pass(doubt)))
+}
+
+/// [`unpack::with_unpacked`] on the blocking pool: decoding and decompressing a
+/// megabyte is CPU work, which would hold one of the runtime's threads from every
+/// request.
+async fn unpacked(
+    text: String,
+    budget: &mut unpack::TextBudget,
+) -> Result<Result<String, unpack::Limit>, tokio::task::JoinError> {
+    let mut left = budget.clone();
+    let (text, left) = tokio::task::spawn_blocking(move || {
+        let text = unpack::with_unpacked(&text, &mut left);
+        (text, left)
+    })
+    .await?;
+    *budget = left;
+    Ok(text)
 }
 
 /// What screening has spent today (UTC) in all, across accounts.

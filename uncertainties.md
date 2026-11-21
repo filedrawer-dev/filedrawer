@@ -593,6 +593,14 @@ The owner set 10 an hour and 50 a day per account (#60); an agent chose the rest
   A minimum would change what "10 MB a day" means: a set of 150 small files would cost 600 KB of it.
 - Against: a file of a few bytes takes a 4 KiB block and an inode, so the bytes counted understate the disk a set of small files takes, and the disk floor measures free bytes, not free inodes.
 
+#### Unpacking: a file past a limit waits while the caps are spent
+
+- Options: unpack each file before asking whether the caps allow screening, so a file past a limit goes to review at once, as before; or ask first, so nothing is unpacked while an entry must wait.
+- Chosen: ask first.
+  An entry that waits is looked at again on every run of the queue, and unpacking its files each time would be work with nothing to show for it.
+- Against: a file past a limit needs no model call, yet its entry now waits for the caps like any other before it reaches the owner's review.
+  Keeping each file's unpacked result would avoid both, at up to 5 MiB of memory a waiting file.
+
 #### Unpacking: archives other tools read differently from the server
 
 - Options: pass whatever the server's readers give up on as "nothing hidden", as before; send every archive a reader can't finish to the owner's review; or read on the way the common tools do where that is cheap, and send to review only what the server can't read and they can.
@@ -602,6 +610,13 @@ The owner set 10 an hour and 50 a day per account (#60); an agent chose the rest
   A gzip, bzip2 or zlib stream cut short keeps what came out, since their tools stop at the same byte.
 - Against: an honest xz literal split over several quoted lines of a source file now sends its entry to review; none of the field test's attached files holds one.
   Not covered: forms design.md doesn't list (`.lzma`, zstd, `.Z`), a zip whose directory and members disagree, blocks `bzip2recover` could salvage, and a blob split across runs.
+
+#### Unpacking: a file the unpacker panics on goes to review
+
+- Options: let the panic end the queue's run, as any panic in it does, or send the entry to the owner's review.
+- Chosen: review, with the panic logged.
+  The entry would otherwise fail every run of the queue, and every entry behind it would wait.
+- Against: a bug in the unpacker then shows as a review item rather than as a crash someone notices.
 
 ### Link checks
 

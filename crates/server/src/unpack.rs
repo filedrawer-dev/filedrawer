@@ -76,7 +76,7 @@ fn header(how: &str) -> String {
 /// [`TEXT_FLOOR`] (the owner's decision, 2026-11-06). Shared by the files of one
 /// entry screened together; a file already passed by hash isn't unpacked again,
 /// and its size doesn't count.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TextBudget(usize);
 
 impl TextBudget {

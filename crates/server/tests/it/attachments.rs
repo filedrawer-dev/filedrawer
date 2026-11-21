@@ -1209,6 +1209,23 @@ mod screened {
     }
 
     #[tokio::test]
+    async fn while_the_caps_hold_screening_back_a_file_waits_unopened() {
+        let models = FakeModels::default();
+        // A day's cap of nothing: no file may be screened, so none is unpacked, and
+        // one past a limit waits like any other.
+        let app = app_with(&models, 0).await;
+        let bomb = gzip_base64(&vec![b'a'; 8 * 1024 * 1024]);
+        let set = set_of(
+            &app,
+            json!([file("author:bomb.py", &format!("BOMB = '{bomb}'\n"))]),
+        )
+        .await;
+        let (_, status) = publish(&app, &set, "a").await;
+        assert_eq!(status, "screening");
+        assert_eq!(models.asked(), vec![]);
+    }
+
+    #[tokio::test]
     async fn an_entrys_files_share_one_hidden_text_budget() {
         let models = FakeModels::default();
         let app = app_with(&models, 1_000_000_000).await;
