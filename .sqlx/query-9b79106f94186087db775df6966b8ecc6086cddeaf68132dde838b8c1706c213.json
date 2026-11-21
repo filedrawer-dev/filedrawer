@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO attachment_files (set_seq, path, origin, sha256) VALUES (?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "9b79106f94186087db775df6966b8ecc6086cddeaf68132dde838b8c1706c213"
+}

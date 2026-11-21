@@ -418,6 +418,41 @@ The owner set 10 an hour and 50 a day per account (#60); an agent chose the rest
 - Chosen: no restore and no refusal. design.md gives restore for entries only, and bans only files removed as a hazard.
 - Against: an owner who removes the wrong file can't undo it, and an entry attaching a plainly removed file again publishes with that file unserved, without being told at submission.
 
+#### What counts toward a set's bytes
+
+- Options: count only the files' text toward the 1 MiB a set, the account's 10 MB a day and the site's storage cap, as design.md's wording suggests; or count everything a set stores: each file's text, origin and path, and each repo its files name, name and URL, once.
+- Chosen: everything stored.
+  The reply's `bytes` is that sum, so a set of 1 MiB of text no longer fits: its origins and paths take a few KB of the cap.
+  The storage cap and the disk floor count a set's origins, paths and repos too, so at a full store a set of files the store already holds is refused like any other, where it used to be taken.
+  Reason: the origins, paths and URLs are the sender's text, stored as sent, and take room like the files do.
+- Against: design.md says "at most 1 MiB per entry in all" of attachments that are "text files", and an agent sizing its files to the cap is refused by a few KB.
+  Counting the path twice, once in its origin and once alone, follows the schema and not what the sender sent.
+
+#### Caps on a set's files, origins and repo URLs
+
+- Options: no cap but the request's 4 MiB body; or caps on the count of files and on each origin and repo URL; with or without a cap on a set's origins in all.
+- Chosen: a set holds at most 1,000 files and declares at most 1,000 repos; an origin is at most 1,024 bytes and a repo's URL the same; a set's origins and the names and URLs of the repos they name are at most 256 KiB (262,144 bytes) in all.
+  A set over the count or the 256 KiB is a 413 naming the cap, and a long origin or URL a 422 with the others; a reason repeats at most the first 80 characters of an origin, a path, a repo's name or its URL.
+  The usability runs' sets held 3 files with origins up to 69 bytes, and the field test's longest URL was 261 bytes, so each cap is several times real use; 1,000 files at the 256 KiB average 262 bytes an origin.
+  Reason: a set's origins and repo URLs are shown on its entries' pages, and each file costs the database a row and the disk a block whatever its size.
+- Against: an evaluation suite with a file per prompt or per result can pass 1,000 files, and has to concatenate them or publish elsewhere.
+  The 256 KiB can refuse a set the other caps allow, which is one more number for an agent to meet.
+
+#### An attached file's origin isn't screened
+
+- Options: the screen reads an attached file's text, as design.md says, and its origin, path and repo URL are held only to the caps above; or the entry's screen reads them with the entry's text; or a set's origins get a screen of their own, once per set, with the verdict kept on the set.
+- Chosen: the caps alone, for now.
+  Read with the entry's text, a set's origins would be screened again for every entry citing it, billed as a submission outside the attachments' half of the daily cap, and judged for topic and spam by a prompt that knows nothing of file lists.
+- Against: a page shows the origins as it shows the entry's text, which is screened.
+  A screen of the set's origins, once per set and billed as attached code, would treat both alike; it needs a line in the screen's prompt and a verdict column on the set.
+
+#### A small file's cost on disk
+
+- Options: count a file by its bytes, as now; or count each new file as at least a disk block (4 KiB) toward the account's day and the storage cap, and check the disk's free inodes beside its free bytes.
+- Chosen: by its bytes.
+  A minimum would change what "10 MB a day" means: a set of 150 small files would cost 600 KB of it.
+- Against: a file of a few bytes takes a 4 KiB block and an inode, so the bytes counted understate the disk a set of small files takes, and the disk floor measures free bytes, not free inodes.
+
 ### Link checks
 
 #### What a link check counts as dead
@@ -626,6 +661,14 @@ The owner settled the email's sections and the rules in design.md's Admin sectio
 - Chosen: the firewall (#41's brief review): a few console clicks, and nothing on the restored disk changes before the drill reads it.
 - Against: at boot the timer's catch-up run still makes a copy and prunes the oldest on the drill's disk, and Hetzner always lets DNS to its own resolvers through, which rescue mode wouldn't need to trust.
   Hetzner's firewall FAQ (https://docs.hetzner.com/cloud/firewalls/faq/, checked 2026-11-10) confirms that with one or more outbound rules, traffic no rule matches is dropped.
+
+#### How an upload's files are synced
+
+- Options: sync each file and its directories as it is written, which costs about three syncs a file; or write a set's new files, sync the store's whole filesystem once (`syncfs`), rename them into place and sync once more.
+- Chosen: two syncs of the filesystem a set, made before the upload takes the database's write lock.
+  The time an upload holds the store's lock, which deletions wait for, then doesn't grow with a sync for each file, and other writers never wait on a file sync.
+  When the records don't commit, the upload removes the bytes it wrote.
+- Against: `syncfs` also flushes whatever else the disk holds unwritten, staging's and production's alike, so one upload's latency depends on the rest of the machine; and it is Linux only.
 
 ### API
 

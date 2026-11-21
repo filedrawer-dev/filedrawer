@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO attachment_repos (set_seq, name, url) VALUES (?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "daad6e3fe40fe63870496bf864ec3f58ca92d36dbc0a4c9bb8debf14a7e8330b"
+}

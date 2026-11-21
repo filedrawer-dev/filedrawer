@@ -37,7 +37,245 @@ async fn a_set_is_stored_and_its_files_hashes_are_returned() {
     assert_eq!(reply["files"][0]["path"], "src/steer.py");
     assert_eq!(reply["files"][0]["sha256"], sha256(SCRIPT));
     assert_eq!(reply["files"][1]["path"], "analysis/plot.py");
-    assert_eq!(reply["bytes"], SCRIPT.len() + "print('plot')\n".len());
+    // What the set stores: each file's text, origin and path, and the repo its
+    // files name, name and URL, once.
+    let stored = SCRIPT.len()
+        + format!("main@{COMMIT}:src/steer.py").len()
+        + "src/steer.py".len()
+        + "print('plot')\n".len()
+        + "author:analysis/plot.py".len()
+        + "analysis/plot.py".len()
+        + "main".len()
+        + "https://github.com/example/steering".len();
+    assert_eq!(reply["bytes"], stored);
+}
+
+#[tokio::test]
+async fn a_repo_two_files_name_counts_once() {
+    let app = test_app().await;
+    let reply = upload(
+        &app,
+        &app.token,
+        json!({
+            "repos": {"main": "https://example.org/r", "spare": "no remote"},
+            "files": [
+                file(&format!("main@{COMMIT}:a"), ""),
+                file(&format!("main@{COMMIT}:b"), ""),
+            ],
+        }),
+    )
+    .await;
+    assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
+    let reply: Value = serde_json::from_str(&reply.body).unwrap();
+    // Two origins of 47 bytes and two paths of 1, then `main` and its URL of 21
+    // once; `spare`, which no file names, isn't stored.
+    assert_eq!(reply["bytes"], 2 * 47 + 2 + 4 + 21);
+}
+
+#[tokio::test]
+async fn a_body_that_isnt_a_set_is_refused_without_repeating_it() {
+    let app = test_app().await;
+    let reply = upload(&app, &app.token, json!({"files": "x".repeat(5000)})).await;
+    assert_eq!(
+        reply.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        reply.body
+    );
+    assert!(reply.body.contains("send JSON"), "{}", reply.body);
+    assert!(!reply.body.contains(&"x".repeat(100)), "{}", reply.body);
+}
+
+#[tokio::test]
+async fn a_set_holds_at_most_a_thousand_files() {
+    let app = test_app().await;
+    let files: Vec<Value> = (0..1001)
+        .map(|n| file(&format!("author:f{n}"), &format!("{n}\n")))
+        .collect();
+    let reply = upload(&app, &app.token, json!({"files": files})).await;
+    assert_eq!(
+        reply.status,
+        StatusCode::PAYLOAD_TOO_LARGE,
+        "{}",
+        reply.body
+    );
+    assert!(reply.body.contains("1001 files"), "{}", reply.body);
+    assert!(reply.body.contains("1000 files"), "{}", reply.body);
+    assert_eq!(common::stored_texts(&app), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn an_origin_or_repo_url_over_1024_bytes_is_refused_without_repeating_it() {
+    let app = test_app().await;
+    let long_path = "p".repeat(1024);
+    let long_url = format!("https://example.org/{}", "u".repeat(1024));
+    let reply = upload(
+        &app,
+        &app.token,
+        json!({
+            "repos": {"far": long_url},
+            "files": [
+                file(&format!("author:{long_path}"), ""),
+                file(&format!("far@{COMMIT}:a.py"), "a"),
+            ],
+        }),
+    )
+    .await;
+    assert_eq!(
+        reply.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        reply.body
+    );
+    for reason in [
+        "an origin of 1031 bytes",
+        "repo `far` has a URL of 1044 bytes",
+        "1024 bytes",
+    ] {
+        assert!(reply.body.contains(reason), "{reason}: {}", reply.body);
+    }
+    assert!(!reply.body.contains(&"p".repeat(100)), "{}", reply.body);
+    assert!(!reply.body.contains(&"u".repeat(100)), "{}", reply.body);
+    // At the cap, both are taken.
+    let url = format!("https://example.org/{}", "u".repeat(1004));
+    let path = "p".repeat(1017);
+    let reply = upload(
+        &app,
+        &app.token,
+        json!({
+            "repos": {"far": url},
+            "files": [
+                file(&format!("author:{path}"), ""),
+                file(&format!("far@{COMMIT}:a.py"), "a"),
+            ],
+        }),
+    )
+    .await;
+    assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
+}
+
+#[tokio::test]
+async fn a_sets_origins_and_repo_urls_hold_at_most_256_kib() {
+    let app = test_app().await;
+    let files: Vec<Value> = (0..300)
+        .map(|n| file(&format!("author:{n:03}{}", "p".repeat(990)), ""))
+        .collect();
+    let reply = upload(&app, &app.token, json!({"files": files})).await;
+    assert_eq!(
+        reply.status,
+        StatusCode::PAYLOAD_TOO_LARGE,
+        "{}",
+        reply.body
+    );
+    // 300 origins of 1,000 bytes: `author:` and a path of 993.
+    assert!(reply.body.contains("300000 bytes"), "{}", reply.body);
+    assert!(reply.body.contains("262144 bytes"), "{}", reply.body);
+}
+
+#[tokio::test]
+async fn a_sets_origins_and_paths_count_toward_its_mebibyte() {
+    let app = test_app().await;
+    // 1,048,570 bytes of text, with an origin of 12 bytes and a path of 5: 11 over.
+    let text = "x".repeat(1_048_570);
+    let reply = upload(
+        &app,
+        &app.token,
+        json!({"files": [file("author:a.txt", &text)]}),
+    )
+    .await;
+    assert_eq!(
+        reply.status,
+        StatusCode::PAYLOAD_TOO_LARGE,
+        "{}",
+        reply.body
+    );
+    assert!(reply.body.contains("1048587 bytes"), "{}", reply.body);
+}
+
+#[tokio::test]
+async fn a_set_declares_at_most_a_thousand_repos() {
+    let app = test_app().await;
+    let repos: serde_json::Map<String, Value> = (0..1001)
+        .map(|n| (format!("r{n}"), json!("ftp://example.org")))
+        .collect();
+    let reply = upload(
+        &app,
+        &app.token,
+        json!({"repos": repos, "files": [file("author:a.txt", "a")]}),
+    )
+    .await;
+    assert_eq!(
+        reply.status,
+        StatusCode::PAYLOAD_TOO_LARGE,
+        "{}",
+        reply.body
+    );
+    assert!(reply.body.contains("1001 repos"), "{}", reply.body);
+}
+
+#[tokio::test]
+async fn files_of_no_text_still_count_toward_the_accounts_day() {
+    let app = test_app().await;
+    // Each set stores 250 origins of 1,007 bytes and their paths of 1,000: 501,750
+    // bytes, so the day's 10,000,000 hold 19 of them.
+    let set = |n: usize| {
+        let files: Vec<Value> = (0..250)
+            .map(|file_n| file(&format!("author:{n:02}{file_n:03}{}", "p".repeat(995)), ""))
+            .collect();
+        json!({"files": files})
+    };
+    for n in 0..19 {
+        let reply = upload(&app, &app.token, set(n)).await;
+        assert_eq!(reply.status, StatusCode::CREATED, "set {n}: {}", reply.body);
+        let reply: Value = serde_json::from_str(&reply.body).unwrap();
+        assert_eq!(reply["bytes"], 501_750);
+    }
+    let reply = upload(&app, &app.token, set(19)).await;
+    assert_eq!(
+        reply.status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "{}",
+        reply.body
+    );
+}
+
+/// A test app whose database is a file, so one connection can hold the write lock
+/// while others read.
+async fn app_on_a_file_database() -> (TestApp, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("filedrawer.db");
+    let pool = filedrawer_server::db::open(path.to_str().unwrap())
+        .await
+        .unwrap();
+    let app = common::test_app_on(pool, filedrawer_server::screening::Screener::PassAll).await;
+    (app, dir)
+}
+
+#[tokio::test]
+async fn an_uploads_bytes_are_written_before_it_takes_the_databases_write_lock() {
+    let (app, _dir) = app_on_a_file_database().await;
+    let held = filedrawer_server::db::write_tx(&app.pool).await.unwrap();
+    let request = upload(
+        &app,
+        &app.token,
+        json!({"files": [file("author:steer.py", SCRIPT)]}),
+    );
+    tokio::pin!(request);
+    let bytes = on_disk(&app, &sha256(SCRIPT));
+    // The bytes appear while another writer holds the lock, which the upload then
+    // waits for.
+    while !bytes.exists() {
+        tokio::select! {
+            reply = &mut request => panic!(
+                "the upload ended before its bytes were on disk: {} {}",
+                reply.status, reply.body
+            ),
+            () = tokio::time::sleep(std::time::Duration::from_millis(2)) => {}
+        }
+    }
+    held.rollback().await.unwrap();
+    let reply = request.await;
+    assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
 }
 
 #[tokio::test]
@@ -147,7 +385,8 @@ async fn an_account_may_upload_ten_megabytes_a_day() {
 #[tokio::test]
 async fn past_the_sites_storage_cap_uploads_are_refused_and_the_owner_told_once() {
     let mut app = test_app().await;
-    app.state.attachment_store_cap_bytes = 10;
+    // Room for one file of 10 bytes and two sets' origins and paths, 17 bytes each.
+    app.state.attachment_store_cap_bytes = 44;
     app.router = filedrawer_server::app(app.state.clone());
     let owner = common::owner(&app).await;
     let first = upload(
@@ -165,11 +404,13 @@ async fn past_the_sites_storage_cap_uploads_are_refused_and_the_owner_told_once(
     )
     .await;
     assert_eq!(again.status, StatusCode::CREATED, "{}", again.body);
-    for _ in 0..2 {
+    // A new file doesn't fit, and neither does the stored one again: its set's
+    // origin and path are stored too.
+    for text in ["x", "x", "0123456789"] {
         let over = upload(
             &app,
             &app.token,
-            json!({"files": [file("author:c.txt", "x")]}),
+            json!({"files": [file("author:c.txt", text)]}),
         )
         .await;
         assert_eq!(
@@ -458,6 +699,8 @@ async fn an_entry_citing_its_set_lists_the_files_and_says_code_attached() {
         json["attachments"]["files"][0]["origin"],
         format!("main@{COMMIT}:src/steer.py")
     );
+    // What the set's `repos` gave for `main`.
+    assert_eq!(json["attachments"]["files"][0]["repo_url"], "no remote");
 }
 
 #[tokio::test]

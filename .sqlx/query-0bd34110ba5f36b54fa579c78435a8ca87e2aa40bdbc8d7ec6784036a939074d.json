@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "INSERT INTO attachment_sets (id, account_id, bytes, created_at) VALUES (?, ?, ?, ?)\n           RETURNING seq AS \"seq!: i64\"",
+  "query": "INSERT INTO attachment_sets (id, account_id, bytes, metadata_bytes, created_at)\n           VALUES (?, ?, ?, ?, ?)\n           RETURNING seq AS \"seq!: i64\"",
   "describe": {
     "columns": [
       {
@@ -16,11 +16,11 @@
       }
     ],
     "parameters": {
-      "Right": 4
+      "Right": 5
     },
     "nullable": [
       null
     ]
   },
-  "hash": "47166c308dc645f5f9b1a4f4cdd2c191166d7004a610d825d82f3ef29932d9f4"
+  "hash": "0bd34110ba5f36b54fa579c78435a8ca87e2aa40bdbc8d7ec6784036a939074d"
 }

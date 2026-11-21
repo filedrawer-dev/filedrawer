@@ -5,3 +5,4 @@
 # ops/deploy-production refuses to roll production back across a `breaks` line.
 # A migration's own text is sqlx's checksum, so its line goes here, never in the file.
 0033 breaks it drops entries.embargo_until and series.public_at, which an older binary reads and writes, and deletes embargoed and waiting entries and unread hidden series
+0037 safe an older binary reads attachment_files.repo_url, which sets stored from 0037 on leave NULL, so it lists their files without the repo URL; the sets it stores itself count no origins toward the storage cap

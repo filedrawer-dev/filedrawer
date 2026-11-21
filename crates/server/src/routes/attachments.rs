@@ -1,6 +1,8 @@
 //! `POST /attachments`: an attachment set, uploaded once and cited by entries as
 //! `attachments: as-...` (design.md, Attached code).
 
+use std::sync::Arc;
+
 use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -33,24 +35,28 @@ pub async fn upload(
         ));
     }
     let set: SetRequest = serde_json::from_slice(&body).map_err(|error| {
+        // The parser's message can repeat a value from the body, so only its start.
         refused(
             StatusCode::UNPROCESSABLE_ENTITY,
             vec![format!(
-                "send JSON: {{\"repos\": {{\"<name>\": \"<url or no remote>\"}}, \"files\": [{{\"origin\": \"...\", \"text\": \"...\"}}]}} ({error})"
+                "send JSON: {{\"repos\": {{\"<name>\": \"<url or no remote>\"}}, \"files\": [{{\"origin\": \"...\", \"text\": \"...\"}}]}} ({})",
+                attachments::shown(&error.to_string())
             )],
         )
     })?;
-    let files = attachments::read(&set).map_err(|invalid| match invalid {
-        Invalid::TooLarge(bytes) => refused(
-            StatusCode::PAYLOAD_TOO_LARGE,
-            vec![format!(
-                "the set's files hold {bytes} bytes; the cap is {} bytes",
-                attachments::MAX_SET_BYTES
-            )],
-        ),
+    let set = attachments::read(&set).map_err(|invalid| match invalid {
+        Invalid::OverCap(reason) => refused(StatusCode::PAYLOAD_TOO_LARGE, vec![reason]),
         Invalid::Problems(problems) => refused(StatusCode::UNPROCESSABLE_ENTITY, problems),
     })?;
-    let stored = attachments::store(&state, &account.id, &files).await?;
+    let set = Arc::new(set);
+    // In a task of its own, so a client that hangs up can't stop it between
+    // writing the files' bytes and committing their records.
+    let storing = {
+        let (state, set) = (state.clone(), set.clone());
+        tokio::spawn(async move { attachments::store(&state, &account.id, &set).await })
+    };
+    let stored = storing.await.map_err(std::io::Error::from)??;
+    let files = &set.files;
     let (id, bytes) = match stored {
         Stored::Saved { id, bytes } => (id, bytes),
         Stored::DailyCap => {
@@ -81,7 +87,7 @@ pub async fn upload(
     let mut text = format!(
         "id: {id}\nbytes: {bytes}\nCite it in each entry's front matter as `attachments: {id}`.\n{DELIMITER}\n"
     );
-    for file in &files {
+    for file in files {
         text.push_str(&format!("file: {} {}\n", file.sha256, one_line(&file.path)));
     }
     let json = json!({

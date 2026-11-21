@@ -56,7 +56,10 @@ async fn writing_a_name_that_isnt_a_sha256_is_refused_and_writes_nothing() {
     let writer = store.write().await;
 
     for name in not_sha256(dir.path()) {
-        assert_refused(writer.put(&name, "replaced\n").await, &name);
+        assert_refused(
+            writer.put_all(&[(name.as_str(), "replaced\n")]).await,
+            &name,
+        );
     }
     assert_eq!(
         std::fs::read_to_string(dir.path().join("secret")).unwrap(),
@@ -84,10 +87,40 @@ async fn a_sha256_in_lower_case_hex_is_stored_read_and_removed() {
     let name = format!("0123456789abcdef{}", "f".repeat(48));
     let writer = store.write().await;
 
-    writer.put(&name, "kept\n").await.unwrap();
+    writer.put_all(&[(name.as_str(), "kept\n")]).await.unwrap();
 
     assert_eq!(store.read(&name).await.unwrap().as_deref(), Some("kept\n"));
     assert_eq!(writer.stored().await.unwrap(), vec![name.clone()]);
     writer.remove(&name).await.unwrap();
     assert_eq!(store.read(&name).await.unwrap(), None);
+}
+
+#[tokio::test]
+async fn files_stored_together_are_each_kept_and_nothing_is_left_half_written() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = store_beside_a_secret(dir.path());
+    let first = format!("0123456789abcdef{}", "f".repeat(48));
+    // The same first two digits, so the two share a folder.
+    let second = format!("0123456789abcdef{}", "e".repeat(48));
+    let third = "a".repeat(64);
+    let writer = store.write().await;
+
+    writer
+        .put_all(&[
+            (first.as_str(), "one\n"),
+            (second.as_str(), "two\n"),
+            (third.as_str(), ""),
+        ])
+        .await
+        .unwrap();
+    // Stored again, a file keeps its bytes.
+    writer.put_all(&[(first.as_str(), "one\n")]).await.unwrap();
+
+    assert_eq!(store.read(&first).await.unwrap().as_deref(), Some("one\n"));
+    assert_eq!(store.read(&second).await.unwrap().as_deref(), Some("two\n"));
+    assert_eq!(store.read(&third).await.unwrap().as_deref(), Some(""));
+    let half_written: Vec<_> = std::fs::read_dir(dir.path().join("site/files/tmp"))
+        .unwrap()
+        .collect();
+    assert!(half_written.is_empty(), "{half_written:?}");
 }

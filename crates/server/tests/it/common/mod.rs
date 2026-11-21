@@ -263,6 +263,20 @@ pub async fn test_app() -> TestApp {
 /// dollar.
 pub async fn test_app_with(screener: Screener, daily_nano_usd: i64) -> TestApp {
     let pool = db::open(":memory:").await.unwrap();
+    test_app_on_with(pool, screener, daily_nano_usd).await
+}
+
+/// A test app on `pool`, such as a file's, where a test needs more than the one
+/// connection an in-memory database has.
+pub async fn test_app_on(pool: sqlx::SqlitePool, screener: Screener) -> TestApp {
+    test_app_on_with(pool, screener, 1_000_000_000).await
+}
+
+async fn test_app_on_with(
+    pool: sqlx::SqlitePool,
+    screener: Screener,
+    daily_nano_usd: i64,
+) -> TestApp {
     let account = admin::create_account(&pool, "Ada").await.unwrap();
     let token = admin::create_token(&pool, &account, "laptop")
         .await
