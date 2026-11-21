@@ -965,7 +965,9 @@ CADDY_GUARD = (
     "Production's wizard sends it on every run, and ops/provision-vps caddy-upgrades: "
     "the guard serves the one server's Caddy."
 )
+AUDIT_FACTS = "ops/audit-vps sends it, when the owner audits the server."
 STAGING_RERUN_EXEMPT = {
+    "audit-facts.sh": AUDIT_FACTS,
     "deploy-facts.sh": "ops/deploy-production sends it, before each production deploy.",
     "ci-account.sh": "Sent when a CI account's ID or token is missing, or when a "
     "run with --ask-all (ops/provision-vps or ops/provision-vps smoke) is asked for "
@@ -982,6 +984,7 @@ STAGING_RERUN_EXEMPT = {
     "caddy-upgrade-check": CADDY_GUARD,
 }
 PRODUCTION_RERUN_EXEMPT = {
+    "audit-facts.sh": AUDIT_FACTS,
     "base.sh": "Staging's wizard sends it; production shares staging's server.",
     "deploy-facts.sh": "ops/deploy-production sends it, before each production deploy.",
     "deploy-user.sh": "Staging's wizard sends it, for staging's deploy key; "
