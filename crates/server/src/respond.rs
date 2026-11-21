@@ -60,6 +60,20 @@ pub fn author_name(display_name: Option<&str>) -> String {
     display_name.map_or_else(|| "account deleted".to_string(), shown_name)
 }
 
+/// A display name for a JSON reply: as [`shown_name`] prints it, or `null` once the
+/// account is deleted.
+pub fn json_name(display_name: Option<&str>) -> Option<String> {
+    display_name.map(shown_name)
+}
+
+/// A stored display name escaped, for the admin pages beside the name as printed,
+/// when the two differ, so the owner sees what the name hides.
+pub fn name_as_stored(display_name: Option<&str>) -> Option<String> {
+    display_name
+        .filter(|name| shown_name(name) != *name)
+        .map(|name| format!("{name:?}"))
+}
+
 /// The card, indented, then each warning on a line of its own: the part of a
 /// plain-text reply below the delimiter that the analyzer produced.
 pub fn card_and_warnings(card: &str, warnings: &[String]) -> String {

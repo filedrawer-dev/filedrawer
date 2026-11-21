@@ -953,6 +953,73 @@ async fn a_stored_display_name_is_printed_without_its_invisible_characters() {
     }
 }
 
+/// A stored name reads the same wherever it is printed: the JSON replies and the
+/// pages show what the text replies show. The admin pages also show the stored
+/// name escaped, so the owner sees what it hides.
+#[tokio::test]
+async fn a_stored_display_name_reads_the_same_in_json_and_on_pages() {
+    let app = test_app().await;
+    let stored = "Ada\u{e0061}\u{e0062} \u{645}\u{6cc}\u{200c}\u{646}\u{627}\u{200b}";
+    let shown = "Ada \u{645}\u{6cc}\u{200c}\u{646}\u{627}";
+    let (cookie, token) = common::browser_account(&app, "ada@example.com").await;
+    let account = common::account_id(&app, &cookie).await;
+    sqlx::query("UPDATE accounts SET display_name = ? WHERE id = ?")
+        .bind(stored)
+        .bind(&account)
+        .execute(&app.pool)
+        .await
+        .unwrap();
+    let json = |path: &str, method: &str, body: String| {
+        Request::builder()
+            .method(method)
+            .uri(path)
+            .header("authorization", format!("Bearer {token}"))
+            .header("accept", "application/json")
+            .header("content-type", "text/markdown")
+            .body(Body::from(body))
+            .unwrap()
+    };
+    let reply = app.send(json("/entries", "POST", entry("Shown", ""))).await;
+    assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
+    let reply: serde_json::Value = serde_json::from_str(&reply.body).unwrap();
+    assert_eq!(reply["account"]["display_name"], shown);
+    let id = reply["id"].as_str().unwrap().to_string();
+    let admin = common::owner(&app).await;
+    for page in [
+        format!("/admin/accounts/{account}"),
+        format!("/admin/e/{id}"),
+    ] {
+        let body = app.page(&page, Some(&admin)).await.body;
+        assert!(body.contains(shown), "{page}: {body}");
+        assert!(!body.contains('\u{e0061}'), "{page}: {body}");
+        assert!(body.contains(r"Ada\u{e0061}\u{e0062}"), "{page}: {body}");
+    }
+    app.send(json(&format!("/e/{id}/publish"), "POST", String::new()))
+        .await;
+    let read = app.get_json(&format!("/e/{id}")).await;
+    assert_eq!(read["author"]["display_name"], shown);
+    let made = app
+        .send(json(
+            "/series",
+            "POST",
+            common::series::series_doc("S", "About it."),
+        ))
+        .await;
+    let made: serde_json::Value = serde_json::from_str(&made.body).unwrap();
+    let series = app
+        .send(json(
+            &format!("/series/{}", made["id"].as_str().unwrap()),
+            "GET",
+            String::new(),
+        ))
+        .await;
+    let series: serde_json::Value = serde_json::from_str(&series.body).unwrap();
+    assert_eq!(series["members"][0]["display_name"], shown, "{series}");
+    let page = app.page("/account", Some(&cookie)).await.body;
+    assert!(page.contains(shown), "{page}");
+    assert!(!page.contains('\u{e0061}'), "{page}");
+}
+
 /// Signs up with `email` and returns the reply.
 async fn sign_up_with(app: &common::TestApp, email: &str) -> common::Reply {
     app.form(

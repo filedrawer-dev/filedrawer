@@ -11,7 +11,7 @@
 <table>
 <tr><th>Entry</th><th>Account</th><th>Submitted</th><th>Batch</th></tr>
 {% for row in rows %}
-<tr><td><a href="/admin/e/{{ row.entry.id }}">{{ row.title }}</a> <code>{{ row.entry.id }}</code></td><td>{{ row.entry.display_name.as_deref().unwrap_or("account deleted") }} <code>{{ row.entry.account_id }}</code></td><td>{{ row.entry.submitted_at }}</td><td>{% if let Some(batch) = row.entry.batch_id %}<code>{{ batch }}</code>{% endif %}</td></tr>
+<tr><td><a href="/admin/e/{{ row.entry.id }}">{{ row.title }}</a> <code>{{ row.entry.id }}</code></td><td>{{ crate::respond::author_name(row.entry.display_name.as_deref()) }}{% if let Some(stored) = crate::respond::name_as_stored(row.entry.display_name.as_deref()) %} <span class="stored-name">(stored as <code>{{ stored }}</code>)</span>{% endif %} <code>{{ row.entry.account_id }}</code></td><td>{{ row.entry.submitted_at }}</td><td>{% if let Some(batch) = row.entry.batch_id %}<code>{{ batch }}</code>{% endif %}</td></tr>
 {% endfor %}
 </table>
 {% endif %}
@@ -21,7 +21,7 @@
 {% if refusals.is_empty() %}<p>None.</p>{% else %}
 {% for refusal in refusals %}
 <h3>{{ refusal.title }}</h3>
-<p>From {{ refusal.display_name.as_deref().unwrap_or("account deleted") }} <code>{{ refusal.account_id }}</code>, {{ refusal.refused_at }}{% if let Some(series) = refusal.series_id %}, as a new version of <code>{{ series }}</code>{% endif %}. The screen: {{ refusal.why }}.</p>
+<p>From {{ crate::respond::author_name(refusal.display_name.as_deref()) }}{% if let Some(stored) = crate::respond::name_as_stored(refusal.display_name.as_deref()) %} <span class="stored-name">(stored as <code>{{ stored }}</code>)</span>{% endif %} <code>{{ refusal.account_id }}</code>, {{ refusal.refused_at }}{% if let Some(series) = refusal.series_id %}, as a new version of <code>{{ series }}</code>{% endif %}. The screen: {{ refusal.why }}.</p>
 <pre>{{ refusal.description }}</pre>
 <form method="post" action="/admin/series-refusals/{{ refusal.id }}/confirm"><button type="submit">Confirm: guard the account</button></form>
 <form method="post" action="/admin/series-refusals/{{ refusal.id }}/dismiss"><button type="submit">Dismiss</button></form>
@@ -43,7 +43,7 @@
 <table>
 <tr><th>Account</th><th>Since</th><th></th></tr>
 {% for account in guarded %}
-<tr><td>{{ account.display_name.as_deref().unwrap_or("account deleted") }} <code>{{ account.id }}</code></td><td>{{ account.since }}</td><td><form method="post" action="/admin/accounts/{{ account.id }}/clear-guard"><button type="submit">Clear</button></form></td></tr>
+<tr><td>{{ crate::respond::author_name(account.display_name.as_deref()) }}{% if let Some(stored) = crate::respond::name_as_stored(account.display_name.as_deref()) %} <span class="stored-name">(stored as <code>{{ stored }}</code>)</span>{% endif %} <code>{{ account.id }}</code></td><td>{{ account.since }}</td><td><form method="post" action="/admin/accounts/{{ account.id }}/clear-guard"><button type="submit">Clear</button></form></td></tr>
 {% endfor %}
 </table>
 {% endif %}

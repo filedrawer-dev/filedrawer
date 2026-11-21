@@ -25,8 +25,8 @@ use crate::pages::{
 };
 use crate::reads;
 use crate::respond::{
-    CONTACT, DELIMITER, Format, Reading, author_name, card_and_warnings, echoed, one_line,
-    wants_page,
+    CONTACT, DELIMITER, Format, Reading, author_name, card_and_warnings, echoed, json_name,
+    one_line, wants_page,
 };
 use crate::routes::account::optional_session_account;
 use crate::{AppState, allowance, attachments, deletion, time, warnings};
@@ -212,7 +212,7 @@ pub async fn entry(
         "published": entry.published_at,
         "previous": entry.previous_id,
         "superseded_by": entry.superseded_by,
-        "author": {"display_name": entry.display_name, "account_id": entry.account_id},
+        "author": {"display_name": json_name(entry.display_name.as_deref()), "account_id": entry.account_id},
         "row_notes": notes,
         "card": card,
         "text": entry.source,

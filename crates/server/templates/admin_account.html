@@ -3,7 +3,8 @@
 {% block wide %} wide{% endblock %}
 {% block content %}
 <p><a href="/admin">Review queue</a></p>
-<h1>{{ account.display_name }}</h1>
+<h1>{{ crate::respond::shown_name(account.display_name) }}</h1>
+{% if let Some(stored) = crate::respond::name_as_stored(Some(account.display_name.as_str())) %}<p class="stored-name">Stored as <code>{{ stored }}</code></p>{% endif %}
 <p><code>{{ account.id }}</code>, {{ account.email.as_deref().unwrap_or("no email") }}.</p>
 {% if let Some(at) = account.suspended_at %}
 <p class="suspended">Suspended since {{ at }}: it can't submit, and its entries and series were removed. Lifting the suspension lets it write again and restores none of them; restore each from its own page.</p>

@@ -331,7 +331,7 @@ The owner set 10 an hour and 50 a day per account (#60); an agent chose the rest
 
 - Options: refuse a display name that holds an invisible character (see "Which characters count as invisible") or a line or paragraph separator; or remove them at signup and keep the rest.
 - Chosen: refuse, with a message that says why, so the holder knows what the name will be.
-  A name stored before the rule is printed without them, on the `author:` and `account:` lines, a series' `by` and the card's last line.
+  A name stored before the rule is printed without them everywhere it is read: the text replies, the JSON replies' `display_name`, the account page and the admin pages, which also show the stored name escaped when it differs, so the owner sees what it hid.
 - Against: a name with a character on the invisible list that real text needs (see "Which characters count as invisible", Against) is refused until its holder removes it; removing it at signup would let them through with a name that looks nearly the same.
   The name still comes before the account ID on the `author:` line and the card's last line, so a name holding ", account a-..." puts an ID of its holder's choosing first; closing that needs the ID before the name, a change to both lines.
 

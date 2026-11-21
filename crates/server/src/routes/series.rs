@@ -17,7 +17,7 @@ use crate::error::AppError;
 use crate::markdown;
 use crate::pages::{SeriesPage, fields_above, page};
 use crate::queue::Screened;
-use crate::respond::{DELIMITER, Format, Reading, author_name, one_line, shown_name};
+use crate::respond::{DELIMITER, Format, Reading, author_name, json_name, one_line, shown_name};
 use crate::screening::Verdict;
 use crate::series::{self, Series, Version};
 use crate::{AppState, allowance, queue, time};
@@ -358,11 +358,11 @@ pub async fn read(
         "description": visible.as_ref().map(|version| &version.description),
         "entries": entries.iter().map(|listed| json!({
             "id": listed.id,
-            "author": {"display_name": listed.display_name, "account_id": listed.account_id},
+            "author": {"display_name": json_name(listed.display_name.as_deref()), "account_id": listed.account_id},
         })).collect::<Vec<_>>(),
         "members": is_creator.then(|| members.iter().map(|member| json!({
             "account_id": member.account_id,
-            "display_name": member.display_name,
+            "display_name": json_name(member.display_name.as_deref()),
         })).collect::<Vec<_>>()),
     });
     Ok(format.reply(StatusCode::OK, text, json))

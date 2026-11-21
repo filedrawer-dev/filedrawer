@@ -2,7 +2,7 @@
 {% block title %}Your account{% endblock %}
 {% block content %}
 <h1>Your account</h1>
-<p>{{ display_name }}, account <code>{{ account_id }}</code></p>
+<p>{{ crate::respond::shown_name(display_name) }}, account <code>{{ account_id }}</code></p>
 {% if let Some(email) = email %}
 <p>{{ email }}, {% if verified %}verified{% else %}not verified: you can't submit entries until you verify it.{% endif %}</p>
 {% if !verified %}

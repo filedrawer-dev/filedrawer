@@ -32,7 +32,7 @@ impl TokenAccount {
 
     /// The account, as a JSON reply names it.
     pub fn json(&self) -> serde_json::Value {
-        serde_json::json!({"id": self.id, "display_name": self.display_name})
+        serde_json::json!({"id": self.id, "display_name": shown_name(&self.display_name)})
     }
 }
 
