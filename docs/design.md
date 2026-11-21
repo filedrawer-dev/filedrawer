@@ -340,7 +340,7 @@ An info hazard is an entry containing any of:
 - private data.
 
 For an entry in the review queue the owner can publish it, reject it, or hold it until the vendor fixes the hole.
-The owner's page for it says why it is there: the hazard's kind the screens named, a limit an attached file passed, a screen that declined to read it, or the review guard.
+The owner's page for it says why it is there: the hazard's kind the screens named, a limit an attached file passed, a screen that declined to read it, a screening that failed three times (replies the server couldn't read, or a request the model API refused, with the API's reason), or the review guard.
 The server keeps that reason with the entry and shows it to the owner only; the author reads only "rejected in review".
 A held entry waits until the owner publishes or rejects it.
 

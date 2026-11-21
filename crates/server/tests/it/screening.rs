@@ -870,6 +870,20 @@ fn a_refused_request_carries_the_apis_reason_for_the_log() {
 }
 
 #[test]
+fn only_a_status_about_the_requests_contents_refuses_the_request() {
+    let refuses = |status| status_error(status, "").refuses_request();
+    for status in [400, 413, 422] {
+        assert!(refuses(status), "{status}");
+    }
+    // The key, billing, the model's ID, a rate limit, a redirect, an outage.
+    for status in [301, 401, 402, 403, 404, 408, 409, 429, 500, 503, 529] {
+        assert!(!refuses(status), "{status}");
+    }
+    assert!(!ModelError::Http("timed out".into()).refuses_request());
+    assert!(!ModelError::Unreadable("stop_reason max_tokens".into()).refuses_request());
+}
+
+#[test]
 fn the_apis_reason_is_kept_to_one_short_line() {
     let message = format!("first line\nsecond {}", "é".repeat(1_000));
     let body = json!({"type": "error", "error": {"type": "api_error", "message": message}});
@@ -993,20 +1007,56 @@ async fn an_unreadable_reply_still_logs_its_cost() {
 
 #[tokio::test]
 async fn an_outage_doesnt_send_entries_to_review() {
+    // An overloaded API, and a key the API no longer takes: neither is about the
+    // entry.
+    for marker in ["FAKE-ERROR", "FAKE-BAD-KEY"] {
+        let models = FakeModels::default();
+        let app = app_with(&models).await;
+        let (id, _) = publish(&app, &marked(marker, "")).await;
+        for _ in 0..4 {
+            publish_due(&app.state, OffsetDateTime::now_utc())
+                .await
+                .unwrap();
+        }
+        let own = app.get_as_author(&format!("/e/{id}")).await;
+        assert_eq!(
+            field(&own.body, "status"),
+            Some("screening"),
+            "{marker}: {}",
+            own.body
+        );
+        assert_eq!(models.asked().len(), 5, "{marker}: each tick tries again");
+    }
+}
+
+#[tokio::test]
+async fn a_request_the_api_refuses_is_retried_and_after_three_goes_to_review() {
     let models = FakeModels::default();
     let app = app_with(&models).await;
-    let (id, _) = publish(&app, &marked("FAKE-ERROR", "")).await;
-    for _ in 0..4 {
-        publish_due(&app.state, OffsetDateTime::now_utc())
-            .await
-            .unwrap();
-    }
+    let cookie = common::owner(&app).await;
+    let (id, status) = publish(&app, &marked("FAKE-REFUSED-REQUEST", "")).await;
+    assert_eq!(status, "screening", "it waits for the next try");
+    let now = OffsetDateTime::now_utc();
+    publish_due(&app.state, now).await.unwrap();
     let own = app.get_as_author(&format!("/e/{id}")).await;
     assert_eq!(
         field(&own.body, "status"),
         Some("screening"),
         "{}",
         own.body
+    );
+    for _ in 0..8 {
+        publish_due(&app.state, now).await.unwrap();
+    }
+    let own = app.get_as_author(&format!("/e/{id}")).await;
+    assert_eq!(field(&own.body, "status"), Some("review"), "{}", own.body);
+    assert_eq!(models.asked().len(), 3, "nothing more is sent");
+    let page = app.page(&format!("/admin/e/{id}"), Some(&cookie)).await;
+    assert!(
+        page.body
+            .contains("(400: invalid_request_error: prompt is too long)"),
+        "{}",
+        page.body
     );
 }
 

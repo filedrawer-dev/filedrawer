@@ -28,6 +28,9 @@ pub const USAGE: Usage = Usage {
 /// - `FAKE-REFUSE`: Haiku declines; Sonnet declines too with `FAKE-SONNET-REFUSE`.
 /// - `FAKE-DOUBT`: a doubt about `outcome`.
 /// - `FAKE-ERROR`: every call fails, as in an outage.
+/// - `FAKE-BAD-KEY`: every call fails with a 401, as with a revoked key.
+/// - `FAKE-REFUSED-REQUEST`: every call fails with a 400, the API's answer to a
+///   request it won't take.
 /// - `FAKE-GARBLED`: the reply can't be read, though it used tokens.
 /// - `FAKE-SLOW`: the call waits for `release`.
 #[derive(Clone)]
@@ -95,11 +98,18 @@ impl ModelClient for FakeModels {
         let text = &request.user;
         let has = |marker: &str| text.contains(marker);
         let sonnet = request.model == Model::Sonnet;
-        let reply = if has("FAKE-ERROR") {
+        let failed = |status: u16, message: &str| {
             Err(ModelError::Status {
-                status: 529,
-                message: "overloaded_error: Overloaded".into(),
+                status,
+                message: message.into(),
             })
+        };
+        let reply = if has("FAKE-ERROR") {
+            failed(529, "overloaded_error: Overloaded")
+        } else if has("FAKE-BAD-KEY") {
+            failed(401, "authentication_error: invalid x-api-key")
+        } else if has("FAKE-REFUSED-REQUEST") {
+            failed(400, "invalid_request_error: prompt is too long")
         } else if has("FAKE-GARBLED") {
             Ok(ModelReply {
                 answer: Answer::Unreadable("stop_reason max_tokens".into()),

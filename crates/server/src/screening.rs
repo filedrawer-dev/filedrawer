@@ -102,14 +102,34 @@ pub enum ModelError {
     /// The API couldn't be reached; retried without counting against the entry.
     #[error("the request failed: {0}")]
     Http(String),
-    /// The API refused the request, as when overloaded; retried the same way.
-    /// `message` is the API's reason, for the server's log.
+    /// The API answered with an error status. Most are retried the same way, as
+    /// when it is overloaded; one that [refuses the request](Self::refuses_request)
+    /// counts against the entry like an unreadable reply. `message` is the API's
+    /// reason, for the server's log and the owner.
     #[error("the API answered {status}: {message}")]
     Status { status: u16, message: String },
     /// The reply came but can't be used; the entry goes to review after
     /// [`MAX_ATTEMPTS`] of these.
     #[error("the API's reply couldn't be read: {0}")]
     Unreadable(String),
+}
+
+impl ModelError {
+    /// Whether the API refused this request for what it holds, so that sending it
+    /// again would draw the same answer: a 400 (an invalid request, such as a prompt
+    /// past the model's context window), a 413 (too large) or a 422. Every other
+    /// status is the server's or the API's trouble, whatever the entry: the key
+    /// (401, 403), billing (402), the model's ID (404), a rate limit (429), or an
+    /// outage (5xx).
+    pub fn refuses_request(&self) -> bool {
+        matches!(
+            self,
+            ModelError::Status {
+                status: 400 | 413 | 422,
+                ..
+            }
+        )
+    }
 }
 
 /// When the last screening call succeeded, and when the last one failed and why, for

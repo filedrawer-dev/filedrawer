@@ -939,7 +939,7 @@ mod screened {
         // The reason as the page escapes its apostrophe.
         assert!(
             page.body
-                .contains("screening replies couldn&#39;t be read 3 times"),
+                .contains("the last when the model&#39;s reply couldn&#39;t be read"),
             "{}",
             page.body
         );
@@ -948,6 +948,34 @@ mod screened {
             sent_with(&models, "FAKE-GARBLED"),
             3,
             "nothing more is sent"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_file_whose_screening_request_the_api_refuses_goes_to_review_after_three() {
+        let models = FakeModels::default();
+        let app = app_with(&models, 1_000_000_000).await;
+        let cookie = common::owner(&app).await;
+        let set = set_of(
+            &app,
+            json!([file("author:run.py", "# FAKE-REFUSED-REQUEST\n")]),
+        )
+        .await;
+
+        let (id, first) = publish(&app, &set, "refused").await;
+        assert_eq!(first, "screening", "it waits for the next try");
+        for _ in 0..6 {
+            run_worker(&app).await;
+        }
+
+        assert_eq!(status(&app, &id).await, "review");
+        assert_eq!(sent_with(&models, "FAKE-REFUSED-REQUEST"), 3);
+        let page = app.page(&format!("/admin/e/{id}"), Some(&cookie)).await;
+        assert!(
+            page.body
+                .contains("(400: invalid_request_error: prompt is too long)"),
+            "{}",
+            page.body
         );
     }
 

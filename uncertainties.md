@@ -486,6 +486,15 @@ The owner set 10 an hour and 50 a day per account (#60); an agent chose the rest
   A ruleset keeps a `skill-*` tag from moving, so the second fetch holds what the human saw.
 - Against: two fetches, and with the network down between them the Yes installs nothing.
 
+#### Screening: which API errors count against an entry
+
+- Options: retry every error status without end, as before; count every 4xx but a rate limit; or count only the statuses that answer the request's own contents, as here.
+- Chosen: a 400, 413 or 422 counts as a failed try, like a reply that can't be read, and the third sends the entry to review with the API's reason.
+  Every other status waits for the next tick uncounted: 401, 402, 403 and 404 come from the server's key, billing or model ID and hit every entry alike, so counting them would move the whole queue to review 90 seconds after a key is revoked.
+- Against: a 400 can be the server's fault too, as when the API drops a parameter the request sends, and then every waiting entry reaches review after three ticks, as it already does when replies stop being readable.
+  The owner's page offers publish, reject and hold for such an entry and no way back to the screen, and reject or hold puts the account under the review guard.
+  The three tries are 30 seconds apart, so a short spell of 400s is enough.
+
 ### Attached code
 
 #### Status codes for refused attachment uploads

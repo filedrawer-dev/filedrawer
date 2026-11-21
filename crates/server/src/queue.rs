@@ -90,27 +90,19 @@ async fn screen_waiting(
         }
     }
     let text = screened_text(state, waiting).await?;
-    let verdict = match screen_text(state, &waiting.account_id, Some(waiting.seq), &text, now)
-        .await?
-    {
-        Screened::Verdict(verdict) => verdict,
-        Screened::Guarded => Verdict::Review {
-            why: "the account is under the review guard".into(),
-        },
-        Screened::OverCap | Screened::Failed(ModelError::Http(_) | ModelError::Status { .. }) => {
-            // Waits for a later tick; an outage doesn't count against the entry.
-            return Ok(());
-        }
-        Screened::Failed(ModelError::Unreadable(_))
-            if waiting.screen_attempts + 1 < MAX_ATTEMPTS =>
-        {
-            entries::count_screen_attempt(&state.pool, waiting.seq).await?;
-            return Ok(());
-        }
-        Screened::Failed(ModelError::Unreadable(_)) => Verdict::Review {
-            why: format!("screening replies couldn't be read {MAX_ATTEMPTS} times"),
-        },
-    };
+    let verdict =
+        match screen_text(state, &waiting.account_id, Some(waiting.seq), &text, now).await? {
+            Screened::Verdict(verdict) => verdict,
+            Screened::Guarded => Verdict::Review {
+                why: "the account is under the review guard".into(),
+            },
+            // Waits for a later tick.
+            Screened::OverCap => return Ok(()),
+            Screened::Failed(error) => match after_failure(state, waiting, &error).await? {
+                Some(why) => Verdict::Review { why },
+                None => return Ok(()),
+            },
+        };
     // The files' lesser doubts join the text's, for the owner's list.
     let verdict = match verdict {
         Verdict::Pass { note, hazard_doubt } if !file_doubts.is_empty() => Verdict::Pass {
@@ -127,6 +119,32 @@ async fn screen_waiting(
     };
     entries::store_verdict(&state.pool, waiting.seq, &verdict).await?;
     settle(state, waiting.seq).await
+}
+
+/// What a failed model call means for the entry it was made for: `None` when the
+/// entry waits for a later tick, or why it goes to the owner's review. An outage
+/// doesn't count against the entry; a reply that can't be read, or a request the
+/// API refuses for what it holds, does, and the entry goes to review at
+/// [`MAX_ATTEMPTS`] of them rather than being sent without end.
+async fn after_failure(
+    state: &AppState,
+    waiting: &Waiting,
+    error: &ModelError,
+) -> Result<Option<String>, sqlx::Error> {
+    let why = match error {
+        ModelError::Unreadable(_) => format!(
+            "screening failed {MAX_ATTEMPTS} times, the last when the model's reply couldn't be read"
+        ),
+        ModelError::Status { status, message } if error.refuses_request() => format!(
+            "screening failed {MAX_ATTEMPTS} times, the last when the model API refused the request ({status}: {message})"
+        ),
+        ModelError::Http(_) | ModelError::Status { .. } => return Ok(None),
+    };
+    if waiting.screen_attempts + 1 < MAX_ATTEMPTS {
+        entries::count_screen_attempt(&state.pool, waiting.seq).await?;
+        return Ok(None);
+    }
+    Ok(Some(why))
 }
 
 /// What the screen reads for an entry: its text, then the declaration of every run it
@@ -319,9 +337,9 @@ async fn screen_files(
 }
 
 /// Screens one file, chunk by chunk, and stores a pass or a rejection. `None` when
-/// it must wait: its bytes can't be read, the caps are spent, a call failed, or a
-/// reply couldn't be read (counted against the entry, which goes to review after
-/// too many).
+/// it must wait: its bytes can't be read, the caps are spent, or a call failed
+/// ([`after_failure`] says which failures count against the entry, which goes to
+/// review after too many).
 async fn screen_file(
     state: &AppState,
     waiting: &Waiting,
@@ -372,18 +390,9 @@ async fn screen_file(
             Err(error) => {
                 // Logged as `screen_text` logs a failure on an entry's text.
                 tracing::warn!(%error, entry_seq = waiting.seq, sha256 = %file.sha256, "screening attached code failed");
-                return match error {
-                    ModelError::Unreadable(_) if waiting.screen_attempts + 1 >= MAX_ATTEMPTS => {
-                        Ok(Some(FileCall::Review(format!(
-                            "screening replies couldn't be read {MAX_ATTEMPTS} times"
-                        ))))
-                    }
-                    ModelError::Unreadable(_) => {
-                        entries::count_screen_attempt(&state.pool, waiting.seq).await?;
-                        Ok(None)
-                    }
-                    ModelError::Http(_) | ModelError::Status { .. } => Ok(None),
-                };
+                return Ok(after_failure(state, waiting, &error)
+                    .await?
+                    .map(FileCall::Review));
             }
         }
     }
