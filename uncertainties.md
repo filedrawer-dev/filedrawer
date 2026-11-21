@@ -187,12 +187,18 @@ Add a new entry at the end of the topic it belongs to, or start a topic when non
 - Also chosen: the statement behind a search, and behind the home page's tabs, which run the same one, is stopped after 5 seconds and the request answers 500.
   A statement keeps running after its client has gone, so the stop is what bounds how long one holds a database connection.
   Searches take milliseconds today, so nothing should reach it.
+- Also chosen: at most 4 searches with words run at once, half the database's 8 connections, and at most 2 of them for one client IP; another is refused at once with a 429 and `Retry-After: 5`, the statement's stop, which frees a place by then.
+  A search's place is held until its statement ends, also when its client has hung up.
+  Searches with only filters, and the home page's tabs, look no words up and take no place.
+  Reason: what a search with words costs depends on what the archive holds, up to the statement's 5 s stop, and searches holding every connection made every page that reads the database wait behind them.
 - Against: an agent that pastes a whole hypothesis as `q` is refused and has to shorten it, where 100 or 200 words would cost little more.
   Words split where the index's tokenizer splits them, at every character that isn't a letter or a digit by its own tables, so `gpt-4o-mini` counts as three.
   Those tables split some scripts inside what a reader sees as one word: a Hindi word breaks at each vowel sign, so about 15 Hindi words reach the limit.
   Variants the tokenizer merges other than case, such as accented letters and a stem's endings, still count apart.
   A stopped search answers "internal error", not a status of its own that says to narrow the search or try again; a 503 with a reason would need a new error kind.
   The stop covers search only.
+  Under a flood of costly searches from many addresses, honest searches with words get the 429 too, while the rest of the site answers; a place held while the pool is busy waits for a connection too (up to 30 s), so a refusal's `Retry-After` can be short.
+  A room behind one address shares the 2.
 
 #### Which request's skill and User-Agent an entry keeps
 

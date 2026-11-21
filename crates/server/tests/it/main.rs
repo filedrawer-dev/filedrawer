@@ -44,6 +44,7 @@ mod request_log;
 mod review;
 mod screening;
 mod search_log;
+mod search_places;
 mod search_terms;
 mod series;
 mod serve;

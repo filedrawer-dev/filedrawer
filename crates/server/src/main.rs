@@ -311,6 +311,7 @@ async fn serve() -> ExitCode {
         backups_dir: config.backups_dir.clone(),
         started_at: time::OffsetDateTime::now_utc(),
         passwords: Default::default(),
+        searches: Default::default(),
         reads: Default::default(),
         request_log: RequestLog::for_environment(config.environment, &config.database)
             .map(Arc::new),

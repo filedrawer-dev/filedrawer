@@ -18,6 +18,7 @@ use filedrawer_server::limits::{Limits, RateLimits};
 use filedrawer_server::mail::{Email, MailError, Mailer, Sending};
 use filedrawer_server::passwords::Hasher;
 use filedrawer_server::request_log::RequestLog;
+use filedrawer_server::search::Places;
 use filedrawer_server::{AppState, Screener, admin, app, db};
 
 /// How a test's mailer fails an email, or `None` to send it.
@@ -253,6 +254,7 @@ pub fn state(pool: sqlx::SqlitePool, outbox: &Outbox, files_dir: &std::path::Pat
         started_at: time::OffsetDateTime::UNIX_EPOCH,
         request_log: None,
         passwords: Default::default(),
+        searches: Default::default(),
         reads: Default::default(),
     }
 }
@@ -468,6 +470,13 @@ impl TestApp {
     /// The app with this hasher for its passwords.
     pub fn with_passwords(mut self, hasher: Hasher) -> TestApp {
         self.state.passwords = Arc::new(hasher);
+        self.router = app(self.state.clone());
+        self
+    }
+
+    /// The app with these places for searches.
+    pub fn with_searches(mut self, places: Places) -> TestApp {
+        self.state.searches = Arc::new(places);
         self.router = app(self.state.clone());
         self
     }

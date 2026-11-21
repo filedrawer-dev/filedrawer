@@ -121,6 +121,8 @@ pub struct AppState {
     pub request_log: Option<std::sync::Arc<request_log::RequestLog>>,
     /// Runs every password hash and check, a few at a time.
     pub passwords: std::sync::Arc<passwords::Hasher>,
+    /// Searches that look words up in the index, a few at a time.
+    pub searches: std::sync::Arc<search::Places>,
     /// Today's readers of each entry, for Most read, and the salt they're hashed with.
     pub reads: std::sync::Arc<reads::ReadCounter>,
 }

@@ -5,7 +5,6 @@ use analyzer::{
     Results, Role, Stage, Vocabulary, analyze, render_card,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::time::Duration;
 
 use sqlx::SqlitePool;
 
@@ -779,10 +778,6 @@ pub struct Found {
     readers: HashMap<i64, i64>,
 }
 
-/// How long one search's statement may run (`db::with_deadline`). Searches take
-/// milliseconds; this only keeps one that doesn't from holding a connection.
-const SEARCH_BUDGET: Duration = Duration::from_secs(5);
-
 /// Public entries matching `filters`: best match first when there are search words
 /// (bm25, with the title weighted most), otherwise newest first.
 pub async fn search(
@@ -801,7 +796,7 @@ pub async fn search(
     let kind = filters.kind.map(Kind::name);
     let stage = filters.stage.map(Stage::name);
     let row_claim = filters.row_claim.map(Claim::name);
-    let mut connection = db::with_deadline(pool, SEARCH_BUDGET).await?;
+    let mut connection = db::with_deadline(pool, crate::search::STATEMENT_BUDGET).await?;
     let rows = sqlx::query!(
         r#"WITH RECURSIVE
              -- The entries the words match, each with its rank, from one run of the

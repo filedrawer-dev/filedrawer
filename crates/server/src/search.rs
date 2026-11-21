@@ -1,8 +1,141 @@
 //! What a stranger's search may cost (design.md, Agent interface; uncertainties.md,
 //! How long a search's `q` may be, and how long a search may run): the terms the
-//! full-text index will look up for a search's text, each once.
+//! full-text index will look up for a search's text, each once, and how many
+//! searches run at once.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::future::Future;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use crate::error::AppError;
+
+/// How long one search's statement may run (`db::with_deadline`). Searches take
+/// milliseconds; this only keeps one that doesn't from holding a connection.
+pub(crate) const STATEMENT_BUDGET: Duration = Duration::from_secs(5);
+
+/// The most searches with words the site runs at once: half the database pool's 8
+/// connections, so pages that search nothing always find one.
+const AT_ONCE: usize = 4;
+
+/// The most of those one client IP runs at once, so one client can't hold them all.
+const PER_CLIENT: u32 = 2;
+
+/// Places for searches that look words up in the index, the costly kind: so many at
+/// once, and so many for each client. A search that finds none free is refused at
+/// once; the full-text statement's own stop frees a place within
+/// [`STATEMENT_BUDGET`].
+#[derive(Debug)]
+pub struct Places {
+    at_once: usize,
+    per_client: u32,
+    /// How many places are taken, and by which client; no entry for none.
+    taken: Mutex<(usize, HashMap<String, u32>)>,
+}
+
+/// No place was free, for the client or for anyone.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Busy {
+    Client,
+    Site,
+}
+
+impl From<Busy> for AppError {
+    fn from(busy: Busy) -> AppError {
+        let what = match busy {
+            Busy::Client => "searches in progress from this IP address",
+            Busy::Site => "searches in progress",
+        };
+        AppError::TooManyRequests {
+            what: what.to_string(),
+            retry_after_secs: STATEMENT_BUDGET.as_secs(),
+        }
+    }
+}
+
+/// The right to run one search, given back when it is dropped.
+#[derive(Debug)]
+pub struct Place {
+    places: Arc<Places>,
+    client: String,
+}
+
+impl Places {
+    /// Places for `at_once` searches, at most `per_client` of them for one client.
+    pub fn new(at_once: usize, per_client: u32) -> Places {
+        Places {
+            at_once,
+            per_client,
+            taken: Mutex::new((0, HashMap::new())),
+        }
+    }
+
+    /// A place for a search from `client` (a `ClientIp`), or why there is none.
+    pub fn place(self: &Arc<Self>, client: &str) -> Result<Place, Busy> {
+        let mut taken = self
+            .taken
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let (all, clients) = &mut *taken;
+        let mine = clients.get(client).copied().unwrap_or(0);
+        if mine >= self.per_client {
+            return Err(Busy::Client);
+        }
+        if *all >= self.at_once {
+            return Err(Busy::Site);
+        }
+        *all += 1;
+        clients.insert(client.to_string(), mine + 1);
+        Ok(Place {
+            places: self.clone(),
+            client: client.to_string(),
+        })
+    }
+}
+
+impl Default for Places {
+    /// The site's: [`AT_ONCE`], [`PER_CLIENT`] each.
+    fn default() -> Places {
+        Places::new(AT_ONCE, PER_CLIENT)
+    }
+}
+
+impl Place {
+    /// Runs `search` on a task of its own, which holds the place: a statement goes on
+    /// after the client that asked for it hangs up, so the place comes free when the
+    /// statement ends, not when the request does.
+    pub async fn run<T: Send + 'static>(
+        self,
+        search: impl Future<Output = T> + Send + 'static,
+    ) -> T {
+        let task = tokio::spawn(async move {
+            let _place = self;
+            search.await
+        });
+        match task.await {
+            Ok(found) => found,
+            Err(error) => std::panic::resume_unwind(error.into_panic()),
+        }
+    }
+}
+
+impl Drop for Place {
+    fn drop(&mut self) {
+        let mut taken = self
+            .places
+            .taken
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let (all, clients) = &mut *taken;
+        *all = all.saturating_sub(1);
+        if let Some(mine) = clients.get_mut(&self.client) {
+            *mine -= 1;
+            if *mine == 0 {
+                clients.remove(&self.client);
+            }
+        }
+    }
+}
 
 /// The distinct terms of `text` as the index's tokenizer (`unicode61`, under
 /// `porter`, migration 0001) splits it, in the order they first appear. Two terms

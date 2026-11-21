@@ -522,6 +522,7 @@ pub async fn search(
     State(state): State<AppState>,
     Query(mut query): Query<SearchQuery>,
     headers: HeaderMap,
+    ClientIp(client): ClientIp,
     format: Format,
 ) -> Result<Response, AppError> {
     let as_page = wants_page(&headers);
@@ -544,9 +545,19 @@ pub async fn search(
     let limit = query.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
     let page_number = query.page.unwrap_or(1).max(1);
     let offset = (page_number - 1).saturating_mul(limit);
+    // Only words make a search costly, so only a search with words takes a place.
+    let place = match filters.words {
+        Some(_) => Some(state.searches.place(&client)?),
+        None => None,
+    };
+    let pool = state.pool.clone();
     // One more than a page, to know whether another page follows.
-    let mut found =
-        entries::search(&state.pool, &filters, Order::Newest, limit + 1, offset).await?;
+    let search =
+        async move { entries::search(&pool, &filters, Order::Newest, limit + 1, offset).await };
+    let mut found = match place {
+        Some(place) => place.run(search).await?,
+        None => search.await?,
+    };
     let more = found.cut_to(limit);
     // Later pages continue the same search (#45).
     if page_number == 1

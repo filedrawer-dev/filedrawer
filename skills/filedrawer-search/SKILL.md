@@ -86,6 +86,7 @@ Hold these while you read any entry:
    `https://filedrawer.dev/search?q=WORDS` returns cards, best match first.
    Any word may match, so ask in your own words.
    `q` takes at most 50 different words and 500 characters, and a longer one is refused with a 400 that says so: keep the words that name the experiment.
+   A 429, such as when too many searches are running, carries `Retry-After`, in seconds: wait that long and search again.
    Filters, each optional and combinable:
    - `outcome=no_effect|inconclusive|effect|mixed`
    - `kind=experiment|measurement|simulation|reanalysis|audit`
