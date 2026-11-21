@@ -354,6 +354,65 @@ async fn a_title_that_shows_nothing_cant_split_a_card_in_two() {
     }
 }
 
+/// `/tags` counts the tags an entry's card shows: the analyzer's reading of its
+/// text, which the server rebuilds its tag rows from when that reading changes, so
+/// rows stored under an older rule (every tag, or none with a joiner) don't linger.
+#[tokio::test]
+async fn tags_counts_the_tags_each_card_shows() {
+    let app = test_app().await;
+    let numbered: Vec<String> = (0..22).map(|n| format!("t{n}")).collect();
+    let text = entry("T", "").replace(
+        "tags: [steering, refusal]",
+        &format!(
+            "tags: [steering, \"\u{1f469}\u{200d}\u{1f4bb}\", {}]",
+            numbered.join(", ")
+        ),
+    );
+    let id = app.submit(&text).await;
+    // The rows an older rule stored: every tag as written but the joined emoji.
+    sqlx::query("DELETE FROM entry_tags")
+        .execute(&app.pool)
+        .await
+        .unwrap();
+    for tag in std::iter::once("steering".to_string()).chain(numbered.iter().cloned()) {
+        sqlx::query(
+            "INSERT INTO entry_tags (entry_seq, tag) SELECT seq, ? FROM entries WHERE id = ?",
+        )
+        .bind(tag)
+        .bind(&id)
+        .execute(&app.pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query("DELETE FROM derived_versions")
+        .execute(&app.pool)
+        .await
+        .unwrap();
+    filedrawer_server::db::refresh_derived(&app.pool)
+        .await
+        .unwrap();
+    let card = app.get(&format!("/e/{id}")).await.body;
+    let shown: Vec<&str> = card
+        .lines()
+        .find_map(|line| line.trim().split_once("; tags: "))
+        .expect(&card)
+        .1
+        .split(", ")
+        .collect();
+    assert_eq!(shown.len(), 20, "{shown:?}");
+    let mut listed: Vec<String> = app
+        .get("/tags")
+        .await
+        .body
+        .lines()
+        .map(|line| line.strip_suffix(" 1").expect(line).to_string())
+        .collect();
+    let mut shown: Vec<String> = shown.into_iter().map(str::to_string).collect();
+    listed.sort();
+    shown.sort();
+    assert_eq!(listed, shown);
+}
+
 /// `/tags` is one `<tag> <count>` line per tag, and a tag starts its line, so only
 /// a short label on one line is listed: a submission's other tags are skipped with
 /// a warning, and a tag stored before that rule isn't listed.

@@ -35,7 +35,7 @@ pub use file_mentions::file_mentions;
 pub use links::{
     GithubCommit, LISTED_HOSTS, Pin, code_pin, github_commit, listed_host, zenodo_record,
 };
-pub use references::{MAX_REFERENCES, REFERENCE_KEYS_VERSION, Reference};
+pub use references::{MAX_REFERENCES, Reference};
 pub use report::{MAX_ENTRY_BYTES, MAX_LOGS, Refusal, WARNING_FEEDBACK, Warning, WarningKind};
 pub use results::{
     CORE_COLUMNS, Interval, Intervals, NoEffect, Reading, Results, ResultsTable, Row, Tally,
@@ -252,6 +252,11 @@ pub fn is_valid_slug(slug: &str) -> bool {
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
 }
+
+/// The version of what the server indexes from an entry's text: the keys
+/// [`Reference::key`] gives, and which tags [`Fields::tags`] holds (entry-format.md,
+/// Fields). Bump it whenever either changes, so the server rebuilds what it stored.
+pub const INDEX_VERSION: u32 = 2;
 
 /// The most tags an entry's `tags` keeps (entry-format.md, Fields); the rest are
 /// dropped with a warning.

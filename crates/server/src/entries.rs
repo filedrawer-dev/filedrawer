@@ -1,8 +1,8 @@
 //! Storing entries and reading them back (design.md, Entry status; Agent interface).
 
 use analyzer::{
-    Analysis, Author, CardContext, Choice, Claim, Kind, Outcome, REFERENCE_KEYS_VERSION, Reference,
-    Results, Role, Stage, Vocabulary, analyze, render_card,
+    Analysis, Author, CardContext, Choice, Claim, INDEX_VERSION, Kind, Outcome, Reference, Results,
+    Role, Stage, Vocabulary, analyze, render_card,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -394,15 +394,7 @@ async fn write_derived(
         .execute(&mut *transaction)
         .await?;
     }
-    for tag in &fields.tags {
-        sqlx::query!(
-            "INSERT INTO entry_tags (entry_seq, tag) VALUES (?, ?)",
-            seq,
-            tag
-        )
-        .execute(&mut *transaction)
-        .await?;
-    }
+    write_tags(&mut *transaction, seq, analysis).await?;
     if let Results::Read(table) = &analysis.results {
         for (position, row) in (1_i64..).zip(&table.rows) {
             let model = row.cell("model");
@@ -444,6 +436,25 @@ async fn write_derived(
         .await?;
     }
     write_references(&mut *transaction, seq, analysis, previous_seq).await
+}
+
+/// Stores an entry's tags as the analyzer reads them, the ones its card shows, for
+/// `/tags` and search's `tag` filter.
+async fn write_tags(
+    transaction: &mut sqlx::SqliteConnection,
+    seq: i64,
+    analysis: &Analysis,
+) -> Result<(), sqlx::Error> {
+    for tag in &analysis.fields.tags {
+        sqlx::query!(
+            "INSERT INTO entry_tags (entry_seq, tag) VALUES (?, ?)",
+            seq,
+            tag
+        )
+        .execute(&mut *transaction)
+        .await?;
+    }
+    Ok(())
 }
 
 /// Stores the keys of what an entry's `replicates` and `reanalyzes` name, for search's
@@ -489,12 +500,15 @@ async fn write_references(
     Ok(())
 }
 
-/// Rebuilds `entry_references` from every entry's text when the keys it holds are of
-/// an older format than the analyzer's, or the table was never filled: entries stored
-/// before it existed get theirs. In seq order, so a version that carries its
-/// predecessor's keys finds them. Keys of a newer format, after a rollback, stay.
-pub async fn rebuild_stale_references(pool: &SqlitePool) -> Result<(), sqlx::Error> {
-    let current = i64::from(REFERENCE_KEYS_VERSION);
+/// Rebuilds `entry_references` and `entry_tags` from every entry's text when what
+/// they hold is of an older [`INDEX_VERSION`] than the analyzer's, or was never
+/// filled: entries stored before then get theirs. In seq order, so a version that
+/// carries its predecessor's keys finds them. Rows of a newer version, after a
+/// rollback, stay. The version is kept in the row `entry_references`, which every
+/// binary since that table lowers to its own after a rollback, so the next newer one
+/// rebuilds both tables, the tags an older binary stored included.
+pub async fn rebuild_stale_index(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    let current = i64::from(INDEX_VERSION);
     let mut transaction = crate::db::write_tx(pool).await?;
     let stored =
         sqlx::query_scalar!("SELECT version FROM derived_versions WHERE name = 'entry_references'")
@@ -519,6 +533,9 @@ pub async fn rebuild_stale_references(pool: &SqlitePool) -> Result<(), sqlx::Err
     sqlx::query!("DELETE FROM entry_references")
         .execute(&mut *transaction)
         .await?;
+    sqlx::query!("DELETE FROM entry_tags")
+        .execute(&mut *transaction)
+        .await?;
     let entries = sqlx::query!(
         r#"SELECT seq AS "seq!: i64", source, previous_seq FROM entries ORDER BY seq"#
     )
@@ -527,6 +544,7 @@ pub async fn rebuild_stale_references(pool: &SqlitePool) -> Result<(), sqlx::Err
     for entry in entries {
         let analysis = analyze(&entry.source);
         write_references(&mut transaction, entry.seq, &analysis, entry.previous_seq).await?;
+        write_tags(&mut transaction, entry.seq, &analysis).await?;
     }
     sqlx::query!(
         "INSERT INTO derived_versions (name, version) VALUES ('entry_references', ?)

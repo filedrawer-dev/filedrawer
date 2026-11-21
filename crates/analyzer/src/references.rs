@@ -6,10 +6,6 @@ use url::Url;
 
 use crate::is_valid_slug;
 
-/// The version of the keys [`Reference::key`] gives (entry-format.md, Fields). Bump
-/// it whenever a key changes, so the server rebuilds the keys it stored.
-pub const REFERENCE_KEYS_VERSION: u32 = 1;
-
 /// The most items `replicates` or `reanalyzes` keeps (entry-format.md, Fields); the
 /// rest are dropped with a warning.
 pub const MAX_REFERENCES: usize = 10;

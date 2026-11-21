@@ -825,10 +825,11 @@ The owner settled the email's sections and the rules in design.md's Admin sectio
 
 ### Storage
 
-#### When the reference keys are rebuilt
+#### When the reference keys and tags are rebuilt
 
-- Options: at startup when `REFERENCE_KEYS_VERSION` differs from the stored one, or at every startup.
+- Options: at startup when the analyzer's `INDEX_VERSION` differs from the stored one, or at every startup.
 - Chosen: on a version change, since a rebuild reads every entry.
+  The keys and the tags are rebuilt together, in one read of every entry, under the version row `entry_references`, which binaries since that table already lower after a rollback; so the tags a rolled-back binary stored are rebuilt too once a newer one starts.
 - Against: if a deploy rolls back to a binary from before `entry_references`, the entries it stores get no keys, and the next binary, finding the version current, doesn't fill them, so `cites=` misses them until each gets a new version.
   A rebuild at every startup would cost a read of every entry, still small before launch.
 

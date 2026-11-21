@@ -86,7 +86,7 @@ pub async fn open(path: &str) -> Result<SqlitePool, sqlx::Error> {
 }
 
 /// Rebuilds each table derived from entries' text whose format has changed since it
-/// was filled, as a new analyzer's reference keys (`entries::rebuild_stale_references`).
+/// was filled, as a new analyzer's reference keys and tags (`entries::rebuild_stale_index`).
 pub async fn refresh_derived(pool: &SqlitePool) -> Result<(), sqlx::Error> {
-    crate::entries::rebuild_stale_references(pool).await
+    crate::entries::rebuild_stale_index(pool).await
 }
