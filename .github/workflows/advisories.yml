@@ -1,0 +1,64 @@
+# RustSec's advisories against Cargo.lock, daily. A crate the server or the CLI is
+# built from can get an advisory any day, and nothing else here says so: Dependabot's
+# pull requests (.github/dependabot.yml) move versions weekly, whether or not an
+# advisory names them.
+#
+# The `audit` job runs cargo-audit, which bin/cargo-audit downloads pinned by hash,
+# and hands on the advisories that apply; the `report` job keeps one issue in step
+# with them: it opens it, rewrites its list, and closes it once none applies.
+# bin/advisories (-h) does each step and says what it counts. cargo-audit and the
+# advisory database run only in `audit`, whose one token, read-only, goes to the
+# checkout alone. A run that can't load the database or read cargo-audit's report
+# fails red, and reports nothing. A run started by hand on another branch audits that
+# branch's Cargo.lock, and reports nothing.
+name: Advisories
+
+on:
+  schedule:
+    # Daily at 10:17 UTC, off the hour's busy minute.
+    - cron: "17 10 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A manual run beside the scheduled one would open the same issue twice.
+concurrency:
+  group: advisories
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      advisories: ${{ steps.check.outputs.advisories }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: check
+        run: bin/advisories check >> "$GITHUB_OUTPUT"
+
+  # Only after an audit that passed: an empty list from a failed one would read as
+  # "none applies" and close the issue.
+  report:
+    needs: audit
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      ADVISORIES: ${{ needs.audit.outputs.advisories }}
+      RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: bin/advisories
+          sparse-checkout-cone-mode: false
+      - run: bin/advisories report "$ADVISORIES" "$RUN"

@@ -935,6 +935,16 @@ An agent chose this on 2026-11-20, with the owner away.
   Any job on main can save a cache entry the next run restores, so a restored one makes every such job's tools part of what built the server's binary or a published package.
 - Against: each push to main builds the server cold, about 2 minutes where a warm build took 40 seconds, so staging deploys that much later.
 
+#### The daily advisories check
+
+An agent added this on 2026-11-20, with the owner away; deleting `.github/workflows/advisories.yml` undoes it.
+
+- Options: report every RustSec finding for `Cargo.lock`, or only vulnerabilities; one issue per advisory, or one issue for all; after the owner closes the issue by hand, open a new one each day the advisories still apply, reopen it, or take the close as accepting what it lists.
+- Chosen: vulnerabilities only, in one issue the workflow rewrites and closes, and a close by hand accepts the advisories listed, so a new issue opens only for one not listed.
+  cargo-audit's warnings (unmaintained, unsound, yanked) name crates nobody here can patch, and would keep an issue open for good; `.cargo/audit.toml` is where an accepted advisory is written down.
+- Against: an unsound or unmaintained dependency is never reported; an advisory accepted by closing the issue leaves no trace in the repo, and stays accepted if it goes away and comes back.
+  A run that fails (RustSec or GitHub down, a cargo-audit too old to read the database) shows only as a red run of a scheduled workflow, which GitHub mails to whoever last changed its schedule; and GitHub stops scheduled workflows in a repo with no activity for 60 days.
+
 ### Production deploys
 
 #### Production's commit is public

@@ -1,0 +1,151 @@
+#!/usr/bin/env python3
+"""Run cargo-audit 0.23.0, pinned by SHA-256, for bin/advisories.
+
+    bin/cargo-audit ARGS...    run cargo-audit with ARGS, as `bin/cargo-audit audit --json`
+
+cargo-audit reads Cargo.lock and RustSec's advisory database, which it fetches itself;
+it needs no cargo and builds nothing.
+
+The first run on a machine downloads cargo-audit's release archive for this platform
+from GitHub, checks it against the SHA-256 in PINS, and caches the binary under
+$XDG_CACHE_HOME/filedrawer/cargo-audit/ (~/.cache by default). Later runs use the
+cache. When the download fails or its hash doesn't match, nothing is cached and it
+exits 1.
+
+To move to another cargo-audit release, change VERSION and every hash in PINS.
+GitHub's API lists a digest for each release asset
+(`gh api repos/rustsec/rustsec/releases/tags/cargo-audit/vVERSION`); download the
+asset and check that its hash agrees before copying it here. Nothing tells you a
+newer release is out: Dependabot doesn't read this file.
+
+Tests serve a fake archive by setting FILEDRAWER_CARGO_AUDIT_URL and
+FILEDRAWER_CARGO_AUDIT_SHA256. An overridden URL alone is still checked against the
+pinned hash.
+
+It downloads with curl rather than urllib, as bin/lychee does.
+"""
+
+import hashlib
+import os
+import platform
+import subprocess
+import sys
+import tarfile
+import tempfile
+from pathlib import Path
+
+VERSION = "0.23.0"
+BASE_URL = (
+    f"https://github.com/rustsec/rustsec/releases/download/cargo-audit%2Fv{VERSION}"
+)
+# Each archive's SHA-256: GitHub's API digest, which matched the download's own hash
+# on 2026-11-20. The release has no musl build for aarch64 Linux.
+PINS = {
+    "x86_64-unknown-linux-musl": "4f01c74ed84b2dffd0b1d37012a62cdf2a92c96e25bdf8eec7fcc0d4d3eb7811",
+    "aarch64-unknown-linux-gnu": "00eff3158429b9629abe8748e971f29f99ee53d4cff54a25072cbb15167bdda8",
+    "aarch64-apple-darwin": "84101204e5b8013c9a8d7251766aebdef3e7fa1a3ef040cde44d65b48b8c4056",
+    "x86_64-apple-darwin": "845ec02452dd233c292be887700ac99a38a697299423081ee0d8ea1a0c961464",
+}
+# (platform.system(), platform.machine()) to release target. The machine names are the
+# ones each kernel reports: aarch64 on Linux, arm64 on macOS.
+TARGETS = {
+    ("Linux", "x86_64"): "x86_64-unknown-linux-musl",
+    ("Linux", "aarch64"): "aarch64-unknown-linux-gnu",
+    ("Darwin", "arm64"): "aarch64-apple-darwin",
+    ("Darwin", "x86_64"): "x86_64-apple-darwin",
+}
+
+
+class InstallError(Exception):
+    pass
+
+
+def target(system: str, machine: str) -> str | None:
+    """The release target for this platform, or None when the release has no build
+    for it."""
+    return TARGETS.get((system, machine))
+
+
+def cache_dir() -> Path:
+    root = os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache"
+    return Path(root) / "filedrawer" / "cargo-audit"
+
+
+def download(url: str, dest: Path) -> None:
+    command = [
+        "curl", "--fail", "--silent", "--show-error", "--location",
+        "--retry", "3",
+        # Give up when connecting takes 15 s, or the transfer stalls below 1 KB/s for
+        # 30 s, so a bad network fails the run instead of hanging it.
+        "--connect-timeout", "15", "--speed-limit", "1024", "--speed-time", "30",
+        # file:// is for the tests' fake archives; the hash check guards every source.
+        "--proto", "=https,file", "--proto-redir", "=https",
+        "--output", str(dest), url,
+    ]  # fmt: skip
+    try:
+        subprocess.run(command, check=True, capture_output=True, text=True)
+    except FileNotFoundError:
+        raise InstallError("downloading cargo-audit needs curl, which isn't on PATH")
+    except subprocess.CalledProcessError as error:
+        raise InstallError(f"couldn't download {url}: {error.stderr.strip()}")
+
+
+def install(url: str, sha256: str, member: str, binary: Path) -> None:
+    """Download the archive at url, check its hash, and put its member at binary.
+
+    Nothing touches the cache until the hash has matched, so a refusal leaves no trace.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        archive = Path(tmp) / "cargo-audit.tgz"
+        download(url, archive)
+        actual = hashlib.sha256(archive.read_bytes()).hexdigest()
+        if actual != sha256:
+            raise InstallError(
+                f"SHA-256 mismatch for {url}: expected {sha256}, got {actual}"
+            )
+        with tarfile.open(archive) as tar:
+            try:
+                source = tar.extractfile(member)
+            except KeyError:
+                source = None
+            if source is None:
+                raise InstallError(f"{url} has no file {member}")
+            contents = source.read()
+    binary.parent.mkdir(parents=True, exist_ok=True)
+    # Written beside the binary and renamed, so a run alongside never sees half a file.
+    staged = binary.with_name(f".cargo-audit-{os.getpid()}")
+    staged.write_bytes(contents)
+    staged.chmod(0o755)
+    os.replace(staged, binary)
+
+
+def fail(why: str) -> int:
+    print(f"bin/cargo-audit: {why}", file=sys.stderr)
+    return 1
+
+
+def main(argv: list[str]) -> int:
+    if argv[:1] in (["-h"], ["--help"]):
+        print(__doc__)
+        return 0
+    release_target = target(platform.system(), platform.machine())
+    if release_target is None:
+        return fail(
+            f"cargo-audit {VERSION} has no release for {platform.system()} "
+            f"{platform.machine()}"
+        )
+    name = f"cargo-audit-{release_target}-v{VERSION}"
+    url = os.environ.get("FILEDRAWER_CARGO_AUDIT_URL", f"{BASE_URL}/{name}.tgz")
+    sha256 = os.environ.get("FILEDRAWER_CARGO_AUDIT_SHA256", PINS[release_target])
+    # Keyed by hash, so a new pin never runs a binary cached under an old one.
+    binary = cache_dir() / sha256 / "cargo-audit"
+    if not binary.is_file():
+        try:
+            install(url, sha256, f"{name}/cargo-audit", binary)
+        except InstallError as error:
+            return fail(str(error))
+    os.execv(binary, [str(binary), *argv])
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -1,0 +1,275 @@
+#!/usr/bin/env python3
+"""RustSec's advisories against Cargo.lock, daily, for
+.github/workflows/advisories.yml. Run it from the repo root.
+
+    bin/advisories check
+        runs cargo-audit (bin/cargo-audit, pinned) against ./Cargo.lock and prints an
+        advisories= line for $GITHUB_OUTPUT: a JSON list of the vulnerabilities that
+        apply, each an id, crate, version and patched versions; and says the same in
+        words on stderr, for the run's log. cargo-audit's warnings (unmaintained,
+        unsound, yanked) aren't reported. An advisory listed under `[advisories]
+        ignore` in .cargo/audit.toml isn't either: cargo-audit skips it.
+        Fails when cargo-audit printed no report, an empty database, or an advisory
+        whose id, crate or version isn't shaped as one: its exit status is 1 for
+        "found some" and for "couldn't load the database" alike.
+    bin/advisories report ADVISORIES RUN_URL
+        keeps one issue, "Cargo.lock holds crates with security advisories", in step
+        with ADVISORIES, check's list. It goes by the newest issue with that title
+        that the workflow itself opened; anyone may open one with the same title.
+        No such issue open, and an advisory the last one doesn't list: opens one.
+        Open, listing other advisories: rewrites its list and comments.
+        Open, and none applies: says so and closes it.
+        An issue someone closed by hand accepts the advisories it lists, so those
+        open nothing again; one it doesn't list opens a new issue. The repo is
+        $GH_REPO.
+
+Advisories are other people's text, so only an advisory's id, crate, version and
+patched versions reach the log or an issue, each checked against its shape, and
+never its title or description.
+
+$FILEDRAWER_CARGO_AUDIT names another cargo-audit to run, for the tests. It reaches
+GitHub through gh, with GH_TOKEN.
+"""
+
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+TITLE = "Cargo.lock holds crates with security advisories"
+ADVISORY = re.compile(r"RUSTSEC-\d{4}-\d{4}")
+CRATE = re.compile(r"[A-Za-z0-9_-]{1,64}")
+CRATE_VERSION = re.compile(r"[0-9A-Za-z.+-]{1,64}")
+# A version requirement, as `>=0.5.3, <0.6.0` or `^1.2`.
+PATCHED = re.compile(r"[0-9A-Za-z.+\-<>=^~, ]{1,64}")
+# Who a workflow's GITHUB_TOKEN writes as, in the REST API's spelling. No user can
+# have the name: a login takes no brackets.
+WORKFLOW = "github-actions[bot]"
+
+
+class Unreadable(Exception):
+    pass
+
+
+def fail(message: str) -> None:
+    print(f"advisories: {message}", file=sys.stderr)
+    sys.exit(1)
+
+
+def gh(*args: str) -> str:
+    done = subprocess.run(["gh", *args], capture_output=True, text=True, check=False)
+    if done.returncode != 0:
+        fail(f"gh {' '.join(args[:2])} failed: {done.stderr.strip()}")
+    return done.stdout
+
+
+def advisory(item: object) -> dict:
+    """One of check's advisories, each field checked against its shape. Patched
+    versions it can't read are left out, since the advisory still applies."""
+    if not isinstance(item, dict):
+        raise Unreadable(f"an advisory that is no map: {item!r}")
+    shapes = {"id": ADVISORY, "crate": CRATE, "version": CRATE_VERSION}
+    for field, shape in shapes.items():
+        value = item.get(field)
+        if not (isinstance(value, str) and shape.fullmatch(value)):
+            raise Unreadable(f"an advisory whose {field} is {value!r}")
+    patched = item.get("patched")
+    if not isinstance(patched, list):
+        raise Unreadable(f"an advisory whose patched versions are {patched!r}")
+    if not all(isinstance(p, str) and PATCHED.fullmatch(p) for p in patched):
+        patched = []
+    return {field: item[field] for field in shapes} | {"patched": patched}
+
+
+def advisories(items: object) -> list[dict]:
+    if not isinstance(items, list):
+        raise Unreadable(f"no list of advisories: {items!r}")
+    return sorted(map(advisory, items), key=lambda a: (a["id"], a["crate"]))
+
+
+def field(value: object, *keys: str) -> object:
+    """value[k1][k2]..., or None where a step isn't a map or lacks the key."""
+    for key in keys:
+        value = value.get(key) if isinstance(value, dict) else None
+    return value
+
+
+def audited(report: object) -> list[dict]:
+    """The vulnerabilities of cargo-audit's report, once it holds what a finished
+    audit does."""
+    known = field(report, "database", "advisory-count")
+    crates = field(report, "lockfile", "dependency-count")
+    listed = field(report, "vulnerabilities", "list")
+    count = field(report, "vulnerabilities", "count")
+    if not (isinstance(known, int) and known > 0):
+        raise Unreadable(f"its database holds {known!r} advisories")
+    if not (isinstance(crates, int) and crates > 0):
+        raise Unreadable(f"it read {crates!r} crates from Cargo.lock")
+    if (
+        not isinstance(listed, list)
+        or count != len(listed)
+        or field(report, "vulnerabilities", "found") != bool(listed)
+    ):
+        raise Unreadable("its count of vulnerabilities isn't its list's")
+    return advisories(
+        [
+            {
+                "id": field(v, "advisory", "id"),
+                "crate": field(v, "package", "name"),
+                "version": field(v, "package", "version"),
+                "patched": field(v, "versions", "patched"),
+            }
+            for v in listed
+        ]
+    )
+
+
+def check() -> None:
+    audit = os.environ.get("FILEDRAWER_CARGO_AUDIT") or str(
+        Path(__file__).resolve().with_name("cargo-audit")
+    )
+    done = subprocess.run(
+        [audit, "audit", "--json", "--no-yanked"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    try:
+        report = json.loads(done.stdout)
+        found = audited(report)
+    except (ValueError, Unreadable) as error:
+        fail(
+            f"cargo-audit exited {done.returncode} with no report to go by: {error}\n"
+            f"{done.stderr.strip()}"
+        )
+    known = report["database"]["advisory-count"]
+    # stdout goes to $GITHUB_OUTPUT, so the run's log shows only stderr.
+    if found:
+        names = "; ".join(f"{a['id']} {a['crate']} {a['version']}" for a in found)
+        print(
+            f"{len(found)} advisories apply to Cargo.lock, of the {known} RustSec "
+            f"lists: {names}.",
+            file=sys.stderr,
+        )
+    else:
+        print(
+            f"No advisory applies to Cargo.lock, of the {known} RustSec lists.",
+            file=sys.stderr,
+        )
+    print(f"advisories={json.dumps(found, separators=(',', ':'))}")
+
+
+def lines(found: list[dict]) -> str:
+    """The advisories as a markdown list, a line each."""
+    return "".join(
+        f"- [{a['id']}](https://rustsec.org/advisories/{a['id']}): `{a['crate']}` "
+        f"`{a['version']}`, "
+        + (
+            "patched in " + " or ".join(f"`{p}`" for p in a["patched"])
+            if a["patched"]
+            else "no patched version"
+        )
+        + "\n"
+        for a in found
+    )
+
+
+def body(found: list[dict], run: str) -> str:
+    return (
+        f"RustSec lists advisories for crates in `Cargo.lock` ({run}):\n\n"
+        f"{lines(found)}\n"
+        "`cargo update -p CRATE` takes a patched version when `Cargo.toml`'s "
+        "requirement allows one.\n"
+        "To accept an advisory instead, list its id under `[advisories]`, `ignore`, "
+        "in `.cargo/audit.toml`, with why in a comment.\n\n"
+        "The daily check (`.github/workflows/advisories.yml`, `bin/advisories -h`) "
+        "keeps this list current and closes the issue once no advisory applies.\n"
+        "Closing it by hand accepts the advisories listed here: a new issue opens "
+        "only for one this list doesn't hold."
+    )
+
+
+def own_issues() -> list[dict]:
+    """The issues with the report's title that the workflow opened, oldest first."""
+    # gh fills {owner} and {repo} from $GH_REPO, and prints each page as a list.
+    pages = gh(
+        "api", "--method", "GET", "--paginate", "--slurp", "repos/{owner}/{repo}/issues",
+        "-f", "per_page=100", "-f", "state=all", "-f", f"creator={WORKFLOW}",
+    )  # fmt: skip
+    return sorted(
+        (
+            issue
+            for page in json.loads(pages)
+            for issue in page
+            if (issue.get("user") or {}).get("login") == WORKFLOW
+            and issue["user"].get("type") == "Bot"
+            # The list holds pull requests too.
+            and "pull_request" not in issue
+            and issue["title"] == TITLE
+        ),
+        key=lambda issue: issue["number"],
+    )
+
+
+def report(given: str, run: str) -> None:
+    try:
+        found = advisories(json.loads(given))
+    except (ValueError, Unreadable) as error:
+        fail(f"can't report what check didn't print: {error}")
+    ids = {a["id"] for a in found}
+    issues = own_issues()
+    last = issues[-1] if issues else None
+    said = set(ADVISORY.findall(last["body"] or "")) if last else set()
+    if last is None or last["state"] != "open":
+        if ids <= said:
+            print("No advisory applies that a closed issue doesn't list.")
+            return
+        gh("issue", "create", "--title", TITLE, "--body", body(found, run))
+        print(f"opened: {TITLE}")
+        return
+    number = str(last["number"])
+    issue = f"repos/{{owner}}/{{repo}}/issues/{number}"
+    if not ids:
+        # Also an open issue that lists nothing already: one whose close failed after
+        # an earlier run's comment, or that someone opened again.
+        none = f"No advisory applies to `Cargo.lock` now ({run})."
+        gh("issue", "comment", number, "--body", none)
+        gh(
+            "api",
+            "--method",
+            "PATCH",
+            issue,
+            "-f",
+            f"body={none}",
+            "-f",
+            "state=closed",
+        )
+        print(f"closed #{number}")
+    elif ids == said:
+        print(f"#{number} lists them already.")
+    else:
+        gh("api", "--method", "PATCH", issue, "-f", f"body={body(found, run)}")
+        gh(
+            "issue", "comment", number, "--body",
+            f"The advisories that apply changed ({run}):\n\n{lines(found)}",
+        )  # fmt: skip
+        print(f"rewrote #{number}'s list")
+
+
+def main(args: list[str]) -> None:
+    match args:
+        case ["check"]:
+            check()
+        case ["report", given, run]:
+            report(given, run)
+        case ["-h" | "--help"]:
+            print(__doc__)
+        case _:
+            print(__doc__, file=sys.stderr)
+            sys.exit(2)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

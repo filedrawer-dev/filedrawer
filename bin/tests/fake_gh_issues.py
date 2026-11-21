@@ -9,8 +9,9 @@ an author and a body. LOG gets every call's arguments, a JSON list a line.
 It answers `gh api` for a path in `api`, for the repo's issues and for an issue's
 comments, as --paginate --slurp prints a list: a list of pages. It lists every issue
 and comment whatever `creator` the call names, so a test shows what the script itself
-counts as its own. What `gh issue create`, `comment`, `edit --body` and `close
-[--comment]` write is the workflow's, as on GitHub.
+counts as its own. `gh api --method PATCH` on an issue sets the fields given, each as
+`-f name=value`. What `gh issue create` and `gh issue comment` write is the
+workflow's, as on GitHub.
 """
 
 import json
@@ -34,6 +35,15 @@ def main(world_path: Path, log: Path, args: list[str]) -> int:
         out.write(json.dumps(args) + "\n")
     if args[:1] == ["api"]:
         [path] = [a for a in args[1:] if a.startswith("repos/")]
+        if "PATCH" in args:
+            [issue] = [
+                i for i in world["issues"] if str(i["number"]) == path.split("/")[-1]
+            ]
+            issue.update(
+                a.split("=", 1) for a in args if a.startswith(("body=", "state="))
+            )
+            world_path.write_text(json.dumps(world))
+            return 0
         if path in world["api"]:
             answer = world["api"][path]
         elif "--slurp" in args and path == "repos/{owner}/{repo}/issues":
@@ -66,20 +76,9 @@ def main(world_path: Path, log: Path, args: list[str]) -> int:
                     "comments": [],
                 }
             )
-        case ["issue", "comment" | "edit" | "close" as verb, number, *_]:
+        case ["issue", "comment", number, *_]:
             [issue] = [i for i in world["issues"] if str(i["number"]) == number]
-            if verb == "edit":
-                issue["body"] = option(args, "--body")
-            if verb == "comment":
-                issue["comments"].append(
-                    {"author": BOT, "body": option(args, "--body")}
-                )
-            if verb == "close":
-                if "--comment" in args:
-                    issue["comments"].append(
-                        {"author": BOT, "body": option(args, "--comment")}
-                    )
-                issue["state"] = "closed"
+            issue["comments"].append({"author": BOT, "body": option(args, "--body")})
         case _:
             return 2
     world_path.write_text(json.dumps(world))

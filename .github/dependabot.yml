@@ -5,8 +5,9 @@
 # first, so one that is pulled or replaced within days never arrives here.
 #
 # It doesn't see the tools pinned inside scripts and workflow inputs (bin/lychee,
-# bin/caddy, `uvx tool@version`, install-action's `tool:` versions): those move by
-# hand.
+# bin/caddy, bin/cargo-audit, `uvx tool@version`, install-action's `tool:` versions):
+# those move by hand. Advisories against Cargo.lock are reported daily by
+# .github/workflows/advisories.yml, not by this.
 #
 # To stop the pull requests, delete this file.
 version: 2

@@ -178,7 +178,12 @@ A workflow names each action by a commit, with its version in a comment: `uses: 
 To add an action or move a pin by hand, resolve the tag with `gh api repos/OWNER/REPO/git/ref/tags/TAG`, following an annotated tag (`object.type` is `tag`) through `git/tags/SHA` to its commit, and read the action at that commit (`gh-src OWNER/REPO SHA`).
 `.github/dependabot.yml` moves the pins and `Cargo.lock` by pull request, at most one a week for each, of releases at least a week old.
 A merged one reaches `origin/main` without wt-ship, deploys staging as any push does, and leaves the main tree behind until it is pulled; one that changes `crates/analyzer/Cargo.toml` is an analyzer change at the next release (Code, `crates/cli`).
-Dependabot doesn't see the tools pinned in scripts and workflow inputs, which move by hand: `bin/lychee`, `bin/caddy`, each `uvx tool@version`, and `taiki-e/install-action`'s `tool:` versions, which must be ones the pinned action's `manifests/` list.
+Dependabot doesn't see the tools pinned in scripts and workflow inputs, which move by hand: `bin/lychee`, `bin/caddy`, `bin/cargo-audit`, each `uvx tool@version`, and `taiki-e/install-action`'s `tool:` versions, which must be ones the pinned action's `manifests/` list.
+
+`.github/workflows/advisories.yml` checks `Cargo.lock` against RustSec's advisories each day, with `bin/advisories` (`-h`): cargo-audit, which `bin/cargo-audit` downloads pinned by SHA-256 as `bin/lychee` does lychee, and one issue, "Cargo.lock holds crates with security advisories", that the workflow opens, keeps current and closes.
+To see what applies now, run `bin/advisories check`.
+To accept an advisory, list its id under `[advisories]`, `ignore`, in `.cargo/audit.toml`, with why in a comment; closing the issue by hand accepts the ones it lists.
+Both reporters, this one and `bin/caddy-latest`, count only issues and comments `github-actions[bot]` wrote, since anyone can open an issue with a title a report will use.
 
 Mutation testing (cargo-mutants, set in `.cargo/mutants.toml`) runs in CI, in `.github/workflows/mutants.yml`.
 Each day it tests the mutants in the lines changed since the last run that tested all of its own, and skips when nothing changed.
