@@ -181,13 +181,16 @@ Add a new entry at the end of the topic it belongs to, or start a topic when non
   For the limit: a few dozen words, or a few hundred.
 - Chosen: `q` takes at most 50 words and at most 500 characters, and a longer one is a 400 whose text gives both limits and how much `q` held; the search skill names them.
   Each word is a term SQLite looks up in the index, so the length of `q` sets what a search costs, and anyone may send one.
+  The words are the terms the index's tokenizer makes of `q`, each counted and looked up once, whatever its case: a word repeated adds nothing, and a word the tokenizer splits counts as every piece.
   50 words is a long sentence, and 500 characters is where the search log already cuts a query.
   Refusing tells the agent its search wasn't the one it wrote; dropping words would answer a different question in silence.
 - Also chosen: the statement behind a search, and behind the home page's tabs, which run the same one, is stopped after 5 seconds and the request answers 500.
   A statement keeps running after its client has gone, so the stop is what bounds how long one holds a database connection.
   Searches take milliseconds today, so nothing should reach it.
 - Against: an agent that pastes a whole hypothesis as `q` is refused and has to shorten it, where 100 or 200 words would cost little more.
-  Words split at every character that isn't a letter or a digit, so `gpt-4o-mini` counts as three, and a repeated word counts each time.
+  Words split where the index's tokenizer splits them, at every character that isn't a letter or a digit by its own tables, so `gpt-4o-mini` counts as three.
+  Those tables split some scripts inside what a reader sees as one word: a Hindi word breaks at each vowel sign, so about 15 Hindi words reach the limit.
+  Variants the tokenizer merges other than case, such as accented letters and a stem's endings, still count apart.
   A stopped search answers "internal error", not a status of its own that says to narrow the search or try again; a 503 with a reason would need a new error kind.
   The stop covers search only.
 

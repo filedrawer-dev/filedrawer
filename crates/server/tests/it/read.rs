@@ -282,6 +282,29 @@ async fn a_search_of_more_words_than_the_limit_is_refused_with_the_limit() {
     );
 }
 
+/// A search looks each term up once, so a word repeated, in any case, counts once.
+#[tokio::test]
+async fn a_word_repeated_past_the_limit_counts_once() {
+    let app = test_app().await;
+    let zebra = app.submit(&entry("Zebrafinch probes", "")).await;
+    let repeated = vec!["probes"; 60].join("%20") + "%20PROBES";
+    let reply = app.get(&format!("/search?q={repeated}")).await;
+    assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
+    assert!(reply.body.contains(&zebra), "{}", reply.body);
+}
+
+/// The limit counts the terms the index's tokenizer makes, which splits at
+/// characters other rules count as letters, such as U+19B0.
+#[tokio::test]
+async fn a_word_the_index_splits_into_more_terms_than_the_limit_is_refused() {
+    let app = test_app().await;
+    let pieces: Vec<String> = (0..51).map(|n| format!("w{n}")).collect();
+    let word = pieces.join("\u{19B0}");
+    let reply = app.get(&format!("/search?q={word}")).await;
+    assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{}", reply.body);
+    assert!(reply.body.contains("51 words"), "{}", reply.body);
+}
+
 #[tokio::test]
 async fn a_search_of_more_characters_than_the_limit_is_refused_with_the_limit() {
     let app = test_app().await;

@@ -969,25 +969,23 @@ pub async fn tags(pool: &SqlitePool) -> Result<Vec<(String, i64)>, sqlx::Error> 
 /// Turns free text into an FTS5 query that matches any of its words, each quoted so a
 /// reader's text is never read as query syntax. Agents ask in sentences, and bm25
 /// ranks entries with more of the words, and rarer ones, first. `None` when it has no
-/// words. Text past [`MAX_QUERY_CHARS`] or [`MAX_QUERY_WORDS`] is refused: each word
-/// is a term SQLite looks up, so the text's size is the search's cost.
+/// words. The words are the index tokenizer's terms, each once (`search::terms`), so
+/// each is one term SQLite looks up; text past [`MAX_QUERY_CHARS`] or with more than
+/// [`MAX_QUERY_WORDS`] of them is refused, since their number is the search's cost.
 pub fn fts_query(text: &str) -> Result<Option<String>, QueryTooLong> {
     let chars = text.chars().count();
     if chars > MAX_QUERY_CHARS {
         return Err(QueryTooLong::Chars(chars));
     }
-    let words: Vec<String> = text
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|word| !word.is_empty())
-        .map(|word| format!("\"{word}\""))
-        .collect();
-    if words.len() > MAX_QUERY_WORDS {
-        return Err(QueryTooLong::Words(words.len()));
+    let terms = crate::search::terms(text);
+    if terms.len() > MAX_QUERY_WORDS {
+        return Err(QueryTooLong::Words(terms.len()));
     }
-    Ok((!words.is_empty()).then(|| words.join(" OR ")))
+    let quoted: Vec<String> = terms.iter().map(|term| format!("\"{term}\"")).collect();
+    Ok((!quoted.is_empty()).then(|| quoted.join(" OR ")))
 }
 
-/// The most words a search's text may hold.
+/// The most distinct words a search's text may hold.
 pub const MAX_QUERY_WORDS: usize = 50;
 /// The most characters a search's text may hold.
 pub const MAX_QUERY_CHARS: usize = 500;

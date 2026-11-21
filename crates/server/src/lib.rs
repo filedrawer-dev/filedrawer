@@ -44,6 +44,7 @@ mod respond;
 mod review;
 mod routes;
 pub mod screening;
+pub mod search;
 pub mod search_log;
 mod series;
 pub mod serve;
