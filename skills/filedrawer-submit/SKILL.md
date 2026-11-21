@@ -464,6 +464,7 @@ A batch is held for an hour as one, and published as one.
   An entry may not become public before an entry it refers to.
 - Declare each run once, in `runs`, as `{"id", "description", "n", "commit", "code_state", "route", "dates"}`, and list the runs each entry draws on in its `uses_runs`.
   A later batch cites a run by its ID without declaring it again.
+  The declarations of the runs one entry uses may come to at most 100 KiB together; past that the server refuses the entry (HTTP 422).
   A run's description becomes public once every entry using it is.
 - If any entry is refused, the whole batch is, with each entry's reasons, and nothing is kept.
 - The reply gives the batch's `id`, `publish_at`, the `account`, and each entry's ID and url, then each entry's headline row, card and warnings.

@@ -585,6 +585,8 @@ Plain text first, since that is cheapest for an agent to read.
   - Screening checks run declarations with their batch.
     A run's description, and the list of entries that use it, are shown only once every entry using the run is public.
     Reason: a run's description is published text, and a public entry citing a run that an entry still with the owner uses would otherwise publish that entry's work before its verdict.
+  - The declarations of the runs one entry uses may come to at most 100 KiB as the screen reads them, and a submission past that is refused.
+    Reason: the screen reads them with the entry, so they count toward what one screening may cost (the size of the cap is in uncertainties.md).
   - A batch is screened and published as a unit.
     If one member fails, the whole batch comes back, with each member's reasons, except a member in review or held, which stays for the owner (see [Submission and screening](#submission-and-screening)).
     If one goes to review, the batch waits for it.

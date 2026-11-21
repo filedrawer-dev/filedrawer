@@ -341,24 +341,28 @@ async fn batch(app: &TestApp, entries: &[String]) -> serde_json::Value {
     batch_with(app, json!([]), entries).await
 }
 
+/// Sends a batch declaring `runs` and returns the server's reply.
+async fn send_batch(app: &TestApp, runs: serde_json::Value, entries: &[String]) -> common::Reply {
+    app.send(
+        Request::post("/entries/batch")
+            .header("authorization", format!("Bearer {}", app.token))
+            .header("content-type", "application/json")
+            .header("accept", "application/json")
+            .body(Body::from(
+                json!({"runs": runs, "entries": entries}).to_string(),
+            ))
+            .unwrap(),
+    )
+    .await
+}
+
 /// Sends a batch declaring `runs`, which must be accepted, and returns the reply.
 async fn batch_with(
     app: &TestApp,
     runs: serde_json::Value,
     entries: &[String],
 ) -> serde_json::Value {
-    let reply = app
-        .send(
-            Request::post("/entries/batch")
-                .header("authorization", format!("Bearer {}", app.token))
-                .header("content-type", "application/json")
-                .header("accept", "application/json")
-                .body(Body::from(
-                    json!({"runs": runs, "entries": entries}).to_string(),
-                ))
-                .unwrap(),
-        )
-        .await;
+    let reply = send_batch(app, runs, entries).await;
     assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
     serde_json::from_str(&reply.body).unwrap()
 }
@@ -1194,6 +1198,188 @@ async fn a_run_cited_from_a_later_entry_is_screened_again_with_it() {
             .last()
             .unwrap()
             .contains("Sweep over layers 10 to 18")
+    );
+}
+
+/// The reasons a refusal answered as JSON lists, one a line of its `error`.
+fn reasons(reply: &common::Reply) -> Vec<String> {
+    let body: serde_json::Value = serde_json::from_str(&reply.body).unwrap();
+    let lines = body["error"].as_str().unwrap().lines();
+    lines
+        .filter_map(|line| line.strip_prefix("- "))
+        .map(str::to_string)
+        .collect()
+}
+
+/// A declaration of run `id` whose description is `bytes` long.
+fn long_run(id: &str, bytes: usize) -> serde_json::Value {
+    json!({"id": id, "description": "sweep layer probe ".repeat(bytes / 18)})
+}
+
+/// The cap on an entry's text, and on what its runs' declarations add to what the
+/// screen reads: 100 KiB (design.md, Limits and abuse).
+const CAP: &str = "102400";
+
+#[tokio::test]
+async fn an_entry_whose_runs_declarations_pass_the_cap_is_refused_in_a_batch() {
+    let models = FakeModels::default();
+    let app = app_with(&models).await;
+    let runs = json!([
+        long_run("r1", 40_000),
+        long_run("r2", 40_000),
+        long_run("r3", 40_000)
+    ]);
+    let over = send_batch(
+        &app,
+        runs.clone(),
+        &[
+            entry("All three", "slug: all\nuses_runs: [r1, r2, r3]\n"),
+            entry("One", "slug: one\nuses_runs: [r1]\n"),
+        ],
+    )
+    .await;
+    assert_eq!(
+        over.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        over.body
+    );
+    let reasons = reasons(&over);
+    assert_eq!(
+        reasons.len(),
+        1,
+        "only the member past the cap: {reasons:?}"
+    );
+    let reason = &reasons[0];
+    assert!(
+        reason.starts_with("entry 1 (slug all): ")
+            && reason.contains("uses_runs")
+            && reason.contains(CAP),
+        "{reason}"
+    );
+
+    // Under the cap, the batch is taken and each entry screened with its runs.
+    let id = batch_with_runs(
+        &app,
+        runs,
+        &[
+            entry("Two", "slug: two\nuses_runs: [r1, r2, r1]\n"),
+            entry("One", "slug: one\nuses_runs: [r3]\n"),
+        ],
+    )
+    .await;
+    let published = app.post(&format!("/batches/{id}/publish"), "").await;
+    assert_eq!(
+        published.body.matches(" public").count(),
+        2,
+        "{}",
+        published.body
+    );
+    let screened = models.screened();
+    assert!(screened[0].contains("run `r1`") && screened[0].contains("run `r2`"));
+    assert!(screened[0].len() > 80_000 && screened[0].len() < 100_000);
+}
+
+#[tokio::test]
+async fn an_entry_citing_earlier_runs_past_the_cap_is_refused_however_it_is_sent() {
+    let models = FakeModels::default();
+    let app = app_with(&models).await;
+    batch_with(
+        &app,
+        json!([
+            long_run("r1", 40_000),
+            long_run("r2", 40_000),
+            long_run("r3", 40_000)
+        ]),
+        &[entry("Holder", "slug: holder\nuses_runs: [r1]\n")],
+    )
+    .await;
+    let over = entry("All three", "slug: all\nuses_runs: [r1, r2, r3]\n");
+    let refused = |reply: &common::Reply| {
+        assert_eq!(
+            reply.status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{}",
+            reply.body
+        );
+        assert!(
+            reply.body.contains("uses_runs") && reply.body.contains(CAP),
+            "{}",
+            reply.body
+        );
+    };
+    refused(&app.post("/entries", over.clone()).await);
+
+    let held = app
+        .post("/entries", entry("Two", "slug: all\nuses_runs: [r1, r2]\n"))
+        .await;
+    assert_eq!(held.status, StatusCode::CREATED, "{}", held.body);
+    let id = id_in(&held.body);
+    refused(&app.put_as(&format!("/e/{id}"), &app.token, over).await);
+    assert!(models.asked().is_empty());
+}
+
+#[tokio::test]
+async fn a_run_declaration_past_the_cap_alone_is_refused() {
+    let app = app_with(&FakeModels::default()).await;
+    let reply = send_batch(
+        &app,
+        json!([long_run("small", 400), long_run("huge", 110_000)]),
+        &[entry("Unrelated", "slug: unrelated\n")],
+    )
+    .await;
+    assert_eq!(
+        reply.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        reply.body
+    );
+    let reasons = reasons(&reply);
+    assert_eq!(reasons.len(), 1, "{reasons:?}");
+    let reason = &reasons[0];
+    assert!(
+        reason.starts_with("run 2 (`huge`): ") && reason.contains(CAP),
+        "{reason}"
+    );
+}
+
+#[tokio::test]
+async fn an_entry_stored_with_declarations_past_the_cap_is_rejected_unscreened() {
+    let models = FakeModels::default();
+    let app = app_with(&models).await;
+    batch_with(
+        &app,
+        json!([long_run("r1", 400)]),
+        &[entry("Holder", "slug: holder\n")],
+    )
+    .await;
+    let held = app
+        .post("/entries", entry("Uses it", "uses_runs: [r1]\n"))
+        .await;
+    assert_eq!(held.status, StatusCode::CREATED, "{}", held.body);
+    let id = id_in(&held.body);
+    // As a database from before the cap may hold.
+    sqlx::query("UPDATE runs SET declaration = ? WHERE id = 'r1'")
+        .bind(long_run("r1", 150_000).to_string())
+        .execute(&app.pool)
+        .await
+        .unwrap();
+
+    let placed = app.post(&format!("/e/{id}/publish"), "").await;
+    assert_eq!(
+        field(&placed.body, "status"),
+        Some("rejected"),
+        "{}",
+        placed.body
+    );
+    assert!(models.asked().is_empty(), "no model is sent it");
+    let own = app.get_as_author(&format!("/e/{id}")).await;
+    let (_, below) = own.body.split_once(DELIMITER).unwrap();
+    assert!(
+        below.contains("reason: the declarations of the runs in `uses_runs`")
+            && below.contains(CAP),
+        "{}",
+        own.body
     );
 }
 

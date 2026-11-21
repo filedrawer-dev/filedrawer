@@ -3,7 +3,7 @@
 //! each other and runs declared once. Also the checks on slugs, runs and references
 //! that single submissions and versions share.
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 
 use analyzer::render_card;
 use axum::body::Bytes;
@@ -94,7 +94,16 @@ async fn declared_runs(
                 "run `{id}` is already declared; cite it in `uses_runs` without declaring it again"
             ));
         }
-        declared.push((id.to_string(), run.to_string()));
+        let declaration = (id.to_string(), run.to_string());
+        // No entry could use a declaration that is past the cap alone.
+        let bytes = queue::run_text(std::slice::from_ref(&declaration)).len();
+        if bytes > queue::MAX_RUN_TEXT_BYTES {
+            problems.push(format!(
+                "run {position} (`{id}`): its declaration is {bytes} bytes as the screen reads it, over the cap of {} bytes",
+                queue::MAX_RUN_TEXT_BYTES
+            ));
+        }
+        declared.push(declaration);
     }
     Ok(declared)
 }
@@ -145,7 +154,7 @@ pub async fn submit_batch(
         }
         labels.push(label);
     }
-    let run_ids: BTreeSet<String> = runs.iter().map(|(id, _)| id.clone()).collect();
+    let declarations: BTreeMap<String, String> = runs.iter().cloned().collect();
     if problems.is_empty() {
         let linked: Vec<Linked<'_>> = accepted
             .iter()
@@ -156,7 +165,7 @@ pub async fn submit_batch(
                 slug_rule: SlugRule::New,
             })
             .collect();
-        problems.extend(links::problems(&state, &account, &linked, &run_ids).await?);
+        problems.extend(links::problems(&state, &account, &linked, &declarations).await?);
     }
     // Each member's series cite and attachment set.
     let mut cites = Vec::new();

@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT declaration FROM runs WHERE account_id = ? AND id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "declaration",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "runs",
+            "name": "declaration"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "84d1ba8578e88bd364c9a7c7a491089683a07bf79002b5744e8b20551821cc75"
+}

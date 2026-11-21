@@ -414,8 +414,9 @@ The owner set 10 an hour and 50 a day per account (#60); an agent chose the rest
 
 - Options: check the cap once before each item and let its calls run, so the day overshoots by at most one item (Haiku, then Sonnet when needed), as here, screening one item at a time; or reserve a worst-case cost before each call.
 - Chosen: one item.
-  One screening runs at a time, so items never race past the check together; the worst item, a 100 KB entry Sonnet also reads, costs about $0.26.
-- Against: that worst item is more than one account's daily share, and one item at a time limits throughput to what the models answer in a day, which the cap already limits more.
+  One screening runs at a time, so items never race past the check together; the worst item, a 256 KiB chunk of attached code Sonnet also reads, costs about $0.31 at four bytes a token (Sonnet's input $0.13 and at most 16,000 output tokens $0.16, Haiku's the rest), and more for denser text.
+  An entry at its cap with its runs' declarations at theirs is 200 KiB, about $0.28.
+- Against: that worst item is three times one account's daily share, and one item at a time limits throughput to what the models answer in a day, which the cap already limits more.
 
 #### Screening: Sonnet unsure of the topic
 
@@ -503,7 +504,16 @@ The owner set 10 an hour and 50 a day per account (#60); an agent chose the rest
   Every other status waits for the next tick uncounted: 401, 402, 403 and 404 come from the server's key, billing or model ID and hit every entry alike, so counting them would move the whole queue to review 90 seconds after a key is revoked.
 - Against: a 400 can be the server's fault too, as when the API drops a parameter the request sends, and then every waiting entry reaches review after three ticks, as it already does when replies stop being readable.
   The owner's page offers publish, reject and hold for such an entry and no way back to the screen, and reject or hold puts the account under the review guard.
-  The three tries are 30 seconds apart, so a short spell of 400s is enough.
+  The three tries are 30 seconds apart, so a fault at the API that lasts a minute and a half reaches review too.
+
+#### Screening: the cap on run declarations
+
+- Options: cap the entry and its declarations together at the entry's 100 KiB; or give the declarations a cap of their own, as here, of that size or a smaller one.
+- Chosen: what the declarations of one entry's runs add to its screened text, each under the server's line naming its run, may be at most 100 KiB, the cap on the entry's own text.
+  A submission past it is refused with a 422 naming the size and the cap, a declaration past it alone is refused where it is declared, and an entry stored before the cap is rejected with the same reason before any model call.
+  The request then stays under a chunk of attached code, which the caps already allow for, and an entry's own 100 KiB doesn't shrink with the runs it names.
+  In the field test the largest declaration was 686 bytes and the most one entry's declarations came to was 20 KB, over 55 runs.
+- Against: 100 KiB is far more than any honest entry's runs need, and a tighter cap would cost less per item; a stored entry past the cap is rejected by the queue rather than shown to the owner.
 
 ### Attached code
 

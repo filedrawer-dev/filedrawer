@@ -1088,14 +1088,23 @@ pub async fn run_declared(
     account_id: &str,
     run_id: &str,
 ) -> Result<bool, sqlx::Error> {
-    let found = sqlx::query_scalar!(
-        "SELECT 1 AS found FROM runs WHERE account_id = ? AND id = ?",
+    Ok(run_declaration(pool, account_id, run_id).await?.is_some())
+}
+
+/// The declaration of `account_id`'s run `run_id` (a JSON object, as its batch sent
+/// it), or `None` when the account has declared no such run.
+pub async fn run_declaration(
+    pool: &SqlitePool,
+    account_id: &str,
+    run_id: &str,
+) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar!(
+        "SELECT declaration FROM runs WHERE account_id = ? AND id = ?",
         account_id,
         run_id
     )
     .fetch_optional(pool)
-    .await?;
-    Ok(found.is_some())
+    .await
 }
 
 /// The runs an entry uses, each with its description once every entry using it is
@@ -1258,13 +1267,13 @@ pub async fn chain_slug(pool: &SqlitePool, seq: i64) -> Result<Option<String>, s
 }
 
 /// The ID and declaration (a JSON object, as its batch sent it) of each run entry
-/// `seq` uses, in ID order.
+/// `seq` uses, once each however often the entry names it, in ID order.
 pub async fn run_declarations(
     pool: &SqlitePool,
     seq: i64,
 ) -> Result<Vec<(String, String)>, sqlx::Error> {
     let rows = sqlx::query!(
-        "SELECT r.id, r.declaration FROM entry_runs er
+        "SELECT DISTINCT r.id, r.declaration FROM entry_runs er
          JOIN runs r ON r.account_id = er.account_id AND r.id = er.run_id
          WHERE er.entry_seq = ? ORDER BY r.id",
         seq

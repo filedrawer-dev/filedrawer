@@ -1,14 +1,14 @@
 //! The checks on what entries name and refer to (design.md, Agent interface):
 //! slugs and declared runs. Submissions, PUTs, versions and batches all run them.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use analyzer::{Analysis, is_valid_slug};
 
 use crate::AppState;
 use crate::auth::TokenAccount;
-use crate::entries;
 use crate::error::AppError;
+use crate::{entries, queue};
 
 /// What may become of an entry's `slug`.
 pub enum SlugRule {
@@ -30,12 +30,12 @@ pub struct Linked<'a> {
 }
 
 /// What's wrong with a set of entries' slugs and runs, given the runs a batch
-/// declares. Empty when nothing is.
+/// declares, each ID with its declaration. Empty when nothing is.
 pub async fn problems(
     state: &AppState,
     account: &TokenAccount,
     members: &[Linked<'_>],
-    declared_runs: &BTreeSet<String>,
+    declared_runs: &BTreeMap<String, String>,
 ) -> Result<Vec<String>, AppError> {
     let mut problems = Vec::new();
     let mut slugs_here = BTreeSet::new();
@@ -94,18 +94,36 @@ async fn run_problems(
     state: &AppState,
     account: &TokenAccount,
     member: &Linked<'_>,
-    declared_runs: &BTreeSet<String>,
+    declared_runs: &BTreeMap<String, String>,
 ) -> Result<Vec<String>, AppError> {
     let mut problems = Vec::new();
+    // Each run the entry names, once, with its declaration.
+    let mut seen = BTreeSet::new();
+    let mut used: Vec<(String, String)> = Vec::new();
     for run in &member.analysis.fields.uses_runs {
-        if !declared_runs.contains(run)
-            && !entries::run_declared(&state.pool, &account.id, run).await?
-        {
-            problems.push(format!(
+        if !seen.insert(run) {
+            continue;
+        }
+        let declaration = match declared_runs.get(run) {
+            Some(declaration) => Some(declaration.clone()),
+            None => entries::run_declaration(&state.pool, &account.id, run).await?,
+        };
+        match declaration {
+            Some(declaration) => used.push((run.clone(), declaration)),
+            None => problems.push(format!(
                 "{}: `uses_runs` names `{run}`, which neither this batch nor an earlier one declares",
                 member.label
-            ));
+            )),
         }
+    }
+    // The screen reads the declarations with the entry, so they are capped with it.
+    let bytes = queue::run_text(&used).len();
+    if bytes > queue::MAX_RUN_TEXT_BYTES {
+        problems.push(format!(
+            "{}: {}",
+            member.label,
+            queue::run_text_refusal(bytes)
+        ));
     }
     Ok(problems)
 }

@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT r.id, r.declaration FROM entry_runs er\n         JOIN runs r ON r.account_id = er.account_id AND r.id = er.run_id\n         WHERE er.entry_seq = ? ORDER BY r.id",
+  "query": "SELECT DISTINCT r.id, r.declaration FROM entry_runs er\n         JOIN runs r ON r.account_id = er.account_id AND r.id = er.run_id\n         WHERE er.entry_seq = ? ORDER BY r.id",
   "describe": {
     "columns": [
       {
@@ -34,5 +34,5 @@
       false
     ]
   },
-  "hash": "d509f32fba2babdffec721a7bdf390bac4637fb485908ce256a8023c3eda1654"
+  "hash": "934ae06d7f3e21255cadfd8f90813f15b25cbc55579310867020175db362c294"
 }

@@ -15,6 +15,34 @@ use crate::{
 /// The share of the day's cap one account may spend (design.md: 10%).
 const ACCOUNT_SHARE_PERCENT: i64 = 10;
 
+/// The most bytes the declarations of the runs one entry uses may add to what the
+/// screen reads for it, each under the server's line naming its run: as much as the
+/// entry's own text may hold. An entry's request is then at most twice that, less
+/// than one chunk of attached code, the largest request the day's caps allow for
+/// (uncertainties.md, how far the daily cap can be overshot).
+pub const MAX_RUN_TEXT_BYTES: usize = analyzer::MAX_ENTRY_BYTES;
+
+/// What the runs an entry uses add to the text the screen reads for it: each run's
+/// declaration, under a line naming the run (design.md: "Screening checks run
+/// declarations with their batch"), since the run's description is shown with the
+/// entry once public. `declarations` holds each run's ID and declaration.
+pub(crate) fn run_text(declarations: &[(String, String)]) -> String {
+    declarations
+        .iter()
+        .map(|(id, declaration)| {
+            format!("\n\nThe declaration of run `{id}`, which this entry uses:\n\n{declaration}\n")
+        })
+        .collect()
+}
+
+/// Why an entry is refused when [`run_text`] for its runs is `bytes` long, past
+/// [`MAX_RUN_TEXT_BYTES`].
+pub(crate) fn run_text_refusal(bytes: usize) -> String {
+    format!(
+        "the declarations of the runs in `uses_runs` come to {bytes} bytes as the screen reads them, over the cap of {MAX_RUN_TEXT_BYTES} bytes; name fewer runs, or declare them under new IDs with shorter descriptions"
+    )
+}
+
 /// An entry waiting to be screened.
 struct Waiting {
     seq: i64,
@@ -73,6 +101,16 @@ async fn screen_waiting(
     waiting: &Waiting,
     now: OffsetDateTime,
 ) -> Result<(), sqlx::Error> {
+    // Submission refuses an entry whose runs' declarations are past the cap. One
+    // stored before it did is refused here, before anything is spent on it.
+    let run_text = run_text(&entries::run_declarations(&state.pool, waiting.seq).await?);
+    if run_text.len() > MAX_RUN_TEXT_BYTES {
+        let verdict = Verdict::Reject {
+            reasons: vec![run_text_refusal(run_text.len())],
+        };
+        entries::store_verdict(&state.pool, waiting.seq, &verdict).await?;
+        return settle(state, waiting.seq).await;
+    }
     // The files first: they're screened once by hash, and an entry whose files must
     // wait shouldn't spend on its text yet. A guarded or smoke-test account's files
     // aren't screened; its text decides, as `screen_text` does for it.
@@ -89,7 +127,7 @@ async fn screen_waiting(
             }
         }
     }
-    let text = screened_text(state, waiting).await?;
+    let text = format!("{}{run_text}", waiting.source);
     let verdict =
         match screen_text(state, &waiting.account_id, Some(waiting.seq), &text, now).await? {
             Screened::Verdict(verdict) => verdict,
@@ -145,19 +183,6 @@ async fn after_failure(
         return Ok(None);
     }
     Ok(Some(why))
-}
-
-/// What the screen reads for an entry: its text, then the declaration of every run it
-/// uses (design.md: "Screening checks run declarations with their batch"), since the
-/// run's description is shown with it once public.
-async fn screened_text(state: &AppState, waiting: &Waiting) -> Result<String, sqlx::Error> {
-    let mut text = waiting.source.clone();
-    for (id, declaration) in entries::run_declarations(&state.pool, waiting.seq).await? {
-        text.push_str(&format!(
-            "\n\nThe declaration of run `{id}`, which this entry uses:\n\n{declaration}\n"
-        ));
-    }
-    Ok(text)
 }
 
 /// What screening one text came to.

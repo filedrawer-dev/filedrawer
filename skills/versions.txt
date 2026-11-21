@@ -3,4 +3,4 @@
 # prints it. `bin/skills sync` writes this file;
 # crates/server/tests/it/skill_folders.rs checks it.
 filedrawer-search 13 bb5650f568ff6f9f7aa4fc25bfc34f56301bf78f08b2cff315722cc91af045fd
-filedrawer-submit 16 ac60bb23e2ab19b5953845810d2fd4a170fe65d0d4c7975775a52506fabf42b7
+filedrawer-submit 16 584e635226646f67a741b6c98b4ec94bc51cceb24b13e35001000ffa79347399
