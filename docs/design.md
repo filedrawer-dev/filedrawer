@@ -1126,6 +1126,7 @@ Python is fine for scripts and internal tools.
   It runs as the server's user, not root.
   Reason: sqlite3 run as root while the server is down can leave root's `-wal` and `-shm` files beside the database, which the server then can't open; a bad binary could delete the 2 local copies, but not Hetzner's.
 - `ops/restore-drill.md` restores a Hetzner backup to a new server once by hand and opens the newest nightly copy with the production binary, run with `FILEDRAWER_ENVIRONMENT=staging` and no ping or SMTP settings, so it neither mails nor pings (the owner's decision, 2026-11-09).
+  `ops/restore-production.md` is the real restore: a rebuild of the server from a backup, or a new server that takes over its IP addresses or its DNS, then the live database if `PRAGMA integrity_check` passes, else the newest nightly copy.
 - Monitoring: a free external uptime checker, UptimeRobot, checks `https://filedrawer.dev/tags` and emails the owner when the site is down (the owner's decision, 2026-11-10).
   Litestream, the restore test, the memory timer and the daily email ping healthchecks.io, which emails the owner when one goes quiet or reports a failure.
   The daily email's ping URL is in `/etc/filedrawer/production-ping.env`, and the nightly copy's, for #41's timer, in `production-backup.env` as `BACKUP_PING`.

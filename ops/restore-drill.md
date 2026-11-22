@@ -2,6 +2,7 @@
 
 The beta's backups are Hetzner's daily server backups and production's two nightly copies of its database in `backups/` (#41; design.md, Hosting and operations).
 This drill proves they restore, once by hand, before the beta relies on them.
+`ops/restore-production.md` is the real restore.
 It takes about half an hour and costs a few cents of server time.
 
 A server restored from a backup boots with production's units enabled.
@@ -23,15 +24,29 @@ In the Hetzner Cloud console, under Firewalls, create `filedrawer-drill`:
 2. On that backup, choose "Create server from backup".
    Pick the same location, any type with at least production's disk, and under Firewalls pick `filedrawer-drill`.
    Name it `filedrawer-drill`.
-3. Once it's running, `ssh root@<its IP>`.
+3. Once it's running, check under its Firewalls tab that `filedrawer-drill` is applied, then `ssh root@<its IP>`.
    Production's root key is on the restored disk, so your key logs in.
+4. Check that nothing gets out:
+
+   ```sh
+   curl -sS -m 5 -o /dev/null https://api.anthropic.com && echo "THE WAY OUT IS OPEN"
+   ```
+
+   It should time out.
+   If it prints the warning, run `poweroff` at once: production's units have been running with a way out since boot, so they may have mailed people, pinged production's healthchecks.io checks and screened entries with production's key.
+   Check the mail provider's sent log, healthchecks.io's events and Anthropic's usage for the time the server ran.
 
 ## 3. Stop production's units on the drill server
 
 ```sh
-systemctl stop filedrawer-backup.timer filedrawer-production.service filedrawer-staging.service caddy
-systemctl disable filedrawer-backup.timer filedrawer-production.service filedrawer-staging.service caddy
+units="filedrawer-backup.timer filedrawer-production.service filedrawer-staging.service caddy
+  caddy-upgrade-daily.timer caddy-upgrade-check.service
+  filedrawer-reboot-check-daily.timer filedrawer-reboot-check.service"
+systemctl stop $units
+systemctl disable $units
 ```
+
+The last four are the Caddy upgrade check's and the reboot check's, which mail you and ping healthchecks.io, the reboot check's at boot.
 
 At boot the timer ran the copy the backup missed, with nowhere to ping; that copy is dated today and was taken from the live file as Hetzner captured it.
 The drill opens the newest copy not dated today instead, the last one the nightly timer made before the backup:
@@ -64,6 +79,14 @@ curl -s -o /dev/null -w '%{http_code}\n' --retry 10 --retry-connrefused --retry-
 It runs as staging, with no ping and no SMTP settings, so it neither mails nor pings (the owner's decision, 2026-11-09).
 `/tags` answers 200 once the server has run its migrations on the copy.
 
+To look at the site in your own browser, open a tunnel from your machine, since the firewall lets in only SSH and step 3 stopped Caddy:
+
+```sh
+ssh -N -L 9090:127.0.0.1:9090 root@<its IP>
+```
+
+Then open http://localhost:9090/.
+
 ## 5. Check the entries and one attached file
 
 ```sh
@@ -82,11 +105,7 @@ With no attached files yet, `sha` is empty: note that, and check one at the next
 
 ## 6. Delete the drill server
 
-```sh
-kill %1
-```
-
-Then delete `filedrawer-drill` in the console; it holds production's data.
+Delete `filedrawer-drill` in the console, which stops the binary with it; it holds production's data.
 Keep the firewall for the next drill.
 
 Write on #41 the date, the backup and the copy you used, the counts, and anything that went differently from these steps.
