@@ -372,6 +372,16 @@ The owner set 10 an hour and 50 a day per account (#60); an agent chose the rest
   A quoted local part is valid and refused.
   Plus-addressing and a provider's own aliases still give one inbox many addresses.
 
+#### What revoke-all ends
+
+- Options: sessions and tokens only; those and unused email links; a per-account or since-a-date scope; a confirmation prompt, a dry run by default, or neither.
+- Chosen: every session, token and unused email link, of every account, and every password with `--passwords` (the owner chose the flag, no email and that the admin is cleared too, 2026-11-21).
+  Email links are secrets like tokens, so a leak of live secrets covers them.
+  Without `--yes` it only prints what it would end, since it runs over SSH, where a prompt on stdin is awkward.
+- Against: an email queued before the run still sends a working link, since the queue makes the link at send time; a link for a person who asked to reset is what they want afterwards.
+  No scope: a leak of one account's secrets is a reset of that account, which its owner can already do.
+  Series join keys are secrets too, shown once and stored hashed, and it leaves them alone; invite codes are stored as they are, so a copy of the database exposes them, and the runbook says to replace the live ones.
+
 ### Versions and batches
 
 #### Versions form one line

@@ -891,6 +891,8 @@ Every page's footer links both, the signup form says beside its button that sign
 
 The owner is the only admin in v1.
 `filedrawer admin grant --account ID`, run from a shell on the server, makes an account the admin; nothing over HTTP can.
+`filedrawer admin revoke-all [--passwords]`, also from a shell on the server, ends every session and token of every account, the admin's included, after a leak, and with `--passwords` clears every password, so each person resets by email; it emails nobody, and a cleared account's login gets the answer a wrong password gets (the owner's decisions, 2026-11-21; `ops/revoke-all.md`).
+It also spends every unused email link (uncertainties.md, "What revoke-all ends").
 Admin pages answer only the admin's browser session.
 Admin pages and an admin API cover the review queue, the series the screen refused as a likely hazard, the entries that passed with a hazard doubt, invite codes, frozen entries, withdrawals, removals, suspensions, purges and the unknown-field report.
 Every admin write needs the owner's browser session, except the triage agent's appends to the admin inbox.

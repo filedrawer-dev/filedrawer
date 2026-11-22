@@ -20,6 +20,7 @@ usage:
   filedrawer-server admin create-account --display-name NAME
   filedrawer-server admin create-token --account ID --name NAME
   filedrawer-server admin grant --account ID
+  filedrawer-server admin revoke-all [--passwords] [--yes]
   filedrawer-server unpack FILE...
   filedrawer-server check-outbound
 
@@ -73,6 +74,13 @@ account's ID. create-token prints a new API token for the account; only its hash
 is stored, so this is the only time it is shown. grant makes the account the admin:
 its browser sessions reach the review queue at /admin. It prints the account's ID.
 
+revoke-all is for a leak (ops/revoke-all.md): it ends every session, revokes every
+API token and spends every unused email link, of every account, the admin's too.
+--passwords also clears every password, so each person must choose a new one through
+/reset; until then a login gets the answer a wrong password gets. Nobody is emailed.
+Accounts made with create-account have no password and need create-token again.
+Without --yes it changes nothing and prints what it would end.
+
 unpack runs the server's decoding on files read as one entry's attached files, as
 the screen reads them, and prints for each how many parts it hides and how many
 bytes, that it hides nothing, or the limit it passes, which sends an entry to the
@@ -122,6 +130,15 @@ fn main() -> ExitCode {
         ["admin", "grant", "--account", account] => runtime.block_on(admin_command(async |pool| {
             admin::grant(&pool, account).await
         })),
+        ["admin", "revoke-all", flags @ ..] => match revoke_all_flags(flags) {
+            Some(revoke) => runtime.block_on(admin_command(async |pool| {
+                Ok(revoked_report(&admin::revoke_all(&pool, revoke).await?))
+            })),
+            None => {
+                eprintln!("{USAGE}");
+                ExitCode::from(2)
+            }
+        },
         ["unpack", files @ ..] if !files.is_empty() => unpack_files(files),
         ["check-outbound"] => check_outbound(&runtime),
         _ => {
@@ -193,7 +210,50 @@ fn check_outbound(runtime: &tokio::runtime::Runtime) -> ExitCode {
     std::process::exit(if failed { 3 } else { 0 });
 }
 
-/// Opens the database, runs `command`, and prints what it returns: an ID or a token.
+/// `revoke-all`'s flags, each at most once in any order; none for anything else.
+fn revoke_all_flags(flags: &[&str]) -> Option<admin::Revoke> {
+    let mut revoke = admin::Revoke::default();
+    for flag in flags {
+        let seen = match *flag {
+            "--passwords" => &mut revoke.passwords,
+            "--yes" => &mut revoke.apply,
+            _ => return None,
+        };
+        if std::mem::replace(seen, true) {
+            return None;
+        }
+    }
+    Some(revoke)
+}
+
+/// What `revoke-all` ended, or would end, as a line for the owner.
+fn revoked_report(revoked: &admin::Revoked) -> String {
+    let mut steps = vec![
+        (revoked.sessions, "session", "end", "ended"),
+        (revoked.tokens, "token", "revoke", "revoked"),
+        (revoked.links, "email link", "spend", "spent"),
+    ];
+    if let Some(passwords) = revoked.passwords {
+        steps.push((passwords, "password", "clear", "cleared"));
+    }
+    let said: Vec<String> = steps
+        .into_iter()
+        .map(|(count, what, verb, done)| {
+            let verb = if revoked.applied { done } else { verb };
+            let plural = if count == 1 { "" } else { "s" };
+            format!("{verb} {count} {what}{plural}")
+        })
+        .collect();
+    let said = said.join(", ");
+    if revoked.applied {
+        said
+    } else {
+        format!("would {said}; changed nothing: rerun with --yes to do it")
+    }
+}
+
+/// Opens the database, runs `command`, and prints what it returns: an ID, a token
+/// or a report.
 async fn admin_command(
     command: impl AsyncFnOnce(sqlx::SqlitePool) -> Result<String, admin::AdminError>,
 ) -> ExitCode {

@@ -414,3 +414,189 @@ fn help_names_the_commit_the_binary_was_built_from() {
         "-h doesn't end a line with {line:?}:\n{help}"
     );
 }
+
+/// A router over the scratch database `database`, as the server would serve it.
+async fn app_over(database: &Path) -> common::TestApp {
+    let pool = db::open(database.to_str().unwrap()).await.unwrap();
+    let outbox = common::Outbox::default();
+    let files_dir = common::files_dir();
+    let state = common::state(pool.clone(), &outbox, files_dir.path());
+    common::TestApp {
+        router: app(state.clone()),
+        state,
+        pool,
+        account: String::new(),
+        token: String::new(),
+        outbox,
+        files_dir,
+        web: Default::default(),
+    }
+}
+
+/// Grace's account with a session, a token and a reset link she hasn't used: what a
+/// leak could hand someone.
+async fn graces_secrets(test: &common::TestApp) -> (String, String, String) {
+    let (cookie, token) = common::browser_account(test, "grace@example.com").await;
+    test.form("/reset", &[("email", "grace@example.com")], None)
+        .await;
+    let link = test.link_in_last_email_to("grace@example.com").await;
+    (cookie, token, link)
+}
+
+/// Whether each of Grace's secrets still works: the session, the token, the link.
+async fn still_work(test: &common::TestApp, secrets: &(String, String, String)) -> [bool; 3] {
+    let (cookie, token, link) = secrets;
+    [
+        test.page("/account", Some(cookie)).await.status == StatusCode::OK,
+        test.get_with_token("/entries/mine", token).await.status == StatusCode::OK,
+        test.page(link, None).await.status == StatusCode::OK,
+    ]
+}
+
+async fn logs_in(test: &common::TestApp, password: &str) -> common::Reply {
+    test.form(
+        "/login",
+        &[("email", "grace@example.com"), ("password", password)],
+        None,
+    )
+    .await
+}
+
+#[tokio::test]
+async fn revoke_all_without_yes_says_what_it_would_end_and_changes_nothing() {
+    let database = scratch_database("revoke-dry");
+    let test = app_over(&database).await;
+    let secrets = graces_secrets(&test).await;
+    let said = printed(&server(&database, &["admin", "revoke-all"], &[]));
+    for count in ["1 session", "1 token", "1 email link", "--yes"] {
+        assert!(said.contains(count), "{said}");
+    }
+    assert!(!said.contains("password"), "{said}");
+    assert_eq!(still_work(&test, &secrets).await, [true; 3]);
+}
+
+#[tokio::test]
+async fn revoke_all_ends_every_session_token_and_email_link_and_keeps_passwords() {
+    let database = scratch_database("revoke");
+    let test = app_over(&database).await;
+    let secrets = graces_secrets(&test).await;
+    let said = printed(&server(&database, &["admin", "revoke-all", "--yes"], &[]));
+    assert!(said.contains("1 session"), "{said}");
+    assert_eq!(still_work(&test, &secrets).await, [false; 3]);
+    assert_eq!(
+        logs_in(&test, common::PASSWORD).await.status,
+        StatusCode::SEE_OTHER
+    );
+}
+
+#[tokio::test]
+async fn revoke_all_passwords_leaves_each_account_a_reset_and_nothing_else() {
+    let database = scratch_database("revoke-passwords");
+    let test = app_over(&database).await;
+    let secrets = graces_secrets(&test).await;
+    let said = printed(&server(
+        &database,
+        &["admin", "revoke-all", "--passwords", "--yes"],
+        &[],
+    ));
+    assert!(said.contains("1 password"), "{said}");
+    assert_eq!(still_work(&test, &secrets).await, [false; 3]);
+    // The old password gets login's usual answer, as a wrong one does.
+    let old = logs_in(&test, common::PASSWORD).await;
+    assert_eq!(old.status, StatusCode::UNAUTHORIZED);
+    assert!(
+        old.body.contains("The email or the password is wrong."),
+        "{}",
+        old.body
+    );
+    test.form("/reset", &[("email", "grace@example.com")], None)
+        .await;
+    let token = test
+        .link_in_last_email_to("grace@example.com")
+        .await
+        .replace("/reset/confirm?token=", "");
+    let reset = test
+        .form(
+            "/reset/confirm",
+            &[("token", &token), ("password", "a new passphrase")],
+            None,
+        )
+        .await;
+    assert_eq!(reset.status, StatusCode::OK, "{}", reset.body);
+    assert_eq!(
+        logs_in(&test, "a new passphrase").await.status,
+        StatusCode::SEE_OTHER
+    );
+}
+
+#[test]
+fn help_names_revoke_all() {
+    let database = scratch_database("revoke-help");
+    let help = printed(&server(&database, &["-h"], &[]));
+    assert!(
+        help.contains("admin revoke-all [--passwords] [--yes]"),
+        "{help}"
+    );
+}
+
+#[tokio::test]
+async fn revoke_all_spends_an_unused_verification_link() {
+    let database = scratch_database("revoke-verify");
+    let test = app_over(&database).await;
+    test.form(
+        "/signup",
+        &[
+            ("email", "ada@example.com"),
+            ("password", common::PASSWORD),
+            ("display_name", "Ada"),
+        ],
+        None,
+    )
+    .await;
+    let link = test.link_in_last_email_to("ada@example.com").await;
+    printed(&server(&database, &["admin", "revoke-all", "--yes"], &[]));
+    let page = test.page(&link, None).await;
+    assert!(page.body.contains("used or expired"), "{}", page.body);
+}
+
+#[tokio::test]
+async fn revoke_all_passwords_without_yes_clears_no_password() {
+    let database = scratch_database("revoke-passwords-dry");
+    let test = app_over(&database).await;
+    graces_secrets(&test).await;
+    let said = printed(&server(
+        &database,
+        &["admin", "revoke-all", "--passwords"],
+        &[],
+    ));
+    assert!(said.contains("1 password"), "{said}");
+    assert_eq!(
+        logs_in(&test, common::PASSWORD).await.status,
+        StatusCode::SEE_OTHER
+    );
+}
+
+/// A mistyped FILEDRAWER_DATABASE opens a new, empty database, where revoking
+/// nothing would read as done.
+#[test]
+fn revoke_all_refuses_a_database_with_no_accounts() {
+    let database = scratch_database("revoke-empty");
+    let output = server(&database, &["admin", "revoke-all", "--yes"], &[]);
+    assert!(!output.status.success());
+    let said = String::from_utf8_lossy(&output.stderr);
+    assert!(said.contains("FILEDRAWER_DATABASE"), "{said}");
+}
+
+#[test]
+fn revoke_all_refuses_a_flag_it_doesnt_know_or_one_given_twice() {
+    let database = scratch_database("revoke-flags");
+    for flags in [&["--force"][..], &["--yes", "--yes"]] {
+        let args: Vec<&str> = ["admin", "revoke-all"]
+            .iter()
+            .chain(flags)
+            .copied()
+            .collect();
+        let output = server(&database, &args, &[]);
+        assert_eq!(output.status.code(), Some(2), "{flags:?}");
+    }
+}
