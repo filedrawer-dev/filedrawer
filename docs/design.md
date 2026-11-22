@@ -51,6 +51,9 @@ The owner expects most contributors to be independent researchers, newcomers to 
   The owner wants password managers to work, so this path always exists.
   Passwords are hashed with argon2id.
   An account can post only after its email is verified.
+  Verifying takes the emailed link and the account's password, or a session of the account in the browser that opens the link (the owner's decision, 2026-11-21).
+  Reason: with the link alone, whoever signed up with someone else's address chose the password, so once the address's owner pressed Verify the other person held a verified account (AUTHZ-1).
+  Whoever didn't sign up resets the password instead, which verifies the address and ends every session and token.
   Password reset goes by email.
 - GitHub sign-in ships right after launch, ORCID later.
   Both are options, never requirements.
@@ -105,7 +108,8 @@ The owner expects little abuse and prefers limits to login friction.
 - Failed logins are limited per email address, 10 an hour, whether or not an account uses it; past that, every login to the address waits for the window, the right password too.
   Password reset stays open under its own limits.
   Reason (the owner's decision, 2026-11-06): the per-IP limit alone let each address guess 300 passwords a minute, and a client with many addresses guess without bound.
-  The cost: a stranger can lock an account's browser login for an hour; its API tokens keep working.
+  Verifying by password counts against the same limit, so it guesses no faster.
+  The cost: a stranger can lock an account's browser login, and verifying by password, for an hour; its API tokens keep working.
 - `POST /feedback` stores at most 10 items an hour and 50 a day per account (the owner, 2026-11-14; #60).
   Reason: with no limit, one account could store thousands of items a day, which buries real feedback in the owner's daily email and fills the database.
   It bounds one account, not the table: many accounts can still fill it.

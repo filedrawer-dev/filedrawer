@@ -195,25 +195,37 @@ pub async fn retire_email_link(pool: &SqlitePool, hash: &[u8]) -> Result<(), sql
     Ok(())
 }
 
-/// Whether an email link would work, without using it: for the page the link opens.
-pub async fn email_link_works(
+/// The account an email link was sent to, for checking who presses it before it is
+/// spent.
+pub struct LinkAccount {
+    pub account_id: String,
+    pub email: String,
+    pub password_hash: Option<String>,
+}
+
+/// The account of an unused, unexpired email link for `purpose`, if it still has an
+/// address. Spends nothing: for the page the link opens, and to check who presses
+/// it.
+pub async fn link_account(
     pool: &SqlitePool,
     secret: &str,
     purpose: Purpose,
-) -> Result<bool, sqlx::Error> {
+) -> Result<Option<LinkAccount>, sqlx::Error> {
     let hash = ids::token_hash(secret);
     let now = now();
     let purpose = purpose.as_str();
-    let found = sqlx::query_scalar!(
-        "SELECT 1 AS found FROM email_tokens
-         WHERE hash = ? AND purpose = ? AND used_at IS NULL AND expires_at > ?",
+    sqlx::query_as!(
+        LinkAccount,
+        "SELECT a.id AS \"account_id!\", a.email AS \"email!\", a.password_hash
+         FROM email_tokens t JOIN accounts a ON a.id = t.account_id
+         WHERE t.hash = ? AND t.purpose = ? AND t.used_at IS NULL AND t.expires_at > ?
+           AND a.email IS NOT NULL AND a.deleted_at IS NULL",
         hash,
         purpose,
         now
     )
     .fetch_optional(pool)
-    .await?;
-    Ok(found.is_some())
+    .await
 }
 
 /// Spends an email link and returns its account, if the link is unused, unexpired and
@@ -239,20 +251,20 @@ async fn spend_link(
     .await
 }
 
-/// Marks the account's address verified. True when it wasn't before.
+/// Marks the account's address verified, unless it was already.
 async fn mark_verified(
     connection: &mut SqliteConnection,
     account_id: &str,
-) -> Result<bool, sqlx::Error> {
+) -> Result<(), sqlx::Error> {
     let verified_at = now();
-    let done = sqlx::query!(
+    sqlx::query!(
         "UPDATE accounts SET email_verified_at = ? WHERE id = ? AND email_verified_at IS NULL",
         verified_at,
         account_id
     )
     .execute(&mut *connection)
     .await?;
-    Ok(done.rows_affected() == 1)
+    Ok(())
 }
 
 async fn end_sessions(
@@ -265,18 +277,15 @@ async fn end_sessions(
     Ok(())
 }
 
-/// Verifies the account a verification link was sent for, and ends its sessions:
-/// they were made before anyone had proved the address, so whoever proved it logs in
-/// again. A link for an address already verified ends none. False when the link is
-/// used, expired or unknown.
+/// Spends a verification link and marks its account's address verified. The caller
+/// has checked that whoever pressed it holds the account's password or a session of
+/// it. False when the link is used, expired or unknown.
 pub async fn verify_with_link(pool: &SqlitePool, secret: &str) -> Result<bool, sqlx::Error> {
     let mut transaction = crate::db::write_tx(pool).await?;
     let Some(account_id) = spend_link(&mut transaction, secret, Purpose::Verify).await? else {
         return Ok(false);
     };
-    if mark_verified(&mut transaction, &account_id).await? {
-        end_sessions(&mut transaction, &account_id).await?;
-    }
+    mark_verified(&mut transaction, &account_id).await?;
     transaction.commit().await?;
     Ok(true)
 }

@@ -96,7 +96,13 @@ async fn a_failed_send_is_retried_after_a_wait_that_doubles_and_then_its_row_is_
     assert_eq!(live_links(&app).await, 1);
     let link = app.link_in_last_email_to("grace@example.com").await;
     let token = link.replace("/verify?token=", "");
-    let verified = app.form("/verify", &[("token", &token)], None).await;
+    let verified = app
+        .form(
+            "/verify",
+            &[("token", &token), ("password", PASSWORD)],
+            None,
+        )
+        .await;
     assert!(verified.status.is_redirection() || verified.status.is_success());
 }
 
@@ -287,7 +293,12 @@ async fn a_row_with_no_one_left_to_tell_is_deleted_unsent() {
     sign_up(&app, "grace@example.com").await;
     let link = app.link_in_last_email_to("grace@example.com").await;
     let token = link.replace("/verify?token=", "");
-    app.form("/verify", &[("token", &token)], None).await;
+    app.form(
+        "/verify",
+        &[("token", &token), ("password", PASSWORD)],
+        None,
+    )
+    .await;
     let cookie = logged_in(&app, "grace@example.com", PASSWORD).await;
     let grace = common::account_id(&app, &cookie).await;
     let before = app.outbox.sent().len();

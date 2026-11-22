@@ -204,7 +204,8 @@ async fn an_invited_account_gets_50_a_day_from_its_first_day() {
     assert_eq!(signup.status, StatusCode::OK, "{}", signup.body);
     let link = app.link_in_last_email_to("grace@example.com").await;
     let token = link.strip_prefix("/verify?token=").unwrap();
-    app.form("/verify", &[("token", token)], None).await;
+    let verify = [("token", token), ("password", SIGNUP_PASSWORD)];
+    app.form("/verify", &verify, None).await;
     let session = common::logged_in(&app, "grace@example.com", SIGNUP_PASSWORD).await;
     let token = common::new_token(&app, &session).await;
     for n in 0..21 {
@@ -279,7 +280,8 @@ pub(crate) async fn invited_account(app: &TestApp, code: &str, email: &str) -> (
     assert_eq!(signup.status, StatusCode::OK, "{}", signup.body);
     let link = app.link_in_last_email_to(email).await;
     let token = link.strip_prefix("/verify?token=").unwrap();
-    app.form("/verify", &[("token", token)], None).await;
+    let verify = [("token", token), ("password", SIGNUP_PASSWORD)];
+    app.form("/verify", &verify, None).await;
     let session = common::logged_in(app, email, SIGNUP_PASSWORD).await;
     let token = common::new_token(app, &session).await;
     (session, token)

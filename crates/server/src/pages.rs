@@ -367,6 +367,10 @@ pub struct LoginPage<'a> {
 #[template(path = "verify.html")]
 pub struct VerifyPage<'a> {
     pub token: &'a str,
+    /// False when the browser holds a session of the link's account, which proves as
+    /// much as its password.
+    pub ask_password: bool,
+    pub error: Option<&'a str>,
 }
 
 #[derive(Template)]

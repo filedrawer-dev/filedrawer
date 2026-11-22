@@ -357,8 +357,13 @@ async fn prepare(
                 accounts::new_email_link(&mut tx, &row.account_id, Purpose::Verify).await?;
             let body = format!(
                 "Someone, probably you, signed up for File Drawer with this address.\n\n\
-                 To verify it, open this link and press the button:\n{url}/verify?token={secret}\n\n\
-                 The link works for {EMAIL_LINK_HOURS} hours. If you didn't sign up, ignore this email.\n"
+                 To verify it, open this link and press the button. It asks for the password you \
+                 chose, unless you're logged in in that browser:\n\
+                 {url}/verify?token={secret}\n\n\
+                 The link works for {EMAIL_LINK_HOURS} hours.\n\n\
+                 If you didn't sign up, someone else typed your address. You can ignore this email, \
+                 since the account can't post until the address is verified, or choose a password \
+                 at {url}/reset to take the account and end their way into it.\n"
             );
             (
                 "Verify your email for File Drawer".to_string(),

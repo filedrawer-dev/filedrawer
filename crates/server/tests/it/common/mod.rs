@@ -581,7 +581,8 @@ impl TestApp {
 /// The password the browser helpers sign up with.
 pub const PASSWORD: &str = "correct horse battery";
 
-/// Signs up `email` as Grace, follows the emailed link, and verifies.
+/// Signs up `email` as Grace, follows the emailed link, and verifies with the
+/// account's password.
 pub async fn signed_up_and_verified(app: &TestApp, email: &str) {
     let reply = app
         .form(
@@ -597,7 +598,9 @@ pub async fn signed_up_and_verified(app: &TestApp, email: &str) {
     assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
     let link = app.link_in_last_email_to(email).await;
     let token = link.strip_prefix("/verify?token=").expect(&link);
-    let verified = app.form("/verify", &[("token", token)], None).await;
+    let verified = app
+        .form("/verify", &[("token", token), ("password", PASSWORD)], None)
+        .await;
     assert_eq!(verified.status, StatusCode::OK, "{}", verified.body);
 }
 
