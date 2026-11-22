@@ -1,29 +1,61 @@
 //! What the process tests share: fixtures in scratch folders, and reading output.
 
 use std::ffi::OsStr;
-use std::path::PathBuf;
+use std::ops::Deref;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// A fixture's path in a scratch directory of its own, which goes, with anything a test
+/// wrote beside the file, when this drops.
+#[derive(Debug)]
+pub struct Fixture {
+    _dir: tempfile::TempDir,
+    path: PathBuf,
+}
+
+impl Deref for Fixture {
+    type Target = Path;
+
+    fn deref(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl AsRef<OsStr> for Fixture {
+    fn as_ref(&self) -> &OsStr {
+        self.path.as_os_str()
+    }
+}
+
+impl AsRef<Path> for Fixture {
+    fn as_ref(&self) -> &Path {
+        &self.path
+    }
+}
 
 /// A fixture written to a fresh scratch directory, from text compiled into the test.
 /// Paths from `CARGO_MANIFEST_DIR` would name the temporary tree the commit hook built
 /// the test in, which is gone by the next run. Each call gets its own directory, so
 /// tests running in parallel never read a file another is rewriting. An unknown name
 /// gives a path to no file.
-pub fn fixture(name: &str) -> PathBuf {
-    static CALLS: AtomicUsize = AtomicUsize::new(0);
-    let call = CALLS.fetch_add(1, Ordering::Relaxed);
-    let dir = std::env::temp_dir().join(format!("cli-tests-{}-{call}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join(name);
+pub fn fixture(name: &str) -> Fixture {
+    let dir = tempfile::Builder::new()
+        .prefix("cli-tests-")
+        .tempdir()
+        .unwrap();
+    let path = dir.path().join(name);
     let text = match name {
         // The analyzer's example entry, which its own tests build on.
-        "example.md" => include_str!("../../../../analyzer/tests/it/fixtures/example.md"),
-        "refused.md" => include_str!("../fixtures/refused.md"),
-        _ => return path,
+        "example.md" => Some(include_str!(
+            "../../../../analyzer/tests/it/fixtures/example.md"
+        )),
+        "refused.md" => Some(include_str!("../fixtures/refused.md")),
+        _ => None,
     };
-    std::fs::write(&path, text).unwrap();
-    path
+    if let Some(text) = text {
+        std::fs::write(&path, text).unwrap();
+    }
+    Fixture { _dir: dir, path }
 }
 
 /// Runs the `filedrawer` binary with `args`.

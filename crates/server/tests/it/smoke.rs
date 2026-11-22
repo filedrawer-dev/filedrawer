@@ -3,6 +3,7 @@
 //! server's replies that would break it there fails here first.
 
 use crate::common;
+use crate::common::scratch::Scratch;
 
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
@@ -10,59 +11,75 @@ use std::process::{Child, Command, Output};
 
 const SCRIPT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../ops/smoke-staging");
 
-/// The skills' tags as this build has them, made once for every test.
-fn true_skill_tags() -> &'static Path {
-    static TAGS: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
-    TAGS.get_or_init(|| {
-        let dir = tempfile::tempdir().unwrap();
-        common::skills::tags_mirror(dir.path(), |_, _, text| text);
-        dir
-    })
-    .path()
+/// The skills' tags as this build has them. Not a static: nextest runs each test in a
+/// process of its own, so a static would be made per test anyway, and never dropped.
+fn true_skill_tags() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    common::skills::tags_mirror(dir.path(), |_, _, text| text);
+    dir
 }
 
 /// A folder holding a `cargo` that fails, first on each run's PATH: a test that built
 /// the server would spend minutes in a fresh worktree, past nextest's limit (#113).
-fn failing_cargo_dir() -> &'static Path {
-    static DIR: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
-    DIR.get_or_init(|| {
-        let dir = tempfile::tempdir().unwrap();
-        let cargo = dir.path().join("cargo");
-        std::fs::write(
-            &cargo,
-            "#!/bin/sh\necho 'smoke tests run no cargo' >&2\nexit 1\n",
-        )
-        .unwrap();
-        std::fs::set_permissions(&cargo, std::os::unix::fs::PermissionsExt::from_mode(0o755))
-            .unwrap();
-        dir
-    })
-    .path()
+fn failing_cargo_dir() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let cargo = dir.path().join("cargo");
+    std::fs::write(
+        &cargo,
+        "#!/bin/sh\necho 'smoke tests run no cargo' >&2\nexit 1\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&cargo, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    dir
+}
+
+/// The script's command, with the folders its settings name, which go when it drops.
+struct Script {
+    command: Command,
+    _tags: tempfile::TempDir,
+    _cargo: tempfile::TempDir,
+}
+
+impl std::ops::Deref for Script {
+    type Target = Command;
+
+    fn deref(&self) -> &Command {
+        &self.command
+    }
+}
+
+impl std::ops::DerefMut for Script {
+    fn deref_mut(&mut self) -> &mut Command {
+        &mut self.command
+    }
 }
 
 /// A `filedrawer-server serve` on a free loopback port, stopped when dropped.
 struct Server {
     child: Child,
     url: String,
-    database: PathBuf,
+    /// Its folder goes when the server drops; `None` once `restart_with` took it.
+    database: Option<Scratch>,
 }
 
 impl Drop for Server {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
-        if let Some(dir) = self.database.parent() {
-            let _ = std::fs::remove_dir_all(dir);
-        }
     }
 }
 
 /// A new database file in a folder of its own.
-fn scratch_database(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("filedrawer-smoke-{}-{name}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    dir.join("filedrawer.db")
+fn scratch_database(name: &str) -> Scratch {
+    Scratch::database(&format!("smoke-{name}"))
+}
+
+/// A new empty folder, removed when dropped.
+fn scratch_dir(name: &str) -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .prefix(&format!("filedrawer-smoke-{name}-"))
+        .tempdir()
+        .unwrap()
 }
 
 /// A free loopback port: one the system just handed out and nobody holds.
@@ -74,18 +91,18 @@ fn free_port() -> u16 {
         .port()
 }
 
-fn serve(database: PathBuf) -> Server {
+fn serve(database: Scratch) -> Server {
     serve_with(database, &[("FILEDRAWER_SCREENER", "pass-all")])
 }
 
 /// A server with these extra settings.
-fn serve_with(database: PathBuf, settings: &[(&str, &str)]) -> Server {
+fn serve_with(database: Scratch, settings: &[(&str, &str)]) -> Server {
     let port = free_port();
     let url = format!("http://127.0.0.1:{port}");
     let child = Command::new(env!("CARGO_BIN_EXE_filedrawer-server"))
         .arg("serve")
         .env_clear()
-        .env("FILEDRAWER_DATABASE", &database)
+        .env("FILEDRAWER_DATABASE", &*database)
         .env("FILEDRAWER_LISTEN", format!("127.0.0.1:{port}"))
         .env("FILEDRAWER_ENVIRONMENT", "dev")
         // So the eval's cases, which link github.com, fetch nothing.
@@ -98,7 +115,7 @@ fn serve_with(database: PathBuf, settings: &[(&str, &str)]) -> Server {
     Server {
         child,
         url,
-        database,
+        database: Some(database),
     }
 }
 
@@ -133,7 +150,9 @@ fn server_and_token(name: &str) -> (Server, String) {
 
 /// The script with `args`, none of its settings inherited, and the staging key if
 /// given. A BASH_ENV file, as in the sandbox, could set the settings again.
-fn script(args: &[&str], key: Option<&str>) -> Command {
+fn script(args: &[&str], key: Option<&str>) -> Script {
+    let tags = true_skill_tags();
+    let cargo = failing_cargo_dir();
     let mut command = Command::new(SCRIPT);
     command
         .args(args)
@@ -143,7 +162,7 @@ fn script(args: &[&str], key: Option<&str>) -> Command {
         .env_remove("FILEDRAWER_STAGING_SCREEN_API_KEY")
         .env(
             "FILEDRAWER_SKILL_TAGS_URL",
-            format!("file://{}", true_skill_tags().display()),
+            format!("file://{}", tags.path().display()),
         )
         // A local server decides within a second or two; polling every 5 s, as against
         // staging, would spend seconds per case.
@@ -154,14 +173,18 @@ fn script(args: &[&str], key: Option<&str>) -> Command {
             "PATH",
             format!(
                 "{}:{}",
-                failing_cargo_dir().display(),
+                cargo.path().display(),
                 std::env::var("PATH").unwrap()
             ),
         );
     if let Some(key) = key {
         command.env("FILEDRAWER_STAGING_KEY", key);
     }
-    command
+    Script {
+        command,
+        _tags: tags,
+        _cargo: cargo,
+    }
 }
 
 fn smoke(args: &[&str], key: Option<&str>, token: Option<&str>) -> Output {
@@ -292,16 +315,13 @@ fn screen(args: &[&str], key: Option<&str>, token: Option<&str>) -> Output {
 /// Runs a mode of the script that submits with a screen token (`screen` or `eval`),
 /// with its settings files looked for in an empty folder.
 fn screen_mode(mode: &str, args: &[&str], key: Option<&str>, token: Option<&str>) -> Output {
-    let empty = scratch_database(&format!("{mode}-settings"));
-    let empty = empty.parent().unwrap();
+    let empty = scratch_dir(&format!("{mode}-settings"));
     let mut command = script(&[&[mode], args].concat(), key);
-    command.env("FILEDRAWER_OPS_DIR", empty);
+    command.env("FILEDRAWER_OPS_DIR", empty.path());
     if let Some(token) = token {
         command.env("FILEDRAWER_STAGING_SCREEN_API_KEY", token);
     }
-    let output = command.output().unwrap();
-    let _ = std::fs::remove_dir_all(empty);
-    output
+    command.output().unwrap()
 }
 
 #[test]
@@ -377,8 +397,8 @@ fn eval_against_a_server_that_doesnt_screen_passes_only_the_public_cases() {
 #[test]
 fn eval_samples_field_test_entries_without_printing_them() {
     let (server, token) = serve_attachments("eval-field");
-    let fake = scratch_database("eval-field-entries");
-    let fake = fake.parent().unwrap().to_path_buf();
+    let fake = scratch_dir("eval-field-entries");
+    let fake = fake.path();
     let fixture = std::fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/smoke-fixture.md"),
     )
@@ -407,8 +427,8 @@ fn eval_samples_field_test_entries_without_printing_them() {
         ),
     )
     .unwrap();
-    let ops = scratch_database("eval-field-settings");
-    let ops = ops.parent().unwrap();
+    let ops = scratch_dir("eval-field-settings");
+    let ops = ops.path();
     let run = |args: &[&str]| {
         let mut command = script(
             &[&["eval"], args, &["--wait", "30", &server.url]].concat(),
@@ -416,7 +436,7 @@ fn eval_samples_field_test_entries_without_printing_them() {
         );
         command
             .env("FILEDRAWER_OPS_DIR", ops)
-            .env("FILEDRAWER_FIELD_TEST_DIR", &fake)
+            .env("FILEDRAWER_FIELD_TEST_DIR", fake)
             .env("FILEDRAWER_STAGING_SCREEN_API_KEY", &token);
         text(&command.output().unwrap())
     };
@@ -437,7 +457,6 @@ fn eval_samples_field_test_entries_without_printing_them() {
     // A resumed run reports it again, so its tally covers the whole run.
     let again = run(&["--resume", path.to_str().unwrap()]);
     assert_eq!(again.matches(refused).count(), 1, "{again}");
-    let _ = std::fs::remove_dir_all(&fake);
     for out in [&printed, &again] {
         for secret in ["SECRET-FIELD-TEST-MARKER", "one.md", "secret-repo-marker"] {
             assert!(!out.contains(secret), "{secret} printed: {out}");
@@ -497,9 +516,9 @@ const FAILING: &[(&str, &str)] = &[
 /// verdict, so a case not decided at once is left undecided.
 fn without_waiting(mode_and_args: &[&str], server: &Server, token: &str) -> Output {
     let mut command = script(&[mode_and_args, &[&server.url]].concat(), Some("unused"));
-    let empty = scratch_database(&format!("{}-nowait-settings", mode_and_args[0]));
+    let empty = scratch_dir(&format!("{}-nowait-settings", mode_and_args[0]));
     command
-        .env("FILEDRAWER_OPS_DIR", empty.parent().unwrap())
+        .env("FILEDRAWER_OPS_DIR", empty.path())
         .env("FILEDRAWER_STAGING_SCREEN_API_KEY", token)
         .env("FILEDRAWER_SCREEN_WAIT_SECONDS", "0");
     command.output().unwrap()
@@ -569,7 +588,7 @@ impl Server {
         let _ = self.child.kill();
         let _ = self.child.wait();
         // Taken, so this server's drop leaves the database for the next one.
-        let database = std::mem::take(&mut self.database);
+        let database = self.database.take().unwrap();
         serve_with(database, settings)
     }
 }
@@ -605,8 +624,9 @@ fn sha256(bytes: &[u8]) -> String {
 /// `one` and `two` listing the same two attached files, which the store holds, and
 /// `three` listing one it doesn't. Every entry and file is marked, so a test can check
 /// that none is printed.
-fn field_test_box(name: &str) -> PathBuf {
-    let dir = scratch_database(name).parent().unwrap().join("field-test");
+fn field_test_box(name: &str) -> Scratch {
+    let scratch = Scratch::new(&format!("smoke-{name}"), "field-test");
+    let dir = &*scratch;
     let fixture = std::fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/smoke-fixture.md"),
     )
@@ -633,7 +653,7 @@ fn field_test_box(name: &str) -> PathBuf {
         list_line("author:analysis/lost.py", missing),
     )
     .unwrap();
-    dir
+    scratch
 }
 
 /// `ops/smoke-staging eval` with `args`, as the screen-test account `token`, keeping
@@ -690,8 +710,8 @@ fn sent(run: &str) -> Vec<(String, String)> {
 fn eval_sends_field_test_entries_citing_their_attachment_sets() {
     let (server, token) = serve_attachments("eval-sets");
     let field_test = field_test_box("eval-sets-entries");
-    let ops = scratch_database("eval-sets-ops");
-    let ops = ops.parent().unwrap();
+    let ops = scratch_dir("eval-sets-ops");
+    let ops = ops.path();
     let output = eval(
         &["--field-test", "3", "--wait", "30", &server.url],
         &token,
@@ -735,7 +755,6 @@ fn eval_sends_field_test_entries_citing_their_attachment_sets() {
         // The upload kept the file's bytes, Windows line ends included.
         assert!(shown.contains(&sha256(plain_file().as_bytes())), "{shown}");
     }
-    let _ = std::fs::remove_dir_all(field_test.parent().unwrap());
     for secret in [
         "SECRET-FIELD-TEST-MARKER",
         "one.md",
@@ -759,16 +778,15 @@ fn eval_counts_what_decoding_finds_in_the_sets_it_sent() {
         list_line("author:hiding.py", &hiding_file()),
     )
     .unwrap();
-    let ops = scratch_database("eval-decode-ops");
+    let ops = scratch_dir("eval-decode-ops");
     let output = eval(
         &["--field-test", "3", "--wait", "30", &server.url],
         &token,
-        ops.parent().unwrap(),
+        ops.path(),
         &field_test,
         &[],
     );
     let printed = text(&output);
-    let _ = std::fs::remove_dir_all(field_test.parent().unwrap());
     // Each file is counted once, though three entries and two sets cite the hiding one.
     // Beside the field test's 2 files are the planted cases' 5: three hide their
     // instruction, in 1, 1 and 9 parts of 282, 282 and 288 bytes, and one is past
@@ -792,8 +810,8 @@ fn eval_counts_what_decoding_finds_in_the_sets_it_sent() {
 #[test]
 fn eval_resumes_a_stopped_run_without_sending_anything_twice() {
     let (server, token) = screening_server("eval-resume", SPENT);
-    let ops = scratch_database("eval-resume-ops");
-    let ops = ops.parent().unwrap();
+    let ops = scratch_dir("eval-resume-ops");
+    let ops = ops.path();
     let field_test = field_test_box("eval-resume-entries");
     let first = eval(
         &["--field-test", "0", "--wait", "30", &server.url],
@@ -834,7 +852,6 @@ fn eval_resumes_a_stopped_run_without_sending_anything_twice() {
         &field_test,
         &[],
     );
-    let _ = std::fs::remove_dir_all(field_test.parent().unwrap());
     let printed = text(&output);
     assert!(printed.contains("public: 5 of 5"), "{printed}");
     assert!(printed.contains(&format!("eval {tag}: ")), "{printed}");
@@ -860,8 +877,8 @@ fn eval_resumes_a_stopped_run_without_sending_anything_twice() {
 fn a_resumed_run_cites_the_sets_it_already_uploaded() {
     let (server, token) = serve_attachments("eval-resume-sets");
     let field_test = field_test_box("eval-resume-sets-entries");
-    let ops = scratch_database("eval-resume-sets-ops");
-    let ops = ops.parent().unwrap();
+    let ops = scratch_dir("eval-resume-sets-ops");
+    let ops = ops.path();
     let args = ["--wait", "30", &server.url];
     let first = eval(
         &[&["--field-test", "1"], &args[..]].concat(),
@@ -903,7 +920,6 @@ fn a_resumed_run_cites_the_sets_it_already_uploaded() {
         printed.contains("citing a set that hides text or passes a limit: 2 (public 2"),
         "{printed}"
     );
-    let _ = std::fs::remove_dir_all(field_test.parent().unwrap());
 }
 
 #[test]
@@ -920,8 +936,8 @@ fn resume_takes_its_cases_from_the_run_file_alone() {
         "{}",
         text(&output)
     );
-    let ops = scratch_database("eval-not-a-run");
-    let ops = ops.parent().unwrap();
+    let ops = scratch_dir("eval-not-a-run");
+    let ops = ops.path();
     std::fs::write(ops.join("notes"), "not a run file\n").unwrap();
     let output = screen_mode(
         "eval",
@@ -949,12 +965,12 @@ const ATTACHMENTS: &[(&str, &str)] = &[
 /// A new database under target/, with the attached files beside it: the server
 /// refuses an upload that would leave its disk under 5 GB free, which a small /tmp
 /// can be.
-fn roomy_database(name: &str) -> PathBuf {
-    let dir =
-        Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("smoke-{}-{name}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    dir.join("filedrawer.db")
+fn roomy_database(name: &str) -> Scratch {
+    Scratch::new_in(
+        Path::new(env!("CARGO_TARGET_TMPDIR")),
+        &format!("smoke-{name}"),
+        "filedrawer.db",
+    )
 }
 
 /// A server that takes attachments and passes everything, and an account's token.
@@ -988,8 +1004,9 @@ fn curl_entry(server: &Server, token: &str, id: &str) -> String {
 /// file. Beside them are notes that aren't an entry, and an older round of the same
 /// repo, which `--families` leaves alone. Every text is marked, so a test can check that
 /// none is printed.
-fn family_box(name: &str) -> PathBuf {
-    let dir = scratch_database(name).parent().unwrap().join("field-test");
+fn family_box(name: &str) -> Scratch {
+    let scratch = Scratch::new(&format!("smoke-{name}"), "field-test");
+    let dir = &*scratch;
     let fixture = std::fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/smoke-fixture.md"),
     )
@@ -1041,15 +1058,15 @@ fn family_box(name: &str) -> PathBuf {
         with("slug: secret-slug-marker\ncode: https://github.com/made-up/secret-repo-marker\n"),
     )
     .unwrap();
-    dir
+    scratch
 }
 
 #[test]
 fn eval_sends_each_field_test_family_as_batches_and_resumes_without_resending() {
     let (server, token) = serve_attachments("eval-families");
     let field_test = family_box("eval-families-entries");
-    let ops = scratch_database("eval-families-ops");
-    let ops = ops.parent().unwrap();
+    let ops = scratch_dir("eval-families-ops");
+    let ops = ops.path();
     // Small enough that a and b go in batches of their own.
     let split = [("FILEDRAWER_BATCH_MAX_BYTES", "2500")];
     let output = eval(
@@ -1134,7 +1151,6 @@ fn eval_sends_each_field_test_family_as_batches_and_resumes_without_resending() 
     assert_eq!(run.matches("\nseries\t").count(), 1, "{run}");
     let reasons = std::fs::read_to_string(format!("{}.refused-1", path.display())).unwrap();
     assert!(reasons.contains("secret-repo-marker"), "{reasons}");
-    let _ = std::fs::remove_dir_all(field_test.parent().unwrap());
     for out in [&first_printed, &printed] {
         for secret in [
             "SECRET-FIELD-TEST-MARKER",

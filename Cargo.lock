@@ -551,6 +551,7 @@ name = "filedrawer"
 version = "0.1.1"
 dependencies = [
  "filedrawer-analyzer",
+ "tempfile",
 ]
 
 [[package]]

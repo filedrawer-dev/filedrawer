@@ -4,6 +4,7 @@ pub mod attachments;
 pub mod deletion;
 pub mod fake_models;
 pub mod fake_web;
+pub mod scratch;
 pub mod series;
 pub mod skills;
 pub mod through_caddy;

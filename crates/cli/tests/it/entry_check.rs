@@ -45,7 +45,7 @@ fn a_refused_entry_lists_every_reason_and_exits_1() {
 fn warnings_are_listed_and_point_to_feedback() {
     let example = fixture("example.md");
     let path = example.with_file_name("warned.md");
-    let text = std::fs::read_to_string(example)
+    let text = std::fs::read_to_string(&example)
         .unwrap()
         .replace("stage: main", "stage: final");
     std::fs::write(&path, text).unwrap();

@@ -1,21 +1,19 @@
 //! Seam: the `filedrawer-server` binary, run as a process.
 
 use crate::common;
+use crate::common::scratch::Scratch;
 
-use std::path::PathBuf;
+use std::path::Path;
 use std::process::{Command, Output};
 
 use axum::http::StatusCode;
 use filedrawer_server::{app, db};
 
-fn scratch_database(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("filedrawer-cli-{}-{name}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    dir.join("filedrawer.db")
+fn scratch_database(name: &str) -> Scratch {
+    Scratch::database(&format!("cli-{name}"))
 }
 
-fn server(database: &PathBuf, args: &[&str], env: &[(&str, &str)]) -> Output {
+fn server(database: &Path, args: &[&str], env: &[(&str, &str)]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_filedrawer-server"))
         .args(args)
         .env_clear()
@@ -147,7 +145,7 @@ fn production_refuses_the_pass_all_screener() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_filedrawer-server"))
         .arg("serve")
         .env_clear()
-        .env("FILEDRAWER_DATABASE", &database)
+        .env("FILEDRAWER_DATABASE", &*database)
         .env("FILEDRAWER_LISTEN", "127.0.0.1:0")
         .env("FILEDRAWER_PUBLIC_URL", "https://filedrawer.dev")
         .env("FILEDRAWER_SMTP_HOST", "smtp.example.com")
@@ -219,7 +217,7 @@ const OFFLINE: &[(&str, &str)] = &[
 #[test]
 fn check_outbound_with_nothing_to_call_says_so_and_never_opens_the_database() {
     let database = scratch_database("outbound-none");
-    std::fs::remove_dir_all(database.parent().unwrap()).unwrap();
+    std::fs::remove_dir_all(database.dir()).unwrap();
     let output = server(&database, &["check-outbound"], OFFLINE);
     let out = String::from_utf8_lossy(&output.stdout);
     assert_eq!(output.status.code(), Some(0), "{out}");
@@ -232,7 +230,7 @@ fn check_outbound_with_nothing_to_call_says_so_and_never_opens_the_database() {
             "skipped hc-ping.com (no FILEDRAWER_DAILY_EMAIL_PING)",
         ]
     );
-    assert!(!database.parent().unwrap().exists());
+    assert!(!database.dir().exists());
 }
 
 #[test]
@@ -284,7 +282,8 @@ const HIDDEN_B64_X4: &str = "V1d4a1IyRXhjRlJOVkVacVVUQktkMWx0TlU5TlIwNTFWbTF3YTF
 /// Runs `filedrawer-server unpack` on files holding `texts`, written to a scratch folder,
 /// and returns the output and each file's path.
 fn unpack(name: &str, texts: &[&[u8]]) -> (Output, Vec<String>) {
-    let dir = scratch_database(name).parent().unwrap().to_path_buf();
+    let scratch = scratch_database(name);
+    let dir = scratch.dir();
     let paths: Vec<String> = texts
         .iter()
         .enumerate()
