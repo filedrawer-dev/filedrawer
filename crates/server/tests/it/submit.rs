@@ -31,12 +31,18 @@ async fn a_valid_entry_is_held_and_the_response_shows_its_card() {
     assert!(reply.body.contains("status: pending\n"), "{}", reply.body);
     assert!(
         reply.body.contains(&format!(
-            "  {id}; experiment; null; main; rows: 1 effect, 1 null"
+            "  entry: {id}; experiment; null; main; rows: 1 effect, 1 null"
         )),
         "{}",
         reply.body
     );
-    assert!(reply.body.contains("Ada, account a-"), "{}", reply.body);
+    assert!(
+        reply
+            .body
+            .contains(&format!("  author: account {}, Ada\n", app.account)),
+        "{}",
+        reply.body
+    );
     assert!(
         reply.body.contains("primary row: model model-a;"),
         "{}",

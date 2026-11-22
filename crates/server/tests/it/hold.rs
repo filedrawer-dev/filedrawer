@@ -87,7 +87,7 @@ async fn a_put_replaces_the_held_entry_and_restarts_the_hour() {
     assert!(page.contains("title: Fixed title"), "{page}");
     assert!(app.get("/search?q=fixed").await.body.contains(&id));
     assert!(!app.get("/search?q=first").await.body.contains(&id));
-    assert_eq!(app.get("/tags").await.body, "probes 1\n");
+    assert_eq!(app.get("/tags").await.body, "1 probes\n");
 }
 
 #[tokio::test]

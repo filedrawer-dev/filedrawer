@@ -54,7 +54,7 @@ async fn a_removed_entry_is_served_nowhere_and_a_restore_brings_it_back() {
     assert!(!cards.contains(&id), "{cards}");
     assert!(cards.contains(&kept), "{cards}");
     // Only the kept entry counts toward its tags now.
-    assert_eq!(app.get("/tags").await.body, "refusal 1\nsteering 1\n");
+    assert_eq!(app.get("/tags").await.body, "1 refusal\n1 steering\n");
 
     // Its author reads that it was removed, and where to write, but not its text.
     let own = app.get_as_author(&format!("/e/{id}")).await;

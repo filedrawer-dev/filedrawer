@@ -115,6 +115,18 @@ pub struct SmallestEffect {
     pub set: Choice<SetWhen>,
 }
 
+/// Whether `text` is S as card line 5 shows it: a positive number written as ASCII
+/// digits with at most one `.`, which a digit follows, and no sign, exponent or unit.
+pub(crate) fn is_positive_decimal(text: &str) -> bool {
+    let (whole, fraction) = text.split_once('.').unwrap_or((text, ""));
+    let digits = |part: &str| part.bytes().all(|b| b.is_ascii_digit());
+    let fraction_ok = !text.contains('.') || !fraction.is_empty();
+    digits(whole)
+        && digits(fraction)
+        && fraction_ok
+        && text.bytes().any(|b| (b'1'..=b'9').contains(&b))
+}
+
 /// One item of `data`: a dataset and its SHA-256 (entry-format.md, Fields).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct DataItem {

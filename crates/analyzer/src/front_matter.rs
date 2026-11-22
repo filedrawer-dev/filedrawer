@@ -6,7 +6,9 @@ use yaml_rust2::scanner::{Marker, Scanner, TokenType};
 use yaml_rust2::{Yaml, YamlLoader};
 
 use crate::choice::{Choice, Vocabulary};
-use crate::fields::{DataItem, Fields, Model, PositiveControl, SmallestEffect, Writer};
+use crate::fields::{
+    DataItem, Fields, Model, PositiveControl, SmallestEffect, Writer, is_positive_decimal,
+};
 use crate::references::{MAX_PAPER_KEY_CHARS, MAX_REFERENCES, Reference, paper_key, successor_key};
 use crate::report::{Refusal, Warning, WarningKind};
 use crate::{MAX_TAG_CHARS, MAX_TAGS, is_valid_tag};
@@ -582,9 +584,21 @@ impl Reader {
         }
     }
 
+    /// `smallest_effect_of_interest`, its value kept as written, and warned when the
+    /// card can't show it.
     fn smallest_effect(&mut self, map: &yaml_rust2::yaml::Hash) -> SmallestEffect {
+        let name = "smallest_effect_of_interest.value";
+        let value = self.text(name, get(map, "value"));
+        if let Some(text) = value.as_deref().filter(|text| !is_positive_decimal(text)) {
+            self.warn(
+                WarningKind::UnrecognizedValue,
+                format!(
+                    "`{name}: {text}` is not a positive number written as digits with at most one `.` (no sign, exponent, unit or %), so the card shows \"unrecognized smallest_effect_of_interest\"; give it in the metric's own units and name the unit in the body"
+                ),
+            );
+        }
         SmallestEffect {
-            value: self.text("smallest_effect_of_interest.value", get(map, "value")),
+            value,
             set: self.choice(get(map, "set")),
         }
     }

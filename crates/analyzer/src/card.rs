@@ -5,16 +5,33 @@ use crate::choice::{
     Choice, Claim, CodeState, ControlChecks, ControlOutcome, ControlSource, Direction,
     HypothesisSet, Kind, Outcome, Role, SetWhen, Stage, Vocabulary,
 };
-use crate::fields::Fields;
+use crate::fields::{Fields, is_positive_decimal};
 use crate::links::{Pin, code_pin};
 use crate::references::{Reference, paper_key, successor_key};
 use crate::results::{Reading, Results, Row};
 
 /// The analyzer version every card names.
-pub const ANALYZER_VERSION: u32 = 1;
+pub const ANALYZER_VERSION: u32 = 2;
 
-/// The longest each of the card's 11 lines may be, in characters.
+/// The longest each of the card's 11 lines may be, in characters, after its label.
 pub const LINE_CAPS: [usize; 11] = [200, 200, 300, 300, 150, 300, 200, 300, 300, 300, 100];
+
+/// The server's label that starts each of the card's 11 lines, so a reader tells the
+/// server's words from an author's by the start of the line (entry-format.md, The
+/// card).
+const LABELS: [&str; 11] = [
+    "entry",
+    "title",
+    "hypothesis",
+    "result",
+    "design",
+    "stats",
+    "models",
+    "first caveat",
+    "not tried",
+    "flags",
+    "author",
+];
 
 /// What only the server knows about an entry. The CLI passes the default, and the
 /// card shows placeholders such as `<id>` for what's missing.
@@ -77,8 +94,9 @@ pub struct Replication {
     pub self_replication: bool,
 }
 
-/// Renders the card, one line per newline (entry-format.md, The card). Line 8, the
-/// first caveat, appears only on an `effect` card, so a card has 10 or 11 lines.
+/// Renders the card, one line per newline (entry-format.md, The card). Each line
+/// starts with the server's label, such as `title: `. Line 8, the first caveat,
+/// appears only on an `effect` card, so a card has 10 or 11 lines.
 pub fn render_card(analysis: &Analysis, context: &CardContext) -> String {
     let fields = &analysis.fields;
     let is_effect = fields.outcome.known() == Some(Outcome::Effect);
@@ -87,7 +105,7 @@ pub fn render_card(analysis: &Analysis, context: &CardContext) -> String {
         Some(whole_line(fields.title.as_deref(), "(no title)")),
         Some(whole_line(fields.hypothesis.as_deref(), "(no hypothesis)")),
         Some(primary_row(analysis)),
-        Some(labels(analysis)),
+        Some(design(analysis)),
         Some(interval_details(analysis)),
         Some(models_and_tags(fields)),
         is_effect.then(|| first_caveat(analysis)),
@@ -98,7 +116,10 @@ pub fn render_card(analysis: &Analysis, context: &CardContext) -> String {
     lines
         .into_iter()
         .zip(LINE_CAPS)
-        .filter_map(|(parts, cap)| parts.map(|parts| fit(&parts, cap)))
+        .zip(LABELS)
+        .filter_map(|((parts, cap), label)| {
+            parts.map(|parts| format!("{label}: {}", fit(&parts, cap)))
+        })
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -172,9 +193,9 @@ fn one_line(text: &str) -> String {
     spaced.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// A line that is author text alone, lines 2 and 3, or the server's `absent` when
-/// there is none or it shows nothing: a blank line would end the card where cards
-/// are listed one after another.
+/// A line that is author text alone after its label, lines 2 and 3, or the server's
+/// `absent` when there is none or it shows nothing: a blank line would end the card
+/// where cards are listed one after another.
 fn whole_line(text: Option<&str>, absent: &str) -> Vec<Part> {
     match text.filter(|text| !crate::shows_nothing(text)) {
         Some(text) => vec![author(text)],
@@ -316,7 +337,7 @@ fn written_number(text: &str, difference: bool) -> String {
 
 /// Line 5: the positive control, the prediction and, for an effect, whether the
 /// primary row went as predicted; then S if given.
-fn labels(analysis: &Analysis) -> Vec<Part> {
+fn design(analysis: &Analysis) -> Vec<Part> {
     let fields = &analysis.fields;
     let control = match &fields.positive_control {
         None => "no positive control reported".to_string(),
@@ -389,11 +410,17 @@ fn labels(analysis: &Analysis) -> Vec<Part> {
                 SetWhen::AfterRun => "set after run",
             }),
         };
-        parts.extend([
-            server("; S "),
-            author(smallest.value.as_deref().unwrap_or("not given")),
-            server(format!(", {set}")),
-        ]);
+        // S sits among the server's labels, so it shows only as a number.
+        match smallest.value.as_deref() {
+            Some(value) if !is_positive_decimal(value) => {
+                parts.push(server("; unrecognized smallest_effect_of_interest"));
+            }
+            value => parts.extend([
+                server("; S "),
+                author(value.unwrap_or("not given")),
+                server(format!(", {set}")),
+            ]),
+        }
     }
     parts
 }
@@ -463,7 +490,7 @@ fn models_and_tags(fields: &Fields) -> Vec<Part> {
         .filter(|model| matches!(model.role, Choice::Known(Role::Subject) | Choice::Absent))
         .filter_map(|model| model.name.as_deref())
         .collect();
-    let mut parts = vec![server("models: ")];
+    let mut parts = Vec::new();
     if subjects.is_empty() {
         parts.push(server("none listed as subject"));
     } else {
@@ -486,8 +513,8 @@ fn first_caveat(analysis: &Analysis) -> Vec<Part> {
         .as_deref()
         .and_then(|caveats| crate::body::items(caveats).into_iter().next());
     match first {
-        Some(caveat) => vec![server("first caveat: "), author(caveat)],
-        None => vec![server("first caveat: none listed")],
+        Some(caveat) => vec![author(caveat)],
+        None => vec![server("none listed")],
     }
 }
 
@@ -500,14 +527,14 @@ fn not_tried(analysis: &Analysis) -> Vec<Part> {
         .map(crate::body::items)
         .unwrap_or_default();
     if items.is_empty() {
-        return vec![server("not tried: none listed")];
+        return vec![server("none listed")];
     }
     let first: Vec<String> = items
         .into_iter()
         .take(3)
         .map(|item| one_line(&item))
         .collect();
-    vec![server("not tried: "), author(first.join("; "))]
+    vec![author(first.join("; "))]
 }
 
 /// Whether `c` is a combining mark of the block Latin and Greek letters take theirs
@@ -646,20 +673,19 @@ fn reanalyzes_stored_data(analysis: &Analysis) -> bool {
     })
 }
 
-/// Line 11: the author's display name, account ID and linked handles, or "account
-/// deleted" and the account ID once the account is deleted. The name loses its
-/// invisible characters, and one that then shows nothing is the server's "(no name)".
+/// Line 11: the account ID, then the author's display name and linked handles, or
+/// "account deleted" once the account is deleted. The ID comes first, since a name
+/// may hold text shaped like one. The name loses its invisible characters, and one
+/// that then shows nothing is the server's "(no name)".
 fn byline(context: &CardContext) -> Vec<Part> {
     let Some(person) = &context.author else {
         return vec![server("<author>")];
     };
+    let account = format!("account {}, ", person.account_id);
     let Some(name) = &person.display_name else {
-        return vec![server(format!("account deleted, {}", person.account_id))];
+        return vec![server(format!("{account}account deleted"))];
     };
-    let mut parts = vec![
-        author(crate::shown_name(name)),
-        server(format!(", account {}", person.account_id)),
-    ];
+    let mut parts = vec![server(account), author(crate::shown_name(name))];
     if !person.handles.is_empty() {
         parts.push(server(format!(", {}", person.handles.join(", "))));
     }

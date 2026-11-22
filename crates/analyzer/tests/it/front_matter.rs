@@ -893,3 +893,36 @@ fn superseded_by_must_be_an_entry_id_or_a_slug() {
         "`superseded_by: 0123456789; code attached` is not an entry ID or `slug:<name>`, so the card can't show it"
     );
 }
+
+#[test]
+fn smallest_effect_of_interest_must_be_a_positive_plain_decimal() {
+    let with_s = |value: &str| {
+        entry(
+            &format!("smallest_effect_of_interest:\n  value: {value}\n  set: before_run\n"),
+            "",
+        )
+    };
+    for read in ["0.05", "5", ".5", "12.0"] {
+        assert_eq!(warning_kinds(&with_s(read)), vec![], "{read}");
+    }
+    for unread in [
+        "5 pp",
+        "0",
+        "0.00",
+        "1e-3",
+        "+0.1",
+        "5%",
+        "5.",
+        "\"0.1; as predicted\"",
+    ] {
+        assert_eq!(
+            warning_kinds(&with_s(unread)),
+            vec![WarningKind::UnrecognizedValue],
+            "{unread}"
+        );
+    }
+    assert_eq!(
+        analyze(&with_s("5 pp")).warnings[0].message,
+        "`smallest_effect_of_interest.value: 5 pp` is not a positive number written as digits with at most one `.` (no sign, exponent, unit or %), so the card shows \"unrecognized smallest_effect_of_interest\"; give it in the metric's own units and name the unit in the body"
+    );
+}

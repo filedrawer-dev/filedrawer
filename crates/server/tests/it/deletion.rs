@@ -62,13 +62,19 @@ async fn deleting_an_account_keeps_its_public_entries_without_its_name() {
     assert_eq!(read.status, StatusCode::OK, "{}", read.body);
     let (above, _) = read.body.split_once(DELIMITER).unwrap();
     assert!(
-        above.contains("author: account deleted, account a-"),
+        above
+            .lines()
+            .any(|line| line.starts_with("author: account a-")
+                && line.ends_with(", account deleted")),
         "{}",
         read.body
     );
     assert!(!read.body.contains("Grace"), "{}", read.body);
     assert!(
-        read.body.contains("account deleted, a-"),
+        read.body
+            .lines()
+            .any(|line| line.starts_with("  author: account a-")
+                && line.ends_with(", account deleted")),
         "the card says so: {}",
         read.body
     );

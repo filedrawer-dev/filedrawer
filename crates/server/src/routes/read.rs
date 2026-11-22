@@ -97,12 +97,12 @@ pub async fn entry(
     let runs = entries::entry_runs(&state.pool, &entry.id).await?;
     let cited = shown_series(&state, entry.seq).await?;
     let mut text = format!(
-        "id: {}\nstatus: public\nanalyzer: v{ANALYZER_VERSION}\nsubmitted: {}\npublished: {}\nauthor: {}, account {}\n",
+        "id: {}\nstatus: public\nanalyzer: v{ANALYZER_VERSION}\nsubmitted: {}\npublished: {}\nauthor: account {}, {}\n",
         entry.id,
         entry.submitted_at,
         entry.published_at.as_deref().unwrap_or(""),
-        author_name(entry.display_name.as_deref()),
-        entry.account_id
+        entry.account_id,
+        author_name(entry.display_name.as_deref())
     );
     if let Some(previous) = &entry.previous_id {
         text.push_str(&format!("previous: {previous}\n"));
@@ -694,15 +694,15 @@ pub async fn cards(State(state): State<AppState>) -> Result<String, AppError> {
     Ok(cards_text(cards.iter().map(String::as_str)))
 }
 
-/// The tags in use, with counts. A tag starts its line, with nothing of the server's
-/// before it, so only a tag the format takes is listed: one stored before the
+/// The tags in use, each line its count and then the tag, so every line starts with
+/// the server's words. Only a tag the format takes is listed: one stored before the
 /// analyzer skipped the others can't add a line or carry text nobody sees.
 pub async fn tags(State(state): State<AppState>, format: Format) -> Result<Response, AppError> {
     let mut tags = entries::tags(&state.pool).await?;
     tags.retain(|(tag, _)| analyzer::is_valid_tag(tag));
     let text: String = tags
         .iter()
-        .map(|(tag, count)| format!("{tag} {count}\n"))
+        .map(|(tag, count)| format!("{count} {tag}\n"))
         .collect();
     let json = json!({
         "tags": tags.iter().map(|(tag, count)| json!({"tag": tag, "count": count})).collect::<Vec<_>>(),

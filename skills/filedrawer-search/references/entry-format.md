@@ -70,7 +70,7 @@ positive_control:
   checks:             #   pipeline | manipulation
   source:             #   this_run | other_run | other_entry
 smallest_effect_of_interest:   # optional
-  value:              #   a positive number in metric units
+  value:              #   a positive number in the metric's units, as digits with at most one `.`, such as 0.05; say the unit in the body
   set:                #   before_run | after_run
 code:                 # a URL pinned to a commit or version; leave out when the code is attached
 attachments:          # the attachment set holding the attached code, as as-...: uploaded first, cited here
@@ -128,7 +128,7 @@ The server warns about both.
 - `tags` are short labels.
   The server reads an entry's first 20, and skips, with a warning, a tag over 60 characters or one holding a line break, another control character or an invisible character, such as a zero-width space.
   A zero-width joiner or non-joiner between two visible characters that aren't both ASCII, as in Persian words and emoji sequences, isn't invisible in this sense, nor is a presentation selector (U+FE0E, U+FE0F) right after a visible character outside ASCII, such as an emoji, or after a keycap's digit, `#` or `*`.
-  Reason: `GET /tags` starts each line with a tag, with none of the server's words before it.
+  Reason: each line of `GET /tags` is the server's count and then a tag, with nothing of the server's after it.
 - `positive_control` describes a check that the pipeline, or the manipulation itself, can produce an effect known to exist: its outcome, whether it checks the pipeline (the judge finds instructed collusion) or the manipulation (the treatment moves the metric somewhere), and where it ran.
   `mixed` means it passed for some models and failed or wasn't run for others.
   Its description, and for `mixed` the breakdown, goes in `## Setup`.
@@ -241,7 +241,7 @@ Search filters on both: an entry's outcome, and whether any row for a given mode
 Reason: a reader wants to know at once whether an entry claims a null, and many experiments are too complicated for a rule to decide that.
 
 The analyzer never decides whether an entry is accepted.
-Version 1 does only this, for every row it reads:
+Versions 1 and 2 do only this, for every row they read (version 2 changed only the card's layout):
 
 - It shows the row's estimate, interval, `n`, unit, method and sampling unit as the author wrote them.
 - It notes whether the interval includes the row's no-effect value (`no_effect_at`, 0 by default), and skips the note on a single-group row with no `no_effect_at`, whose level has no no-effect value.
@@ -271,30 +271,36 @@ Judging whether a replication agrees waits in Later.
 ## The card
 
 A card is the few lines search and `/cards.txt` return for an entry.
+Every line starts with the server's label for it, such as `title: `, and the label is the only thing on a line a reader can take for the server's words by its place alone (the owner's decision, 2026-11-21).
 Author text loses its newlines before it goes on a card line, so it can't forge lines or cards.
-Each line has a cap, and longer text ends in "…".
+Each line has a cap, which counts what follows the label, and longer text ends in "…".
+Analyzer v2 lays the card out as below; v1 had no labels on lines 1 to 6, 10 and 11, and put the display name before the account ID.
+Cards render from the stored entry at each read, so every card, an old entry's too, shows the current version.
 
-1. The ID, `kind`, outcome (a `no_effect` entry shows as "null"), `stage`, and the tally of row claims, such as "rows: 3 effect, 12 null, 40 inconclusive", up to 200 characters.
+1. `entry: `, then the ID, `kind`, outcome (a `no_effect` entry shows as "null"), `stage`, and the tally of row claims, such as "rows: 3 effect, 12 null, 40 inconclusive", up to 200 characters.
    A value the server doesn't recognize shows as "unrecognized <field>".
    An entry that follows up other work ends the line with how many items `replicates` and `reanalyzes` hold, then the first item as the server reads it, `replicates` first: "reanalyzes 5: arXiv:2609.18346", or "replicates 1, reanalyzes 2: 10.2139/ssrn.7439840".
    A first item in no form the server reads shows as "unrecognized reference".
    A `;` in a DOI or a URL shows percent-encoded, as `%3b` in a DOI and `%3B` in a URL, which is also how `cites` matches it, so the line's own `;` stays the server's; so does one in line 10's `published_in`.
-2. The title, up to 200 characters.
-3. The hypothesis, up to 300 characters.
-4. The primary row: first the server's note on whether the interval includes the no-effect value, the claim and "and N more rows", then the estimate, interval, `n` and unit as written, in what is left of 300 characters.
+2. `title: `, then the title, up to 200 characters.
+3. `hypothesis: `, then the hypothesis, up to 300 characters.
+4. `result: `, then the primary row: first the server's note on whether the interval includes the no-effect value, the claim and "and N more rows", then the estimate, interval, `n` and unit as written, in what is left of 300 characters.
    An entry with no table the analyzer can read shows "Results table not read".
-5. The server's labels: the positive control, as "pipeline check passed (other run)" or "no positive control reported"; the prediction as declared, such as "predicted increase, set before run", "predicted no effect, set after run" or "no prediction", followed for an `effect` by whether the primary row went "as predicted" or "opposite to prediction"; and S with when it was set, if given; up to 150 characters.
-6. The baseline, the interval's level, and the author's method and sampling unit, up to 300 characters.
-7. The subject models and the tags, up to 200 characters.
-8. On an `effect` card, the first caveat, up to 300 characters.
-9. The first three items of `## Not tried`, up to 300 characters.
-10. Flags, as they apply, up to 300 characters: the analyzer version and any screening note first, then "no code" or "code attached", "code that ran not committed", "code link dead" or "logs link dead", "pin not verified" (or "commit on no branch", when the GitHub commit is on no branch or tag of its repository, or "code pin failed", when a check after submission finds a Zenodo concept record), "no data" when `## Reproduce` re-analyzes stored data that `data` doesn't link, "now part of a paper" with its DOI or arXiv ID, "superseded by <id>", and the replications.
-11. The author: display name, account ID, and any linked GitHub or ORCID handle, up to 100 characters.
-    Once the account is deleted, "account deleted" and the account ID, with no name.
+5. `design: `, then the server's labels: the positive control, as "pipeline check passed (other run)" or "no positive control reported"; the prediction as declared, such as "predicted increase, set before run", "predicted no effect, set after run" or "no prediction", followed for an `effect` by whether the primary row went "as predicted" or "opposite to prediction"; and S with when it was set, if given; up to 150 characters.
+   S shows only as a positive number written as digits with at most one `.`, such as `0.05`; any other value, a unit, sign or exponent included, shows as "unrecognized smallest_effect_of_interest", and the submission response warns about it (the owner's decision, 2026-11-21).
+6. `stats: `, then the baseline, the interval's level, and the author's method and sampling unit, up to 300 characters.
+7. `models: `, then the subject models and the tags, up to 200 characters.
+8. On an `effect` card, `first caveat: `, then the first caveat, up to 300 characters.
+9. `not tried: `, then the first three items of `## Not tried`, up to 300 characters.
+10. `flags: `, then the flags, as they apply, up to 300 characters: the analyzer version and any screening note first, then "no code" or "code attached", "code that ran not committed", "code link dead" or "logs link dead", "pin not verified" (or "commit on no branch", when the GitHub commit is on no branch or tag of its repository, or "code pin failed", when a check after submission finds a Zenodo concept record), "no data" when `## Reproduce` re-analyzes stored data that `data` doesn't link, "now part of a paper" with its DOI or arXiv ID, "superseded by <id>", and the replications.
+11. `author: `, then the account ID, the author's display name, and any linked GitHub or ORCID handle, as `account <id>, <name>, <handle>`, up to 100 characters.
+    The ID comes first, since a name is author text and may hold something shaped like an ID (the owner's decision, 2026-11-21).
+    Once the account is deleted, the account ID and "account deleted", with no name.
 
-Lines 2 and 3 are author text from their first character, and line 11 starts with the author's display name, without any invisible characters (with the joiners and selectors a tag may hold).
-On every other line, the server's own words come before author text, and author text is cut to fit what remains, so it can never push a server note off the card.
-No line is blank, since a blank line ends a card where cards are listed: where a stored entry's title or hypothesis shows nothing, the line reads "(no title)" or "(no hypothesis)", and a display name that shows nothing reads "(no name)".
+After its label, each line holds the server's own words first and author text after them, cut to fit what remains, so it can never push a server note off the card.
+Lines 2 and 3 are author text right after the label, line 11 is author text after the account ID, and the display name there has no invisible characters (with the joiners and selectors a tag may hold).
+Text after a label that is shaped like the server's, such as another card's line or a notice, is still the author's.
+No line is blank, since a blank line ends a card where cards are listed: where a stored entry's title or hypothesis shows nothing, the line reads "title: (no title)" or "hypothesis: (no hypothesis)", and a display name that shows nothing reads "(no name)".
 A value in a field whose values the server knows, such as `positive_control.outcome`, that it doesn't recognize renders as "unrecognized <field>", never as written.
 So do, among line 10's flags, a `published_in` the server reads as neither a DOI nor an arXiv ID of at most 100 characters, and a `superseded_by` that is neither an entry ID nor `slug:<name>`; the submission response warns about each.
 
@@ -360,8 +366,8 @@ Intervals: 95%, Newcombe hybrid score, per prompt.
 ````
 
 The primary row's empty `outcome` cell takes the entry's `no_effect`.
-The card's line 4 says "+0.012 [−0.047, +0.070], n 520/520, fraction: no_effect; interval includes 0".
-Line 5 says "pipeline check passed (this run)", and line 6 "baseline 0.62; 95%, Newcombe hybrid score, per prompt".
+The card's line 4 says "result: interval includes 0; null: +0.012 [−0.047, +0.070], n 520/520, fraction".
+Line 5 says "design: pipeline check passed (this run); predicted increase, set before run", and line 6 "stats: baseline 0.62; 95%, Newcombe hybrid score, per prompt".
 The interval stays within ±0.10, so the claim meets the submit skill's default; the card doesn't judge that.
 
 ## Field test findings

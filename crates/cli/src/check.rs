@@ -10,7 +10,7 @@ use filedrawer_analyzer::{Analysis, CardContext, analyze, render_card};
 const ABOUT: &str = "\
 Reads each entry the way the File Drawer server does (docs/entry-format.md) and prints
 whether the server would accept it, the reasons it would refuse it, its card as
-analyzer v1 renders it, the primary Results row as the analyzer read it, and every
+the analyzer renders it, the primary Results row as the analyzer read it, and every
 warning. Nothing is fetched: link hosts and pins are checked by the URL's shape, and
 the card shows placeholders such as <id> and <author> for what only the server knows.
 

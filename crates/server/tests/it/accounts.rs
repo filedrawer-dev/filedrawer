@@ -37,7 +37,14 @@ async fn signup_verify_login_and_submit_with_a_new_token() {
     let token = new_token(&app, &cookie).await;
     let reply = app.post_as("/entries", Some(&token), entry("T", "")).await;
     assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
-    assert!(reply.body.contains("Grace, account a-"), "{}", reply.body);
+    assert!(
+        reply
+            .body
+            .lines()
+            .any(|line| line.starts_with("  author: account a-") && line.ends_with(", Grace")),
+        "{}",
+        reply.body
+    );
 }
 
 #[tokio::test]
@@ -1079,12 +1086,12 @@ async fn a_stored_display_name_is_printed_without_its_invisible_characters() {
         let body = app.get(&format!("/e/{id}")).await.body;
         let (server, _) = body.split_once(common::DELIMITER).expect(&body);
         assert!(
-            server.contains(&format!("author: {shown}, account {account}\n")),
+            server.contains(&format!("author: account {account}, {shown}\n")),
             "{server:?}"
         );
         let cards = app.get("/cards.txt").await.body;
         assert!(
-            cards.contains(&format!("\n{shown}, account {account}\n")),
+            cards.contains(&format!("\nauthor: account {account}, {shown}\n")),
             "{cards:?}"
         );
         assert!(!server.contains('\u{e0061}'), "{server:?}");

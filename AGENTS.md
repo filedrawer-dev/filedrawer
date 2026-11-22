@@ -49,7 +49,7 @@ The field test's entries and logs are in `field-test/`, git-excluded and local o
 
 ## Code
 
-- `crates/analyzer`: reads an entry by `docs/entry-format.md`, lists what would refuse it and what the server couldn't read, and renders its card with analyzer v1.
+- `crates/analyzer`: reads an entry by `docs/entry-format.md`, lists what would refuse it and what the server couldn't read, and renders its card with analyzer v2 (every line starts with a server label).
   The server and the CLI share it.
   Reason: in the field test every agent wrote its own parser and card renderer, a dozen in all, and each read the spec differently.
   Its library is `filedrawer_analyzer`, as on crates.io; the server's Cargo.toml renames it `analyzer`.

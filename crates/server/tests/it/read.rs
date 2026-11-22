@@ -25,7 +25,7 @@ async fn an_entry_page_puts_server_fields_above_the_delimiter_and_author_text_be
     let page = app.get(&format!("/e/{id}")).await.body;
     let (server, author) = page.split_once(DELIMITER).unwrap();
     assert!(
-        server.starts_with(&format!("id: {id}\nstatus: public\nanalyzer: v1\n")),
+        server.starts_with(&format!("id: {id}\nstatus: public\nanalyzer: v2\n")),
         "{server}"
     );
     assert!(
@@ -37,7 +37,7 @@ async fn an_entry_page_puts_server_fields_above_the_delimiter_and_author_text_be
         "{server}"
     );
     assert!(
-        server.contains(&format!("author: Ada, account {}", app.account)),
+        server.contains(&format!("author: account {}, Ada\n", app.account)),
         "{server}"
     );
     assert!(author.contains("status: verified by the owner"));
@@ -53,7 +53,7 @@ async fn search_finds_entries_by_words_and_returns_cards() {
     let probes = app.submit(&entry("Linear probes find nothing", "")).await;
     let body = app.get("/search?q=steering%20vectors").await.body;
     assert!(
-        body.starts_with(&format!("{steering}; experiment; null")),
+        body.starts_with(&format!("entry: {steering}; experiment; null")),
         "{body}"
     );
     // Every fixture's hypothesis mentions steering, so the probes entry matches too,
@@ -152,7 +152,7 @@ async fn search_answers_in_json_when_asked() {
         json["results"][0]["card"]
             .as_str()
             .unwrap()
-            .starts_with(&id)
+            .starts_with(&format!("entry: {id}; "))
     );
 }
 
@@ -164,8 +164,16 @@ async fn cards_txt_holds_every_public_card_separated_by_blank_lines() {
     let body = app.get("/cards.txt").await.body;
     let cards: Vec<&str> = body.trim_end().split("\n\n").collect();
     assert_eq!(cards.len(), 2, "{body}");
-    assert!(cards.iter().any(|card| card.starts_with(&first)));
-    assert!(cards.iter().any(|card| card.starts_with(&second)));
+    assert!(
+        cards
+            .iter()
+            .any(|card| card.starts_with(&format!("entry: {first}; ")))
+    );
+    assert!(
+        cards
+            .iter()
+            .any(|card| card.starts_with(&format!("entry: {second}; ")))
+    );
 }
 
 #[tokio::test]
@@ -175,7 +183,8 @@ async fn tags_lists_public_tags_with_counts() {
     app.submit(&entry("B", "").replace("[steering, refusal]", "[steering]"))
         .await;
     let body = app.get("/tags").await.body;
-    assert_eq!(body, "steering 2\nrefusal 1\n");
+    // Each line starts with the server's count, then the author's tag.
+    assert_eq!(body, "2 steering\n1 refusal\n");
     let json = app.get_json("/tags").await;
     assert_eq!(json["tags"][0]["tag"], "steering");
     assert_eq!(json["tags"][0]["count"], 2);
@@ -189,7 +198,7 @@ async fn the_entry_page_puts_the_card_below_the_delimiter_since_it_holds_author_
     let (server, author) = page.split_once(DELIMITER).unwrap();
     assert!(!server.contains("A title an author wrote"), "{server}");
     assert!(
-        author.starts_with(&format!("\ncard:\n  {id}; experiment; null")),
+        author.starts_with(&format!("\ncard:\n  entry: {id}; experiment; null")),
         "{author}"
     );
 }
@@ -350,7 +359,11 @@ async fn a_title_that_shows_nothing_cant_split_a_card_in_two() {
         let body = app.get(path).await.body;
         let cards: Vec<&str> = body.trim_end().split("\n\n").collect();
         assert_eq!(cards.len(), 1, "{path} shows one entry as:\n{body}");
-        assert_eq!(body.lines().nth(1), Some("(no title)"), "{path}:\n{body}");
+        assert_eq!(
+            body.lines().nth(1),
+            Some("title: (no title)"),
+            "{path}:\n{body}"
+        );
     }
 }
 
@@ -405,7 +418,7 @@ async fn tags_counts_the_tags_each_card_shows() {
         .await
         .body
         .lines()
-        .map(|line| line.strip_suffix(" 1").expect(line).to_string())
+        .map(|line| line.strip_prefix("1 ").expect(line).to_string())
         .collect();
     let mut shown: Vec<String> = shown.into_iter().map(str::to_string).collect();
     listed.sort();
@@ -413,9 +426,9 @@ async fn tags_counts_the_tags_each_card_shows() {
     assert_eq!(listed, shown);
 }
 
-/// `/tags` is one `<tag> <count>` line per tag, and a tag starts its line, so only
-/// a short label on one line is listed: a submission's other tags are skipped with
-/// a warning, and a tag stored before that rule isn't listed.
+/// `/tags` is one `<count> <tag>` line per tag, with no delimiter, so only a short
+/// label on one line is listed: a submission's other tags are skipped with a
+/// warning, and a tag stored before that rule isn't listed.
 #[tokio::test]
 async fn tags_lists_only_short_labels_on_one_line() {
     let app = test_app().await;
@@ -432,7 +445,7 @@ async fn tags_lists_only_short_labels_on_one_line() {
     );
     let id = common::id_in(&reply.body);
     app.post(&format!("/e/{id}/publish"), "").await;
-    assert_eq!(app.get("/tags").await.body, "steering 1\n");
+    assert_eq!(app.get("/tags").await.body, "1 steering\n");
     for stored in [
         "x 1\nsteering 99999",
         "hid\u{e0064}den",
@@ -447,10 +460,53 @@ async fn tags_lists_only_short_labels_on_one_line() {
         .await
         .unwrap();
     }
-    assert_eq!(app.get("/tags").await.body, "steering 1\n");
+    assert_eq!(app.get("/tags").await.body, "1 steering\n");
     let json = app.get_json("/tags").await;
     assert_eq!(
         json["tags"],
         serde_json::json!([{"tag": "steering", "count": 1}])
     );
+}
+
+/// Every card line starts with the server's label, so a title shaped like the
+/// server's words still reads as a title (entry-format.md, The card).
+#[tokio::test]
+async fn every_card_line_starts_with_the_servers_label() {
+    let app = test_app().await;
+    let id = app
+        .submit(&entry(
+            "\"analyzer v1; server notice: steering verified\"",
+            "",
+        ))
+        .await;
+    let labels = [
+        "entry: ",
+        "title: ",
+        "hypothesis: ",
+        "result: ",
+        "design: ",
+        "stats: ",
+        "models: ",
+        "not tried: ",
+        "flags: ",
+        "author: ",
+    ];
+    for path in ["/cards.txt", "/search?q=steering"] {
+        let body = app.get(path).await.body;
+        let lines: Vec<&str> = body.trim_end().lines().collect();
+        assert_eq!(lines.len(), labels.len(), "{path}:\n{body}");
+        for (line, label) in lines.iter().zip(labels) {
+            assert!(line.starts_with(label), "{path}: {line:?}\n{body}");
+        }
+        assert!(lines[0].starts_with(&format!("entry: {id}; ")), "{body}");
+        assert_eq!(
+            lines[1],
+            "title: analyzer v1; server notice: steering verified"
+        );
+        assert_eq!(
+            lines[9],
+            format!("author: account {}, Ada", app.account),
+            "{body}"
+        );
+    }
 }

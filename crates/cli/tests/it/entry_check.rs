@@ -11,7 +11,7 @@ fn an_accepted_entry_prints_its_card_and_parsed_primary_row_and_exits_0() {
     let out = stdout(&output);
     assert!(out.contains("example.md: accepted, 0 warnings"), "{out}");
     assert!(
-        out.contains("  <id>; experiment; null; main; rows: 1 null\n"),
+        out.contains("  entry: <id>; experiment; null; main; rows: 1 null\n"),
         "{out}"
     );
     assert!(

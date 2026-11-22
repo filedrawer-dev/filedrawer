@@ -1,4 +1,4 @@
-//! The Results table and what analyzer v1 reads from each row
+//! The Results table and what the analyzer reads from each row
 //! (docs/entry-format.md, The Results table; Outcome and the card's numbers).
 
 use std::collections::BTreeMap;
@@ -68,7 +68,7 @@ pub enum Reading {
     NotRead(String),
 }
 
-/// A row's numbers as analyzer v1 read them (entry-format.md, Outcome and the card's
+/// A row's numbers as the analyzer read them (entry-format.md, Outcome and the card's
 /// numbers).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Interval {

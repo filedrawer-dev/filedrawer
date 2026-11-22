@@ -10,7 +10,8 @@ use common::{TestApp, entry, id_in, test_app};
 /// The entry IDs a plain-text search answered, in order.
 fn ids(body: &str) -> Vec<String> {
     body.lines()
-        .filter_map(|line| line.split_once("; ").map(|(id, _)| id))
+        .filter_map(|line| line.strip_prefix("entry: ")?.split_once("; "))
+        .map(|(id, _)| id)
         .filter(|id| id.len() == 10 && !id.contains(' '))
         .map(str::to_string)
         .collect()

@@ -1,4 +1,4 @@
-//! Seam: `analyze`, for the Results table and analyzer v1's reading of each row
+//! Seam: `analyze`, for the Results table and the analyzer's reading of each row
 //! (docs/entry-format.md, The Results table; Outcome and the card's numbers).
 
 use crate::common;

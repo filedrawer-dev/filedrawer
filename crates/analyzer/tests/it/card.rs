@@ -13,36 +13,73 @@ fn card(text: &str) -> String {
     render_card(&analyze(text), &CardContext::default())
 }
 
+/// The card's lines, each without its label (see [`unlabeled`]).
 fn lines(text: &str) -> Vec<String> {
-    card(text).lines().map(str::to_string).collect()
+    unlabeled(&card(text))
 }
 
-/// The card line that starts with `prefix`.
-fn line_starting(text: &str, prefix: &str) -> String {
-    lines(text)
-        .into_iter()
-        .find(|line| line.starts_with(prefix))
-        .unwrap_or_else(|| panic!("no line starts with {prefix:?} in\n{}", card(text)))
+/// The rest of the card line that starts with `label`, such as `"flags: "`.
+fn line_starting(text: &str, label: &str) -> String {
+    let card = card(text);
+    card.lines()
+        .find_map(|line| line.strip_prefix(label))
+        .unwrap_or_else(|| panic!("no line starts with {label:?} in\n{card}"))
+        .to_string()
 }
 
 const EFFECT_TABLE: &str = "Intervals: 95%, Wilson, per prompt.\n\n| model | condition | baseline | estimate | ci_low | ci_high | n | unit |\n|---|---|---|---|---|---|---|---|\n| m | treated vs control | 0.2 | -0.15 | -0.25 | -0.05 | 200/200 | fraction |";
 
 #[test]
 fn the_spec_example_renders_the_card_the_spec_describes() {
-    // Lines 5 and 6 are quoted in entry-format.md's Example. Line 4 puts the server's
-    // note first, as The card's rules say, ahead of the numbers as written.
+    // Lines 4 to 6 are quoted in entry-format.md's Example, and every line starts
+    // with the label The card gives it.
     let expected = "\
-<id>; experiment; null; main; rows: 1 null
-Refusal steering vector from Llama-3-8B base does not transfer to the instruct model
-Adding the base model's refusal direction at layer 14 raises the instruct model's refusal rate on harmful prompts.
-interval includes 0; null: +0.012 [\u{2212}0.047, +0.070], n 520/520, fraction
-pipeline check passed (this run); predicted increase, set before run
-baseline 0.62; 95%, Newcombe hybrid score, per prompt
+entry: <id>; experiment; null; main; rows: 1 null
+title: Refusal steering vector from Llama-3-8B base does not transfer to the instruct model
+hypothesis: Adding the base model's refusal direction at layer 14 raises the instruct model's refusal rate on harmful prompts.
+result: interval includes 0; null: +0.012 [\u{2212}0.047, +0.070], n 520/520, fraction
+design: pipeline check passed (this run); predicted increase, set before run
+stats: baseline 0.62; 95%, Newcombe hybrid score, per prompt
 models: Llama-3-8B-Instruct; tags: steering, refusal, transfer
 not tried: Layers other than 14.; Steering coefficients above 8.; Other base and instruct pairs.
-analyzer v1
-<author>";
+flags: analyzer v2
+author: <author>";
     assert_eq!(card(EXAMPLE), expected);
+}
+
+/// The labels that start the card's lines, in order (entry-format.md, The card).
+const LABELS: [&str; 11] = [
+    "entry: ",
+    "title: ",
+    "hypothesis: ",
+    "result: ",
+    "design: ",
+    "stats: ",
+    "models: ",
+    "first caveat: ",
+    "not tried: ",
+    "flags: ",
+    "author: ",
+];
+
+/// Each line of `card` without its label, after checking that every line starts
+/// with the server's label for its place: line 8's only on an `effect` card.
+fn unlabeled(card: &str) -> Vec<String> {
+    let lines: Vec<&str> = card.lines().collect();
+    let labels: Vec<&str> = LABELS
+        .into_iter()
+        .filter(|label| lines.len() == 11 || *label != "first caveat: ")
+        .collect();
+    assert_eq!(lines.len(), labels.len(), "{card}");
+    lines
+        .iter()
+        .zip(labels)
+        .map(|(line, label)| {
+            line.strip_prefix(label)
+                .unwrap_or_else(|| panic!("{line:?} doesn't start with {label:?}"))
+                .to_string()
+        })
+        .collect()
 }
 
 #[test]
@@ -80,38 +117,34 @@ fn the_server_context_fills_the_id_flags_and_author() {
     let card = render_card(&analyze(&text), &context);
     let lines: Vec<&str> = card.lines().collect();
     assert!(
-        lines[0].starts_with("fd-7k2q; experiment; null"),
+        lines[0].starts_with("entry: fd-7k2q; experiment; null"),
         "{}",
         lines[0]
     );
     assert_eq!(
         lines[8],
-        "analyzer v1; screening note: \"The body reports an effect.\"; code attached; logs link dead; superseded by fd-9zz1; replication fd-r1 (null); self-replication fd-r2 (effect)"
+        "flags: analyzer v2; screening note: \"The body reports an effect.\"; code attached; logs link dead; superseded by fd-9zz1; replication fd-r1 (null); self-replication fd-r2 (effect)"
     );
-    assert_eq!(lines[9], "Ada, account a91x, github:ada");
+    // The account's ID comes before the name, which an author chose.
+    assert_eq!(lines[9], "author: account a91x, Ada, github:ada");
 }
 
 #[test]
 fn the_server_flags_a_pin_it_couldnt_verify_or_found_bad() {
-    let flags = |context: CardContext| {
-        render_card(&analyze(EXAMPLE), &context)
-            .lines()
-            .nth(8)
-            .unwrap()
-            .to_string()
-    };
+    let flags =
+        |context: CardContext| unlabeled(&render_card(&analyze(EXAMPLE), &context))[8].clone();
     let with = |pin| CardContext {
         pin: Some(pin),
         ..CardContext::default()
     };
     assert_eq!(
         flags(with(PinFlag::NotVerified)),
-        "analyzer v1; pin not verified"
+        "analyzer v2; pin not verified"
     );
-    assert_eq!(flags(with(PinFlag::Failed)), "analyzer v1; code pin failed");
+    assert_eq!(flags(with(PinFlag::Failed)), "analyzer v2; code pin failed");
     assert_eq!(
         flags(with(PinFlag::OnNoBranch)),
-        "analyzer v1; commit on no branch"
+        "analyzer v2; commit on no branch"
     );
 }
 
@@ -152,20 +185,20 @@ fn an_effect_card_shows_the_first_caveat_and_whether_the_effect_went_as_predicte
             )
     };
     assert_eq!(
-        line_starting(&entry("decrease"), "no positive control"),
+        line_starting(&entry("decrease"), "design: "),
         "no positive control reported; predicted decrease, set after run, as predicted"
     );
     assert_eq!(
-        line_starting(&entry("increase"), "no positive control"),
+        line_starting(&entry("increase"), "design: "),
         "no positive control reported; predicted increase, set after run, opposite to prediction"
     );
     assert_eq!(
-        line_starting(&entry("either"), "no positive control"),
+        line_starting(&entry("either"), "design: "),
         "no positive control reported; predicted either direction, set after run"
     );
     assert_eq!(
-        line_starting(&entry("decrease"), "first caveat"),
-        "first caveat: The judge saw the condition label."
+        line_starting(&entry("decrease"), "first caveat: "),
+        "The judge saw the condition label."
     );
 }
 
@@ -304,14 +337,11 @@ fn flags_come_from_the_fields() {
         )
         .replace("Command not recorded.", "Re-analyses the stored transcripts: `python analyze.py`.");
     assert_eq!(
-        line_starting(&text, "analyzer v1"),
-        "analyzer v1; code that ran not committed; pin not verified; no data; now part of a paper arXiv:2507.01410; superseded by slug:main-run"
+        line_starting(&text, "flags: "),
+        "analyzer v2; code that ran not committed; pin not verified; no data; now part of a paper arXiv:2507.01410; superseded by slug:main-run"
     );
     let no_code = with_results("no_effect", EFFECT_TABLE);
-    assert_eq!(
-        line_starting(&no_code, "analyzer v1"),
-        "analyzer v1; no code"
-    );
+    assert_eq!(line_starting(&no_code, "flags: "), "analyzer v2; no code");
 }
 
 #[test]
@@ -347,7 +377,7 @@ fn flags_with_note(note: &str) -> String {
         ..CardContext::default()
     };
     let card = render_card(&analyze(EXAMPLE), &context);
-    let line = card.lines().find(|line| line.starts_with("analyzer v"));
+    let line = card.lines().find_map(|line| line.strip_prefix("flags: "));
     line.unwrap().to_string()
 }
 
@@ -355,7 +385,7 @@ fn flags_with_note(note: &str) -> String {
 fn a_screening_note_keeps_its_words_inside_the_servers_quotes() {
     assert_eq!(
         flags_with_note("The body says \"a strong effect\"; `outcome` says no_effect."),
-        "analyzer v1; screening note: \"The body says 'a strong effect', 'outcome' says no_effect.\"; code attached"
+        "analyzer v2; screening note: \"The body says 'a strong effect', 'outcome' says no_effect.\"; code attached"
     );
     // Marks that look like a quote or a semicolon go too, a combining mark stays
     // only on a letter, and two single quotes can't stand in for a double one.
@@ -363,14 +393,14 @@ fn a_screening_note_keeps_its_words_inside_the_servers_quotes() {
         flags_with_note(
             "An effe\u{301}ct\u{201d}\u{ff1b} as said\u{37e} \u{30e}\u{201c}''see''\u{ff9e}\u{a78c}\u{a78c}"
         ),
-        "analyzer v1; screening note: \"An effe\u{301}ct as said 'see'\"; code attached"
+        "analyzer v2; screening note: \"An effe\u{301}ct as said 'see'\"; code attached"
     );
     // Letters of any script, digits and the signs numbers are written with stay.
     assert_eq!(
         flags_with_note(
             "L'effet est de +0.3 \u{b1} 0.1 (p<0.05), \u{2212}2 \u{2264} d; pas nul \u{2192} contredit"
         ),
-        "analyzer v1; screening note: \"L'effet est de +0.3 \u{b1} 0.1 (p<0.05), \u{2212}2 \u{2264} d, pas nul \u{2192} contredit\"; code attached"
+        "analyzer v2; screening note: \"L'effet est de +0.3 \u{b1} 0.1 (p<0.05), \u{2212}2 \u{2264} d, pas nul \u{2192} contredit\"; code attached"
     );
 }
 
@@ -381,7 +411,7 @@ proptest! {
         note in "(\\PC|[\"'`; \u{30b}\u{30e}\u{37e}\u{61b}\u{204f}\u{1364}\u{2e35}\u{fe14}\u{fe54}\u{ff1b}\u{a6f6}\u{ab}\u{bb}\u{2ba}\u{2dd}\u{2ee}\u{5f4}\u{201c}\u{201d}\u{201e}\u{201f}\u{2033}\u{2036}\u{275d}\u{275e}\u{2e42}\u{3003}\u{301d}\u{301e}\u{301f}\u{a78c}\u{ff02}\u{ff9e}]){0,120}",
     ) {
         let line = flags_with_note(&note);
-        let rest = line.strip_prefix("analyzer v1; screening note: \"");
+        let rest = line.strip_prefix("analyzer v2; screening note: \"");
         prop_assert!(rest.is_some(), "{}", line);
         // The first quote mark after the server's opening one is the server's
         // closing one, and only the server's flag follows it.
@@ -437,6 +467,8 @@ proptest! {
         note in "\\PC{0,400}",
         // A key, which is author text at line 1's end, or text with none.
         reference in "https://example\\.com/[a-z0-9;:/]{0,300}|arXiv:[0-9]{4}\\.[0-9]{5}|\\PC{0,200}",
+        // A display name, or none once the account is deleted.
+        name in proptest::option::of("\\PC{0,80}|[\n\u{2028}\u{200b}a-z, :]{0,60}"),
     ) {
         let text = with_results(
             "effect",
@@ -445,16 +477,23 @@ proptest! {
         .replace("title: T", &format!("title: {}\ntags: [{}]", yaml_quote(&title), yaml_quote(&tag)))
         .replace("hypothesis: H", &format!("hypothesis: {}\nreanalyzes: {}", yaml_quote(&hypothesis), yaml_quote(&reference)))
         .replace("## Reproduce", &format!("## Caveats\n\n- {caveat}\n\n## Reproduce"));
-        let context = CardContext { screening_note: Some(note), ..CardContext::default() };
+        let context = CardContext {
+            id: Some("0123456789".into()),
+            author: Some(Author { display_name: name, account_id: "a-91x".into(), handles: vec!["github:ada".into()] }),
+            screening_note: Some(note),
+            ..CardContext::default()
+        };
         let card = render_card(&analyze(&text), &context);
-        let lines: Vec<&str> = card.lines().collect();
-        prop_assert_eq!(lines.len(), 11, "{}", card);
+        prop_assert_eq!(card.lines().count(), 11, "{}", card);
+        // Every line starts with the server's label, and what follows it keeps the
+        // line's cap.
+        let lines = unlabeled(&card);
         for (line, cap) in lines.iter().zip(LINE_CAPS) {
             prop_assert!(line.chars().count() <= cap, "{} > {}: {}", line.chars().count(), cap, line);
             // A blank line would end the card where cards are listed.
             prop_assert!(!line.trim().is_empty(), "a blank line in\n{}", card);
         }
-        let line_1 = lines[0].starts_with("<id>; experiment; effect; no stage; rows: 1 effect");
+        let line_1 = lines[0].starts_with("0123456789; experiment; effect; no stage; rows: 1 effect");
         prop_assert!(line_1, "{}", lines[0]);
         // The counts stay whole, and what follows is the key, cut to fit, or the
         // server's word for an item with none: never the item as written. An empty
@@ -473,7 +512,9 @@ proptest! {
         }
         prop_assert!(lines[3].starts_with("interval excludes 0; effect"), "{}", lines[3]);
         prop_assert!(lines[4].starts_with("no positive control reported; no prediction"), "{}", lines[4]);
-        prop_assert!(lines[9].starts_with("analyzer v1; screening note: \""), "{}", lines[9]);
+        prop_assert!(lines[9].starts_with("analyzer v2; screening note: \""), "{}", lines[9]);
+        // The account's ID comes first on the author's line, whatever the name holds.
+        prop_assert!(lines[10].starts_with("account a-91x, "), "{}", lines[10]);
     }
 }
 
@@ -531,7 +572,7 @@ proptest! {
         .replace("stage: main", &format!("stage: {}", yaml_quote(&values[6])))
         .replace("outcome: no_effect", &format!("outcome: {}\nkind: {}", yaml_quote(&values[7]), yaml_quote(&values[8])));
         let card = render_card(&analyze(&text), &CardContext::default());
-        let lines: Vec<&str> = card.lines().collect();
+        let lines = unlabeled(&card);
         let caps: Vec<usize> = if lines.len() == 11 { LINE_CAPS.to_vec() } else {
             LINE_CAPS.iter().enumerate().filter(|(i, _)| *i != 7).map(|(_, cap)| *cap).collect()
         };
@@ -539,10 +580,49 @@ proptest! {
             prop_assert!(line.chars().count() <= cap, "{} > {}: {}", line.chars().count(), cap, line);
             prop_assert!(!line.ends_with('…') || !line.starts_with("<id>"), "{}", line);
         }
-        let line5 = lines[4];
+        let line5 = &lines[4];
         let s_label = line5.rsplit(", ").next().unwrap_or("");
         prop_assert!(!line5.ends_with('…'), "{}", line5);
-        prop_assert!(s_label.contains("set") || s_label.contains("S "), "{}", line5);
+        prop_assert!(s_label.contains("set") || s_label.contains("S ") || s_label.ends_with("unrecognized smallest_effect_of_interest"), "{}", line5);
+    }
+}
+
+/// Line 5 puts S beside the server's labels, so it shows only as a number
+/// (entry-format.md, The card).
+#[test]
+fn line_5_shows_s_only_as_a_positive_plain_decimal() {
+    let design = |value: &str| {
+        let text = example_with(
+            "positive_control:\n  outcome: passed\n  checks: pipeline\n  source: this_run\n",
+            &format!(
+                "positive_control:\n  outcome: passed\n  checks: pipeline\n  source: this_run\nsmallest_effect_of_interest:\n  value: {value}\n  set: before_run\n"
+            ),
+        );
+        line_starting(&text, "design: ")
+    };
+    let control = "pipeline check passed (this run); predicted increase, set before run";
+    for shown in ["0.05", "5", ".5"] {
+        assert_eq!(
+            design(shown),
+            format!("{control}; S {shown}, set before run")
+        );
+    }
+    // With no value, the card says so, and there is nothing to warn about.
+    let no_value = example_with(
+        "positive_control:\n  outcome: passed\n  checks: pipeline\n  source: this_run\n",
+        "positive_control:\n  outcome: passed\n  checks: pipeline\n  source: this_run\nsmallest_effect_of_interest:\n  set: before_run\n",
+    );
+    assert_eq!(
+        line_starting(&no_value, "design: "),
+        format!("{control}; S not given, set before run")
+    );
+    assert!(analyze(&no_value).warnings.is_empty());
+    for unread in ["5 pp", "0", "1e-3", "\"0.1, set before run; as predicted\""] {
+        assert_eq!(
+            design(unread),
+            format!("{control}; unrecognized smallest_effect_of_interest"),
+            "{unread}"
+        );
     }
 }
 
@@ -604,7 +684,10 @@ fn a_deleted_accounts_card_says_so_and_shows_no_name() {
         ..CardContext::default()
     };
     let card = render_card(&analyze(EXAMPLE), &context);
-    assert_eq!(card.lines().last(), Some("account deleted, a-91x"));
+    assert_eq!(
+        card.lines().last(),
+        Some("author: account a-91x, account deleted")
+    );
 }
 
 /// Text that shows nothing: characters the card drops or turns into spaces, and
@@ -652,19 +735,19 @@ fn line_10_shows_a_paper_or_successor_only_as_the_server_reads_it() {
     let flags = |front: &str| {
         let text = with_results("no_effect", EFFECT_TABLE)
             .replace("hypothesis: H\n", &format!("hypothesis: H\n{front}\n"));
-        line_starting(&text, "analyzer v1")
+        line_starting(&text, "flags: ")
     };
     assert_eq!(
         flags("published_in: \"arXiv:2601.00001; code attached; replication 0000000000 (effect)\""),
-        "analyzer v1; no code; unrecognized published_in"
+        "analyzer v2; no code; unrecognized published_in"
     );
     assert_eq!(
         flags("superseded_by: \"0000000000; pin verified; self-replication 0000000000 (effect)\""),
-        "analyzer v1; no code; unrecognized superseded_by"
+        "analyzer v2; no code; unrecognized superseded_by"
     );
     assert_eq!(
         flags("published_in: https://example.com/paper"),
-        "analyzer v1; no code; unrecognized published_in"
+        "analyzer v2; no code; unrecognized published_in"
     );
     // The same paper written other ways shows as its key.
     for written in [
@@ -674,23 +757,23 @@ fn line_10_shows_a_paper_or_successor_only_as_the_server_reads_it() {
     ] {
         assert_eq!(
             flags(&format!("published_in: {written}")),
-            "analyzer v1; no code; now part of a paper arXiv:2601.00001",
+            "analyzer v2; no code; now part of a paper arXiv:2601.00001",
             "{written}"
         );
     }
     assert_eq!(
         flags("published_in: https://doi.org/10.1234/ABC.5"),
-        "analyzer v1; no code; now part of a paper 10.1234/abc.5"
+        "analyzer v2; no code; now part of a paper 10.1234/abc.5"
     );
     // A `;` in a DOI's suffix is shown escaped, so it can't start a flag of its own.
     assert_eq!(
         flags("published_in: \"10.5555/x;code;attached;replication:0000000000(effect)\""),
-        "analyzer v1; no code; now part of a paper 10.5555/x%3bcode%3battached%3breplication:0000000000(effect)"
+        "analyzer v2; no code; now part of a paper 10.5555/x%3bcode%3battached%3breplication:0000000000(effect)"
     );
     // An arXiv ID has no room for one.
     assert_eq!(
         flags("published_in: \"arXiv:2601.00001;code\""),
-        "analyzer v1; no code; unrecognized published_in"
+        "analyzer v2; no code; unrecognized published_in"
     );
     // A DOI's suffix may hold `;` and `:`, so a key long enough to hold a sentence
     // isn't shown. The cap counts the DOI, not its escapes.
@@ -699,17 +782,17 @@ fn line_10_shows_a_paper_or_successor_only_as_the_server_reads_it() {
     assert_eq!(
         flags(&format!("published_in: \"{longest}\"")),
         format!(
-            "analyzer v1; no code; now part of a paper 10.1234/{}",
+            "analyzer v2; no code; now part of a paper 10.1234/{}",
             "x%3b".repeat(46)
         )
     );
     assert_eq!(
         flags(&format!("published_in: \"{longest}x\"")),
-        "analyzer v1; no code; unrecognized published_in"
+        "analyzer v2; no code; unrecognized published_in"
     );
     assert_eq!(
         flags("superseded_by: https://filedrawer.dev/e/0123456789"),
-        "analyzer v1; no code; superseded by 0123456789"
+        "analyzer v2; no code; superseded by 0123456789"
     );
 }
 
@@ -729,13 +812,16 @@ fn a_display_name_loses_its_invisible_characters_on_line_11() {
     };
     assert_eq!(
         last_line("Ada\u{e0061}\u{e0062}\u{200b}\u{202e} L\u{ad}ovelace"),
-        "Ada Lovelace, account a-91x"
+        "author: account a-91x, Ada Lovelace"
     );
-    assert_eq!(last_line("\u{200b}\u{e0061}"), "(no name), account a-91x");
+    assert_eq!(
+        last_line("\u{200b}\u{e0061}"),
+        "author: account a-91x, (no name)"
+    );
     // A variation selector after an emoji stays.
     assert_eq!(
         last_line("Ada \u{2764}\u{fe0f}"),
-        "Ada \u{2764}\u{fe0f}, account a-91x"
+        "author: account a-91x, Ada \u{2764}\u{fe0f}"
     );
     // A joiner between letters of a word stays, as Persian writes it; one that joins
     // nothing, or two ASCII letters, goes, and so does a run of selectors.
@@ -743,6 +829,6 @@ fn a_display_name_loses_its_invisible_characters_on_line_11() {
         last_line(
             "\u{645}\u{6cc}\u{200c}\u{646}\u{627}\u{200c} A\u{200d}da\u{2764}\u{fe0f}\u{fe0f}\u{fe0e}"
         ),
-        "\u{645}\u{6cc}\u{200c}\u{646}\u{627} Ada\u{2764}\u{fe0f}, account a-91x"
+        "author: account a-91x, \u{645}\u{6cc}\u{200c}\u{646}\u{627} Ada\u{2764}\u{fe0f}"
     );
 }

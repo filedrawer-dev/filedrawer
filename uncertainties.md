@@ -15,8 +15,36 @@ Add a new entry at the end of the topic it belongs to, or start a topic when non
 - Options: the server's note and the claim first (`interval includes 0; null: +0.012 [−0.047, +0.070], n 520/520, fraction`), or the numbers first as the Example in entry-format.md shows (`+0.012 [−0.047, +0.070], n 520/520, fraction: no_effect; interval includes 0`).
 - Chosen: note first.
   The card's rules say so for line 4 and for every line that isn't author text alone ("the server's own words come before author text"), and a long unit can then never cut the note.
-- Against: the Example is the only worked line 4, and readers may scan for the number first.
-  If the Example is right, the line 4 rule needs rewording instead.
+  The Example's line 4 was rewritten to match when the labels came in (analyzer v2).
+- Against: readers may scan for the number first.
+
+#### The card's labels (analyzer v2)
+
+- Options, for the words: the eleven chosen, `entry`, `title`, `hypothesis`, `result`, `design`, `stats`, `models`, `first caveat`, `not tried`, `flags`, `author`; or longer ones that name each line's contents (`primary row`, `control and prediction`, `baseline and method`).
+  For where they go: before every line, lines 7 to 9 keeping the label they had; or only before the lines that started with author text (2, 3 and 11).
+  For the caps: a cap counts what follows the label; or the whole line.
+- Chosen: the eleven short words before every line, so the rule a reader holds is one sentence with no exceptions (the owner's decision 2026-11-21 was "every line"; the words are mine).
+  Line 4 is `result`, not `primary row`, since the submission and batch replies print their own `primary row:` line just above the card.
+  A cap counts what follows the label, so author text keeps the room it had under v1; lines 7 to 9, whose label counted under v1, gain its length.
+  The deleted account's line reads `author: account <id>, account deleted`.
+- Against: `design` and `stats` are vague for what they hold (positive control, prediction and S; baseline, level, method and unit).
+  Line 1's `entry:` has the shape of the batch reply's `entry: <id> <url>` lines, though those are above the delimiter and the card's are indented below it.
+  Linked handles, once linking lands, would follow the display name on line 11, so a name holding `, github:x` could pass for a handle; handles before the name would close that.
+
+#### Stored entries' cards under v2
+
+- Options: render every card at read time with the current analyzer, as before, so old entries show v2 at once; or keep rendering an entry with the analyzer version it was submitted under, which would mean keeping v1's renderer.
+- Chosen: read time, as entry-format.md's "Accept, warn, and re-render" says ("When the analyzer improves, every card is rendered again").
+  The `entries.analyzer_version` column keeps the version an entry was submitted under (1 for every entry before v2, 2 after); nothing reads it to render, and `/e/<id>` says `analyzer: v2` for every entry.
+- Against: the column then says something no reply shows, and an agent that saved an old card sees a different one for the same entry.
+
+#### S on line 5 (analyzer v2)
+
+- Options, for "a plain decimal" (the owner's words): digits with at most one `.`, which a digit follows; also a sign, an exponent or a trailing `.`; and whether `0` passes.
+- Chosen: digits with at most one `.` that a digit follows, at least one of them not 0, since entry-format.md asks for "a positive number".
+  `0`, `5.`, `1e-3`, `+0.1`, `5%` and `5 pp` show as "unrecognized smallest_effect_of_interest", without when S was set, as an unrecognized `positive_control` shows, and draw a warning.
+- Against: `0` is an honest way to say "any effect", and `1e-3` is a plain number to most readers; the card now hides both.
+  Only 2 of the field test's 440 entries set S, both plain decimals, so the rule has met few real values.
 
 #### Line 8 on cards that aren't `effect`
 
@@ -158,10 +186,9 @@ Add a new entry at the end of the topic it belongs to, or start a topic when non
 - Chosen: skip with a warning, as items past 10 in `replicates` are dropped.
   A tag is read when it is 1 to 60 characters on one line with no control or invisible character, and an entry's first 20 tags are read.
   `GET /tags` lists only such tags, so each listed tag still matches `tag=` exactly.
-  Reason: `/tags` starts each line with a tag and has no delimiter, so a tag with a line break wrote whole lines of that reply.
+  Reason: `/tags` has no delimiter, so a tag with a line break wrote whole lines of that reply.
   The longest tag in the field test's entries is 35 characters, and the most tags on one entry is 9.
 - Against: the bounds are an agent's.
-  A read tag is still up to 60 characters of an author's words at the start of a `/tags` line, which only a change to that reply's format would mark.
 
 #### Which characters count as invisible
 
@@ -326,14 +353,6 @@ The owner set 10 an hour and 50 a day per account (#60); an agent chose the rest
 - Options: deleting an account deletes the record of the entries it deleted by token or withdrawal, or keeps it.
 - Chosen: deletes it, with the tokens and sessions that could read it.
 - Against: the record holds only random IDs and times, and the owner might want it kept for analysis, as removed entries are.
-
-#### Invisible characters in a display name
-
-- Options: refuse a display name that holds an invisible character (see "Which characters count as invisible") or a line or paragraph separator; or remove them at signup and keep the rest.
-- Chosen: refuse, with a message that says why, so the holder knows what the name will be.
-  A name stored before the rule is printed without them everywhere it is read: the text replies, the JSON replies' `display_name`, the account page and the admin pages, which also show the stored name escaped when it differs, so the owner sees what it hid.
-- Against: a name with a character on the invisible list that real text needs (see "Which characters count as invisible", Against) is refused until its holder removes it; removing it at signup would let them through with a name that looks nearly the same.
-  The name still comes before the account ID on the `author:` line and the card's last line, so a name holding ", account a-..." puts an ID of its holder's choosing first; closing that needs the ID before the name, a change to both lines.
 
 #### What a password reset ends
 

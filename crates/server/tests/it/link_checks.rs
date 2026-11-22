@@ -32,7 +32,7 @@ fn warnings(body: &str) -> Vec<&str> {
 fn flags(body: &str) -> &str {
     body.lines()
         .map(str::trim)
-        .find(|line| line.starts_with("analyzer v"))
+        .find_map(|line| line.strip_prefix("flags: "))
         .expect("the reply holds a card")
 }
 
@@ -53,7 +53,7 @@ async fn with_link_checks_off_nothing_is_fetched_or_flagged() {
         .await;
     assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
     assert_eq!(link_warnings(&reply.body), Vec::<&str>::new());
-    assert_eq!(flags(&reply.body), "analyzer v1");
+    assert_eq!(flags(&reply.body), "analyzer v2");
 }
 
 #[tokio::test]
@@ -101,7 +101,7 @@ async fn a_live_link_draws_nothing() {
     let app = test_app().await;
     let reply = app.post("/entries", with_code(&github_code())).await;
     assert_eq!(warnings(&reply.body), Vec::<&str>::new());
-    assert_eq!(flags(&reply.body), "analyzer v1");
+    assert_eq!(flags(&reply.body), "analyzer v2");
 }
 
 #[tokio::test]
@@ -208,7 +208,7 @@ async fn a_link_that_doesnt_answer_or_answers_5xx_is_not_dead() {
             ),
         ]
     );
-    assert_eq!(flags(&reply.body), "analyzer v1; no code");
+    assert_eq!(flags(&reply.body), "analyzer v2; no code");
 }
 
 #[tokio::test]
@@ -501,7 +501,7 @@ async fn a_recheck_that_finds_a_zenodo_concept_record_flags_code_pin_failed() {
         "https://zenodo.org/api/records/123",
     );
     assert_eq!(recheck_after_minutes(&app, 61).await, 1);
-    assert_eq!(public_card(&app, &id).await, "analyzer v1; code pin failed");
+    assert_eq!(public_card(&app, &id).await, "analyzer v2; code pin failed");
 }
 
 #[tokio::test]
@@ -523,7 +523,7 @@ async fn a_commit_tagged_later_is_cleared_by_the_weekly_recheck() {
     // A definite answer, so a week, not an hour.
     assert_eq!(recheck_after_minutes(&app, 61).await, 0);
     assert_eq!(recheck(&app, 8).await, 1);
-    assert_eq!(public_card(&app, &id).await, "analyzer v1");
+    assert_eq!(public_card(&app, &id).await, "analyzer v2");
 }
 
 #[tokio::test]
@@ -621,7 +621,7 @@ async fn a_zenodo_version_record_is_verified() {
         .post("/entries", with_code("https://zenodo.org/records/123"))
         .await;
     assert_eq!(link_warnings(&reply.body), Vec::<&str>::new());
-    assert_eq!(flags(&reply.body), "analyzer v1");
+    assert_eq!(flags(&reply.body), "analyzer v2");
     let mut fetched = app.web.fetched();
     fetched.sort();
     assert_eq!(
@@ -709,7 +709,7 @@ async fn a_put_checks_the_links_again_and_replaces_what_they_found() {
     assert_eq!(warnings(&reply.body), Vec::<&str>::new());
     let own = app.get_as_author(&format!("/e/{id}")).await;
     assert_eq!(warnings(&own.body), Vec::<&str>::new());
-    assert_eq!(flags(&own.body), "analyzer v1; no code");
+    assert_eq!(flags(&own.body), "analyzer v2; no code");
 }
 
 #[tokio::test]
@@ -849,7 +849,7 @@ async fn a_pin_that_couldnt_be_checked_is_checked_again_in_an_hour_and_a_commit_
     assert_eq!(recheck_after_minutes(&app, 61).await, 1);
     assert_eq!(
         public_card(&app, &id).await,
-        "analyzer v1; commit on no branch"
+        "analyzer v2; commit on no branch"
     );
 }
 
@@ -873,7 +873,7 @@ async fn the_weekly_recheck_clears_a_link_that_came_back() {
     assert_eq!(recheck(&app, 6).await, 0);
     assert!(public_card(&app, &id).await.contains("; logs link dead"));
     assert_eq!(recheck(&app, 8).await, 1);
-    assert_eq!(public_card(&app, &id).await, "analyzer v1; no code");
+    assert_eq!(public_card(&app, &id).await, "analyzer v2; no code");
     // Live now, so it leaves the recheck.
     assert_eq!(recheck(&app, 16).await, 0);
 }
@@ -899,7 +899,7 @@ async fn a_recheck_that_finds_a_commit_on_no_branch_flags_the_card_and_never_rej
     assert_eq!(recheck(&app, 8).await, 1);
     assert_eq!(
         public_card(&app, &id).await,
-        "analyzer v1; commit on no branch"
+        "analyzer v2; commit on no branch"
     );
 }
 

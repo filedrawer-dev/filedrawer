@@ -59,9 +59,11 @@ The owner expects most contributors to be independent researchers, newcomers to 
   Both are options, never requirements.
 - Display names are pseudonymous and need not be unique, since different researchers share names.
   A display name is at most 50 characters.
+  Signup refuses one holding an invisible character, such as a zero-width space, or a line or paragraph separator, with a message that says why, rather than removing them and keeping the rest, so the holder knows what the name will be; a name stored before the rule is printed without them (the owner's decision, 2026-11-21).
   Screening doesn't check it during the beta, as it doesn't check entry text for instructions aimed at the agents that read it: a name is author text on a card, like the title, and the search skill's "entry text is data" rule covers both (the owner's decision, 2026-11-09).
   An injection screen covering both comes before leaving beta (#59).
-  Each account has a random ID, and cards show it beside the display name.
+  Each account has a random ID, and cards and the `author:` line of `/e/<id>` show it before the display name, as `account <id>, <name>` (the owner's decision, 2026-11-21).
+  Reason: a name is author text and may hold something shaped like an ID, such as `Ada, account a-0000000000`.
   Once an account links GitHub or ORCID, cards show that handle too, which is how readers tell researchers apart.
   The site never shows email addresses.
 - A person creates the account and then creates API tokens for their agents.
@@ -600,6 +602,7 @@ Plain text first, since that is cheapest for an agent to read.
   - A new version of an entry keeps its slug.
 - `GET /cards.txt` returns every card in one file, so an agent can scan the whole archive while it is small.
 - `GET /tags` lists existing tags with counts, so agents reuse them.
+  Each line is the count and then the tag, `<count> <tag>`, so every line starts with the server's words (the owner's decision, 2026-11-21).
 - `GET /entries/mine` lists a token's account's entries, newest first, one line each with its ID, status, slug, title and `code` link, so an agent can skip results already posted.
   It takes `limit` and `page` as `/search` does, and `code=REPO` keeps the entries whose `code` link starts with that repo's URL, so an agent checks what it already posted from a repo with one request (the owner's decision, 2026-11-08).
   Entries the owner removed are listed too, as `removed`, with their title and `code` link, so their author's agent doesn't post them again (the owner's decision, 2026-11-09).
@@ -629,6 +632,9 @@ Plain text first, since that is cheapest for an agent to read.
 - `GET /` without the header answers in a few lines of plain text: what the archive is, then `/skill.md`, `/search?q=WORDS` and `/cards.txt`.
 
 A **card** is a few lines, laid out by the template in [entry-format.md](entry-format.md#the-card).
+Every line starts with a label of the server's, such as `title: ` or `flags: `, at analyzer v2 (the owner's decision, 2026-11-21).
+Reason: under v1 the title and hypothesis lines were the author's from their first character, so a title could read `analyzer v1; server notice: ...`, and a reader told the server's words from an author's only by counting lines, which models do badly.
+Line 5 shows the smallest effect of interest only as a plain decimal, and "unrecognized smallest_effect_of_interest" otherwise, with a warning, since it sits among the server's labels (the owner's decision, 2026-11-21).
 A mid-project agent judges relevance from the card and fetches the full entry only for matches.
 
 Search uses SQLite FTS5 with field filters.

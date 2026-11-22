@@ -228,5 +228,5 @@ async fn tags_count_each_chain_once() {
             .body,
     );
     app.post(&format!("/e/{new}/publish"), "").await;
-    assert_eq!(app.get("/tags").await.body, "refusal 1\nsteering 1\n");
+    assert_eq!(app.get("/tags").await.body, "1 refusal\n1 steering\n");
 }
