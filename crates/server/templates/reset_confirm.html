@@ -3,7 +3,7 @@
 {% block content %}
 <h1>Choose a new password</h1>
 {% if let Some(error) = error %}<p class="error">{{ error }}</p>{% endif %}
-<p class="reset-ends">A new password logs this account out everywhere and revokes its API tokens, so each of your agents will need a new one.</p>
+<p class="reset-ends">A new password logs this account out everywhere, revokes its API tokens, so each of your agents will need a new one, and unlinks GitHub, which you can link again from your account page.</p>
 <form method="post" action="/reset/confirm">
 <input type="hidden" name="token" value="{{ token }}">
 <label>New password, at least 12 characters <input type="password" name="password" autocomplete="new-password" minlength="12" required></label>

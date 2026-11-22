@@ -17,7 +17,7 @@
 <form method="post" action="/account/github/unlink"><button type="submit">Unlink GitHub</button></form>
 <p>Unlinking leaves File Drawer listed among your GitHub account's authorized apps; <a href="https://github.com/settings/connections/applications/{{ app }}">remove it there</a> too if you like.</p>
 {% else %}
-<p class="github-needs-password">GitHub is this account's only way in, so it can't be unlinked until you <a href="/reset">choose a password</a>. Choosing one ends every session and revokes every API token of the account.</p>
+<p class="github-needs-password">GitHub is this account's only way in, so it can't be unlinked here. <a href="/reset">Choosing a password</a> unlinks it, and ends every session and revokes every API token of the account.</p>
 {% endif %}
 {% endif %}
 {% else if github_app.is_some() %}

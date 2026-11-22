@@ -811,3 +811,36 @@ async fn a_sign_in_lands_on_the_page_it_was_asked_from_on_this_site_only() {
         assert_eq!(back.location(), Some(landing), "{next}");
     }
 }
+
+#[tokio::test]
+async fn a_password_reset_unlinks_github() {
+    // Whoever reads the inbox now may not be who linked GitHub: GitHub can list an
+    // address its user no longer holds, so a reset takes the handle off the cards.
+    let (app, github) = github_app().await;
+    github.code_for("c1", octo(1, "octo", "octo@example.com"));
+    github_signup(&app, "c1").await;
+    let reset = app
+        .form("/reset", &[("email", "octo@example.com")], None)
+        .await;
+    assert_eq!(reset.status, StatusCode::OK, "{}", reset.body);
+    let link = app.link_in_last_email_to("octo@example.com").await;
+    let token = link.strip_prefix("/reset/confirm?token=").expect(&link);
+    let done = app
+        .form(
+            "/reset/confirm",
+            &[("token", token), ("password", PASSWORD)],
+            None,
+        )
+        .await;
+    assert_eq!(done.status, StatusCode::OK, "{}", done.body);
+    let session = logged_in(&app, "octo@example.com", PASSWORD).await;
+    let page = app.page("/account", Some(&session)).await;
+    assert!(!page.has_class("github-linked"), "{}", page.body);
+    assert!(!page.body.contains("github:octo"), "{}", page.body);
+    // The exemption record stays, as unlinking leaves it.
+    let kept: i64 = sqlx::query_scalar("SELECT count(*) FROM github_exemptions")
+        .fetch_one(&app.pool)
+        .await
+        .unwrap();
+    assert_eq!(kept, 1);
+}

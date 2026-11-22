@@ -303,9 +303,10 @@ pub async fn verify_with_link(pool: &SqlitePool, secret: &str) -> Result<bool, s
 }
 
 /// Sets a new password through a reset link, in one transaction: spends every reset
-/// link the account has, ends all its sessions, revokes all its tokens, and marks the
-/// address verified, since the link reached it. Whoever held the account before
-/// keeps no way to act for it. False when the link is used, expired or unknown.
+/// link the account has, ends all its sessions, revokes all its tokens, marks the
+/// address verified, since the link reached it, and unlinks GitHub. Whoever held the
+/// account before keeps no way to act for it, nor their GitHub handle on its cards.
+/// False when the link is used, expired or unknown.
 pub async fn reset_with_link(
     pool: &SqlitePool,
     secret: &str,
@@ -340,6 +341,10 @@ pub async fn reset_with_link(
     .execute(&mut *transaction)
     .await?;
     mark_verified(&mut transaction, &account_id).await?;
+    // GitHub can list as verified an address its user no longer holds, so whoever
+    // reset through it may not be who linked GitHub (the owner's decision,
+    // 2026-11-22).
+    crate::github_accounts::unlink_in(&mut transaction, &account_id).await?;
     transaction.commit().await?;
     Ok(true)
 }

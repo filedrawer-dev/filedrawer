@@ -411,8 +411,10 @@ pub async fn reset_confirm(
         StatusCode::OK,
         &Message {
             title: "Password changed",
-            text: "Every session on this account has ended and its API tokens are revoked. \
-                   Log in with the new password, then make a new token for each agent.",
+            text: "Every session on this account has ended, its API tokens are revoked, and \
+                   GitHub is unlinked from it. Log in with the new password, then make a new \
+                   token for each agent, and link GitHub again from your account page if you \
+                   want it.",
             link: Some(("/login", "Log in")),
         },
     ))

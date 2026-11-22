@@ -8,14 +8,14 @@ Pick what to revoke by what leaked:
 - **Password hashes**, such as a copy of the database or of a nightly backup: add `--passwords`.
   Weak passwords can be cracked offline, and a forced login alone would let a cracked one back in.
   Every account then has no password until its owner chooses one through `/reset`; a login meanwhile gets the answer a wrong password gets.
-  An account that signed up with GitHub has no password to lose, needs no reset, and an account linked to GitHub can still log in with GitHub.
+  An account that signed up with GitHub has no password to lose, needs no reset, and an account linked to GitHub can still log in with GitHub, which keeps its link, where a reset would unlink GitHub.
   The same copy holds the invite codes as they are: make new codes for any sprint still running, and revoke the old ones at `/admin/invites`, which freezes the unscreened entries of the accounts that joined with them.
 - **The server's settings**, such as a copy of `/etc/filedrawer` or a compromised server: also rotate the GitHub OAuth App's client secret, as below.
   The database holds no GitHub token, since the server revokes each one as soon as it has read the account, so the client secret is the only GitHub sign-in secret to rotate.
   The other secrets there, such as the link checks' GitHub token, the Anthropic API keys and the SMTP passwords, are each replaced by their stage of `ops/provision-vps --ask-all`, after you revoke the old one where it was made.
 
 Nobody is emailed.
-Announce it yourself, and say that people must give their agents a new token, and with `--passwords` choose a new password through `/reset`, unless they log in with GitHub.
+Announce it yourself, and say that people must give their agents a new token, and with `--passwords` choose a new password through `/reset`, unless they log in with GitHub; a reset unlinks GitHub, so people with GitHub linked should log in with it instead.
 Every session ends either way: people who log in with GitHub just log in with GitHub again.
 
 ## Run it
@@ -49,6 +49,7 @@ The running server sees the change at once: it reads sessions and tokens from th
 ## After it
 
 - Reset your own password through `/reset`, then log in; the admin pages need a session.
+  With GitHub linked, log in with GitHub instead, since a reset unlinks it.
 - Accounts made with `admin create-account` have no password and need `admin create-token` again.
 - On staging, CI's smoke-test and screen-test accounts lose their tokens, and so does the token agents use as `FILEDRAWER_STAGING_API_KEY`.
   `ops/provision-vps --ask-all smoke` makes new ones for CI: answer yes to replacing `SMOKE_TEST_TOKEN` and `CI_SCREEN_TOKEN`.

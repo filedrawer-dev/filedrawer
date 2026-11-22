@@ -57,6 +57,8 @@ The owner expects most contributors to be independent researchers, newcomers to 
   Ending sessions at verification would add nothing to that, since whoever signed up knows the password and logs in again.
   The cost: until that reset, the person who signed up holds a verified account at that address, and a suspension of it falls on the address (AUTHZ-1 in the 2026-11 security review; asking for the password at verification, built on 2026-11-21, closed that window and was taken out).
   Password reset goes by email.
+  A reset also unlinks GitHub from the account, which its holder may link again (the owner's decision, 2026-11-22).
+  Reason: GitHub can list as verified an address its user no longer holds, such as an old work address, so whoever resets through that inbox may not be who linked GitHub, and their entries' cards would show the GitHub user's handle.
 - GitHub sign-in ships right after launch, ORCID later.
   Both are options, never requirements.
   Signing in with GitHub never joins an existing account because the addresses match: a GitHub login joins an account only from a session of that account.
@@ -72,14 +74,14 @@ The owner expects most contributors to be independent researchers, newcomers to 
   Reason: a login renamed away can be claimed by someone else at once, so a stale handle could name a stranger.
   An address GitHub lists as verified counts as verified here, and GitHub's noreply addresses, which get no mail, aren't offered.
   Reason: GitHub checked the inbox already, so a second email adds a step and proves nothing more.
-  The cost: GitHub may still list an address the person no longer holds, such as a former employer's.
+  The cost: GitHub may still list an address the person no longer holds, such as a former employer's; a reset through it unlinks GitHub, so its handle doesn't follow the account to the inbox's holder.
 - A first GitHub sign-in that links no account gets a form: the display name, GitHub's name suggested, one of GitHub's verified addresses, and the optional invite code.
   The account it makes is verified and has no password, and no email goes to it.
   When the address has an account already, the server sends that address the note email signup sends, makes nothing, and says to log in and link GitHub from the account page.
   That page differs from a new account's, which logs in, so it says the address has an account; only someone GitHub lists as holding the address sees it.
 - An account links at most one GitHub account, and a GitHub account at most one account.
   Linking from the account page also verifies the account's address when GitHub lists it as verified, since the person holds the session and the inbox.
-  Unlinking needs a password, so the person keeps a way in, and takes the handle off every card; GitHub keeps listing the app among the person's authorized ones, which the account page links to, since the server holds no token to revoke the grant with.
+  Unlinking needs a password, so the person keeps a way in, and takes the handle off every card; an account with none sets one through a reset, which unlinks GitHub itself; GitHub keeps listing the app among the person's authorized ones, which the account page links to, since the server holds no token to revoke the grant with.
 - An account with no password confirms its deletion by typing its GitHub login instead (the owner's decision, 2026-11-22).
   Reason: the password guards against a deletion by accident, and a session can already withdraw entries for good.
 - Display names are pseudonymous and need not be unique, since different researchers share names.
@@ -933,7 +935,7 @@ Every page's footer links both, the signup form says beside its button that sign
 
 The owner is the only admin in v1.
 `filedrawer admin grant --account ID`, run from a shell on the server, makes an account the admin; nothing over HTTP can.
-`filedrawer admin revoke-all [--passwords]`, also from a shell on the server, ends every session and token of every account, the admin's included, after a leak, and with `--passwords` clears every password, so each person resets by email; it emails nobody, and a cleared account's login gets the answer a wrong password gets (the owner's decisions, 2026-11-21; `ops/revoke-all.md`).
+`filedrawer admin revoke-all [--passwords]`, also from a shell on the server, ends every session and token of every account, the admin's included, after a leak, and with `--passwords` clears every password, so each person resets by email, which unlinks GitHub, or logs in with GitHub; it emails nobody, and a cleared account's login gets the answer a wrong password gets (the owner's decisions, 2026-11-21; `ops/revoke-all.md`).
 It also spends every unused email link (uncertainties.md, "What revoke-all ends").
 Admin pages answer only the admin's browser session.
 Admin pages and an admin API cover the review queue, the series the screen refused as a likely hazard, the entries that passed with a hazard doubt, invite codes, frozen entries, withdrawals, removals, suspensions, purges and the unknown-field report.

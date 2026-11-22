@@ -81,7 +81,8 @@ its browser sessions reach the review queue at /admin. It prints the account's I
 revoke-all is for a leak (ops/revoke-all.md): it ends every session, revokes every
 API token and spends every unused email link, of every account, the admin's too.
 --passwords also clears every password, so each person must choose a new one through
-/reset; until then a login gets the answer a wrong password gets. Nobody is emailed.
+/reset, which unlinks GitHub, or log in with GitHub; until then a password login gets
+the answer a wrong password gets. Nobody is emailed.
 Accounts made with create-account have no password and need create-token again.
 Without --yes it changes nothing and prints what it would end.
 

@@ -280,8 +280,14 @@ pub async fn login_of(pool: &SqlitePool, account_id: &str) -> Result<Option<Stri
 
 /// Removes the account's link. False when it had none.
 pub async fn unlink(pool: &SqlitePool, account_id: &str) -> Result<bool, sqlx::Error> {
+    unlink_in(&mut *pool.acquire().await?, account_id).await
+}
+
+/// [`unlink`] in the caller's transaction, such as a password reset's. The
+/// exemption record stays, so the GitHub ID exempts no other account.
+pub async fn unlink_in(conn: &mut SqliteConnection, account_id: &str) -> Result<bool, sqlx::Error> {
     let done = sqlx::query!("DELETE FROM github_links WHERE account_id = ?", account_id)
-        .execute(pool)
+        .execute(conn)
         .await?;
     Ok(done.rows_affected() == 1)
 }
@@ -293,9 +299,7 @@ pub async fn forget_account(
     conn: &mut SqliteConnection,
     account_id: &str,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query!("DELETE FROM github_links WHERE account_id = ?", account_id)
-        .execute(&mut *conn)
-        .await?;
+    unlink_in(&mut *conn, account_id).await?;
     sqlx::query!(
         "UPDATE github_exemptions SET account_id = NULL WHERE account_id = ?",
         account_id

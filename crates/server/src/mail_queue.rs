@@ -373,8 +373,9 @@ async fn prepare(
             let body = format!(
                 "Someone, probably you, asked to choose a new File Drawer password for this \
                  address.\n\nTo choose one, open this link:\n{url}/reset/confirm?token={secret}\n\n\
-                 A new password logs the account out everywhere and revokes its API tokens, \
-                 so each of your agents will need a new one from {url}/account.\n\n\
+                 A new password logs the account out everywhere, revokes its API tokens, \
+                 so each of your agents will need a new one from {url}/account, and \
+                 unlinks GitHub, which you can link again there.\n\n\
                  The link works for {EMAIL_LINK_HOURS} hours. If you didn't ask, ignore this \
                  email; your password hasn't changed.\n"
             );

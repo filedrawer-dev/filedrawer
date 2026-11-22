@@ -53,7 +53,8 @@ fn message(status: StatusCode, title: &str, text: &str, link: Option<(&str, &str
 
 /// What a GitHub-only account can do when GitHub can't sign it in.
 const WHEN_GITHUB_FAILS: &str = "If you signed up with GitHub, you can choose a password \
-     at /reset instead; that ends every session and revokes every API token of the account.";
+     at /reset instead; that ends every session, revokes every API token and unlinks GitHub, \
+     which you can link again from your account page.";
 
 /// Sends the browser to GitHub for `purpose`, keeping what the callback needs.
 async fn start(
@@ -427,8 +428,8 @@ pub async fn unlink(
     if !accounts::has_password(&state.pool, &session.id).await? {
         return Ok(message(
             StatusCode::CONFLICT,
-            "Choose a password first",
-            "GitHub is this account's only way in. Choose a password at /reset first; that ends every session and revokes every API token of the account. Then unlink GitHub.",
+            "GitHub is this account's only way in",
+            "Choosing a password at /reset unlinks GitHub too, and ends every session and revokes every API token of the account; you can link GitHub again from your account page.",
             Some(("/reset", "Choose a password")),
         ));
     }
