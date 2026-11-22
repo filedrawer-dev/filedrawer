@@ -129,8 +129,9 @@ fn the_server_context_fills_the_id_flags_and_author() {
         lines[8],
         "flags: analyzer v2; screening note: \"The body reports an effect.\"; code attached; logs link dead; superseded by fd-9zz1; replication fd-r1 (null); self-replication fd-r2 (effect)"
     );
-    // The account's ID comes before the name, which an author chose.
-    assert_eq!(lines[9], "author: account a91x, Ada, github:ada");
+    // The account's ID and its linked handles, the server's words, come before the
+    // name, which an author chose.
+    assert_eq!(lines[9], "author: account a91x, github:ada, Ada");
 }
 
 #[test]
@@ -496,6 +497,7 @@ proptest! {
         .replace("title: T", &format!("title: {}\ntags: [{}]", yaml_quote(&title), yaml_quote(&tag)))
         .replace("hypothesis: H", &format!("hypothesis: {}\nreanalyzes: {}", yaml_quote(&hypothesis), yaml_quote(&reference)))
         .replace("## Reproduce", &format!("## Caveats\n\n- {caveat}\n\n## Reproduce"));
+        let named = name.is_some();
         let context = CardContext {
             id: Some("0123456789".into()),
             author: Some(Author { display_name: name, account_id: "a-91x".into(), handles: vec!["github:ada".into()] }),
@@ -532,8 +534,10 @@ proptest! {
         prop_assert!(lines[3].starts_with("interval excludes 0; effect"), "{}", lines[3]);
         prop_assert!(lines[4].starts_with("no positive control reported; no prediction"), "{}", lines[4]);
         prop_assert!(lines[9].starts_with("analyzer v2; screening note: \""), "{}", lines[9]);
-        // The account's ID comes first on the author's line, whatever the name holds.
-        prop_assert!(lines[10].starts_with("account a-91x, "), "{}", lines[10]);
+        // The account's ID and its handle come first on the author's line, whatever
+        // the name holds.
+        let start = if named { "account a-91x, github:ada, " } else { "account a-91x, account deleted" };
+        prop_assert!(lines[10].starts_with(start), "{}", lines[10]);
     }
 }
 

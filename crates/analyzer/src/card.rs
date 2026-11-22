@@ -674,10 +674,11 @@ fn reanalyzes_stored_data(analysis: &Analysis) -> bool {
     })
 }
 
-/// Line 11: the account ID, then the author's display name and linked handles, or
-/// "account deleted" once the account is deleted. The ID comes first, since a name
-/// may hold text shaped like one. The name loses its invisible characters, and one
-/// that then shows nothing is the server's "(no name)".
+/// Line 11: the account ID and its linked handles, then the author's display name,
+/// or "account deleted" once the account is deleted. The server's words come first
+/// and the author's text after them, as on every line, since a name may hold text
+/// shaped like an ID. The name loses its invisible characters, and one that then
+/// shows nothing is the server's "(no name)".
 fn byline(context: &CardContext) -> Vec<Part> {
     let Some(person) = &context.author else {
         return vec![server("<author>")];
@@ -686,9 +687,13 @@ fn byline(context: &CardContext) -> Vec<Part> {
     let Some(name) = &person.display_name else {
         return vec![server(format!("{account}account deleted"))];
     };
-    let mut parts = vec![server(account), author(crate::shown_name(name))];
-    if !person.handles.is_empty() {
-        parts.push(server(format!(", {}", person.handles.join(", "))));
-    }
-    parts
+    let handles: String = person
+        .handles
+        .iter()
+        .map(|handle| format!("{handle}, "))
+        .collect();
+    vec![
+        server(format!("{account}{handles}")),
+        author(crate::shown_name(name)),
+    ]
 }

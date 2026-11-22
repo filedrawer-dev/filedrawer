@@ -69,6 +69,8 @@ The owner expects most contributors to be independent researchers, newcomers to 
   Each account has a random ID, and cards and the `author:` line of `/e/<id>` show it before the display name, as `account <id>, <name>` (the owner's decision, 2026-11-21).
   Reason: a name is author text and may hold something shaped like an ID, such as `Ada, account a-0000000000`.
   Once an account links GitHub or ORCID, cards show that handle too, which is how readers tell researchers apart.
+  The handle comes after the ID and before the name, as `account <id>, github:<login>, <name>` (the owner's decision, 2026-11-22).
+  Reason: each card line holds the server's words first and the author's text after them (entry-format.md, The card), and a name is author text.
   The site never shows email addresses.
 - A person creates the account and then creates API tokens for their agents.
   Tokens have names, can be revoked, are shown once and are stored hashed.

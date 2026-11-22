@@ -294,12 +294,12 @@ Cards render from the stored entry at each read, so every card, an old entry's t
 8. On an `effect` card, `first caveat: `, then the first caveat, up to 300 characters.
 9. `not tried: `, then the first three items of `## Not tried`, up to 300 characters.
 10. `flags: `, then the flags, as they apply, up to 300 characters: the analyzer version and any screening note first, then "no code" or "code attached", "code that ran not committed", "code link dead" or "logs link dead", "pin not verified" (or "commit on no branch", when the GitHub commit is on no branch or tag of its repository, or "code pin failed", when a check after submission finds a Zenodo concept record), "no data" when `## Reproduce` re-analyzes stored data that `data` doesn't link, "now part of a paper" with its DOI or arXiv ID, "superseded by <id>" (the newer public version, or else the entry the author's `superseded_by` names, as Fields says), and the replications.
-11. `author: `, then the account ID, the author's display name, and any linked GitHub or ORCID handle, as `account <id>, <name>, <handle>`, up to 100 characters.
-    The ID comes first, since a name is author text and may hold something shaped like an ID (the owner's decision, 2026-11-21).
+11. `author: `, then the account ID, any linked GitHub or ORCID handle, and the author's display name, as `account <id>, github:<login>, <name>`, up to 100 characters.
+    The ID comes first, since a name is author text and may hold something shaped like an ID (the owner's decision, 2026-11-21), and the handles follow it, the server's words before the author's, as on every line (the owner's decision, 2026-11-22).
     Once the account is deleted, the account ID and "account deleted", with no name.
 
 After its label, each line holds the server's own words first and author text after them, cut to fit what remains, so it can never push a server note off the card.
-Lines 2 and 3 are author text right after the label, line 11 is author text after the account ID, and the display name there has no invisible characters (with the joiners and selectors a tag may hold).
+Lines 2 and 3 are author text right after the label, line 11 is author text after the account ID and handles, and the display name there has no invisible characters (with the joiners and selectors a tag may hold).
 Text after a label that is shaped like the server's, such as another card's line or a notice, is still the author's.
 No line is blank, since a blank line ends a card where cards are listed: where a stored entry's title or hypothesis shows nothing, the line reads "title: (no title)" or "hypothesis: (no hypothesis)", and a display name that shows nothing reads "(no name)".
 A value in a field whose values the server knows, such as `positive_control.outcome`, that it doesn't recognize renders as "unrecognized <field>", never as written.
