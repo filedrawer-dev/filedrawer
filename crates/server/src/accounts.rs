@@ -195,37 +195,25 @@ pub async fn retire_email_link(pool: &SqlitePool, hash: &[u8]) -> Result<(), sql
     Ok(())
 }
 
-/// The account an email link was sent to, for checking who presses it before it is
-/// spent.
-pub struct LinkAccount {
-    pub account_id: String,
-    pub email: String,
-    pub password_hash: Option<String>,
-}
-
-/// The account of an unused, unexpired email link for `purpose`, if it still has an
-/// address. Spends nothing: for the page the link opens, and to check who presses
-/// it.
-pub async fn link_account(
+/// Whether an email link would work, without using it: for the page the link opens.
+pub async fn email_link_works(
     pool: &SqlitePool,
     secret: &str,
     purpose: Purpose,
-) -> Result<Option<LinkAccount>, sqlx::Error> {
+) -> Result<bool, sqlx::Error> {
     let hash = ids::token_hash(secret);
     let now = now();
     let purpose = purpose.as_str();
-    sqlx::query_as!(
-        LinkAccount,
-        "SELECT a.id AS \"account_id!\", a.email AS \"email!\", a.password_hash
-         FROM email_tokens t JOIN accounts a ON a.id = t.account_id
-         WHERE t.hash = ? AND t.purpose = ? AND t.used_at IS NULL AND t.expires_at > ?
-           AND a.email IS NOT NULL AND a.deleted_at IS NULL",
+    let found = sqlx::query_scalar!(
+        "SELECT 1 AS found FROM email_tokens
+         WHERE hash = ? AND purpose = ? AND used_at IS NULL AND expires_at > ?",
         hash,
         purpose,
         now
     )
     .fetch_optional(pool)
-    .await
+    .await?;
+    Ok(found.is_some())
 }
 
 /// Spends an email link and returns its account, if the link is unused, unexpired and
@@ -251,7 +239,7 @@ async fn spend_link(
     .await
 }
 
-/// Marks the account's address verified, unless it was already.
+/// Marks the account's address verified, keeping the first time it was.
 async fn mark_verified(
     connection: &mut SqliteConnection,
     account_id: &str,
@@ -277,9 +265,9 @@ async fn end_sessions(
     Ok(())
 }
 
-/// Spends a verification link and marks its account's address verified. The caller
-/// has checked that whoever pressed it holds the account's password or a session of
-/// it. False when the link is used, expired or unknown.
+/// Verifies the account a verification link was sent for. Its sessions stay: whoever
+/// signed up knows the password and could log in again anyway, and a reset is what
+/// ends their way in. False when the link is used, expired or unknown.
 pub async fn verify_with_link(pool: &SqlitePool, secret: &str) -> Result<bool, sqlx::Error> {
     let mut transaction = crate::db::write_tx(pool).await?;
     let Some(account_id) = spend_link(&mut transaction, secret, Purpose::Verify).await? else {

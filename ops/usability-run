@@ -333,9 +333,7 @@ def make_account(site: Site, name: str) -> dict:
             raise Failed(f"signup answered {status}: {' '.join(reason.split())[:300]}")
         time.sleep(5)  # a deploy restarting staging; the same address is retried
     token_link = verification_link(site, mail, address)
-    status, _ = site.request(
-        "POST", "/verify", {"token": token_link, "password": password}
-    )
+    status, _ = site.request("POST", "/verify", {"token": token_link})
     if status != 200:
         raise Failed(f"verifying answered {status}")
     login = {"address": address, "tag": tag, "password": password}

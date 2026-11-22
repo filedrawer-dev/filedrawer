@@ -533,9 +533,8 @@ async fn an_unverified_account_can_ask_for_another_verification_email() {
         .link_in_last_email_to("grace@example.com")
         .await
         .replace("/verify?token=", "");
-    let verify = [("token", token.as_str()), ("password", PASSWORD)];
     assert_eq!(
-        app.form("/verify", &verify, None).await.status,
+        app.form("/verify", &[("token", &token)], None).await.status,
         StatusCode::OK
     );
 }
@@ -647,37 +646,10 @@ async fn mallory_signs_up_with(app: &common::TestApp, email: &str) -> String {
     logged_in(app, email, MALLORYS_PASSWORD).await
 }
 
-/// Presses the button of verification link `link`, as its email gave it, with
-/// `password` typed and `cookie`'s session, if any.
-async fn press_verify(
-    app: &common::TestApp,
-    link: &str,
-    password: &str,
-    cookie: Option<&str>,
-) -> common::Reply {
+/// Presses the button of verification link `link`, as its email gave it.
+async fn press_verify(app: &common::TestApp, link: &str) -> common::Reply {
     let token = link.strip_prefix("/verify?token=").expect(link);
-    app.form(
-        "/verify",
-        &[("token", token), ("password", password)],
-        cookie,
-    )
-    .await
-}
-
-/// How many events the rate limits count, failed logins among them.
-async fn counted(app: &common::TestApp) -> i64 {
-    sqlx::query_scalar("SELECT COUNT(*) FROM rate_events")
-        .fetch_one(&app.pool)
-        .await
-        .unwrap()
-}
-
-/// Whether the account behind `cookie` may make a token, as only a verified one may.
-async fn can_make_a_token(app: &common::TestApp, cookie: &str) -> bool {
-    let reply = app
-        .form("/account/tokens", &[("name", "agent")], Some(cookie))
-        .await;
-    reply.status == StatusCode::OK
+    app.form("/verify", &[("token", token)], None).await
 }
 
 /// Resets `email`'s password to `PASSWORD` through the link sent to it.
@@ -695,153 +667,30 @@ async fn reset_password(app: &common::TestApp, email: &str) -> common::Reply {
     .await
 }
 
-/// AUTHZ-1: the inbox's owner, who knows neither Mallory's password nor holds her
-/// session, can't verify the account Mallory made with the address.
 #[tokio::test]
-async fn the_link_alone_doesnt_verify_the_account_someone_else_made() {
+async fn verifying_keeps_the_session_of_whoever_signed_up() {
     let app = test_app().await;
-    let mallory = mallory_signs_up_with(&app, "grace@example.com").await;
+    let session = mallory_signs_up_with(&app, "grace@example.com").await;
     let link = app.link_in_last_email_to("grace@example.com").await;
-    let token = link.strip_prefix("/verify?token=").unwrap();
-    let pressed = app.form("/verify", &[("token", token)], None).await;
-    assert_eq!(pressed.status, StatusCode::BAD_REQUEST, "{}", pressed.body);
+    let verified = press_verify(&app, &link).await;
+    assert_eq!(verified.status, StatusCode::OK, "{}", verified.body);
+    let page = app.page("/account", Some(&session)).await;
+    assert_eq!(page.status, StatusCode::OK, "{:?}", page.location());
+}
+
+#[tokio::test]
+async fn the_verification_email_tells_whoever_didnt_sign_up_not_to_press_it() {
+    let app = test_app().await;
+    mallory_signs_up_with(&app, "grace@example.com").await;
+    let sent = app.sent().await;
+    let email = sent.last().expect("the verification email");
     assert!(
-        pressed.body.contains(r#"type="password""#),
+        email
+            .body
+            .contains("If you didn't sign up, don't press the button"),
         "{}",
-        pressed.body
+        email.body
     );
-    let guessed = press_verify(&app, &link, "grace's own passphrase", None).await;
-    assert_eq!(guessed.status, StatusCode::UNAUTHORIZED, "{}", guessed.body);
-    assert!(!can_make_a_token(&app, &mallory).await);
-}
-
-#[tokio::test]
-async fn a_wrong_password_counts_as_a_failed_login_and_leaves_the_link_working() {
-    let app = test_app().await;
-    mallory_signs_up_with(&app, "grace@example.com").await;
-    let link = app.link_in_last_email_to("grace@example.com").await;
-    let before = counted(&app).await;
-    let wrong = press_verify(&app, &link, "not the passphrase", None).await;
-    assert_eq!(wrong.status, StatusCode::UNAUTHORIZED, "{}", wrong.body);
-    assert!(!error_on(&wrong.body).is_empty(), "{}", wrong.body);
-    assert_eq!(counted(&app).await, before + 1);
-    let right = press_verify(&app, &link, MALLORYS_PASSWORD, None).await;
-    assert_eq!(right.status, StatusCode::OK, "{}", right.body);
-    // The right one gives its place back, as a login does.
-    assert_eq!(counted(&app).await, before + 1);
-}
-
-/// Verifying shares login's limit on failed logins, so it guesses no faster.
-#[tokio::test]
-async fn wrong_passwords_at_verify_lock_the_address_as_failed_logins_do() {
-    let app = test_app().await;
-    mallory_signs_up_with(&app, "grace@example.com").await;
-    let link = app.link_in_last_email_to("grace@example.com").await;
-    let mut last = StatusCode::OK;
-    for _ in 0..50 {
-        last = press_verify(&app, &link, "not the passphrase", None)
-            .await
-            .status;
-        if last == StatusCode::TOO_MANY_REQUESTS {
-            break;
-        }
-    }
-    assert_eq!(last, StatusCode::TOO_MANY_REQUESTS);
-    let login = app
-        .form(
-            "/login",
-            &[
-                ("email", "grace@example.com"),
-                ("password", MALLORYS_PASSWORD),
-            ],
-            None,
-        )
-        .await;
-    assert_eq!(
-        login.status,
-        StatusCode::TOO_MANY_REQUESTS,
-        "{}",
-        login.body
-    );
-    // The right password waits too, as at login.
-    let right = press_verify(&app, &link, MALLORYS_PASSWORD, None).await;
-    assert_eq!(
-        right.status,
-        StatusCode::TOO_MANY_REQUESTS,
-        "{}",
-        right.body
-    );
-}
-
-/// A session needs no password, so the limit on failed logins doesn't stop it.
-#[tokio::test]
-async fn a_session_verifies_while_the_address_is_locked_out() {
-    let app = test_app().await;
-    let mallory = mallory_signs_up_with(&app, "grace@example.com").await;
-    let link = app.link_in_last_email_to("grace@example.com").await;
-    for _ in 0..50 {
-        let wrong = press_verify(&app, &link, "not the passphrase", None).await;
-        if wrong.status == StatusCode::TOO_MANY_REQUESTS {
-            break;
-        }
-    }
-    let pressed = press_verify(&app, &link, "", Some(&mallory)).await;
-    assert_eq!(pressed.status, StatusCode::OK, "{}", pressed.body);
-}
-
-/// A password no account can have, such as an empty field from a mail scanner's
-/// press, can't be a guess, so it counts nothing against the address.
-#[tokio::test]
-async fn a_missing_or_impossible_password_counts_no_failed_login() {
-    let app = test_app().await;
-    mallory_signs_up_with(&app, "grace@example.com").await;
-    let link = app.link_in_last_email_to("grace@example.com").await;
-    let before = counted(&app).await;
-    for password in ["", "short"] {
-        let pressed = press_verify(&app, &link, password, None).await;
-        assert_eq!(pressed.status, StatusCode::BAD_REQUEST, "{}", pressed.body);
-    }
-    assert_eq!(counted(&app).await, before);
-}
-
-#[tokio::test]
-async fn a_session_of_the_account_verifies_without_its_password() {
-    let app = test_app().await;
-    let mallory = mallory_signs_up_with(&app, "grace@example.com").await;
-    let link = app.link_in_last_email_to("grace@example.com").await;
-    let page = app.page(&link, Some(&mallory)).await;
-    assert_eq!(page.status, StatusCode::OK);
-    assert!(!page.body.contains(r#"type="password""#), "{}", page.body);
-    let pressed = press_verify(&app, &link, "", Some(&mallory)).await;
-    assert_eq!(pressed.status, StatusCode::OK, "{}", pressed.body);
-    // Verifying ends no session: only the password's holder could do it.
-    assert!(can_make_a_token(&app, &mallory).await);
-}
-
-#[tokio::test]
-async fn a_session_of_another_account_is_asked_for_the_password() {
-    let app = test_app().await;
-    signed_up_and_verified(&app, "other@example.com").await;
-    let other = logged_in(&app, "other@example.com", PASSWORD).await;
-    let mallory = mallory_signs_up_with(&app, "grace@example.com").await;
-    let link = app.link_in_last_email_to("grace@example.com").await;
-    let page = app.page(&link, Some(&other)).await;
-    assert!(page.body.contains(r#"type="password""#), "{}", page.body);
-    let pressed = press_verify(&app, &link, "", Some(&other)).await;
-    assert_eq!(pressed.status, StatusCode::BAD_REQUEST, "{}", pressed.body);
-    assert!(!can_make_a_token(&app, &mallory).await);
-}
-
-#[tokio::test]
-async fn the_verify_page_and_its_email_send_whoever_didnt_sign_up_to_a_reset() {
-    let app = test_app().await;
-    mallory_signs_up_with(&app, "grace@example.com").await;
-    let email = app.sent().await.pop().unwrap().body;
-    assert!(email.contains(&format!("{PUBLIC_URL}/reset")), "{email}");
-    assert!(email.contains("unless you're logged in"), "{email}");
-    let link = app.link_in_last_email_to("grace@example.com").await;
-    let page = app.page(&link, None).await;
-    assert!(page.body.contains(r#"href="/reset""#), "{}", page.body);
 }
 
 #[tokio::test]
@@ -870,13 +719,14 @@ async fn a_reset_revokes_every_token_the_account_has() {
 
 #[tokio::test]
 async fn nothing_made_before_an_address_was_proved_outlives_its_owners_reset() {
-    // Mallory signs up with Grace's address and logs in. Suppose she verifies too, as
-    // she could if she read the link, and makes a token. Grace resets the password
-    // through her inbox, and nothing Mallory made with the account still works.
+    // Mallory signs up with Grace's address and logs in. Grace presses the button in
+    // the verification email, which leaves Mallory's session, and later resets the
+    // password through her inbox. As when she never verified, nothing Mallory made
+    // with the account still works.
     let app = test_app().await;
     let mallory = mallory_signs_up_with(&app, "grace@example.com").await;
     let link = app.link_in_last_email_to("grace@example.com").await;
-    press_verify(&app, &link, MALLORYS_PASSWORD, None).await;
+    press_verify(&app, &link).await;
     let mallorys_token = new_token(&app, &mallory).await;
     let done = reset_password(&app, "grace@example.com").await;
     assert_eq!(done.status, StatusCode::OK, "{}", done.body);

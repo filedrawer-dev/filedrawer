@@ -374,24 +374,6 @@ The owner set 10 an hour and 50 a day per account (#60); an agent chose the rest
 - Against: someone who only forgot a password, or who resets to get past a stranger's hour-long login lockout (design.md, Limits and abuse: "its API tokens keep working"), now has to give every agent a new token.
   The email says so only before the fact; one sent afterwards would be a new kind of queued mail.
 
-#### Sessions made before an address was verified
-
-- Options: leave them; end them when the address is verified; give no session until then.
-- Chosen: leave them, now that verifying takes the account's password or a session of it (design.md, Accounts; the owner's decision, 2026-11-21): whoever verifies is whoever made the account, so ending its sessions would only log them out.
-  Before then, when anyone holding the inbox could verify, verifying ended every session the account had.
-- Against: no session before verification would take away "log in to send it again".
-
-#### What verifying asks of a browser without a session
-
-- Options: a password field only when the browser holds no session of the link's account; or always.
-- Chosen: the page asks for the password only without a session of that account; a session of another account counts as none.
-  A missing password, or one signup would refuse (under 12 characters), shows the form again and counts nothing, so an empty press by a mail scanner, or a session that ended since the page opened, costs the address no failed login.
-  A wrong one counts as a failed login to the account's address, under login's limit, and leaves the link working.
-  The page shows no email address, so the password field has no username beside it for a password manager.
-- Against: most people open the link in a mail app's browser, which has no session, so most signups still type the password.
-  A locked-out address can verify only by session or once the hour frees; a reset still works and verifies too.
-  A session cookie planted by a page on a filedrawer.dev subdomain would pass as a session of the account; `.dev` is HSTS-preloaded, so plain http can't plant one, and a `__Host-` cookie name would close the subdomain case at the cost of logging everyone out once.
-
 #### Which addresses signup takes
 
 - Options: anything with an `@` and a dotted domain, as before; whatever the mail library parses as a single address; or a narrow rule of the server's own.
@@ -1039,7 +1021,7 @@ The owner settled the email's sections and the rules in design.md's Admin sectio
 - Chosen: a hash for every core the process may use but one, at least 1 and at most 4, so 1 on the 2-core VPS, where staging and production share the cores with Caddy.
   Each argon2id hash fills 19 MiB and takes a core for tens of milliseconds, so one at a time is about 20 logins a second, and 4 at once is 76 MiB.
   A request waits up to 5 s for its place, then gets a 429 with `Retry-After: 5`, the shape every limit answers with.
-  Login, signup, email verification by password, password reset and account deletion share the places, and a login for an address with no account takes one like any other.
+  Login, signup, password reset and account deletion share the places, and a login for an address with no account takes one like any other.
   A request takes its place before it counts against any hourly or daily limit, so a refusal for want of a place costs it nothing.
 - Against: 20 logins a second is far more than people need, but the queue is shared and first come, first served, so a busy period refuses honest logins too.
   A place per client in the queue would stop that, at the cost of more state.

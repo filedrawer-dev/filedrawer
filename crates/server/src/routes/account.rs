@@ -52,8 +52,8 @@ fn session_secret(headers: &HeaderMap) -> Option<String> {
 }
 
 /// The account of the request's session, if it carries a live one; unlike
-/// `SessionAccount`, no session is no error. The read counter uses it to know who
-/// read, and verification to let a session stand in for the account's password.
+/// `SessionAccount`, no session is no error. Only the read counter uses it, to know
+/// who read: a session reveals nothing a page wouldn't show anyone.
 pub async fn optional_session_account(
     headers: &HeaderMap,
     state: &AppState,
@@ -225,80 +225,25 @@ fn link_used_or_expired() -> Response {
     )
 }
 
-/// Whether the request carries a live session of `account_id`.
-async fn session_of(
-    headers: &HeaderMap,
-    state: &AppState,
-    account_id: &str,
-) -> Result<bool, sqlx::Error> {
-    let session = optional_session_account(headers, state).await?;
-    Ok(session.as_deref() == Some(account_id))
-}
-
-/// The verify form again, with `error`.
-fn verify_again(status: StatusCode, token: &str, error: &str) -> Response {
-    page(
-        status,
-        &VerifyPage {
-            token,
-            ask_password: true,
-            error: Some(error),
-        },
-    )
-}
-
 pub async fn verify_page(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Query(query): Query<TokenQuery>,
 ) -> Result<Response, AppError> {
-    let Some(link) = accounts::link_account(&state.pool, &query.token, Purpose::Verify).await?
-    else {
+    if !accounts::email_link_works(&state.pool, &query.token, Purpose::Verify).await? {
         return Ok(link_used_or_expired());
-    };
-    let logged_in = session_of(&headers, &state, &link.account_id).await?;
+    }
     Ok(page(
         StatusCode::OK,
         &VerifyPage {
             token: &query.token,
-            ask_password: !logged_in,
-            error: None,
         },
     ))
 }
 
-#[derive(Deserialize)]
-pub struct VerifyForm {
-    token: String,
-    #[serde(default)]
-    password: String,
-}
-
-/// Verifies the address of the link's account for whoever proves they made it: with
-/// a session of the account or its password. The link alone would let the inbox's
-/// owner verify an account someone else made with the address, who would then hold
-/// it (AUTHZ-1); that owner resets the password instead.
 pub async fn verify(
     State(state): State<AppState>,
-    headers: HeaderMap,
-    Form(form): Form<VerifyForm>,
+    Form(form): Form<TokenQuery>,
 ) -> Result<Response, AppError> {
-    let Some(link) = accounts::link_account(&state.pool, &form.token, Purpose::Verify).await?
-    else {
-        return Ok(link_used_or_expired());
-    };
-    if !session_of(&headers, &state, &link.account_id).await? {
-        // A password signup would refuse can't match, so it counts nothing: an empty
-        // field, or a session that ended since the page opened.
-        if passwords::problem(&form.password).is_some() {
-            let error = "Type the password you chose at signup.";
-            return Ok(verify_again(StatusCode::BAD_REQUEST, &form.token, error));
-        }
-        if !password_matches(&state, &link.email, form.password, link.password_hash).await? {
-            let error = "That isn't this account's password.";
-            return Ok(verify_again(StatusCode::UNAUTHORIZED, &form.token, error));
-        }
-    }
     if !accounts::verify_with_link(&state.pool, &form.token).await? {
         return Ok(link_used_or_expired());
     }
@@ -340,12 +285,19 @@ pub async fn login(
 ) -> Result<Response, AppError> {
     let next = page_on_this_site(&form.next);
     let email = accounts::normalize_email(&form.email);
+    // Before the attempt is counted, so a refusal for want of a place costs none.
+    let place = state.passwords.place().await?;
+    // Failed logins count per address, known or not; once full, even the right
+    // password waits (design.md, Limits and abuse). Each attempt takes its place
+    // before the password is checked, and a right one gives it back.
+    let failures = [Counted::failed_logins_to(&state.rate_limits.limits, &email)];
+    let slot = limits::take_slot(&state.pool, &failures, now_utc()).await?;
     let (account_id, stored) = match accounts::login_for_email(&state.pool, &email).await? {
         Some(login) => (Some(login.account_id), login.password_hash),
         None => (None, None),
     };
     // An unknown email still checks a decoy hash, so the answer takes as long.
-    let matched = password_matches(&state, &email, form.password, stored).await?;
+    let matched = place.matches(form.password, stored).await;
     let Some(account_id) = account_id.filter(|_| matched) else {
         let template = LoginPage {
             error: Some("The email or the password is wrong."),
@@ -354,32 +306,11 @@ pub async fn login(
         };
         return Ok(page(StatusCode::UNAUTHORIZED, &template));
     };
+    limits::give_back(&state.pool, slot).await?;
     let secret = accounts::new_session(&state.pool, &account_id).await?;
     let cookie = session_cookie(&secret, SESSION_DAYS * 24 * 60 * 60);
     let landing = Redirect::to(next.unwrap_or("/account"));
     Ok(([(header::SET_COOKIE, cookie)], landing).into_response())
-}
-
-/// Whether `password` matches `stored`, checked as one attempt on `email`'s
-/// password, at login or verification. Failed attempts count per address, known or
-/// not; once full, even the right password waits (design.md, Limits and abuse). The
-/// attempt takes a hashing place first, so a refusal for want of one costs no failed
-/// attempt, then its place among the failed ones, which a match gives back. With no
-/// `stored`, it checks a decoy hash.
-async fn password_matches(
-    state: &AppState,
-    email: &str,
-    password: String,
-    stored: Option<String>,
-) -> Result<bool, AppError> {
-    let place = state.passwords.place().await?;
-    let failures = [Counted::failed_logins_to(&state.rate_limits.limits, email)];
-    let slot = limits::take_slot(&state.pool, &failures, now_utc()).await?;
-    let matched = place.matches(password, stored).await;
-    if matched {
-        limits::give_back(&state.pool, slot).await?;
-    }
-    Ok(matched)
 }
 
 pub async fn logout(
@@ -430,10 +361,7 @@ pub async fn reset_confirm_page(
     State(state): State<AppState>,
     Query(query): Query<TokenQuery>,
 ) -> Result<Response, AppError> {
-    if accounts::link_account(&state.pool, &query.token, Purpose::Reset)
-        .await?
-        .is_none()
-    {
+    if !accounts::email_link_works(&state.pool, &query.token, Purpose::Reset).await? {
         return Ok(link_used_or_expired());
     }
     let template = ResetConfirmPage {
@@ -462,10 +390,7 @@ pub async fn reset_confirm(
     }
     // A dead link costs no hash. Answering it sooner tells nothing the form's page,
     // which says at once whether a link works, doesn't already.
-    if accounts::link_account(&state.pool, &form.token, Purpose::Reset)
-        .await?
-        .is_none()
-    {
+    if !accounts::email_link_works(&state.pool, &form.token, Purpose::Reset).await? {
         return Ok(link_used_or_expired());
     }
     let place = state.passwords.place().await?;

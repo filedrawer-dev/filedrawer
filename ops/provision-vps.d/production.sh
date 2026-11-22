@@ -374,8 +374,7 @@ production_account_stage() {
   say "Sign up on production with a Gmail address, so you see where a stranger's"
   say "verification mail lands."
   open_url "https://filedrawer.dev/signup"
-  step "Find the verification email, click its verification link, and verify"
-  step "with the password you just chose."
+  step "Find the verification email, and click its verification link."
   if ! confirm "Did the verification email reach Gmail's inbox, not spam?"; then
     say "Mail that lands in spam needs filedrawer.dev's records in order:"
     open_url "https://purelymail.com/manage/domains"

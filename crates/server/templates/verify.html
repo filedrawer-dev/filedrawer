@@ -2,12 +2,8 @@
 {% block title %}Verify your email{% endblock %}
 {% block content %}
 <h1>Verify your email</h1>
-{% if let Some(error) = error %}<p class="error">{{ error }}</p>{% endif %}
 <form method="post" action="/verify">
 <input type="hidden" name="token" value="{{ token }}">
-{% if ask_password %}<label>The password you chose at signup <input type="password" name="password" autocomplete="current-password" required></label>
-{% else %}<p>You're logged in as this account.</p>
-{% endif %}<button type="submit">Verify my email</button>
+<button type="submit">Verify my email</button>
 </form>
-<p>Didn't sign up, or forgot the password? <a href="/reset">Choose a new password</a>, which verifies the address too and ends any other way into the account.</p>
 {% endblock %}
