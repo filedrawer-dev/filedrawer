@@ -5,7 +5,7 @@
 use crate::common;
 use crate::common::scratch::Scratch;
 
-use std::net::TcpListener;
+use crate::common::listening::free_port;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output};
 
@@ -82,15 +82,6 @@ fn scratch_dir(name: &str) -> tempfile::TempDir {
         .unwrap()
 }
 
-/// A free loopback port: one the system just handed out and nobody holds.
-fn free_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
-}
-
 fn serve(database: Scratch) -> Server {
     serve_with(database, &[("FILEDRAWER_SCREENER", "pass-all")])
 }
@@ -112,11 +103,18 @@ fn serve_with(database: Scratch, settings: &[(&str, &str)]) -> Server {
         .envs(settings.iter().copied())
         .spawn()
         .unwrap();
-    Server {
+    // Made first, so a panic below stops the server as it drops.
+    let mut server = Server {
         child,
         url,
         database: Some(database),
-    }
+    };
+    common::listening::wait_until_listening(
+        &mut server.child,
+        port,
+        common::listening::START_DEADLINE,
+    );
+    server
 }
 
 /// Runs a `filedrawer-server admin` command on `database` and returns what it printed.
@@ -206,6 +204,7 @@ fn text(output: &Output) -> String {
 #[test]
 fn every_check_passes_against_this_server() {
     let (server, token) = server_and_token("pass");
+    // With --wait, as CI runs it after each deploy.
     let output = smoke(&["--wait", "30", &server.url], Some("unused"), Some(&token));
     let printed = text(&output);
     assert!(output.status.success(), "{printed}");
@@ -239,7 +238,7 @@ fn a_skill_tag_that_differs_from_the_site_fails() {
     common::skills::tags_mirror(tags.path(), |_, _, text| {
         text.replace("# File Drawer: submit", "# Planted")
     });
-    let output = script(&["--wait", "30", &server.url], Some("unused"))
+    let output = script(&[&server.url], Some("unused"))
         .env("FILEDRAWER_STAGING_API_KEY", &token)
         .env(
             "FILEDRAWER_SKILL_TAGS_URL",
@@ -268,11 +267,7 @@ fn a_skill_tag_that_differs_from_the_site_fails() {
 #[test]
 fn a_failed_check_fails_the_run() {
     let (server, _) = server_and_token("fail");
-    let output = smoke(
-        &["--wait", "30", &server.url],
-        Some("unused"),
-        Some("fdt_not-a-token"),
-    );
+    let output = smoke(&[&server.url], Some("unused"), Some("fdt_not-a-token"));
     let printed = text(&output);
     assert!(!output.status.success(), "{printed}");
     assert!(printed.contains("FAIL submit"), "{printed}");
@@ -327,7 +322,7 @@ fn screen_mode(mode: &str, args: &[&str], key: Option<&str>, token: Option<&str>
 #[test]
 fn screen_against_a_server_that_doesnt_screen_fails_on_the_off_topic_entry() {
     let (server, token) = server_and_token("screen");
-    let output = screen(&["--wait", "30", &server.url], Some("unused"), Some(&token));
+    let output = screen(&[&server.url], Some("unused"), Some(&token));
     let printed = text(&output);
     assert_eq!(output.status.code(), Some(1), "{printed}");
     assert!(printed.contains("PASS on-topic entry: public"), "{printed}");
@@ -359,7 +354,7 @@ fn eval_against_a_server_that_doesnt_screen_passes_only_the_public_cases() {
     let (server, token) = serve_attachments("eval");
     let output = screen_mode(
         "eval",
-        &["--field-test", "0", "--wait", "30", &server.url],
+        &["--field-test", "0", &server.url],
         Some("unused"),
         Some(&token),
     );
@@ -430,10 +425,7 @@ fn eval_samples_field_test_entries_without_printing_them() {
     let ops = scratch_dir("eval-field-settings");
     let ops = ops.path();
     let run = |args: &[&str]| {
-        let mut command = script(
-            &[&["eval"], args, &["--wait", "30", &server.url]].concat(),
-            Some("unused"),
-        );
+        let mut command = script(&[&["eval"], args, &[&server.url]].concat(), Some("unused"));
         command
             .env("FILEDRAWER_OPS_DIR", ops)
             .env("FILEDRAWER_FIELD_TEST_DIR", fake)
@@ -513,13 +505,9 @@ const FAILING: &[(&str, &str)] = &[
 ];
 
 /// Runs a screen-test mode of the script against `server` without waiting for a
-/// verdict, so a case not decided at once is left undecided. It waits for the server
-/// to answer, as every run here does, since `serve_with` doesn't.
+/// verdict, so a case not decided at once is left undecided.
 fn without_verdict_wait(mode_and_args: &[&str], server: &Server, token: &str) -> Output {
-    let mut command = script(
-        &[mode_and_args, &["--wait", "30", &server.url]].concat(),
-        Some("unused"),
-    );
+    let mut command = script(&[mode_and_args, &[&server.url]].concat(), Some("unused"));
     let empty = scratch_dir(&format!("{}-nowait-settings", mode_and_args[0]));
     command
         .env("FILEDRAWER_OPS_DIR", empty.path())
@@ -717,7 +705,7 @@ fn eval_sends_field_test_entries_citing_their_attachment_sets() {
     let ops = scratch_dir("eval-sets-ops");
     let ops = ops.path();
     let output = eval(
-        &["--field-test", "3", "--wait", "30", &server.url],
+        &["--field-test", "3", &server.url],
         &token,
         ops,
         &field_test,
@@ -784,7 +772,7 @@ fn eval_counts_what_decoding_finds_in_the_sets_it_sent() {
     .unwrap();
     let ops = scratch_dir("eval-decode-ops");
     let output = eval(
-        &["--field-test", "3", "--wait", "30", &server.url],
+        &["--field-test", "3", &server.url],
         &token,
         ops.path(),
         &field_test,
@@ -818,7 +806,7 @@ fn eval_resumes_a_stopped_run_without_sending_anything_twice() {
     let ops = ops.path();
     let field_test = field_test_box("eval-resume-entries");
     let first = eval(
-        &["--field-test", "0", "--wait", "30", &server.url],
+        &["--field-test", "0", &server.url],
         &token,
         ops,
         &field_test,
@@ -844,13 +832,7 @@ fn eval_resumes_a_stopped_run_without_sending_anything_twice() {
     let passing = [("FILEDRAWER_SCREENER", "pass-all")];
     let server = server.restart_with(&[&passing[..], ATTACHMENTS].concat());
     let output = eval(
-        &[
-            "--resume",
-            path.to_str().unwrap(),
-            "--wait",
-            "30",
-            &server.url,
-        ],
+        &["--resume", path.to_str().unwrap(), &server.url],
         &token,
         ops,
         &field_test,
@@ -883,9 +865,8 @@ fn a_resumed_run_cites_the_sets_it_already_uploaded() {
     let field_test = field_test_box("eval-resume-sets-entries");
     let ops = scratch_dir("eval-resume-sets-ops");
     let ops = ops.path();
-    let args = ["--wait", "30", &server.url];
     let first = eval(
-        &[&["--field-test", "1"], &args[..]].concat(),
+        &["--field-test", "1", &server.url],
         &token,
         ops,
         &field_test,
@@ -897,7 +878,7 @@ fn a_resumed_run_cites_the_sets_it_already_uploaded() {
     // Stands for a run that stopped after its first field-test entry: it wanted two.
     std::fs::write(&path, run.replace("field-tests\t1\n", "field-tests\t2\n")).unwrap();
     let second = eval(
-        &[&["--resume", path.to_str().unwrap()], &args[..]].concat(),
+        &["--resume", path.to_str().unwrap(), &server.url],
         &token,
         ops,
         &field_test,
@@ -1074,7 +1055,7 @@ fn eval_sends_each_field_test_family_as_batches_and_resumes_without_resending() 
     // Small enough that a and b go in batches of their own.
     let split = [("FILEDRAWER_BATCH_MAX_BYTES", "2500")];
     let output = eval(
-        &["--families", "--wait", "30", &server.url],
+        &["--families", &server.url],
         &token,
         ops,
         &field_test,
@@ -1123,13 +1104,7 @@ fn eval_sends_each_field_test_family_as_batches_and_resumes_without_resending() 
     assert!(shown.contains("analysis/plain.py"), "{shown}");
 
     let again = eval(
-        &[
-            "--resume",
-            path.to_str().unwrap(),
-            "--wait",
-            "30",
-            &server.url,
-        ],
+        &["--resume", path.to_str().unwrap(), &server.url],
         &token,
         ops,
         &field_test,

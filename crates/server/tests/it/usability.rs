@@ -3,7 +3,7 @@
 //! staging. The server logs the mail it can't send, so the scripts read the
 //! verification link from its log (FILEDRAWER_USABILITY_MAIL_LOG) instead of IMAP.
 
-use std::net::TcpListener;
+use crate::common;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output};
 
@@ -36,11 +36,7 @@ impl Server {
 
 fn serve() -> Server {
     let dir = tempfile::tempdir().unwrap();
-    let port = TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
+    let port = common::listening::free_port();
     let url = format!("http://127.0.0.1:{port}");
     let log = std::fs::File::create(dir.path().join("server.log")).unwrap();
     let child = Command::new(env!("CARGO_BIN_EXE_filedrawer-server"))
@@ -60,14 +56,13 @@ fn serve() -> Server {
         .spawn()
         .unwrap();
     // Dropped, it stops the server, so a panic below leaves none running.
-    let server = Server { child, url, dir };
-    for _ in 0..200 {
-        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
-            return server;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(50));
-    }
-    panic!("the server never listened on {}", server.url);
+    let mut server = Server { child, url, dir };
+    common::listening::wait_until_listening(
+        &mut server.child,
+        port,
+        common::listening::START_DEADLINE,
+    );
+    server
 }
 
 fn script(path: &str, server: &Server, args: &[&str]) -> Output {

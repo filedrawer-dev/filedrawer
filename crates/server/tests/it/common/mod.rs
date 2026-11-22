@@ -5,6 +5,7 @@ pub mod deletion;
 pub mod fake_github;
 pub mod fake_models;
 pub mod fake_web;
+pub mod listening;
 pub mod scratch;
 pub mod series;
 pub mod skills;
