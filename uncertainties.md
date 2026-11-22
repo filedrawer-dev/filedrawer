@@ -1255,13 +1255,13 @@ An agent chose these with #87's fix, after its brief review.
 
 - Options: when PyPI has some of a version's files, upload the rest from whichever commit the rerun builds; or first compare PyPI's sdist with the rerun's and refuse a difference.
 - Chosen: upload the rest.
-  A release already fills in a registry that lacks the version from main's tip, so a later push with no version bump can finish what an earlier commit's run began; the sdist goes first, in an upload of its own, so it is the file least likely to be the one missing.
+  A release already fills in a registry that lacks the version from main's tip, so a later run at a commit with no version bump can finish what an earlier commit's run began; the sdist goes first, in an upload of its own, so it is the file least likely to be the one missing.
 - Against: one version's wheels can then come from two commits, and nothing says so.
-- A version PyPI can never complete, such as one with a file deleted there, fails in the publish job on every push until the version is bumped; before, it passed with the files missing.
+- A version PyPI can never complete, such as one with a file deleted there, fails in the publish job on every run until the version is bumped; before, it passed with the files missing.
 - A file PyPI has that the run didn't build is a warning, since no run can remove it.
   The plan counts it among the version's files, so with one such file and one missing, the plan calls the version whole and nothing uploads the missing one.
 
-#### What a release on push checks
+#### What a release checks
 
 - Options: release once CI's `check` job passes, or once the whole CI run does; compare the analyzer with crates.io's crate file by file, or by git tags of each release; pin the CLI's requirement on the analyzer with `=`, or with a caret.
 - Chosen: once `check` passes and the commit is still main's tip, so staging's deploy and smoke runs, which can fail for reasons of their own, don't hold a release back; file by file against crates.io (`Cargo.toml.orig` in, the Cargo.toml cargo writes out), since CI can't push tags without a deploy key; `=`, so `cargo install filedrawer` builds with the analyzer the binaries hold, `--locked` or not (`bin/release-plan`; #84).

@@ -5,21 +5,16 @@
 # @filedrawer/cli-<os>-<cpu> around the same filedrawer binaries, from
 # crates/cli/npm/pack.mjs.
 #
-# A push to main that bumps crates/cli/Cargo.toml's version is the release: once
-# CI's check job passes on it, this runs (workflow_run, so the registries' trusted
-# publishers see this file), and bin/release-plan says what each registry lacks,
-# after the analyzer rule. Every publish goes through trusted publishing, so no token
-# is stored, from the commit CI checked. Starting it by hand releases main's tip, as
-# a rerun. A pull request that touches the packages builds and tests them only.
+# A release is started by hand, with ops/release-cli, once a version bump of
+# crates/cli/Cargo.toml is on main and CI's check job has passed on it; crates.io's
+# trusted publishing refuses a workflow_run, so CI's completion can't start it
+# (design.md, Distribution). bin/release-plan says what each registry lacks, after
+# the analyzer rule. Every publish goes through trusted publishing, so no token is
+# stored, from main's tip. A rerun finishes a release that stopped partway. A pull
+# request that touches the packages builds and tests them only.
 name: Release CLI
 
 on:
-  # The gate job takes only a push's CI run on this repo, and every job after it
-  # checks out the commit that run checked, never the ref that started this one.
-  workflow_run: # zizmor: ignore[dangerous-triggers]
-    workflows: [CI]
-    types: [completed]
-    branches: [main]
   pull_request:
     paths:
       - crates/cli/**
@@ -37,29 +32,24 @@ permissions:
 
 # One release at a time, held by the jobs only a release reaches (plan and the
 # publishing jobs, a group each), not the workflow: GitHub keeps one pending run a
-# group, so every CI run's gate, most of which release nothing, would cancel a
-# pending release.
+# group, so a pull request's run, which releases nothing, would cancel a pending
+# release.
 
 env:
   MATURIN: maturin@1.16.0
 
 jobs:
-  # Whether this may release, and from which commit: a push's CI run on this repo
-  # whose check job passed while its commit is still main's tip. A fork's pull
-  # request from a branch named main runs CI with event pull_request, so stops here.
+  # Whether this may release: a run started from main, whose commit is still main's
+  # tip, with a CI push run's check job passed on it. It fails otherwise, saying why.
+  # The publishing jobs' environments are open to main only besides.
   gate:
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.event == 'push' &&
-       github.event.workflow_run.head_repository.full_name == github.repository)
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       actions: read
       contents: read
     outputs:
-      go: ${{ steps.gate.outputs.go }}
       sha: ${{ steps.gate.outputs.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -70,20 +60,13 @@ jobs:
       - id: gate
         env:
           GH_TOKEN: ${{ github.token }}
-          RUN: ${{ github.event.workflow_run.id }}
-          SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
-          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
-            bin/release-plan gate --repo "$GITHUB_REPOSITORY" --dispatch >> "$GITHUB_OUTPUT"
-          else
-            bin/release-plan gate --repo "$GITHUB_REPOSITORY" --run "$RUN" --sha "$SHA" >> "$GITHUB_OUTPUT"
-          fi
+          bin/release-plan gate --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF" --sha "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
           cat "$GITHUB_OUTPUT"
 
   # What each registry lacks at that commit's versions, after the analyzer rule.
   plan:
     needs: gate
-    if: needs.gate.outputs.go == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     concurrency:

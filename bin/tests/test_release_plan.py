@@ -1,5 +1,5 @@
 """Tests for bin/release-plan, which release-cli.yml runs before it publishes (#84):
-`gate` says whether a CI run may release and from which commit, and `plan` says
+`gate` says whether a run started by hand may release, and `plan` says
 what each registry lacks, after the analyzer rule (design.md, Distribution).
 
 They run it in a made-up repo with the two crates' Cargo.tomls, against fakes of
@@ -102,6 +102,9 @@ if tool == "cargo":
 
 if tool == "gh":
     path = args[1]
+    if "FAKE_GH_BODY" in os.environ and os.environ.get("FAKE_GH_PATH", "") in path:
+        print(os.environ["FAKE_GH_BODY"])
+        sys.exit(0)
     github = json.loads((state / "github.json").read_text())
     if path.endswith("/git/ref/heads/main"):
         print(json.dumps({"ref": "refs/heads/main", "object": {"sha": github["tip"]}}))
@@ -217,11 +220,11 @@ class Box:
             check=False,
         )
 
-    def gate(self, *args: str):
+    def gate(self, *args: str, **env: str):
         return subprocess.run(
             [str(SCRIPT), "gate", "--repo", SLUG, *args],
             cwd=self.repo,
-            env=self.env,
+            env={**self.env, **env},
             capture_output=True,
             text=True,
             check=False,
@@ -489,50 +492,68 @@ def ci_run(box: Box, run: int, sha: str, check: str = "success") -> None:
     box.save_github()
 
 
-def test_a_ci_run_of_mains_tip_whose_check_passed_may_release(tmp_path):
+MAIN = ["--ref", "refs/heads/main", "--sha", TIP]
+
+
+def test_a_run_from_mains_tip_releases_it_once_its_check_passed(tmp_path):
     """The rest of CI, such as a flaky smoke run, doesn't hold a release back."""
     box = Box(tmp_path)
     ci_run(box, 7, TIP)
-    assert outputs(box.gate("--run", "7", "--sha", TIP)) == {"go": "true", "sha": TIP}
+    assert outputs(box.gate(*MAIN)) == {"sha": TIP}
 
 
-def test_a_ci_run_whose_check_failed_releases_nothing(tmp_path):
+def test_a_run_before_mains_check_passed_fails(tmp_path):
     box = Box(tmp_path)
     ci_run(box, 7, TIP, check="failure")
-    gate = outputs(box.gate("--run", "7", "--sha", TIP))
-    assert gate["go"] == "false"
+    done = box.gate(*MAIN)
+    assert done.returncode == 1
+    assert "::error::" in done.stdout and "wait for it" in done.stdout
 
 
-def test_a_ci_run_of_a_commit_main_has_moved_past_releases_nothing(tmp_path):
-    """The later commit's run releases instead; an old run re-run can't."""
-    box = Box(tmp_path)
-    ci_run(box, 7, "b" * 40)
-    gate = outputs(box.gate("--run", "7", "--sha", "b" * 40))
-    assert gate["go"] == "false"
-
-
-def test_a_dispatch_releases_mains_tip_once_its_check_passed(tmp_path):
+@pytest.mark.parametrize("ref", ["refs/heads/fix", "refs/tags/main", "main"])
+def test_a_run_started_from_another_ref_fails(tmp_path, ref):
+    """The environments refuse it later anyway; this says why in seconds."""
     box = Box(tmp_path)
     ci_run(box, 7, TIP)
-    assert outputs(box.gate("--dispatch")) == {"go": "true", "sha": TIP}
-
-
-def test_a_dispatch_before_mains_check_passed_fails(tmp_path):
-    box = Box(tmp_path)
-    ci_run(box, 7, TIP, check="failure")
-    done = box.gate("--dispatch")
+    done = box.gate("--ref", ref, "--sha", TIP)
     assert done.returncode == 1
-    assert "::error::" in done.stdout
+    assert "::error::" in done.stdout and "ops/release-cli" in done.stdout
+
+
+def test_a_run_of_a_commit_main_has_moved_past_fails(tmp_path):
+    """Main moved between the dispatch and the gate: the registries' provenance
+    would name the commit dispatched, not the one published."""
+    box = Box(tmp_path)
+    ci_run(box, 7, TIP)
+    done = box.gate("--ref", "refs/heads/main", "--sha", "b" * 40)
+    assert done.returncode == 1
+    assert "::error::" in done.stdout and TIP in done.stdout
 
 
 @pytest.mark.parametrize(
-    "args",
-    [["--run", "7"], ["--sha", TIP], [], ["--dispatch", "--run", "7", "--sha", TIP]],
+    ("path", "body"),
+    [
+        ("/git/ref/heads/main", "<html>"),
+        ("/git/ref/heads/main", "{}"),
+        ("/git/ref/heads/main", '{"object": 1}'),
+        ("/actions/runs?", '{"runs": []}'),
+        ("/actions/runs?", '{"workflow_runs": [{"id": 7}]}'),
+        ("/jobs", '{"jobs": [{"name": "check"}]}'),
+    ],
 )
-def test_the_gate_takes_a_run_and_its_sha_or_a_dispatch(tmp_path, args):
+def test_a_github_answer_in_another_shape_fails_in_a_line(tmp_path, path, body):
+    box = Box(tmp_path)
+    ci_run(box, 7, TIP)
+    done = box.gate(*MAIN, FAKE_GH_PATH=path, FAKE_GH_BODY=body)
+    assert done.returncode == 1, done.stdout + done.stderr
+    assert "::error::" in done.stdout and "Traceback" not in done.stderr
+
+
+@pytest.mark.parametrize("args", [["--ref", "refs/heads/main"], ["--sha", TIP], []])
+def test_the_gate_takes_a_ref_and_a_sha(tmp_path, args):
     done = Box(tmp_path).gate(*args)
     assert done.returncode == 2
-    assert "--dispatch" in done.stderr
+    assert "required" in done.stderr
 
 
 def test_help_says_what_it_does():

@@ -58,8 +58,12 @@ The field test's entries and logs are in `field-test/`, git-excluded and local o
   Each published crate holds a copy of the repo's `LICENSE`, since cargo and maturin package only files inside the crate, and `bin/tests/test_license_copies.py` fails when a copy differs.
   It is a crate of its own so that a later CLI's HTTP dependencies stay out of the analyzer the server builds.
   `crates/cli/pyproject.toml` has maturin wrap both binaries in a wheel, and `crates/cli/npm/pack.mjs` packs the `filedrawer` binary in an npm package per platform beside the launcher `@filedrawer/cli` (`crates/cli/npm/filedrawer.js`); `.github/workflows/release-cli.yml` builds the wheels, the sdist and the npm packages on each pull request that touches them.
-  A push to main that bumps `crates/cli/Cargo.toml`'s version is a release: once CI's `check` job passes on it, `release-cli.yml` publishes that version to crates.io, PyPI and npm, wherever it's missing or, on PyPI and npm, only partly there, through each registry's trusted publishing (`bin/release-plan`, `-h`, says what and when).
-  To release, bump with `cargo set-version --bump patch -p filedrawer` (cargo-edit), or `minor`; when `crates/analyzer` changed since its version on crates.io, README and dev-dependencies included, bump it too (`-p filedrawer-analyzer`) and set the CLI's requirement on it to `=` that version, or the release stops and names the files that differ.
+  The owner starts each release by hand, with `ops/release-cli X.Y.Z` (`-h`), which runs `release-cli.yml` on main; it publishes main's version to crates.io, PyPI and npm, wherever it's missing or, on PyPI and npm, only partly there, through each registry's trusted publishing (`bin/release-plan`, `-h`, says what and when).
+  A push doesn't start it: crates.io's trusted publishing refuses a run that CI's completion started (design.md, Distribution).
+  To release:
+  1. An agent bumps with `cargo set-version --bump patch -p filedrawer` (cargo-edit), or `minor`, and lands the commit; when `crates/analyzer` changed since its version on crates.io, README and dev-dependencies included, it bumps that too (`-p filedrawer-analyzer`) and sets the CLI's requirement on it to `=` that version, or the release stops and names the files that differ.
+  2. The owner pushes main and waits for CI's `check` job to pass on that commit.
+  3. The owner runs `ops/release-cli X.Y.Z` with the new version; the run's gate fails, saying to wait, until `check` has passed, and the run refuses a version that isn't main's.
   Between releases the analyzer changes freely.
   Each crate's crates.io settings name `release-cli.yml` and the environment `crates-io` as its trusted publisher, which the owner sets up by hand once, with that environment open to main only.
   `ops/claim-names` (`-h`) made the first release: the crates.io names, PyPI's pending publisher, and the npm packages as placeholders with a trusted publisher each.

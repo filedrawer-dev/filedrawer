@@ -66,8 +66,8 @@ repos:
       # an action or a cache could do with them: text from an event in a script, a
       # token left in a checkout, wider permissions than a job needs. Offline, so it
       # asks GitHub nothing and takes about a second. A finding that is meant gets
-      # `# zizmor: ignore[audit]` and why on its line, as release-cli.yml's
-      # workflow_run has.
+      # `# zizmor: ignore[audit]` on its line and why beside it, as release-cli.yml's
+      # npm install has.
       - id: zizmor
         name: zizmor (GitHub workflows)
         entry: uvx zizmor==1.32.0 --offline --quiet .github

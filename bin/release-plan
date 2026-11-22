@@ -2,20 +2,19 @@
 """What a release of the `filedrawer` command publishes, for .github/workflows/release-cli.yml
 (design.md, Distribution; #84).
 
-    bin/release-plan gate --repo OWNER/NAME --run ID --sha SHA
-    bin/release-plan gate --repo OWNER/NAME --dispatch
+    bin/release-plan gate --repo OWNER/NAME --ref REF --sha SHA
     bin/release-plan plan [--version X.Y.Z]
 
-A push to main that bumps crates/cli/Cargo.toml's version is a release: once CI's
-`check` job passes on it, the workflow publishes that version to each registry
-that lacks it.
+A release is started by hand, with ops/release-cli X.Y.Z, once a version bump is
+on main and CI's `check` job has passed on it. The workflow then publishes that
+version to each registry that lacks it. (crates.io's trusted publishing refuses a
+run that CI's completion started, so a push can't start it; design.md,
+Distribution.)
 
-`gate` says whether a CI run may release, and from which commit, as `go=` and `sha=`
-lines: a run may when its `check` job passed and its commit is still main's tip
-(a later commit's run releases instead). The rest of CI, such as staging's deploy
-and smoke runs, doesn't hold a release back. With `--dispatch`, for a run started
-by hand, the commit is main's tip, and it fails unless a CI run's `check` passed
-on it. It reads GitHub through gh.
+`gate`, given the run's GITHUB_REF and GITHUB_SHA, prints a `sha=` line when REF
+is refs/heads/main, SHA is still main's tip, and a CI push run's `check` job
+passed on it; otherwise it fails, saying why. The rest of CI, such as staging's
+deploy and smoke runs, doesn't hold a release back. It reads GitHub through gh.
 
 `plan`, run at the repo root of that commit, prints `key=value` lines for
 $GITHUB_OUTPUT: cli_version and analyzer_version; crates_analyzer, crates_cli, pypi
@@ -243,13 +242,18 @@ def plan(dispatched: str | None) -> dict[str, str]:
     } | {k: str(v).lower() for k, v in flags.items()}
 
 
-def gh(path: str) -> dict:
+def gh(path: str) -> object:
     done = subprocess.run(
         ["gh", "api", path], capture_output=True, text=True, check=False
     )
     if done.returncode != 0:
         raise Refused(f"GitHub didn't answer {path}: {done.stderr.strip()}")
-    return json.loads(done.stdout)
+    try:
+        return json.loads(done.stdout)
+    except json.JSONDecodeError:
+        raise Refused(
+            f"GitHub answered {path} with something that isn't JSON"
+        ) from None
 
 
 def check_passed(repo: str, run: int) -> bool:
@@ -258,30 +262,34 @@ def check_passed(repo: str, run: int) -> bool:
     return any(j["name"] == "check" and j["conclusion"] == "success" for j in jobs)
 
 
-def gate(repo: str, run: int | None, sha: str | None) -> dict[str, str]:
-    # The branch's own ref: `commits/main` would leave it to GitHub which ref the
-    # name means, were a tag ever called main too.
-    tip = gh(f"repos/{repo}/git/ref/heads/main")["object"]["sha"]
-    if run is None:
+def gate(repo: str, ref: str, sha: str) -> dict[str, str]:
+    if ref != "refs/heads/main":
+        raise Refused(
+            f"this run started from {ref}; a release runs only from main: start it with ops/release-cli"
+        )
+    try:
+        # The branch's own ref: `commits/main` would leave it to GitHub which ref
+        # the name means, were a tag ever called main too.
+        tip = gh(f"repos/{repo}/git/ref/heads/main")["object"]["sha"]
+        if sha != tip:
+            raise Refused(
+                f"main moved from {sha}, the commit this run started at, to {tip}: start the release again"
+            )
         runs = gh(f"repos/{repo}/actions/runs?head_sha={tip}&event=push")[
             "workflow_runs"
         ]
-        if not any(
+        passed = any(
             r["name"] == CI_WORKFLOW and check_passed(repo, r["id"]) for r in runs
-        ):
-            raise Refused(
-                f"CI's check hasn't passed on main's tip, {tip}: wait for it, then start the release again"
-            )
-        return {"go": "true", "sha": tip}
-    if sha != tip:
-        print(
-            f"::notice::main has moved on from {sha} to {tip}; that commit's CI run releases instead."
         )
-        return {"go": "false", "sha": sha}
-    if not check_passed(repo, run):
-        print(f"::notice::CI's check didn't pass on {sha}, so nothing is released.")
-        return {"go": "false", "sha": sha}
-    return {"go": "true", "sha": sha}
+    except (KeyError, TypeError) as error:
+        raise Refused(
+            f"GitHub answered in a shape this doesn't know ({error!r})"
+        ) from None
+    if not passed:
+        raise Refused(
+            f"CI's check hasn't passed on main's tip, {tip}: wait for it, then start the release again"
+        )
+    return {"sha": tip}
 
 
 def main() -> int:
@@ -292,12 +300,11 @@ def main() -> int:
     )
     commands = parser.add_subparsers(dest="command", required=True)
     g = commands.add_parser(
-        "gate", help="whether a CI run may release, and from which commit"
+        "gate", help="whether a run started by hand may release main's tip"
     )
     g.add_argument("--repo", required=True)
-    g.add_argument("--run", type=int)
-    g.add_argument("--sha")
-    g.add_argument("--dispatch", action="store_true")
+    g.add_argument("--ref", required=True, help="the run's GITHUB_REF")
+    g.add_argument("--sha", required=True, help="the run's GITHUB_SHA")
     p = commands.add_parser(
         "plan", help="what each registry lacks, after the analyzer rule"
     )
@@ -307,10 +314,7 @@ def main() -> int:
     args = parser.parse_args()
     try:
         if args.command == "gate":
-            by_run = args.run is not None and args.sha is not None
-            if args.dispatch == by_run or (not by_run and (args.run or args.sha)):
-                parser.error("gate takes --run and --sha, or --dispatch")
-            found = gate(args.repo, None if args.dispatch else args.run, args.sha)
+            found = gate(args.repo, args.ref, args.sha)
         else:
             found = plan(args.version)
     except Refused as refused:

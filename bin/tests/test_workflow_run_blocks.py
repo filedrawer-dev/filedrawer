@@ -49,10 +49,6 @@ EXEMPT = {
     ): "one cargo mutants call and what its exit status means",
     (
         "release-cli.yml",
-        'if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then',
-    ): "one bin/release-plan call, two ways",
-    (
-        "release-cli.yml",
         "exe=target/${{ matrix.target }}/release/filedrawer",
     ): "the npm packages packed, installed and run once",
 }
