@@ -1,6 +1,6 @@
 [package]
 name = "filedrawer"
-version = "0.1.0"
+version = "0.1.1"
 edition.workspace = true
 license.workspace = true
 description = "Checks File Drawer entries offline, with the analyzer filedrawer.dev runs."
@@ -25,4 +25,4 @@ name = "entry-check"
 path = "src/bin/entry-check.rs"
 
 [dependencies]
-filedrawer-analyzer = { version = "=0.1.0", path = "../analyzer" }
+filedrawer-analyzer = { version = "=0.1.1", path = "../analyzer" }
