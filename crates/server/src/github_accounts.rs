@@ -475,6 +475,112 @@ pub async fn finish_signup(
     Ok(Finished::Created(id))
 }
 
+/// How the hourly refresh went.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Refreshed {
+    pub asked: usize,
+    /// Whether it stopped early, for GitHub's limits or a failure to answer.
+    pub stopped: bool,
+}
+
+/// Asks GitHub about each linked account that has an entry, in any state, longest
+/// unconfirmed first, so cards show its current login (the owner's decisions,
+/// 2026-11-22). A 304 or a 200 confirms the login; a 404 hides the handle until a
+/// later answer; anything else stops the run, and the next hour goes on.
+pub async fn refresh_logins(
+    state: &crate::AppState,
+    at: OffsetDateTime,
+) -> Result<Refreshed, sqlx::Error> {
+    let mut done = Refreshed::default();
+    let links = sqlx::query!(
+        "SELECT l.github_id, l.etag FROM github_links l
+         WHERE EXISTS (SELECT 1 FROM entries e WHERE e.account_id = l.account_id)
+         ORDER BY l.refreshed_at, l.github_id"
+    )
+    .fetch_all(&state.pool)
+    .await?;
+    for link in links {
+        match refresh_one(state, link.github_id, link.etag.as_deref(), at).await? {
+            Some(()) => done.asked += 1,
+            None => {
+                done.stopped = true;
+                break;
+            }
+        }
+    }
+    Ok(done)
+}
+
+/// Refreshes `account_id`'s login as an entry of it publishes, so its first card
+/// shows a login GitHub just confirmed, unless GitHub confirmed it within the hour.
+/// A failure is logged: the hourly refresh comes next.
+pub async fn refresh_at_publish(state: &crate::AppState, account_id: &str) {
+    let hour_ago = stamp(now_utc() - Duration::hours(1));
+    let link = sqlx::query!(
+        "SELECT github_id, etag FROM github_links WHERE account_id = ? AND refreshed_at <= ?",
+        account_id,
+        hour_ago
+    )
+    .fetch_optional(&state.pool)
+    .await;
+    let refreshed = match link {
+        Ok(Some(link)) => refresh_one(state, link.github_id, link.etag.as_deref(), now_utc())
+            .await
+            .map(|_| ()),
+        Ok(None) => Ok(()),
+        Err(error) => Err(error),
+    };
+    if let Err(error) = refreshed {
+        tracing::warn!(%error, "refreshing a GitHub login at publish failed");
+    }
+}
+
+/// Asks GitHub about one linked account and keeps what it says. None when the
+/// refresh must stop for now ([`crate::link_checks::UserAnswer::Wait`]).
+async fn refresh_one(
+    state: &crate::AppState,
+    github_id: i64,
+    etag: Option<&str>,
+    at: OffsetDateTime,
+) -> Result<Option<()>, sqlx::Error> {
+    use crate::link_checks::UserAnswer;
+    let now = stamp(at);
+    match crate::link_checks::github_user(state, github_id, etag).await {
+        UserAnswer::Unchanged => {
+            sqlx::query!(
+                "UPDATE github_links SET refreshed_at = ?, hidden = 0 WHERE github_id = ?",
+                now,
+                github_id
+            )
+            .execute(&state.pool)
+            .await?;
+        }
+        UserAnswer::Changed { login, etag } => {
+            sqlx::query!(
+                "UPDATE github_links SET login = ?, etag = ?, refreshed_at = ?, hidden = 0
+                 WHERE github_id = ?",
+                login,
+                etag,
+                now,
+                github_id
+            )
+            .execute(&state.pool)
+            .await?;
+        }
+        UserAnswer::NotFound => {
+            sqlx::query!(
+                "UPDATE github_links SET hidden = 1 WHERE github_id = ?",
+                github_id
+            )
+            .execute(&state.pool)
+            .await?;
+        }
+        UserAnswer::Unreadable => {}
+        UserAnswer::Wait => return Ok(None),
+    }
+    Ok(Some(()))
+}
+
 /// Deletes sign-ins and signups that expired, and the links of accounts an older
 /// binary deleted without them (crates/server/migration-rollback.txt, 0038), for the
 /// hourly tidy.

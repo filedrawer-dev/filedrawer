@@ -564,11 +564,15 @@ async fn unlinking_needs_a_password_and_takes_the_handle_off() {
 #[tokio::test]
 async fn the_card_and_the_author_line_show_the_handle_before_the_name() {
     let app = test_app().await;
+    // Confirmed by GitHub just now, so the card shows it.
+    let now = common::stamp(time::OffsetDateTime::now_utc());
     sqlx::query(
         "INSERT INTO github_links (account_id, github_id, login, linked_at, refreshed_at)
-         VALUES (?, 1, 'ada-gh', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+         VALUES (?, 1, 'ada-gh', ?, ?)",
     )
     .bind(&app.account)
+    .bind(&now)
+    .bind(&now)
     .execute(&app.pool)
     .await
     .unwrap();

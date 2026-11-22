@@ -597,7 +597,12 @@ async fn place_passed(state: &AppState, seq: i64) -> Result<(), sqlx::Error> {
     else {
         return Ok(());
     };
-    entries::publish(&state.pool, seq, &analyze(&source)).await?;
+    if entries::publish(&state.pool, seq, &analyze(&source)).await? {
+        let account = sqlx::query_scalar!("SELECT account_id FROM entries WHERE seq = ?", seq)
+            .fetch_one(&state.pool)
+            .await?;
+        crate::github_accounts::refresh_at_publish(state, &account).await;
+    }
     Ok(())
 }
 

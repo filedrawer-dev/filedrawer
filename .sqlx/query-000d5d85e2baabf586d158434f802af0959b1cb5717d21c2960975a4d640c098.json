@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT github_id, etag FROM github_links WHERE account_id = ? AND refreshed_at <= ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "github_id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "github_links",
+            "name": "github_id"
+          }
+        }
+      },
+      {
+        "name": "etag",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "github_links",
+            "name": "etag"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "000d5d85e2baabf586d158434f802af0959b1cb5717d21c2960975a4d640c098"
+}

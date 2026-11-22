@@ -31,6 +31,7 @@ pub use fetch::{
     Answer, ApiAnswer, Fetcher, Fetching, GITHUB_HOURLY_WITH_TOKEN, GITHUB_HOURLY_WITHOUT_TOKEN,
     HttpFetcher, JsonAnswer,
 };
+pub use github::{UserAnswer, github_user};
 pub use stored::{RECHECK_DAYS, pin_flag, recheck_due, store, stored};
 
 use crate::AppState;

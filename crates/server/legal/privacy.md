@@ -28,7 +28,7 @@ Its pages load nothing from other sites.
 ## Who processes it
 
 A hosting provider runs the server and holds its backups, an email service sends the site's mail, and an AI model screens each entry before it publishes.
-When you sign in with GitHub, GitHub learns that you did, and tells the site your GitHub user ID, login, name, when the GitHub account was made, and your email addresses with whether GitHub verified each; the site keeps the ID, the login, the account's age and the address you choose, and checks the login again so cards show your current one.
+When you sign in with GitHub, GitHub learns that you did, and tells the site your GitHub user ID, login, name, when the GitHub account was made, and your email addresses with whether GitHub verified each; the site keeps the ID, the login, the account's age and the address you choose, and asks GitHub about the ID each hour, keeping the answer's ETag, so cards show your current login.
 Otherwise no one else gets your data, and none of it is sold.
 
 ## Deleting

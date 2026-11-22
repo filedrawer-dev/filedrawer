@@ -62,9 +62,12 @@ CREATE TABLE github_signups (
 ) STRICT;
 
 -- The GitHub login to show for each account that has one: none once the account is
--- deleted, and none while GitHub's answer hides it. Every read that shows a handle
--- goes through this view, as names go through `authors`.
+-- deleted, none while GitHub's answer hides it, and none when GitHub last confirmed
+-- it more than a day ago, since a login renamed away can be claimed by someone else
+-- at once. Every read that shows a handle goes through this view, as names go
+-- through `authors`.
 CREATE VIEW github_handles AS
 SELECT l.account_id, l.login
 FROM github_links l JOIN accounts a ON a.id = l.account_id
-WHERE a.deleted_at IS NULL AND l.hidden = 0;
+WHERE a.deleted_at IS NULL AND l.hidden = 0
+  AND l.refreshed_at > strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-1 day');

@@ -73,6 +73,23 @@ pub async fn tidy_files(state: &AppState, now: OffsetDateTime) -> Result<(), Sto
     expired.map_err(StoreError::from).and(swept)
 }
 
+/// Refreshes the linked GitHub accounts' logins every hour, for `filedrawer-server
+/// serve` (`github_accounts::refresh_logins`). An error is logged and the loop goes
+/// on.
+pub async fn run_github_refresh(state: AppState) {
+    let mut ticks = tokio::time::interval(std::time::Duration::from_secs(60 * 60));
+    loop {
+        ticks.tick().await;
+        match crate::github_accounts::refresh_logins(&state, OffsetDateTime::now_utc()).await {
+            Ok(done) if done.stopped => {
+                tracing::info!(asked = done.asked, "the GitHub login refresh stopped early");
+            }
+            Ok(_) => {}
+            Err(error) => tracing::error!(%error, "refreshing GitHub logins failed"),
+        }
+    }
+}
+
 /// Runs `tidy_files`, deletes the rate limits' expired counts, the search log's old
 /// rows and GitHub sign-ins that expired, closes the read counter's finished days,
 /// and drops and deletes the mail queue's old rows, every hour, for

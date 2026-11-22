@@ -172,3 +172,34 @@ async fn a_host_that_isnt_there_is_an_error_not_an_answer() {
     // Port 9 (discard) on loopback: nothing listens there.
     assert!(fetcher.get("http://127.0.0.1:9/").await.is_err());
 }
+
+#[tokio::test]
+async fn a_conditional_call_sends_the_etag_and_reads_the_answers() {
+    // GitHub's user endpoint: 304 to the ETag it last gave, else 200 with its ETag.
+    let user = |headers: HeaderMap| async move {
+        let sent = headers
+            .get(header::IF_NONE_MATCH)
+            .and_then(|value| value.to_str().ok());
+        if sent == Some("\"e1\"") {
+            StatusCode::NOT_MODIFIED.into_response()
+        } else {
+            (
+                [(header::ETAG, "\"e1\"")],
+                axum::Json(serde_json::json!({"id": 1, "login": "octo"})),
+            )
+                .into_response()
+        }
+    };
+    let router = Router::new().route("/user/1", get(user));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let fetcher = HttpFetcher::with_api_base(Some("github_pat_not_real".into()), &base, TIMEOUT);
+    let first = fetcher.github_if_changed("/user/1", None).await.unwrap();
+    assert_eq!((first.status, first.etag.as_deref()), (200, Some("\"e1\"")));
+    let again = fetcher
+        .github_if_changed("/user/1", Some("\"e1\""))
+        .await
+        .unwrap();
+    assert_eq!(again.status, 304);
+}

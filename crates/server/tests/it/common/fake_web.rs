@@ -31,6 +31,7 @@ struct Web {
     gated: HashMap<String, Arc<tokio::sync::Semaphore>>,
     json: HashMap<String, Result<JsonAnswer, String>>,
     json_fetched: Vec<String>,
+    sent_etags: Vec<(String, Option<String>)>,
 }
 
 impl FakeWeb {
@@ -124,8 +125,31 @@ impl FakeWeb {
                 remaining: Some(remaining),
                 reset: Some(an_hour_from_now()),
                 retry_after: seconds,
+                etag: None,
             }),
         );
+    }
+
+    /// GitHub's API answers `path` as GitHub answers a user: 304 to a call that
+    /// sends `etag`, and otherwise 200 with `body` and `etag`.
+    pub fn api_tagged(&self, path: &str, body: Value, etag: &str) {
+        let mut web = self.web.lock().unwrap();
+        web.api.insert(
+            path.into(),
+            Ok(ApiAnswer {
+                status: 200,
+                body: Some(body),
+                remaining: Some(4999),
+                reset: Some(an_hour_from_now()),
+                retry_after: None,
+                etag: Some(etag.into()),
+            }),
+        );
+    }
+
+    /// The ETag each conditional call sent, by path, in order.
+    pub fn sent_etags(&self) -> Vec<(String, Option<String>)> {
+        self.web.lock().unwrap().sent_etags.clone()
     }
 
     /// GitHub's API doesn't answer `path`.
@@ -222,11 +246,32 @@ impl Fetcher for FakeWeb {
     }
 
     fn github<'a>(&'a self, path: &'a str) -> Fetching<'a, ApiAnswer> {
+        self.github_if_changed(path, None)
+    }
+
+    fn github_if_changed<'a>(
+        &'a self,
+        path: &'a str,
+        etag: Option<&'a str>,
+    ) -> Fetching<'a, ApiAnswer> {
         Box::pin(async move {
             let mut web = self.web.lock().unwrap();
             web.api_calls.push(path.into());
+            if let Some(etag) = etag {
+                web.sent_etags.push((path.into(), Some(etag.into())));
+            }
             if let Some(answer) = web.api.get(path) {
-                return answer.clone();
+                return match answer {
+                    // An answer whose ETag the call sent hasn't changed.
+                    Ok(stored) if stored.etag.is_some() && stored.etag.as_deref() == etag => {
+                        Ok(ApiAnswer {
+                            status: 304,
+                            body: None,
+                            ..stored.clone()
+                        })
+                    }
+                    other => other.clone(),
+                };
             }
             let body = if path.contains("/compare/") {
                 json!({"status": "identical", "base_commit": {"sha": "f".repeat(40)}})
@@ -239,6 +284,7 @@ impl Fetcher for FakeWeb {
                 remaining: Some(4999),
                 reset: Some(an_hour_from_now()),
                 retry_after: None,
+                etag: None,
             })
         })
     }

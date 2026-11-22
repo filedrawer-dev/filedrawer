@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT l.github_id, l.etag FROM github_links l\n         WHERE EXISTS (SELECT 1 FROM entries e WHERE e.account_id = l.account_id)\n         ORDER BY l.refreshed_at, l.github_id",
+  "describe": {
+    "columns": [
+      {
+        "name": "github_id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "github_links",
+            "name": "github_id"
+          }
+        }
+      },
+      {
+        "name": "etag",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "github_links",
+            "name": "etag"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "38df789c706352482daac44900bd479b02f207b78dd614f4eb63d07b276d5337"
+}

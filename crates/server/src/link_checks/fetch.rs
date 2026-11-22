@@ -27,6 +27,8 @@ pub struct ApiAnswer {
     pub reset: Option<i64>,
     /// `Retry-After`, in seconds, when GitHub gave it.
     pub retry_after: Option<u64>,
+    /// `ETag`, which a conditional call sends back to learn whether it changed.
+    pub etag: Option<String>,
 }
 
 /// How the server reaches the web, so tests can stand in for it.
@@ -36,6 +38,13 @@ pub trait Fetcher: Send + Sync {
     /// GETs `path`, such as `/repos/o/r/branches`, from GitHub's REST API, with the
     /// server's token if it has one.
     fn github<'a>(&'a self, path: &'a str) -> Fetching<'a, ApiAnswer>;
+    /// `github`, sending `etag` as `If-None-Match`, so an answer that hasn't
+    /// changed is a 304, which costs no call of the hour's.
+    fn github_if_changed<'a>(
+        &'a self,
+        path: &'a str,
+        etag: Option<&'a str>,
+    ) -> Fetching<'a, ApiAnswer>;
     /// GETs `url` asking for JSON, as a web page's script does, without a token or
     /// following a redirect, and reads its body as JSON.
     fn get_json<'a>(&'a self, url: &'a str) -> Fetching<'a, JsonAnswer>;
@@ -169,6 +178,14 @@ impl Fetcher for HttpFetcher {
     }
 
     fn github<'a>(&'a self, path: &'a str) -> Fetching<'a, ApiAnswer> {
+        self.github_if_changed(path, None)
+    }
+
+    fn github_if_changed<'a>(
+        &'a self,
+        path: &'a str,
+        etag: Option<&'a str>,
+    ) -> Fetching<'a, ApiAnswer> {
         Box::pin(async move {
             let mut request = self
                 .http
@@ -178,17 +195,26 @@ impl Fetcher for HttpFetcher {
             if let Some(token) = &self.token {
                 request = request.bearer_auth(token);
             }
+            if let Some(etag) = etag {
+                request = request.header(reqwest::header::IF_NONE_MATCH, etag);
+            }
             let response = request.send().await.map_err(fetch_error)?;
             let status = response.status().as_u16();
             let remaining = header_number(response.headers(), "x-ratelimit-remaining");
             let reset = header_number(response.headers(), "x-ratelimit-reset");
             let retry_after = header_number(response.headers(), "retry-after");
+            let etag = response
+                .headers()
+                .get(reqwest::header::ETAG)
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_string);
             Ok(ApiAnswer {
                 status,
                 body: json_body(response, MAX_API_BODY_BYTES).await?,
                 remaining,
                 reset,
                 retry_after,
+                etag,
             })
         })
     }

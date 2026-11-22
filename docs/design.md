@@ -65,6 +65,11 @@ The owner expects most contributors to be independent researchers, newcomers to 
   Each environment has its own GitHub OAuth App, which asks only for `user:email`, since the public profile needs no scope; the server revokes the token as soon as it has read the user and their addresses, and keeps none.
   A start is a POST from the site, GitHub always shows its account picker, and the callback must come back to the browser that started it within 10 minutes, with the start's PKCE verifier; so another site, a crawler or a shared browser signed in to someone else's GitHub can't start or finish one unseen.
   The server keeps GitHub's numeric user ID and the account's current login, which cards show as `github:<login>`.
+  It confirms the login at each sign-in, as an entry of the account publishes unless GitHub confirmed it within the hour, and each hour for every linked account that has an entry, in any state, asking GitHub by ID with the last answer's ETag, so an unchanged account answers 304, which GitHub doesn't count against the hour's calls (the owner's decision, 2026-11-22).
+  The refresh needs the server's GitHub token and link checks on, and stops while a quarter of the hour's calls are spent, as the link rechecks do, or GitHub asks the server to wait, so it never takes the calls submissions' checks have left.
+  A 404, which GitHub gives a deleted account and some live ones, hides the handle until a later answer; an answer for another ID, with no login or with another status changes nothing, and the refresh goes on to the next account.
+  A login GitHub hasn't confirmed for a day shows on no card until it does, so where no refresh runs, such as dev, a handle shows for a day after each sign-in.
+  Reason: a login renamed away can be claimed by someone else at once, so a stale handle could name a stranger.
   An address GitHub lists as verified counts as verified here, and GitHub's noreply addresses, which get no mail, aren't offered.
   Reason: GitHub checked the inbox already, so a second email adds a step and proves nothing more.
   The cost: GitHub may still list an address the person no longer holds, such as a former employer's.

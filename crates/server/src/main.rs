@@ -396,6 +396,7 @@ async fn serve() -> ExitCode {
     ));
     tokio::spawn(filedrawer_server::jobs::run_tidier(state.clone()));
     tokio::spawn(filedrawer_server::jobs::run_link_rechecker(state.clone()));
+    tokio::spawn(filedrawer_server::jobs::run_github_refresh(state.clone()));
     tokio::spawn(filedrawer_server::jobs::run_daily_email(state.clone()));
     tokio::spawn(filedrawer_server::mail_queue::run_sender(state.clone()));
     let router = app(state);

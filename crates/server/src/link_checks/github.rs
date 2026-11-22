@@ -2,9 +2,10 @@
 //! `code` commit is on one of the named repository's own branches or in one of its
 //! tags, since GitHub serves a fork's commits under its parent's URL; GitHub's
 //! commit page says first, and its API confirms a page that lists none, or stands
-//! in for one that doesn't answer. And the API calls it
-//! spends: at most half of the hour's, each account a tenth of that half,
-//! and none while GitHub asks the server to wait.
+//! in for one that doesn't answer. And the API calls it spends: at most half of
+//! the hour's, each account a tenth of that half, and none while GitHub asks the
+//! server to wait. The GitHub login refresh (`github_accounts::refresh_logins`)
+//! asks about users here too, so its calls count in the same budget.
 
 use std::time::Duration;
 
@@ -436,16 +437,10 @@ async fn github_call(
         .github(path)
         .await
         .map_err(|why| format!("GitHub's API didn't answer ({why})"))?;
-    checker.note_quota(&answer);
-    if rate_limited(&answer) {
-        // With no calls left, the quota waits for the reset by itself.
-        if answer.remaining == Some(0) {
-            return Err(spent());
-        }
-        checker.pause(API_HOST, answer.retry_after);
-        return Err(waiting());
-    }
-    checker.pauses.clear(API_HOST);
+    let answer = checker.heed_api(answer).map_err(|limit| match limit {
+        Limited::Spent => spent(),
+        Limited::Waiting => waiting(),
+    })?;
     match answer.status {
         500..=599 => Err(format!("GitHub's API answered {}", answer.status)),
         _ => Ok(answer),
@@ -481,4 +476,106 @@ async fn record_confirmed(pool: &SqlitePool, commit: &GithubCommit) -> PinCheck 
         tracing::warn!(%error, "recording a commit GitHub confirmed failed");
     }
     PinCheck::Verified
+}
+
+/// Why an answer from GitHub's API can't be used: the hour's calls are spent, or
+/// GitHub asked the server to wait.
+enum Limited {
+    Spent,
+    Waiting,
+}
+
+impl LinkChecker {
+    /// Keeps what an API answer says of the hour's calls, and pauses the API when it
+    /// asks the server to wait; every API call goes through this.
+    fn heed_api(&self, answer: ApiAnswer) -> Result<ApiAnswer, Limited> {
+        self.note_quota(&answer);
+        if rate_limited(&answer) {
+            // With no calls left, the quota waits for the reset by itself.
+            if answer.remaining == Some(0) {
+                return Err(Limited::Spent);
+            }
+            self.pause(API_HOST, answer.retry_after);
+            return Err(Limited::Waiting);
+        }
+        self.pauses.clear(API_HOST);
+        Ok(answer)
+    }
+}
+
+/// What GitHub said of a linked GitHub account, for the hourly login refresh.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UserAnswer {
+    /// The answer matches the ETag sent: a 304, which costs no call.
+    Unchanged,
+    /// The account's login now, and the answer's ETag.
+    Changed { login: String, etag: Option<String> },
+    /// GitHub answered 404, as it does for a deleted account and for some live
+    /// ones, such as managed users.
+    NotFound,
+    /// An answer the server can't use for this account: another status, another
+    /// ID or no login. Nothing changes, and the refresh goes on to the next.
+    Unreadable,
+    /// Not now: no token, the link checks' calls run low, GitHub asked the server
+    /// to wait, or it didn't answer. Nothing changes, and the refresh stops.
+    Wait,
+}
+
+impl LinkChecker {
+    /// Whether the login refresh may call GitHub now: only with a token, since
+    /// without one even a 304 counts against 60 calls an hour, only while link
+    /// checks are on, and only while fewer than a quarter of the hour's calls are
+    /// spent and GitHub hasn't asked the server to wait, so the refresh takes only
+    /// what the rechecks may and leaves submissions' share alone.
+    fn may_refresh_logins(&self) -> bool {
+        !self.off
+            && self.github_hourly > super::GITHUB_HOURLY_WITHOUT_TOKEN
+            && !self.github_low()
+            && !self.github_paused()
+    }
+}
+
+/// Asks GitHub about the account with `github_id`, sending `etag` from the last
+/// answer, when the link checks' budget allows ([`LinkChecker::may_refresh_logins`]).
+/// Its quota and any wait it asks for count as the link checks' do.
+pub async fn github_user(state: &AppState, github_id: i64, etag: Option<&str>) -> UserAnswer {
+    let checker = &state.link_checker;
+    if !checker.may_refresh_logins() {
+        return UserAnswer::Wait;
+    }
+    let path = format!("/user/{github_id}");
+    let Ok(answer) = checker.fetcher.github_if_changed(&path, etag).await else {
+        return UserAnswer::Wait;
+    };
+    let Ok(answer) = checker.heed_api(answer) else {
+        return UserAnswer::Wait;
+    };
+    match answer.status {
+        304 => UserAnswer::Unchanged,
+        404 => UserAnswer::NotFound,
+        500..=599 => UserAnswer::Wait,
+        200 => {
+            let body = answer.body.as_ref();
+            let same_id = body.and_then(|body| body["id"].as_i64()) == Some(github_id);
+            let login = body.and_then(|body| body["login"].as_str());
+            match (same_id, login) {
+                (true, Some(login)) if !login.is_empty() => UserAnswer::Changed {
+                    login: login.to_string(),
+                    etag: answer.etag,
+                },
+                _ => {
+                    tracing::warn!(github_id, "GitHub's user answer isn't the shape it was");
+                    UserAnswer::Unreadable
+                }
+            }
+        }
+        status => {
+            tracing::warn!(
+                github_id,
+                status,
+                "GitHub answered a user lookup unexpectedly"
+            );
+            UserAnswer::Unreadable
+        }
+    }
 }

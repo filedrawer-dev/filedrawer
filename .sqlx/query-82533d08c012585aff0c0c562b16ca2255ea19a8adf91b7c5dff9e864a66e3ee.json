@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE github_links SET hidden = 1 WHERE github_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "82533d08c012585aff0c0c562b16ca2255ea19a8adf91b7c5dff9e864a66e3ee"
+}
