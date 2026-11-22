@@ -548,7 +548,7 @@ checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 
 [[package]]
 name = "filedrawer"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "filedrawer-analyzer",
  "tempfile",
@@ -556,7 +556,7 @@ dependencies = [
 
 [[package]]
 name = "filedrawer-analyzer"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "percent-encoding",
  "proptest",
