@@ -40,7 +40,8 @@ def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-# The fake gh: `gh api PATH` prints api[PATH] as JSON; `gh run download ID ...
+# The fake gh: `gh api PATH` prints api[PATH] as JSON, or, when that is
+# {"sequence": [...]}, the next of those on each call, then the last again; `gh run download ID ...
 # --dir DIR` copies binary-ID to DIR, under the name in file-ID, as GitHub unpacks an
 # artifact of one file under that file's name; `gh auth status` succeeds unless
 # `logged-out` exists. Every call is a line in `log`.
@@ -59,7 +60,14 @@ if args[0] == "api":
     if path not in api:
         print(f"gh: Not Found (HTTP 404) {{path}}", file=sys.stderr)
         sys.exit(1)
-    print(json.dumps(api[path]))
+    value = api[path]
+    if isinstance(value, dict) and "sequence" in value:
+        seq = value["sequence"]
+        counter = root / ("count-" + path.replace("/", "_"))
+        n = int(counter.read_text()) if counter.exists() else 0
+        counter.write_text(str(n + 1))
+        value = seq[min(n, len(seq) - 1)]
+    print(json.dumps(value))
     sys.exit(0)
 if args[:2] == ["run", "download"]:
     run = args[2]
@@ -147,6 +155,7 @@ def deploy(tmp_path, fake_host):
             "head_branch": "main",
             "event": "push",
             "path": ".github/workflows/ci.yml",
+            "status": "completed",
             "conclusion": "success",
             **overrides.get("run", {}),
         }
@@ -205,7 +214,9 @@ def deploy(tmp_path, fake_host):
             f"install {state.install_sha}\nbackup {state.backup_sha}\n"
         )
 
-    def run(*args: str, answers: str = "") -> subprocess.CompletedProcess:
+    def run(
+        *args: str, answers: str = "", env: dict[str, str] | None = None
+    ) -> subprocess.CompletedProcess:
         (gh_root / "api.json").write_text(json.dumps(state.api))
         fake_host.answer("bash -s", stdout=facts())
         env = {
@@ -214,6 +225,9 @@ def deploy(tmp_path, fake_host):
             "FILEDRAWER_REPO": str(repo),
             "FILEDRAWER_OPS_DIR": str(ops),
             "FILEDRAWER_SMOKE_STAGING": str(fakes / "smoke-staging"),
+            "FILEDRAWER_CI_POLL": "0",
+            "FILEDRAWER_CI_APPEAR_WAIT": "0",
+            **(env or {}),
         }
         env.pop("FILEDRAWER_STAGING_KEY", None)
         return subprocess.run(
@@ -227,6 +241,59 @@ def deploy(tmp_path, fake_host):
 
     state.run = run
     return state
+
+
+PASSED = ["check", "deploy-staging", "smoke-staging", "screen-staging"]
+
+
+def ci_progresses(deploy, commit: str, run_id: int, polls: list) -> None:
+    """GitHub's answers for `commit`'s run `run_id`, one poll at a time: each poll is
+    (run status, run conclusion, {job: state}), a job's state its status until it
+    completes, then its conclusion. A poll of None is a time before the run exists."""
+    deploy.api.clear()
+    deploy.run_for(commit, run_id)
+    runs_path = f"{GH_REPO}/actions/runs?head_sha={commit}&per_page=100"
+    jobs_path = f"{GH_REPO}/actions/runs/{run_id}/jobs?per_page=100"
+    run = deploy.api[runs_path]["workflow_runs"][0]
+    run["html_url"] = f"https://github.com/x/actions/runs/{run_id}"
+    runs, jobs = [], []
+    for poll in polls:
+        if poll is None:
+            runs.append({"workflow_runs": []})
+            continue
+        status, conclusion, states = poll
+        runs.append(
+            {"workflow_runs": [{**run, "status": status, "conclusion": conclusion}]}
+        )
+        jobs.append(
+            {
+                "jobs": [
+                    {
+                        "name": name,
+                        "status": state
+                        if state in ("queued", "in_progress")
+                        else "completed",
+                        "conclusion": None
+                        if state in ("queued", "in_progress")
+                        else state,
+                    }
+                    for name, state in states.items()
+                ]
+            }
+        )
+    deploy.api[runs_path] = {"sequence": runs}
+    deploy.api[jobs_path] = {"sequence": jobs}
+
+
+def finished_run(**failed: str) -> tuple:
+    states = {name: "success" for name in PASSED} | {
+        k.replace("_", "-"): v for k, v in failed.items()
+    }
+    conclusion = "success" if not failed else "failure"
+    return ("completed", conclusion, states)
+
+
+RUNNING = ("in_progress", None, {"check": "in_progress"})
 
 
 def installs(deploy) -> list[str]:
@@ -663,3 +730,166 @@ def test_the_facts_say_who_holds_caddy(tmp_path, held, guard_marker, expected):
         check=False,
     )
     assert f"caddy-hold {expected}\n" in result.stdout, result.stdout + result.stderr
+
+
+def test_a_finished_run_needs_no_wait(deploy):
+    result = deploy.run()
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "waiting" not in result.stdout.lower()
+
+
+def test_it_waits_for_ci_running_on_the_tip_then_promotes_it(deploy):
+    # Just pushed: staging still runs `old`, and CI is building `new`.
+    deploy.staging_runs(deploy.new)
+    ci_progresses(
+        deploy,
+        deploy.new,
+        100,
+        [
+            ("queued", None, {}),
+            RUNNING,
+            (
+                "in_progress",
+                None,
+                {"check": "success", "deploy-staging": "in_progress"},
+            ),
+            finished_run(),
+        ],
+    )
+    result = deploy.run()
+    assert result.returncode == 0, result.stdout + result.stderr
+    out = result.stdout
+    assert "CI is still running on " + deploy.new in out
+    assert "https://github.com/x/actions/runs/100" in out
+    assert "check: in_progress" in out
+    assert "check: success" in out
+    assert "deploy-staging: in_progress" in out
+    assert "screen-staging: success" in out
+    # A state is shown once, when it changes.
+    assert out.count("check: success") == 1
+    assert out.index("check: in_progress") < out.index("check: success")
+    assert f"deployed {deploy.new}" in out
+    assert len(installs(deploy)) == 1
+
+
+def test_the_wait_comes_before_staging_or_the_server_is_read(deploy):
+    # While deploy-staging restarts staging it can't name its commit.
+    ci_progresses(deploy, deploy.new, 100, [RUNNING, finished_run()])
+    deploy.host.answer(
+        "*staging.filedrawer.dev/skill.md*", stdout="HTTP/2 502\r\n\r\n", tool="curl"
+    )
+    result = deploy.run()
+    assert "CI is still running" in result.stdout
+    assert "502" in result.stderr, "staging was read after the wait"
+    assert deploy.host.calls() == []
+
+
+@pytest.mark.parametrize(
+    ("failed", "rerun_promotes"),
+    [
+        ({"check": "failure", "deploy_staging": "skipped"}, False),
+        ({"smoke_staging": "cancelled"}, False),
+        ({"screen_staging": "failure"}, True),
+    ],
+)
+def test_a_run_it_waited_for_that_fails_stops_and_says_why(
+    deploy, failed, rerun_promotes
+):
+    ci_progresses(deploy, deploy.new, 100, [RUNNING, finished_run(**failed)])
+    result = deploy.run()
+    assert result.returncode != 0
+    for name, conclusion in failed.items():
+        if conclusion != "skipped":
+            assert f"{name.replace('_', '-')} {conclusion}" in result.stderr
+    assert "https://github.com/x/actions/runs/100" in result.stderr
+    assert "nothing changed" in result.stderr
+    assert ("again promotes it" in result.stderr) == rerun_promotes
+    assert deploy.host.calls() == []
+
+
+def test_a_run_that_failed_before_any_job_says_how_it_ended(deploy):
+    # GitHub creates a run of an invalid workflow already completed.
+    deploy.staging_runs(deploy.old)
+    ci_progresses(deploy, deploy.new, 100, [("completed", "startup_failure", {})])
+    result = deploy.run()
+    assert result.returncode != 0
+    assert "startup_failure" in result.stderr
+    assert installs(deploy) == []
+
+
+def test_a_tip_whose_ci_already_failed_stops_and_names_stagings_commit(deploy):
+    deploy.staging_runs(deploy.old)
+    ci_progresses(
+        deploy,
+        deploy.new,
+        100,
+        [finished_run(check="failure", deploy_staging="skipped")],
+    )
+    result = deploy.run()
+    assert result.returncode != 0
+    assert f"CI failed on {deploy.new}: check failure" in result.stderr
+    assert deploy.old in result.stderr, "it says how to promote staging's instead"
+    assert installs(deploy) == []
+
+
+def test_a_tip_whose_only_failure_is_another_job_deploys_without_waiting(deploy):
+    ci_progresses(deploy, deploy.new, 100, [finished_run(screen_staging="failure")])
+    result = deploy.run()
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"deployed {deploy.new}" in result.stdout
+
+
+def test_a_cancelled_job_says_a_newer_push_may_have_cancelled_it(deploy):
+    ci_progresses(
+        deploy, deploy.new, 100, [RUNNING, finished_run(deploy_staging="cancelled")]
+    )
+    result = deploy.run()
+    assert result.returncode != 0
+    assert "newer push" in result.stderr
+
+
+def test_right_after_a_push_it_waits_for_the_run_to_appear(deploy):
+    ci_progresses(deploy, deploy.new, 100, [None, None, RUNNING, finished_run()])
+    result = deploy.run(env={"FILEDRAWER_CI_APPEAR_WAIT": "30"})
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Waiting for GitHub to start CI on " + deploy.new in result.stdout
+    assert "CI is still running" in result.stdout
+    assert len(installs(deploy)) == 1
+
+
+def test_a_tip_no_run_appears_for_goes_on_with_stagings_commit(deploy):
+    # The tip, `new`, gets no run; staging still runs `old`, whose run passed.
+    deploy.staging_runs(deploy.old)
+    ci_progresses(deploy, deploy.new, 100, [None])
+    deploy.run_for(deploy.old, 90)
+    result = deploy.run(
+        env={"FILEDRAWER_CI_POLL": "0.2", "FILEDRAWER_CI_APPEAR_WAIT": "1"}
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "No CI run started for " + deploy.new in result.stdout
+    assert sent_binary(deploy) == (deploy.gh / "binary-90").read_bytes()
+
+
+def test_a_named_commit_whose_ci_runs_is_waited_for(deploy):
+    ci_progresses(deploy, deploy.new, 100, [RUNNING, finished_run()])
+    result = deploy.run(deploy.new[:8])
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "CI is still running on " + deploy.new in result.stdout
+
+
+def test_a_named_commit_with_no_run_doesnt_wait_for_one(deploy):
+    ci_progresses(deploy, deploy.new, 100, [None])
+    result = deploy.run(
+        deploy.new, env={"FILEDRAWER_CI_POLL": "5", "FILEDRAWER_CI_APPEAR_WAIT": "60"}
+    )
+    assert "Waiting for GitHub" not in result.stdout
+    assert "no push run" in result.stderr
+
+
+def test_a_run_still_going_past_the_limit_stops(deploy):
+    ci_progresses(deploy, deploy.new, 100, [RUNNING])
+    result = deploy.run(env={"FILEDRAWER_CI_TIMEOUT": "0"})
+    assert result.returncode != 0
+    assert "still running" in result.stderr
+    assert "nothing changed" in result.stderr
+    assert deploy.host.calls("curl") == []

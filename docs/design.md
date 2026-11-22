@@ -1066,6 +1066,9 @@ Python is fine for scripts and internal tools.
   A push to `main` deploys to staging, and the owner promotes to production the binary staging ran, from their own machine with `ops/deploy-production [COMMIT]` (the owner's decisions, 2026-11-09 and 2026-11-10, #42).
   Reason: no production deploy key exists in GitHub, so a compromised GitHub account or workflow can't deploy to production; this settles #2 without build attestation, which would only vouch that a push to `main` built the binary, which the script already requires.
   The script takes the commit staging runs (its `X-Filedrawer-Commit`) unless given one, asks first about any other, takes the binary only from a push run of `ci.yml` on `main` whose `deploy-staging` and `smoke-staging` jobs passed, and refuses one that doesn't name its commit.
+  First, while CI still runs on the commit, by default `origin/main`'s tip, it waits, showing each job's progress, and stops, naming the jobs that failed, if any did (the owner's request, 2026-11-22, #118).
+  With no commit given, it also stops when the tip's CI already ended without passing `deploy-staging` and `smoke-staging`, rather than promote the older commit staging still runs (an agent's choice, in uncertainties.md).
+  Reason: the owner pushes and deploys at once, and staging names the tip only once CI has deployed it.
   CI keeps that artifact 90 days.
   Before it changes anything it reads the server's Caddy version, production's schema and binary in one ssh round (`ops/remote/deploy-facts.sh`).
   When the server's Caddy is newer than the version `bin/caddy` pins on `origin/main`, which the real-Caddy tests ran, it says to bump the pin and goes on; when it is older, it warns and asks; when Caddy is held, it says whether the guard or a hand held it (the owner's decisions, 2026-11-18, #100, replacing 2026-11-10's refusal).

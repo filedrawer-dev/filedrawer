@@ -1154,6 +1154,15 @@ An agent added this on 2026-11-20, with the owner away; deleting `.github/workfl
 
 ### Production deploys
 
+#### A deploy after the tip's CI failed (#118)
+
+An agent chose this on 2026-11-22, building #118.
+
+- Options: with no COMMIT, when the tip's CI already ended without deploy-staging and smoke-staging passing, promote the older commit staging still runs, as before #118; or stop, naming the failed jobs and staging's commit.
+- Chosen: stop, unless the only failures are other jobs, such as screen-staging, since then staging runs the tip and promoting it is what was meant; a run the script waited for stops on any failure, and a rerun then promotes it when only another job failed.
+- Against: promoting staging's older commit while the tip is broken now takes naming it.
+  A tip with no run at all (`[skip ci]`) waits 60 s for one before going on as before.
+
 #### Who may open the apps' ports
 
 - Options: reject only the users found to reach them (as before, staging's user to 8080); allow only Caddy and root; or per port, each app's own Caddy site alone.

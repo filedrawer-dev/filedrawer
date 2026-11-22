@@ -15,6 +15,12 @@ first.
 
 Before it changes anything it:
   - fetches origin and refuses unless this checkout is at origin/main;
+  - waits while CI runs on the commit (by default origin/main's tip, so a deploy can
+    follow a push at once; for a tip just pushed, up to 60 s for GitHub to start
+    the run), showing each job's progress, and stops, saying which jobs failed,
+    when any did, or when it still runs after 60 minutes; with no COMMIT, it also
+    stops when the tip's CI ended without deploy-staging and smoke-staging passing,
+    and names staging's commit to promote instead;
   - takes the binary only from a push run of .github/workflows/ci.yml on main for
     that commit whose deploy-staging and smoke-staging jobs passed, and refuses one
     that doesn't name its commit;
@@ -51,6 +57,11 @@ PRODUCTION=https://filedrawer.dev
 ops_dir="${FILEDRAWER_OPS_DIR:-$(dirname "$0")}"
 remote_dir="$(dirname "$0")/remote"
 smoke="${FILEDRAWER_SMOKE_STAGING:-$(dirname "$0")/smoke-staging}"
+# Seconds between polls of CI, the most to wait for it, and the most to wait for a
+# run to appear on a tip just pushed.
+poll=${FILEDRAWER_CI_POLL:-15}
+ci_limit=${FILEDRAWER_CI_TIMEOUT:-3600}
+appear_limit=${FILEDRAWER_CI_APPEAR_WAIT:-60}
 repo="${FILEDRAWER_REPO:-$(git -C "$(dirname "$0")" rev-parse --show-toplevel)}"
 
 die() {
@@ -82,6 +93,122 @@ main=$(in_repo rev-parse origin/main)
 [[ "$(in_repo rev-parse HEAD)" == "$main" ]] ||
   die "this checkout isn't at origin/main ($main); pull first, so its checks and pins are main's"
 
+if (( $# == 1 )); then
+  prefix=$1
+  [[ "$prefix" =~ ^[0-9a-f]{4,40}$ ]] ||
+    die "'$prefix' isn't a commit: give 4 to 40 lowercase hex characters of a commit on origin/main"
+  mapfile -t matches < <(in_repo rev-list origin/main | grep "^$prefix" || true)
+  (( ${#matches[@]} > 0 )) || die "no commit on origin/main starts with $prefix"
+  (( ${#matches[@]} == 1 )) || die "$prefix names ${#matches[@]} commits on origin/main; give more of it"
+  target=${matches[0]}
+fi
+
+# ci_runs SHA: the push runs of ci.yml on main for SHA, one JSON object a line. A
+# pull_request run uses the PR's own workflow file, which could upload an artifact
+# under the same name.
+ci_runs() {
+  gh api "$API/actions/runs?head_sha=$1&per_page=100" | jq -c --arg sha "$1" '.workflow_runs[]
+    | select(.event == "push" and .head_branch == "main" and .head_sha == $sha
+             and .path == ".github/workflows/ci.yml")'
+}
+
+# jobs_of ID: run ID's jobs, as GitHub lists them (its latest attempt).
+jobs_of() {
+  gh api "$API/actions/runs/$1/jobs?per_page=100" || die "gh api (the jobs of run $1) failed"
+}
+
+# staging_verdict JOBS: how deploy-staging and smoke-staging ended, which a promoted
+# binary needs both to have passed.
+staging_verdict() {
+  jq -r '[.jobs[] | select(.name == "deploy-staging" or .name == "smoke-staging")
+    | "\(.name) \(.conclusion)"] | sort | join(", ")' <<< "$1"
+}
+STAGING_PASSED="deploy-staging success, smoke-staging success"
+
+# wait_for_ci SHA APPEAR: returns at once unless a CI run for SHA is still going;
+# then shows each job's state as it changes until every run for SHA ends. When SHA
+# has no run yet, it waits up to APPEAR seconds for one. Sets ci_waited when it
+# waited for a run.
+ci_waited=""
+wait_for_ci() {
+  local sha=$1 appear=$2 start=$SECONDS runs id jobs name state open said_open=""
+  local said_appear=""
+  local -A shown=()
+  while :; do
+    runs=$(ci_runs "$sha") || die "gh api (the runs for $sha) failed"
+    if [[ -z "$runs" ]]; then
+      (( appear > 0 )) || return 0
+      if [[ -z "$said_appear" ]]; then
+        say "Waiting for GitHub to start CI on $sha..."
+        said_appear=1
+      elif (( SECONDS - start >= appear )); then
+        say "No CI run started for $sha within ${appear}s; going on without one."
+        return 0
+      fi
+      sleep "$poll"
+      continue
+    fi
+    open=$(jq -c 'select(.status != "completed")' <<< "$runs")
+    [[ -n "$open" || -n "$said_open" ]] || return 0
+    if [[ -z "$said_open" ]]; then
+      say "CI is still running on $sha; waiting for it (nothing has changed yet):"
+      jq -r '"  \(.html_url)"' <<< "$open"
+      said_open=1
+      ci_waited=1
+    fi
+    while read -r id; do
+      jobs=$(jobs_of "$id") || exit 1
+      while IFS=$'\t' read -r name state; do
+        [[ "${shown[$id/$name]:-}" == "$state" ]] && continue
+        shown[$id/$name]=$state
+        printf '  [%d:%02d] %s: %s\n' $(( (SECONDS - start) / 60 )) $(( (SECONDS - start) % 60 )) "$name" "$state"
+      done < <(jq -r '.jobs[]
+        | [.name, (if .status == "completed" then .conclusion else .status end)] | @tsv' <<< "$jobs")
+    done < <(jq -r '.id' <<< "$runs")
+    [[ -n "$open" ]] || return 0
+    (( SECONDS - start < ci_limit )) ||
+      die "CI on $sha is still running after $(( ci_limit / 60 )) minutes; nothing changed. Run this again once it ends"
+    sleep "$poll"
+  done
+}
+
+# check_ci SHA STRICT: stops the script when CI failed on SHA. With STRICT, any run
+# that ended other than in success stops it; without, only one whose deploy-staging
+# or smoke-staging didn't pass, since without those staging never ran SHA.
+check_ci() {
+  local sha=$1 strict=$2 run id url conclusion jobs fails failed=() rerun_hint="" cancelled=""
+  while read -r run; do
+    [[ -n "$run" ]] || continue
+    id=$(jq -r .id <<< "$run")
+    url=$(jq -r .html_url <<< "$run")
+    conclusion=$(jq -r .conclusion <<< "$run")
+    jobs=$(jobs_of "$id") || exit 1
+    if [[ "$(staging_verdict "$jobs")" == "$STAGING_PASSED" ]]; then
+      [[ -n "$strict" ]] || return 0
+      [[ "$conclusion" == success ]] && continue
+      rerun_hint=". Its deploy-staging and smoke-staging passed, so running this again promotes it"
+    fi
+    fails=$(jq -r '[.jobs[] | select(.conclusion != null and .conclusion != "success" and .conclusion != "skipped")
+      | "\(.name) \(.conclusion)"] | join(", ")' <<< "$jobs")
+    if [[ -z "$fails" && "$conclusion" == success ]]; then
+      fails="no deploy-staging and smoke-staging that passed ($(staging_verdict "$jobs"))"
+    fi
+    [[ "$fails" == *cancelled* ]] && cancelled=". A newer push cancels a staging job that waits behind it: deploy that one instead"
+    failed+=("${fails:-the run ended $conclusion} ($url)")
+  done < <(ci_runs "$sha" || die "gh api (the runs for $sha) failed")
+  (( ${#failed[@]} > 0 )) || return 0
+  if [[ -z "$strict" && -n "${staging:-}" && "$staging" != "$sha" ]]; then
+    rerun_hint=". To promote $staging, the commit staging runs, name it"
+  fi
+  die "CI failed on $sha: $(IFS=';'; echo "${failed[*]}"); nothing changed$cancelled$rerun_hint"
+}
+
+if (( $# == 0 )); then
+  wait_for_ci "$main" "$appear_limit"
+else
+  wait_for_ci "$target" 0
+fi
+
 # The commit staging runs, from its X-Filedrawer-Commit, or why it's unknown. The key
 # reaches curl in a config on stdin, never on a command line.
 staging_commit() {
@@ -104,6 +231,12 @@ staging_commit() {
 staging=""
 staging_unknown=""
 staging_commit
+# Waited for or not, the tip CI failed on isn't staging's, so isn't the one meant.
+if (( $# == 0 )); then
+  check_ci "$main" "$ci_waited"
+elif [[ -n "$ci_waited" ]]; then
+  check_ci "$target" 1
+fi
 # What the one question before any change names, when there's anything to ask.
 warnings=()
 
@@ -112,13 +245,6 @@ if (( $# == 0 )); then
   target=$staging
   say "Promoting $target, the commit staging runs."
 else
-  prefix=$1
-  [[ "$prefix" =~ ^[0-9a-f]{4,40}$ ]] ||
-    die "'$prefix' isn't a commit: give 4 to 40 lowercase hex characters of a commit on origin/main"
-  mapfile -t matches < <(in_repo rev-list origin/main | grep "^$prefix" || true)
-  (( ${#matches[@]} > 0 )) || die "no commit on origin/main starts with $prefix"
-  (( ${#matches[@]} == 1 )) || die "$prefix names ${#matches[@]} commits on origin/main; give more of it"
-  target=${matches[0]}
   if [[ "$target" == "$staging" ]]; then
     say "Promoting $target, the commit staging runs."
   elif [[ -n "$staging" ]]; then
@@ -129,22 +255,17 @@ else
 fi
 
 # The run that built it: a push run of ci.yml on main, for this commit, whose deploy
-# and smoke jobs passed. A pull_request run uses the PR's own workflow file, which
-# could upload an artifact under the same name.
-runs=$(gh api "$API/actions/runs?head_sha=$target&per_page=100") || die "gh api (the runs for $target) failed"
-mapfile -t candidates < <(jq -r --arg sha "$target" '.workflow_runs[]
-  | select(.event == "push" and .head_branch == "main" and .head_sha == $sha
-           and .path == ".github/workflows/ci.yml")
-  | .id' <<< "$runs")
+# and smoke jobs passed.
+runs=$(ci_runs "$target") || die "gh api (the runs for $target) failed"
+mapfile -t candidates < <(jq -r '.id' <<< "$runs")
 (( ${#candidates[@]} > 0 )) ||
   die "no push run of ci.yml on main built $target (a commit inside a push of several gets none); promote the push's last commit"
 run=""
 reasons=()
 for id in "${candidates[@]}"; do
-  jobs=$(gh api "$API/actions/runs/$id/jobs?per_page=100") || die "gh api (the jobs of run $id) failed"
-  verdict=$(jq -r '[.jobs[] | select(.name == "deploy-staging" or .name == "smoke-staging")
-    | "\(.name) \(.conclusion)"] | sort | join(", ")' <<< "$jobs")
-  if [[ "$verdict" == "deploy-staging success, smoke-staging success" ]]; then
+  jobs=$(jobs_of "$id") || exit 1
+  verdict=$(staging_verdict "$jobs")
+  if [[ "$verdict" == "$STAGING_PASSED" ]]; then
     run=$id
     break
   fi
