@@ -59,16 +59,19 @@ pub(crate) fn sections(body: &str) -> Sections {
     sections
 }
 
-/// The text of each top-level list item in `markdown`, or the whole text as one item
-/// when it has no list. Used for the card's first caveat and `## Not tried`.
+/// The text of each top-level list item in `markdown` that shows something, or the
+/// whole text as one item when it has no list. Used for the card's first caveat and
+/// `## Not tried`, where an item that shows nothing would leave a blank line.
 pub(crate) fn items(markdown: &str) -> Vec<String> {
     let mut items = Vec::new();
     let mut depth = 0usize;
+    let mut has_list = false;
     for event in Parser::new_ext(markdown, options()) {
         match event {
             Event::Start(Tag::Item) => {
                 depth += 1;
                 if depth == 1 {
+                    has_list = true;
                     items.push(String::new());
                 }
             }
@@ -86,8 +89,8 @@ pub(crate) fn items(markdown: &str) -> Vec<String> {
             _ => {}
         }
     }
-    items.retain(|item| !item.trim().is_empty());
-    if items.is_empty() && !markdown.trim().is_empty() {
+    items.retain(|item| !crate::shows_nothing(item));
+    if !has_list && !crate::shows_nothing(markdown) {
         items.push(markdown.trim().to_string());
     }
     items

@@ -207,6 +207,21 @@ fn an_effect_card_shows_the_first_caveat_and_whether_the_effect_went_as_predicte
 }
 
 #[test]
+fn a_caveat_or_not_tried_item_of_control_characters_reads_as_none() {
+    let text = with_results("effect", EFFECT_TABLE).replace(
+        "## Reproduce",
+        "## Caveats\n\n- \u{1b}\t\u{6}\n\n## Not tried\n\n- \u{1b}\u{6}\n\n## Reproduce",
+    );
+    assert_eq!(line_starting(&text, "first caveat: "), "none listed");
+    assert_eq!(line_starting(&text, "not tried: "), "none listed");
+    let no_list = with_results("effect", EFFECT_TABLE).replace(
+        "## Reproduce",
+        "## Caveats\n\n\u{1b}\t\u{6}\n\n## Reproduce",
+    );
+    assert_eq!(line_starting(&no_list, "first caveat: "), "none listed");
+}
+
+#[test]
 fn a_card_that_isnt_an_effect_has_no_caveat_line() {
     assert!(!card(EXAMPLE).contains("first caveat"));
     assert_eq!(lines(EXAMPLE).len(), 10);
