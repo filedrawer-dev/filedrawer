@@ -23,6 +23,7 @@ UNITS=(
   filedrawer-staging.service filedrawer-production.service caddy.service ssh.service
   filedrawer-backup.service filedrawer-loopback.service
   caddy-upgrade-check.service caddy-upgrade-daily.service
+  filedrawer-reboot-check.service filedrawer-reboot-check-daily.service
 )
 # The root-owned copies of the repo's scripts; ops/audit-vps compares each hash with
 # origin/main's.
@@ -31,6 +32,7 @@ INSTALLED=(
   /usr/local/sbin/filedrawer-backup
   /usr/local/sbin/caddy-upgrade-check
   /usr/local/lib/filedrawer-alerts.sh
+  /usr/local/sbin/filedrawer-reboot-check
   /usr/local/bin/filedrawer-receive
 )
 
@@ -207,7 +209,8 @@ modes "${INSTALLED[@]}" /usr/local/sbin /usr/local/bin
 heading "installed units and configs: hashes, owners and modes"
 # The files the repo's scripts generate that hold no secret.
 generated=(/etc/caddy/Caddyfile /etc/filedrawer/loopback.nft
-  /etc/ssh/sshd_config.d/10-filedrawer.conf /etc/apt/apt.conf.d/52filedrawer-caddy)
+  /etc/ssh/sshd_config.d/10-filedrawer.conf /etc/apt/apt.conf.d/52filedrawer-caddy
+  /etc/apt/apt.conf.d/53filedrawer-reboot)
 for file in "$root"/etc/systemd/system/filedrawer-* "$root"/etc/systemd/system/caddy-upgrade-* \
   "$root"/etc/sudoers.d/*; do
   [[ -f "$file" ]] && generated+=("${file#"$root"}")

@@ -29,10 +29,10 @@ journal's size and settings.
 
 From this checkout, after `git fetch origin`: whether each script the server keeps
 a root-owned copy of (filedrawer-install, filedrawer-backup, caddy-upgrade-check,
-the filedrawer-alerts.sh it sources, filedrawer-receive) is origin/main's
-(`current`), an older revision's (`behind`, with the commit), or no revision's
-(`MATCHES NO REVISION`: a hand edit, or tampering); the Caddy version bin/caddy
-pins; and the names and mode of what ops/.vps.env holds.
+filedrawer-reboot-check, the filedrawer-alerts.sh both source, filedrawer-receive)
+is origin/main's (`current`), an older revision's (`behind`, with the commit), or
+no revision's (`MATCHES NO REVISION`: a hand edit, or tampering); the Caddy version
+bin/caddy pins; and the names and mode of what ops/.vps.env holds.
 
 No secret is printed: of an env file only its key names, of a Caddy site file only
 its owner and mode, of a process only its user and name. Read the report before
@@ -41,8 +41,10 @@ you pass it on all the same: it names users, paths and package versions.
 Not covered: the generated units and configs are hashed but not compared with the
 repo, which holds the scripts that write them, not the files; compare one report's
 hashes with the last one's. The env files and Caddy's site files hold secrets, so
-they aren't hashed either. `reboot-required` covers kernel packages only, as Debian
-writes it. The VPS provider's backups and firewall can only be read in its console.
+they aren't hashed either. `reboot-required` covers kernel packages and dbus only,
+as Debian writes it, not a library such as libc or OpenSSL whose running users
+haven't restarted. The VPS provider's backups and firewall can only be read in its
+console.
 
 Needs VPS_HOST in ops/.vps.env, as ops/provision-vps writes it.
 EOF

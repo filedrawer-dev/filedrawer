@@ -1,0 +1,458 @@
+#!/usr/bin/env bash
+# Reboots the server for a kernel it installed, with notice (design.md, Hosting and
+# operations). unattended-upgrades installs kernels but never reboots, and unplanned
+# downtime is bad even for a minute or two, so:
+#
+#   filedrawer-reboot-check            at boot and after each dpkg run: notices a
+#                                      pending reboot and mails it, and after a
+#                                      reboot this job made, mails that the server
+#                                      is back. Never reboots.
+#   filedrawer-reboot-check --daily    the 05:00 UTC timer's run: the same, then
+#                                      reboots once the reboot is due
+#   filedrawer-reboot-check --dry-run  mails a test holding what it finds and would
+#                                      do now, prints the same, and changes nothing
+#
+# A reboot is pending while /run/reboot-required exists. On Debian, unattended-
+# upgrades' kernel hook writes it for each kernel package, and dbus's postinst for
+# an upgrade of the running bus; reboot-required.pkgs names them. Nothing writes it
+# for a library such as libc or OpenSSL, whose running users keep the old copy until
+# they restart, so this doesn't cover those.
+#
+# The first run that sees one mails the owner, naming the packages and when the
+# server will reboot: the first 05:00 UTC at least 4 days after that mail (a mail
+# sent between 05:00 and 05:30 counts from 05:00). A package that asks later gets a
+# short mail of its own, and the date stays. Until the notice is mailed, there's no
+# reboot: each run tries it again, and pings /fail.
+#
+# Once the reboot is due, the daily run reboots, and only between 05:00 and 05:30
+# UTC, whatever started it. Until 05:25 it waits, trying each minute, while a deploy,
+# the nightly copy or the Caddy guard holds its lock, the guard has a rollback
+# waiting, dpkg or apt's daily jobs run, someone is logged in, or logind doesn't
+# answer; then it puts the reboot off to the next day and mails why. At the reboot
+# it takes those locks and keeps them until the shutdown stops it.
+#
+# After a reboot it made, the first run mails whether Caddy, production, staging and
+# the loopback rules are active, whether the sites answer through Caddy (the guard's
+# check), and which kernel runs; a mail that fails is tried again 10 minutes later,
+# for up to an hour. A kernel older than the newest it rebooted for, or a
+# reboot-required that is back, is mailed and pinged as /fail, and starts no second
+# reboot until a package not already named asks for one; removing
+# /var/lib/filedrawer/reboot/stuck, or rebooting by hand, clears it.
+#
+# Mail and pings go as the Caddy guard's do (/usr/local/lib/filedrawer-alerts.sh):
+# to its ALERT_TO, and /fail to its healthchecks.io check, never a success, which
+# would hide a failing guard. State is in /var/lib/filedrawer/reboot. Runs as root.
+# Exits 1 when anything needs the owner.
+set -uo pipefail
+
+# The overrides are for tests: a fake root, a fixed clock or a file holding it, and
+# no waiting.
+root="${FILEDRAWER_ROOT:-}"
+
+# clock: the time now.
+clock() {
+  if [[ -n "${FILEDRAWER_CLOCK-}" ]]; then
+    cat "$FILEDRAWER_CLOCK"
+  elif [[ -n "${FILEDRAWER_NOW-}" ]]; then
+    printf '%s\n' "$FILEDRAWER_NOW"
+  else
+    date +%s
+  fi
+}
+now=$(clock)
+putoff_pause="${FILEDRAWER_PUTOFF_PAUSE:-60}"
+reboot_wait="${FILEDRAWER_REBOOT_WAIT:-600}"
+
+state="$root/var/lib/filedrawer/reboot"
+required="$root/run/reboot-required"
+day=86400
+window_start=$(( 5 * 3600 ))
+window_length=1800
+# The last try before the day's reboot is put off: 05:25 UTC.
+last_try=$(( window_start + 25 * 60 ))
+wait_days=4
+
+mode=notice
+case "${1-}" in
+  "") ;;
+  --daily) mode=daily ;;
+  --dry-run) mode=dry-run ;;
+  -h | --help) sed -n '2,/^set -uo/{/^set -uo/d; s/^# \{0,1\}//; p}' "$0"; exit 0 ;;
+  *) echo "usage: filedrawer-reboot-check [--daily | --dry-run]" >&2; exit 2 ;;
+esac
+
+# Mail, pings and the site check, shared with caddy-upgrade-check.
+# shellcheck disable=SC2034  # the library reads these
+{
+  alert_name=filedrawer-reboot-check
+  alert_title="Reboot check"
+  tries="${FILEDRAWER_PROBE_TRIES:-12}"
+  pause="${FILEDRAWER_PROBE_PAUSE:-5}"
+}
+# check() sets it.
+findings=""
+# shellcheck disable=SC1091  # installed beside it; ops/remote/filedrawer-alerts.sh here
+source "$root/usr/local/lib/filedrawer-alerts.sh" || {
+  echo "filedrawer-reboot-check: /usr/local/lib/filedrawer-alerts.sh is missing; run ops/provision-vps reboots" >&2
+  exit 1
+}
+
+utc() { date -u -d "@$1" '+%a %F %H:%M UTC'; }
+
+# in_window TIME: whether TIME is between 05:00 and 05:30 UTC.
+in_window() {
+  local into=$(( $1 % day - window_start ))
+  (( into >= 0 && into < window_length ))
+}
+
+# due_after TIME: the first 05:00 UTC at least 4 days after TIME, counted from 05:00
+# when TIME is in the window.
+due_after() {
+  local from=$1 at
+  in_window "$from" && from=$(( from - from % day + window_start ))
+  from=$(( from + wait_days * day ))
+  at=$(( from - from % day + window_start ))
+  (( at >= from )) || at=$(( at + day ))
+  printf '%s' "$at"
+}
+
+# wanted: the packages that want the reboot now, one a line.
+wanted() { sed '/^$/d' "$required.pkgs" 2>/dev/null | sort -u; }
+
+# new_in FILE: the packages wanted that FILE doesn't list.
+new_in() {
+  local have pkg
+  have=$(cat "$1" 2>/dev/null)
+  while IFS= read -r pkg; do
+    grep -qxF -- "$pkg" <<< "$have" || printf '%s\n' "$pkg"
+  done < <(wanted)
+}
+
+# named LIST: LIST's lines as a phrase.
+named() {
+  if [[ -z "${1-}" ]]; then
+    printf 'no package named (only /run/reboot-required exists)'
+  else
+    paste -sd, - <<< "$1" | sed 's/,/, /g'
+  fi
+}
+
+boot_id() { cat "$root/proc/sys/kernel/random/boot_id" 2>/dev/null; }
+running_kernel() { cat "$root/proc/sys/kernel/osrelease" 2>/dev/null; }
+
+clear_pending() { rm -f "$state/seen" "$state/announced" "$state/pkgs" "$state/stuck"; }
+
+# locked PATH: whether some process holds a lock on PATH, by /proc/locks, which lists
+# flock and fcntl locks alike; nothing is taken, so a deploy starting now isn't
+# refused for it.
+locked() {
+  local inode locks
+  inode=$(stat -c %i "$1" 2>/dev/null) || return 1
+  locks=$(cat /proc/locks 2>/dev/null)
+  # 1: FLOCK  ADVISORY  WRITE 1234 08:01:131074 0 EOF
+  grep -qE ":$inode [0-9]+ ([0-9]+|EOF)$" <<< "$locks"
+}
+
+guard_dir="$root/var/lib/filedrawer/caddy-guard"
+# The flock locks a reboot waits for and then holds, each "PATH|who holds it": the
+# staging deploy's (filedrawer-receive), production's backups folder (its deploys
+# and the nightly copy), and the Caddy guard's.
+reboot_locks=(
+  "$root/var/lib/filedrawer-deploy/lock|a staging deploy"
+  "$root/srv/filedrawer/production/data/backups|production's deploy or nightly copy"
+  "$guard_dir/lock|the Caddy guard"
+)
+
+# lockable PATH: whether PATH is there to lock: a file, or the backups folder when it
+# is a real folder, never a link production's user could have planted.
+lockable() {
+  if [[ -d "$1" ]]; then
+    [[ ! -L "$1" ]]
+  else
+    [[ -f "$1" ]]
+  fi
+}
+
+# blockers: what would put a reboot off now, one a line.
+blockers() {
+  local unit active id cls st who from listed entry
+  for entry in "${reboot_locks[@]}"; do
+    lockable "${entry%%|*}" && locked "${entry%%|*}" &&
+      echo "${entry#*|} is running (it holds the lock on ${entry%%|*})"
+  done
+  [[ -f "$guard_dir/rollback" ]] &&
+    echo "the Caddy guard has a rollback waiting for the dpkg lock ($guard_dir/rollback)"
+  locked "$root/var/lib/dpkg/lock-frontend" && echo "dpkg is running (/var/lib/dpkg/lock-frontend is locked)"
+  for unit in apt-daily.service apt-daily-upgrade.service; do
+    active=$(systemctl show -p ActiveState --value "$unit" 2>/dev/null)
+    case $active in
+      "" | inactive | failed) ;;
+      *) echo "$unit is running ($active)" ;;
+    esac
+  done
+  if ! listed=$(loginctl list-sessions --no-legend 2>/dev/null); then
+    echo "loginctl list-sessions failed, so whether anyone is logged in is unknown"
+    return
+  fi
+  while read -r id _; do
+    [[ -n "$id" ]] || continue
+    # A session that ended since the list was read answers nothing, and is gone.
+    cls=$(loginctl show-session "$id" -p Class --value 2>/dev/null) || continue
+    st=$(loginctl show-session "$id" -p State --value 2>/dev/null) || continue
+    [[ "$cls" == user* && "$st" != closing ]] || continue
+    who=$(loginctl show-session "$id" -p Name --value 2>/dev/null)
+    from=$(loginctl show-session "$id" -p RemoteHost --value 2>/dev/null)
+    echo "${who:-someone} is logged in${from:+ from $from} (session $id, $st)"
+  done <<< "$listed"
+}
+
+# take_locks: takes each of reboot_locks for the reboot, and keeps them. When one is
+# taken already (it started since blockers looked), it lets go of the others and
+# fails, naming it in $lock_why.
+held_fds=()
+take_locks() {
+  local fd entry path
+  lock_why=""
+  for entry in "${reboot_locks[@]}"; do
+    path=${entry%%|*}
+    lockable "$path" || continue
+    if [[ -d "$path" ]]; then
+      # Read-only, on the folder, as filedrawer-install opens it.
+      exec {fd}< "$path"
+    else
+      exec {fd}>> "$path"
+    fi
+    held_fds+=("$fd")
+    flock -n "$fd" || { lock_why="${entry#*|} started"; break; }
+  done
+  [[ -z "$lock_why" ]] && return 0
+  for fd in "${held_fds[@]}"; do
+    exec {fd}>&-
+  done
+  held_fds=()
+  return 1
+}
+
+units=(caddy.service filedrawer-production.service filedrawer-staging.service filedrawer-loopback.service)
+
+# settle: waits, up to the probe tries, for each unit to be active and each
+# environment's server to answer, so a slow start isn't reported as a failure.
+# shellcheck disable=SC2154  # the library sets sites
+settle() {
+  local n unit ready
+  for (( n = 1; n <= tries; n++ )); do
+    ready=1
+    for unit in "${units[@]}"; do
+      [[ "$(systemctl is-active "$unit" 2>/dev/null)" == active ]] || ready=0
+    done
+    [[ -f "$sites/production.caddy" ]] && ! backend_up 8080 && ready=0
+    [[ -f "$sites/staging.caddy" ]] && ! backend_up 8081 && ready=0
+    (( ready )) && return 0
+    (( n < tries )) && sleep "$pause"
+  done
+  return 0
+}
+
+# newest_kernel: the newest kernel release among the packages rebooted for.
+newest_kernel() {
+  sed -n 's/^linux-image-\([0-9].*\)$/\1/p' "$state/pkgs" 2>/dev/null | sort -V | tail -n 1
+}
+
+# after_reboot: the report after a reboot this job made, until it is mailed.
+after_reboot() {
+  local at boot services unit active kernel newest subject body
+  [[ -f "$state/rebooted" ]] || return 0
+  read -r at boot < "$state/rebooted"
+  [[ "$boot" != "$(boot_id)" ]] || return 0
+  settle
+  services=""
+  for unit in "${units[@]}"; do
+    active=$(systemctl is-active "$unit" 2>/dev/null)
+    services+="$unit: ${active:-unknown}"$'\n'
+    [[ "$active" == active ]] || problems+=("after the reboot, $unit is ${active:-unknown}")
+  done
+  check || problems+=("after the reboot, the site check failed: $findings")
+  kernel=$(running_kernel)
+  newest=$(newest_kernel)
+  subject="the server is back"
+  body="The server rebooted at $(utc "$at"), as the notice said, and is back.
+
+$services
+$findings
+It runs kernel ${kernel:-unknown}."
+  if [[ -n "$newest" && "$kernel" != "$newest" ]]; then
+    subject="the server is back, on an older kernel"
+    body+=" That isn't $newest, the newest it rebooted for: check GRUB's default (grub-editenv list), then reboot by hand. No second reboot starts by itself."
+    problems+=("after the reboot, the server runs kernel $kernel, not $newest")
+  fi
+  if [[ -e "$required" ]]; then
+    # Only stuck stays, so clearing it starts over with a fresh notice.
+    clear_pending
+    wanted > "$state/stuck"
+    subject="the server is back, but a reboot is still pending"
+    body+="
+/run/reboot-required is back after the reboot, for: $(named "$(wanted)").
+So no second reboot starts until a package not named here asks for one. To clear this: reboot by hand (systemctl reboot), or remove /var/lib/filedrawer/reboot/stuck so the next run mails a fresh notice."
+    problems+=("a reboot is still pending after this job's reboot")
+  else
+    clear_pending
+  fi
+  if send_mail "$subject" "$body"; then
+    rm -f "$state/rebooted"
+  elif (( now - at < 3600 )); then
+    systemd-run --on-active=10min --unit="filedrawer-reboot-check-retry-$now" \
+      systemctl start filedrawer-reboot-check.service > /dev/null 2>&1 ||
+      problems+=("couldn't schedule another try at the mail that the server is back")
+  else
+    rm -f "$state/rebooted"
+  fi
+}
+
+# plan_reboot: notices a pending reboot, and mails it or a package that asks later.
+# True when a reboot is planned.
+plan_reboot() {
+  local list due added
+  if [[ ! -e "$required" ]]; then
+    clear_pending
+    return 1
+  fi
+  if [[ -f "$state/stuck" ]]; then
+    if [[ -z "$(new_in "$state/stuck")" ]]; then
+      problems+=("a reboot is still pending after this job's reboot, for $(named "$(cat "$state/stuck")"); none starts until a new package asks, or you clear it")
+      return 1
+    fi
+    clear_pending
+  fi
+  [[ -f "$state/seen" ]] || printf '%s\n' "$now" > "$state/seen"
+  list=$(wanted)
+  if [[ ! -f "$state/announced" ]]; then
+    due=$(due_after "$now")
+    if send_mail "a reboot is pending, set for $(utc "$due")" "The server installed packages that take effect only after a reboot: $(named "$list").
+
+It reboots itself at $(utc "$due"), unless it has rebooted by then, and mails you once it is back: a minute or two of downtime for both sites.
+It waits until 05:25, then puts the reboot off a day and mails you, while a deploy, the nightly copy or the Caddy guard runs, dpkg or apt's daily jobs run, or someone is logged in. ops/deploy-production holds no lock between its steps, so don't deploy production between 05:00 and 05:30 UTC that day.
+To reboot sooner, at a time you choose: systemctl reboot (no mail follows).
+
+Not covered: upgraded libraries, such as libc or OpenSSL, whose running services keep the old copy until they restart; needrestart, or checkrestart from debian-goodies, lists them."; then
+      printf '%s\n' "$now" > "$state/announced"
+      printf '%s\n' "$list" > "$state/pkgs"
+      return 0
+    fi
+    problems+=("a reboot has been pending since $(utc "$(cat "$state/seen")"), and its notice couldn't be mailed, so the server won't reboot itself")
+    return 1
+  fi
+  added=$(new_in "$state/pkgs")
+  if [[ -n "$added" ]] && send_mail "also wants a reboot: $(named "$added")" \
+    "$(named "$added") also takes effect only after a reboot. The reboot stays at $(utc "$(due_after "$(cat "$state/announced")")")."; then
+    printf '%s\n' "$list" > "$state/pkgs"
+  fi
+  return 0
+}
+
+# reboot_if_due: the daily run's reboot, inside the window, once nothing stops it.
+reboot_if_due() {
+  local due why="" next boot
+  due=$(due_after "$(cat "$state/announced")")
+  (( now >= due )) && in_window "$now" || return 0
+  if [[ -f "$state/rebooted" ]]; then
+    read -r _ boot < "$state/rebooted"
+    # This boot's own reboot is under way.
+    [[ "$boot" == "$(boot_id)" ]] && return 0
+  fi
+  # Each minute until 05:25, or as many tries as a test gives.
+  local n=0 t
+  while true; do
+    n=$(( n + 1 ))
+    why=$(blockers)
+    if [[ -z "$why" ]]; then
+      take_locks && break
+      why=$lock_why
+    fi
+    if [[ -n "${FILEDRAWER_PUTOFF_TRIES-}" ]]; then
+      (( n < FILEDRAWER_PUTOFF_TRIES )) || break
+    else
+      t=$(clock)
+      (( t % day + putoff_pause <= last_try )) || break
+    fi
+    sleep "$putoff_pause"
+  done
+  # The checks and the waits take time: the window must still be open.
+  t=$(clock)
+  if [[ -z "$why" ]] && ! in_window "$t"; then
+    why="the window closed, at 05:30 UTC, before the checks were done"
+  fi
+  if [[ -n "$why" ]]; then
+    next=$(( now - now % day + window_start + day ))
+    problems+=("the reboot was put off to $(utc "$next"): $why")
+    send_mail "the reboot was put off to $(utc "$next")" "The reboot set for today was put off a day, since, at its last try:
+$why" || true
+    return 0
+  fi
+  printf '%s %s\n' "$now" "$(boot_id)" > "$state/rebooted"
+  say "rebooting for $(named "$(wanted)")"
+  if ! systemctl reboot; then
+    rm -f "$state/rebooted"
+    problems+=("systemctl reboot failed")
+    return 0
+  fi
+  # It holds the locks until the shutdown stops it, so no deploy starts first.
+  sleep "$reboot_wait"
+  rm -f "$state/rebooted"
+  problems+=("systemctl reboot returned, but the server hadn't rebooted ${reboot_wait}s later")
+}
+
+dry_run() {
+  local report="" announced why list
+  if [[ -e "$required" ]]; then
+    list=$(wanted)
+    report+="A reboot is pending, for: $(named "$list")."$'\n'
+    if [[ -f "$state/stuck" && -z "$(new_in "$state/stuck")" ]]; then
+      report+="It was still pending after this job's last reboot, so none is planned until a new package asks or you clear it."$'\n'
+    elif announced=$(cat "$state/announced" 2>/dev/null); then
+      report+="Its notice went out $(utc "$announced"); the reboot is set for $(utc "$(due_after "$announced")")."$'\n'
+    else
+      report+="No notice has gone out yet; the next run sends it, setting the reboot for $(utc "$(due_after "$now")")."$'\n'
+    fi
+  else
+    report+="No reboot is pending."$'\n'
+  fi
+  [[ -f "$state/rebooted" ]] && report+="A reboot this job made waits for its report, which the next run mails."$'\n'
+  if in_window "$now"; then
+    report+="Now, $(utc "$now"), is inside the reboot window, 05:00 to 05:30 UTC."$'\n'
+  else
+    report+="Now, $(utc "$now"), is outside the reboot window, 05:00 to 05:30 UTC."$'\n'
+  fi
+  why=$(blockers)
+  if [[ -n "$why" ]]; then
+    report+="A reboot now would wait, since:"$'\n'"$why"$'\n'
+  else
+    report+="Nothing would put a reboot off now."$'\n'
+  fi
+  printf '%s' "$report"
+  send_mail "a test" "The reboot check can mail you. What it finds now:
+
+$report"
+}
+
+mkdir -p "$state"
+chmod 0700 "$state"
+exec 9> "$state/lock"
+flock -w 600 9 || { say "another run held the lock for 10 minutes"; exit 1; }
+# The lock may have kept it waiting.
+now=$(clock)
+
+if [[ $mode == dry-run ]]; then
+  dry_run || exit 1
+  exit 0
+fi
+
+after_reboot
+if plan_reboot && [[ $mode == daily ]]; then
+  reboot_if_due
+fi
+if (( ${#problems[@]} )); then
+  say "$(printf '%s\n' "${problems[@]}")"
+  ping_check /fail "$(printf '%s\n' "${problems[@]}")"
+  exit 1
+fi
+exit 0

@@ -243,9 +243,8 @@ caddy_upgrades_stage() {
   say "Caddy ships its security fixes beside breaking changes, so the server takes"
   say "each Caddy release, and a guard checks the sites after each one: if they fail,"
   say "it puts the version before back, holds it, and emails you."
-  # The program first, and the library it sources: the units start it.
-  install_on_server filedrawer-alerts.sh /usr/local/lib
-  install_on_server caddy-upgrade-check /usr/local/sbin
+  # The program first, with the library it sources: the units start it.
+  install_upkeep_scripts
   local alert_before keep=0 holds=0 settings=/etc/filedrawer/caddy-upgrades.env
   alert_before=$(_existing CADDY_ALERT_TO || true)
   remote_has "$settings" && holds=1
@@ -284,6 +283,45 @@ caddy_upgrades_stage() {
     if ! confirm "Did a 'Caddy guard: a test' email reach $CADDY_ALERT_TO, and does the check show a ping?"; then
       warn "Check the address and the ping URL, then rerun: ops/provision-vps --ask-all caddy-upgrades"
       SKIPPED+=("Caddy guard: the test mail or ping didn't arrive")
+    fi
+  fi
+  pause
+}
+
+# install_upkeep_scripts: the library the guard and the reboot check source, and both
+# programs, so a change to the library never reaches one without the other.
+install_upkeep_scripts() {
+  install_on_server filedrawer-alerts.sh /usr/local/lib
+  install_on_server caddy-upgrade-check /usr/local/sbin
+  install_on_server filedrawer-reboot-check /usr/local/sbin
+}
+
+# reboots_stage: the server reboots itself for a kernel it installed, with notice;
+# one server, so this serves staging and production alike.
+reboots_stage() {
+  stage "Reboots for new kernels, with notice"
+  say "unattended-upgrades installs new kernels but never reboots. When one waits for"
+  say "a reboot, the server emails you, at the guard's address, naming it and when it"
+  say "will reboot itself: the first 05:00 UTC at least 4 days later. Then it emails"
+  say "that it is back, with the services and sites. It waits, and puts the reboot off"
+  say "a day, while a deploy or backup runs or someone is logged in."
+  local new=1
+  remote_has /etc/systemd/system/filedrawer-reboot-check-daily.timer && new=0
+  # The programs first: the units start one.
+  install_upkeep_scripts
+  if ! remote reboots.sh; then
+    warn "The reboot check's setup failed; the server said why above."
+    SKIPPED+=("reboots: setup failed; fix, then rerun ops/provision-vps reboots")
+    pause
+    return 0
+  fi
+  if (( new || ASK_ALL )); then
+    step "What it finds now (a dry run, which changes nothing):"
+    ssh -o BatchMode=yes "root@$VPS_HOST" "/usr/local/sbin/filedrawer-reboot-check --dry-run" < /dev/null ||
+      warn "The test mail failed to send; what the server said is above."
+    if ! confirm "Did a 'Reboot check: a test' email arrive?"; then
+      warn "It mails as the Caddy guard does: check with ops/provision-vps --ask-all caddy-upgrades"
+      SKIPPED+=("reboots: the test mail didn't arrive")
     fi
   fi
   pause
@@ -382,7 +420,7 @@ production_account_stage() {
 production() {
   case "${1:-}" in
     "")
-      TOTAL_STAGES=11
+      TOTAL_STAGES=12
       banner "File Drawer VPS: production setup"
       production_preflight_stage
       production_dns_stage
@@ -394,6 +432,7 @@ production() {
       production_pings_stage
       production_backup_stage
       caddy_upgrades_stage
+      reboots_stage
       outbound_check production
       production_check_stage
       ;;

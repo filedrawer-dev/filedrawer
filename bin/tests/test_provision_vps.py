@@ -585,6 +585,8 @@ FULL_RUN = (
     # (Enter takes ops@filedrawer.dev), its ping URL, and yes, the test arrived.
     + "\n\n"
     + f"\n{CADDY_PING}\ny\n"
+    # The guard's pause, then yes, the reboot check's test mail arrived.
+    + "\ny\n"
     + "\n" * 10
 )
 
@@ -616,8 +618,15 @@ def test_production_sends_each_script_for_production_in_order(production):
         at("ping.sh"),
         at("backup.sh"),
         at("caddy-upgrades.sh"),
+        at("reboots.sh"),
     ]
     assert order == sorted(order), order
+    # The reboot check mails through the guard's settings, and its units start the
+    # program, which is there first; the dry run comes once they're set up.
+    assert sent.index(script("filedrawer-reboot-check")) < at("reboots.sh")
+    assert calls.index("/usr/local/sbin/filedrawer-reboot-check --dry-run") > at(
+        "reboots.sh"
+    )
     # The units start the guard, so the program it runs, and the library that
     # program sources, are there first.
     assert sent.index(script("filedrawer-alerts.sh")) < at("caddy-upgrades.sh")
@@ -824,14 +833,37 @@ def test_a_production_rerun_asks_for_nothing_the_server_has(production):
 def test_caddy_upgrades_alone_takes_an_address_and_a_ping_url(stage):
     result = stage.run("caddy-upgrades", f"me@example.org\n{CADDY_PING}\ny\n\n")
     assert result.returncode == 0, result.stdout + result.stderr
-    assert stage.scripts()[:3] == [
+    assert stage.scripts()[:4] == [
         script("filedrawer-alerts.sh"),
         script("caddy-upgrade-check"),
+        script("filedrawer-reboot-check"),
         f"me@example.org\t{CADDY_PING}\n" + script("caddy-upgrades.sh"),
     ]
     assert "https://healthchecks.io/" in stage.opened.read_text()
     for where in (stage.log.read_text(), stage.env_file.read_text(), result.stdout):
         assert CADDY_PING not in where
+
+
+def test_reboots_alone_installs_the_programs_then_the_units_and_runs_a_dry_run(stage):
+    result = stage.run("reboots", "y\n\n")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert stage.scripts()[:4] == [
+        script("filedrawer-alerts.sh"),
+        script("caddy-upgrade-check"),
+        script("filedrawer-reboot-check"),
+        script("reboots.sh"),
+    ]
+    assert "/usr/local/sbin/filedrawer-reboot-check --dry-run" in stage.host.calls()
+    assert "Reboot check: a test" in result.stdout
+    assert "test mail didn't arrive" not in result.stdout
+
+
+def test_a_reboots_rerun_runs_no_dry_run_and_asks_nothing(stage):
+    stage.host.answer("test -f /etc/systemd/system/filedrawer-reboot-check-daily.timer")
+    result = stage.run("reboots", "")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert script("reboots.sh") in stage.scripts()
+    assert not any("--dry-run" in call for call in stage.host.calls())
 
 
 @pytest.mark.parametrize(
@@ -959,6 +991,7 @@ INSTALLED = {
     "filedrawer-backup": "/usr/local/sbin",
     "caddy-upgrade-check": "/usr/local/sbin",
     "filedrawer-alerts.sh": "/usr/local/lib",
+    "filedrawer-reboot-check": "/usr/local/sbin",
 }
 
 # Each reason says when the script does reach the server.
@@ -987,6 +1020,9 @@ STAGING_RERUN_EXEMPT = {
     "caddy-upgrades.sh": CADDY_GUARD,
     "caddy-upgrade-check": CADDY_GUARD,
     "filedrawer-alerts.sh": CADDY_GUARD,
+    "filedrawer-reboot-check": CADDY_GUARD,
+    "reboots.sh": "Production's wizard sends it on every run, and ops/provision-vps "
+    "reboots: the reboots serve the one server.",
 }
 PRODUCTION_RERUN_EXEMPT = {
     "audit-facts.sh": AUDIT_FACTS,

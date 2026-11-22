@@ -1,16 +1,25 @@
-"""The server's tools as caddy-upgrade-check sees them, for test_caddy_upgrades.py.
+"""The server's tools as caddy-upgrade-check and filedrawer-reboot-check see them,
+for test_caddy_upgrades.py and test_reboot_check.py.
 
 Usage: fake_caddy_world.py WORLD TOOL ARG...
 
 WORLD is a directory holding world.json, the server's state: the Caddy version
 installed, whether it's held, which versions apt can install, which versions accept
 the config and serve the sites, which backends answer, apt's candidate, and whether
-the dpkg lock or mail is failing. Each call is noted in WORLD/log.jsonl with its
-arguments and stdin; a mail's message goes to WORLD/mails.jsonl.
+the dpkg lock or mail is failing; and for the reboot check, each unit's state
+(`units`), the logged-in sessions (`sessions`, or `logind_down`), the clock after
+the sessions are listed (`clock_after_sessions`, into WORLD/clock), and how many
+times `systemctl reboot` ran (`reboots`), which reboots nothing but stops its caller,
+as the shutdown would, unless it fails (`reboot_fails`) or is ignored
+(`reboot_ignored`). Each call is noted in
+WORLD/log.jsonl with its arguments and stdin; a mail's message goes to
+WORLD/mails.jsonl.
 """
 
 import json
+import os
 import re
+import signal
 import sys
 from pathlib import Path
 
@@ -25,6 +34,11 @@ def main(world_dir: Path, tool: str, args: list[str]) -> int:
         log.write(json.dumps({"tool": tool, "args": args, "stdin": stdin}) + "\n")
     status = TOOLS[tool](world, args, stdin, world_dir)
     path.write_text(json.dumps(world))
+    if tool == "systemctl" and args == ["reboot"] and status == 0:
+        if world.get("reboot_ignored"):
+            return status
+        # The shutdown stops the service that asked for it.
+        os.kill(os.getppid(), signal.SIGTERM)
     return status
 
 
@@ -109,6 +123,49 @@ def nothing(world, args, stdin, world_dir):
     return 0
 
 
+def systemctl(world, args, stdin, world_dir):
+    units = world.get("units", {})
+    if args == ["reboot"]:
+        if world.get("reboot_fails"):
+            return 1
+        world["reboots"] = world.get("reboots", 0) + 1
+        return 0
+    if args[:1] == ["is-active"]:
+        state = units.get(args[-1], "inactive")
+        print(state)
+        return 0 if state == "active" else 3
+    if args[:1] == ["show"] and "ActiveState" in args:
+        print(units.get(args[-1], "inactive"))
+        return 0
+    return 0
+
+
+def loginctl(world, args, stdin, world_dir):
+    if world.get("logind_down"):
+        print("Failed to connect to bus", file=sys.stderr)
+        return 1
+    sessions = {s["id"]: s for s in world.get("sessions", [])}
+    if args[:1] == ["list-sessions"]:
+        if "clock_after_sessions" in world:
+            # The checks took a while.
+            (world_dir / "clock").write_text(f"{world['clock_after_sessions']}\n")
+        for s in sessions.values():
+            print(f"{s['id']} 0 {s['name']} - 100 {s['class']} pts/0 no -")
+        return 0
+    if args[:1] == ["show-session"]:
+        session = sessions.get(args[1])
+        if session is None:
+            print(
+                f"Failed to get session: No session '{args[1]}' known", file=sys.stderr
+            )
+            return 1
+        wanted = [args[i + 1] for i, a in enumerate(args) if a == "-p"]
+        for name in wanted:
+            print(session.get(name.lower(), ""))
+        return 0
+    return 2
+
+
 def curl(world, args, stdin, world_dir):
     url = next((a for a in args if re.match(r"(https?|smtps)://", a)), None)
     config_url = re.search(r'^url = "([^"]*)"', stdin, re.M)
@@ -160,7 +217,8 @@ TOOLS = {
     "dpkg": dpkg,
     "apt-mark": apt_mark,
     "apt-cache": apt_cache,
-    "systemctl": nothing,
+    "systemctl": systemctl,
+    "loginctl": loginctl,
     "systemd-run": nothing,
     "curl": curl,
 }

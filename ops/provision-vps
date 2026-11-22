@@ -11,7 +11,8 @@
 # set up; `ops/provision-vps screening` only staging's API key and cap;
 # `ops/provision-vps github` only the GitHub token the link checks use;
 # `ops/provision-vps caddy-upgrades` only the guard on the server's Caddy (#100),
-# which production's run also sets up; and
+# which production's run also sets up; `ops/provision-vps reboots` only the reboots
+# for new kernels, with notice, which production's run also sets up; and
 # `ops/provision-vps admin` only making your staging account the admin; and
 # `ops/provision-vps mail` only staging's Purelymail sender.
 # A rerun asks for nothing ops/.vps.env, the server or GitHub already holds (#112):
@@ -97,7 +98,7 @@ case "${1:-}" in
     shift
     production "$@"
     return 0 ;;
-  smoke | screening | admin | github | caddy-upgrades | mail)
+  smoke | screening | admin | github | caddy-upgrades | reboots | mail)
     TOTAL_STAGES=1
     need_vps_host
     "${1//-/_}_stage"
@@ -109,7 +110,8 @@ case "${1:-}" in
     # A typo would otherwise run the whole staging setup.
     warn "ops/provision-vps doesn't know '$1'. It takes, after an optional --ask-all:"
     warn "  nothing (staging's setup), production [account, mail, screening or pings],"
-    warn "  or one stage alone: smoke, screening, admin, github, caddy-upgrades or mail."
+    warn "  or one stage alone: smoke, screening, admin, github, caddy-upgrades, reboots"
+    warn "  or mail."
     exit 2 ;;
 esac
 

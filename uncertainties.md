@@ -1204,6 +1204,28 @@ An agent chose these on 2026-11-20, with the owner away.
 - Against: one run of either environment's Caddy stage changes the limit for both.
   A lowest rate would end a slow body sooner than 5 minutes.
 
+### Reboots
+
+#### Where the reboot check lives
+
+- Options: a script of its own, `filedrawer-reboot-check`, with its own units and a timer at 05:00 UTC, and the guard's mail, ping and site check moved into `filedrawer-alerts.sh`, which both source (chosen); or a mode of `caddy-upgrade-check`; or unattended-upgrades' `Automatic-Reboot`.
+- Chosen: its own script, since the guard's lock, state and 08:00 timer are about Caddy, and `Automatic-Reboot` has no wait of days, no notice and no deploy check.
+  Its stage is `ops/provision-vps reboots`, run by production's wizard after the guard's, and both stages install the library and both scripts.
+  A dpkg hook starts the check after each dpkg run, so a kernel installed at 06:30 is mailed within minutes rather than at the next 05:00, which gives a day more notice for the same reboot.
+- Against: a library on the server is one more file two stages must keep in step, and the guard's healthchecks.io check now hears from two jobs.
+
+#### When the reboot check reboots
+
+- Options for the clock: from the first sighting, as the owner put it, or from the notice's mail (chosen); they differ only when that mail fails.
+- Chosen: from the mail, and no reboot until a notice is mailed, so every reboot comes with 4 days' notice; with mail failing, each 05:00 run pings `/fail` on the guard's check, whose alerts go to an address outside filedrawer.dev.
+- Options for what puts it off: nothing; locks only; locks, apt and logins (chosen).
+- Chosen: the staging deploy's lock, production's backups lock (its deploys and the nightly copy), the guard's lock or a rollback it left waiting, dpkg's lock, apt's daily units, any logind session of class `user` not `closing`, or logind not answering; it reads `/proc/locks` and takes no lock until the reboot, tries each minute until 05:25, then puts the day off and mails why.
+  A session left open every day puts it off every day, which the daily mail shows.
+- Options against a loop: rely on `/run` being cleared at boot; or also check the kernel that booted (chosen).
+- Chosen: after its reboot it mails the running kernel and flags one older than the newest it rebooted for, and a `reboot-required` back at boot is recorded in `stuck`, so no second reboot starts until a new package asks.
+- Not done: a check that the clock is synchronized (a server without an NTP daemon would never reboot), and a healthchecks.io check of its own (a new ping URL is a new secret, which the owner ruled out); the reboot check pings only `/fail`, since a success would hide a failing guard, so a failure it keeps finding shows as down at 05:00 and up at the guard's 08:00 success.
+- Against: the gaps between `ops/deploy-production`'s ssh calls hold no lock, so a production deploy started near 05:00 on the reboot's day can be cut off; the notice says not to deploy then.
+
 ### Packages
 
 #### The analyzer's library name
