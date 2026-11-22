@@ -243,7 +243,8 @@ caddy_upgrades_stage() {
   say "Caddy ships its security fixes beside breaking changes, so the server takes"
   say "each Caddy release, and a guard checks the sites after each one: if they fail,"
   say "it puts the version before back, holds it, and emails you."
-  # The program first: the units start it.
+  # The program first, and the library it sources: the units start it.
+  install_on_server filedrawer-alerts.sh /usr/local/lib
   install_on_server caddy-upgrade-check /usr/local/sbin
   local alert_before keep=0 holds=0 settings=/etc/filedrawer/caddy-upgrades.env
   alert_before=$(_existing CADDY_ALERT_TO || true)

@@ -618,7 +618,9 @@ def test_production_sends_each_script_for_production_in_order(production):
         at("caddy-upgrades.sh"),
     ]
     assert order == sorted(order), order
-    # The units start the guard, so the program it runs is there first.
+    # The units start the guard, so the program it runs, and the library that
+    # program sources, are there first.
+    assert sent.index(script("filedrawer-alerts.sh")) < at("caddy-upgrades.sh")
     assert sent.index(script("caddy-upgrade-check")) < at("caddy-upgrades.sh")
     assert calls.index("/usr/local/sbin/caddy-upgrade-check --test-mail") > at(
         "caddy-upgrades.sh"
@@ -822,7 +824,8 @@ def test_a_production_rerun_asks_for_nothing_the_server_has(production):
 def test_caddy_upgrades_alone_takes_an_address_and_a_ping_url(stage):
     result = stage.run("caddy-upgrades", f"me@example.org\n{CADDY_PING}\ny\n\n")
     assert result.returncode == 0, result.stdout + result.stderr
-    assert stage.scripts()[:2] == [
+    assert stage.scripts()[:3] == [
+        script("filedrawer-alerts.sh"),
         script("caddy-upgrade-check"),
         f"me@example.org\t{CADDY_PING}\n" + script("caddy-upgrades.sh"),
     ]
@@ -955,6 +958,7 @@ INSTALLED = {
     "filedrawer-install": "/usr/local/sbin",
     "filedrawer-backup": "/usr/local/sbin",
     "caddy-upgrade-check": "/usr/local/sbin",
+    "filedrawer-alerts.sh": "/usr/local/lib",
 }
 
 # Each reason says when the script does reach the server.
@@ -982,6 +986,7 @@ STAGING_RERUN_EXEMPT = {
     "field-test-key.sh": FIELD_TEST_KEY,
     "caddy-upgrades.sh": CADDY_GUARD,
     "caddy-upgrade-check": CADDY_GUARD,
+    "filedrawer-alerts.sh": CADDY_GUARD,
 }
 PRODUCTION_RERUN_EXEMPT = {
     "audit-facts.sh": AUDIT_FACTS,

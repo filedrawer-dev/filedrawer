@@ -6,6 +6,7 @@ temp root.
 
 import json
 import os
+import shutil
 import stat
 import subprocess
 from pathlib import Path
@@ -15,6 +16,7 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 CHECK = REPO / "ops/remote/caddy-upgrade-check"
+ALERTS = REPO / "ops/remote/filedrawer-alerts.sh"
 INSTALL = REPO / "ops/remote/caddy-upgrades.sh"
 FAKE = Path(__file__).with_name("fake_caddy_world.py")
 TOOLS = [
@@ -72,6 +74,9 @@ def server(tmp_path):
     stamp.touch()
     os.utime(stamp, (NOW - 3600, NOW - 3600))
     (root / "var/cache/apt/archives").mkdir(parents=True)
+    # The library the guard sources, where ops/provision-vps installs it.
+    (root / "usr/local/lib").mkdir(parents=True)
+    shutil.copy(ALERTS, root / "usr/local/lib/filedrawer-alerts.sh")
 
     world_dir = tmp_path / "world"
     world_dir.mkdir()

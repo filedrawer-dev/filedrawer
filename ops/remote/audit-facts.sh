@@ -30,6 +30,7 @@ INSTALLED=(
   /usr/local/sbin/filedrawer-install
   /usr/local/sbin/filedrawer-backup
   /usr/local/sbin/caddy-upgrade-check
+  /usr/local/lib/filedrawer-alerts.sh
   /usr/local/bin/filedrawer-receive
 )
 
