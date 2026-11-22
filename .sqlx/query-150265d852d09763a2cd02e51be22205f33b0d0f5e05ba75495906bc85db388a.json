@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT password_hash FROM accounts WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "password_hash",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "accounts",
+            "name": "password_hash"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "150265d852d09763a2cd02e51be22205f33b0d0f5e05ba75495906bc85db388a"
+}

@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Finish signing up{% endblock %}
+{% block content %}
+<h1>Finish signing up</h1>
+<p>Signing up as <code>{{ login }}</code> on GitHub. Your account's cards will show <code>github:{{ login }}</code>, and they follow a rename.</p>
+{% if let Some(error) = error %}<p class="error">{{ error }}</p>{% endif %}
+<form method="post" action="/signup/github">
+<label>Display name, shown on your entries <input type="text" name="display_name" value="{{ display_name }}" maxlength="50" required></label>
+<fieldset>
+<legend>Email address, for password resets and notices; never shown</legend>
+{% for email in emails %}
+<label class="github-email"><input type="radio" name="email" value="{{ loop.index0 }}"{% if loop.index0 == chosen %} checked{% endif %}> {{ email }}</label>
+{% endfor %}
+</fieldset>
+<label>Invite code, if you were given one <input type="text" name="invite" value="{{ invite }}" autocomplete="off"></label>
+<p id="accept">Signing up accepts the <a href="/terms">terms</a>. Every entry you post is CC-BY 4.0 and public for good.</p>
+<button type="submit">Sign up</button>
+</form>
+{% endblock %}

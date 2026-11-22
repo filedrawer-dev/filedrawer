@@ -3,6 +3,12 @@
 {% block content %}
 <h1>Sign up</h1>
 {% if let Some(error) = error %}<p class="error">{{ error }}</p>{% endif %}
+{% if github %}
+<form method="post" action="/login/github" class="github-sign-in">
+<button type="submit">Sign up with GitHub</button>
+</form>
+<p>Or sign up with an email address and a password:</p>
+{% endif %}
 <form method="post" action="/signup">
 <label>Email <input type="email" name="email" value="{{ email }}" autocomplete="email" required></label>
 <label>Password, at least 12 characters <input type="password" name="password" autocomplete="new-password" minlength="12" required></label>

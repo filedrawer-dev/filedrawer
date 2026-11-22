@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM github_starts WHERE expires_at <= ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "4db31ab24aa25a309d754c7150ae5bf7dd13547914c55d30a031bc7809e6d64c"
+}

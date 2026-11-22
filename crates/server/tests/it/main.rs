@@ -26,6 +26,8 @@ mod error_bodies;
 mod fair_queue;
 mod feedback;
 mod file_store;
+mod github_oauth;
+mod github_sign_in;
 mod hold;
 mod http_fetcher;
 mod invites;

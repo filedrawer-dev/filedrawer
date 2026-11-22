@@ -2,6 +2,7 @@
 
 pub mod attachments;
 pub mod deletion;
+pub mod fake_github;
 pub mod fake_models;
 pub mod fake_web;
 pub mod scratch;
@@ -257,6 +258,7 @@ pub fn state(pool: sqlx::SqlitePool, outbox: &Outbox, files_dir: &std::path::Pat
         passwords: Default::default(),
         searches: Default::default(),
         reads: Default::default(),
+        github_login: None,
     }
 }
 
@@ -471,6 +473,13 @@ impl TestApp {
     /// The app with this hasher for its passwords.
     pub fn with_passwords(mut self, hasher: Hasher) -> TestApp {
         self.state.passwords = Arc::new(hasher);
+        self.router = app(self.state.clone());
+        self
+    }
+
+    /// The app with GitHub sign-in through `github`.
+    pub fn with_github(mut self, github: &fake_github::FakeGithub) -> TestApp {
+        self.state.github_login = Some(github.login());
         self.router = app(self.state.clone());
         self
     }

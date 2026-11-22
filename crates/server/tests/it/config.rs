@@ -388,3 +388,40 @@ fn the_publishers_tick_is_30_seconds_and_only_dev_takes_another() {
         );
     }
 }
+
+const GITHUB_OAUTH: [(&str, &str); 2] = [
+    ("FILEDRAWER_GITHUB_CLIENT_ID", "Iv1.staging"),
+    ("FILEDRAWER_GITHUB_CLIENT_SECRET", "not-a-real-secret"),
+];
+
+#[test]
+fn github_sign_in_takes_both_oauth_settings_or_neither_and_debug_hides_the_secret() {
+    assert!(config(&[]).unwrap().github_oauth.is_none());
+    let app = config(&GITHUB_OAUTH).unwrap().github_oauth.unwrap();
+    assert_eq!(app.client_id, "Iv1.staging");
+    assert!(!format!("{app:?}").contains("not-a-real-secret"));
+    let error = config(&GITHUB_OAUTH[..1]).unwrap_err();
+    assert_eq!(
+        error,
+        ConfigError::PartialGithubOauth("FILEDRAWER_GITHUB_CLIENT_SECRET")
+    );
+}
+
+#[test]
+fn with_github_sign_in_check_outbound_calls_github_com_and_its_api() {
+    use filedrawer_server::outbound::{Step, plan};
+    let called = |pairs: &[(&str, &str)]| -> Vec<String> {
+        plan(&config(pairs).unwrap())
+            .into_iter()
+            .filter(|planned| matches!(planned.step, Step::Call(_)))
+            .map(|planned| planned.host)
+            .collect()
+    };
+    let off = [("FILEDRAWER_LINK_CHECKS", "off")];
+    assert!(!called(&off).iter().any(|host| host.contains("github")));
+    let mut on = off.to_vec();
+    on.extend(GITHUB_OAUTH);
+    let hosts = called(&on);
+    assert!(hosts.contains(&"github.com".to_string()), "{hosts:?}");
+    assert!(hosts.contains(&"api.github.com".to_string()), "{hosts:?}");
+}

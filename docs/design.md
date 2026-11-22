@@ -61,8 +61,26 @@ The owner expects most contributors to be independent researchers, newcomers to 
   Both are options, never requirements.
   Signing in with GitHub never joins an existing account because the addresses match: a GitHub login joins an account only from a session of that account.
   Reason: whoever signed up with someone else's address chose its password, so joining by address would hand the address's owner an account a stranger can still log in to.
+- GitHub sign-in is a login helper (#119; the owner's decisions, 2026-11-22).
+  Each environment has its own GitHub OAuth App, which asks only for `user:email`, since the public profile needs no scope; the server revokes the token as soon as it has read the user and their addresses, and keeps none.
+  A start is a POST from the site, GitHub always shows its account picker, and the callback must come back to the browser that started it within 10 minutes, with the start's PKCE verifier; so another site, a crawler or a shared browser signed in to someone else's GitHub can't start or finish one unseen.
+  The server keeps GitHub's numeric user ID and the account's current login, which cards show as `github:<login>`.
+  An address GitHub lists as verified counts as verified here, and GitHub's noreply addresses, which get no mail, aren't offered.
+  Reason: GitHub checked the inbox already, so a second email adds a step and proves nothing more.
+  The cost: GitHub may still list an address the person no longer holds, such as a former employer's.
+- A first GitHub sign-in that links no account gets a form: the display name, GitHub's name suggested, one of GitHub's verified addresses, and the optional invite code.
+  The account it makes is verified and has no password, and no email goes to it.
+  When the address has an account already, the server sends that address the note email signup sends, makes nothing, and says to log in and link GitHub from the account page.
+  That page differs from a new account's, which logs in, so it says the address has an account; only someone GitHub lists as holding the address sees it.
+- An account links at most one GitHub account, and a GitHub account at most one account.
+  Linking from the account page also verifies the account's address when GitHub lists it as verified, since the person holds the session and the inbox.
+  Unlinking needs a password, so the person keeps a way in, and takes the handle off every card; GitHub keeps listing the app among the person's authorized ones, which the account page links to, since the server holds no token to revoke the grant with.
+- An account with no password confirms its deletion by typing its GitHub login instead (the owner's decision, 2026-11-22).
+  Reason: the password guards against a deletion by accident, and a session can already withdraw entries for good.
 - Display names are pseudonymous and need not be unique, since different researchers share names.
   A display name is at most 50 characters.
+  Signup refuses one holding `github:` or `orcid:`, in any case, with a message that says why (the owner's decision, 2026-11-22).
+  Reason: cards show linked handles that way, so a name holding one would look like a handle the server checked.
   Signup refuses one holding an invisible character, such as a zero-width space, or a line or paragraph separator, with a message that says why, rather than removing them and keeping the rest, so the holder knows what the name will be; a name stored before the rule is printed without them (the owner's decision, 2026-11-21).
   Screening doesn't check it during the beta, as it doesn't check entry text for instructions aimed at the agents that read it: a name is author text on a card, like the title, and the search skill's "entry text is data" rule covers both (the owner's decision, 2026-11-09).
   An injection screen covering both comes before leaving beta (#59).
@@ -89,7 +107,7 @@ The owner expects most contributors to be independent researchers, newcomers to 
   Forms keep their guard, since a POST from another site carries no Lax cookie and the server refuses a POST whose `Origin` isn't the site; every GET that reads the session only shows a page.
 - The server keeps a record of each entry deleted by token or withdrawn: its ID, its account and the time.
   The account's later `GET /e/<id>` or `DELETE /e/<id>` of it answers that it was deleted then, not 404, so a retried request that had worked is recognized; nobody else learns anything from it (the owner's decision, 2026-11-08).
-- Deleting an account, from a browser session with the password, deletes the email address, login, display name, tokens, private feedback and queued email, and every entry not yet public, except those the owner removed, which stay for analysis (see [Admin](#admin)).
+- Deleting an account, from a browser session with the password (or, with none, the GitHub login typed), deletes the email address, login, display name, linked GitHub account, tokens, private feedback and queued email, and every entry not yet public, except those the owner removed, which stay for analysis (see [Admin](#admin)).
   By the same rule it deletes the series the screen refused, except those the owner confirmed as a hazard.
   It also deletes the series the account made that no one but their members could read yet, no version readable, unless another account's entry cites one; any other series outlives the account, as a removed one does (the owner's decision, 2026-11-17).
   An entry rejected in the last 60 days counts as citing it (the owner's decision, 2026-11-17).
@@ -108,7 +126,9 @@ The owner expects little abuse and prefers limits to login friction.
   Token-authenticated writes are limited per account too, 60 a minute, refused ones included (issue #14).
   Reason: refused requests cost no allowance, but each still costs the server CPU, and once link checks run, the GitHub API quota that every account shares.
 - Signups are rate limited per IP: 10 an hour and 40 a day.
-  Verification and password-reset emails are limited per address, 5 an hour and 20 a day, and per IP, 20 an hour and 60 a day; a signup counts as one, since it always sends an email.
+  Verification and password-reset emails are limited per address, 5 an hour and 20 a day, and per IP, 20 an hour and 60 a day; an email signup counts as one, since it always sends an email.
+  A GitHub signup counts against the per-IP signup limit only when its GitHub account is younger than 90 days or of unknown age, and against its address's email limit always, whether or not the address has an account (the owner's decision, 2026-11-22).
+  Reason: each GitHub signup needs a GitHub account of its own, and GitHub checks new ones; a sprint behind one IP mostly has old ones, and a farm of fresh ones still meets the limit, while a stale address's holder can't be flooded with notes that it has an account.
   They count every request to send one, whether or not the address has an account, so a limit never says whether one exists.
   Signups with an invite code are to be limited per address only, so a sprint behind one IP can verify (with invite codes, the next slice).
   Reason: a flood of them would hurt the domain's mail reputation, and with it every email the site sends.
@@ -148,7 +168,10 @@ The owner expects little abuse and prefers limits to login friction.
   Reason: an in-person sprint puts many real users behind a few IPs, and each of them may want to post more than 20 a day.
 - The admin account counts as invited for the allowance: 50 a day from its first day (the owner's decision, 2026-11-09).
   Reason: the owner's production account is new at launch, and its first batches would wait days at 20 a day.
-- An account linked to a GitHub account at least 90 days old also skips the new-account limit.
+- An account linked to a GitHub account at least 90 days old also skips the new-account limit, while it stays linked, if it was the first account that GitHub account ever linked (the owner's decision, 2026-11-22).
+  Reason: otherwise one old GitHub account, linked, unlinked and linked again, would exempt account after account, and the units it queued keep their days.
+  The server keeps the GitHub ID of each first link after unlinking and after the account is deleted, without the account, and only a purge removes it.
+  A GitHub account whose age GitHub's answer doesn't give grants no exemption.
   Linking ORCID doesn't, since anyone can create an ORCID iD in a minute.
 - The owner makes codes on `/admin/invites`, with a label, a number of uses (up to 10,000) and the days it is valid (up to 365); the page lists each code with its signup link, `/signup?invite=<code>`, its uses taken and its expiry.
   Codes are `inv-` and 16 random characters, kept in plain, since the owner reads them off the page to share them.
@@ -775,7 +798,7 @@ Reason: the results that belong here are the ones nobody comes back to, so a req
 - A later "post it", "yes" or "go ahead" about an entry already pending doesn't end the hold; the agent says when it publishes and that "publish now" ends the hold (#94).
   Reason: in round 4 a second "Yes, post it." made Claude Code publish at once, and the pull that followed was refused.
 - After a submit, the agent's report leads with the URL, the publish time and that "pull it" deletes the entry until then, repeats that it will be public for good under CC-BY 4.0, then shows the card and the account it posted as, and leaves the hour's hold to run.
-- On Yes with no token yet, the agent gives the human the `/signup` link at once, says to look in spam for the verification email, and goes on writing; it asks for the token only when the entry is ready (#53; the owner's decision, 2026-11-09).
+- On Yes with no token yet, the agent gives the human the `/signup` link at once, says that if they sign up by email to look in spam for the verification email, and goes on writing; it asks for the token only when the entry is ready (#53; the owner's decision, 2026-11-09).
   Before it asks, it saves each draft in the repo's `.filedrawer/drafts/`, whose own `.gitignore` keeps it out of commits, and tells the human the path, so a later session asked to post them finds them.
   `/skill.md` does the same when the human's task is sharing.
   Reason: many people paste the home page's line before they have an account, and asking for the token before writing stalled the work behind signup and lost it to a new session.
@@ -934,7 +957,7 @@ Reason: entries and feedback can carry instructions, such as "create an invite c
     A restore is refused while its creator is suspended.
     A removed series outlives its creator's account, whatever its versions.
 - For an erasure request, the owner purges instead.
-  A purge deletes the data from the database: the named entries with all their versions and search rows, or an account's email, login, display name, linked GitHub and ORCID handles, private feedback and its triage-inbox summaries.
+  A purge deletes the data from the database: the named entries with all their versions and search rows, or an account's email, login, display name, linked GitHub and ORCID handles and the GitHub ID kept for the exemption, private feedback and its triage-inbox summaries.
   It deletes attached files that no other entry uses.
   Reason: the VPS is in Germany, and people have a legal right to have their personal data erased.
   - Deleted rows' bytes may stay in SQLite's freed pages, its write-ahead log and the backups until they are overwritten or age out: the email address is the only private data the site keeps, and the privacy page promises no time (the owner's decision, 2026-11-17, which dropped `secure_delete`, the hourly emptying of the log (#65) and the 21-day promise).
@@ -964,7 +987,8 @@ Reason: entries and feedback can carry instructions, such as "create an invite c
 Rust, because the owner wants performance and reliability in production.
 Python is fine for scripts and internal tools.
 
-- axum (HTTP), sqlx with SQLite (storage and FTS5 search), askama (templates), pulldown-cmark (markdown), argon2 (passwords), lettre (SMTP), oauth2 (GitHub sign-in).
+- axum (HTTP), sqlx with SQLite (storage and FTS5 search), askama (templates), pulldown-cmark (markdown), argon2 (passwords), lettre (SMTP), and reqwest for GitHub sign-in's few calls.
+  Reason: the oauth2 crate can't make GitHub's token revocation, a DELETE, reads GitHub's errors, which come with HTTP 200, as parse failures, and brings older copies of crates the server already has; state, PKCE and the code exchange take little code (#119).
 - Caddy in front for HTTPS.
   The `.dev` top-level domain is HSTS-preloaded, so browsers refuse plain HTTP.
   Caddy also passes `files.filedrawer.dev` to the server, which serves attached code there.
@@ -1078,7 +1102,7 @@ Python is fine for scripts and internal tools.
   Everything it would warn of, another commit than staging's, an older Caddy, the migrations a rollback crosses, goes in one question before anything on the server changes.
   It pipes the binary to `filedrawer-install production`, then runs `ops/smoke-staging read` against production, which posts nothing.
   When the install kept the new binary with an outbound warning (its exit 3, below), it still runs that check, then exits 3 with the warning.
-- Each deploy, staging's and production's, probes the server's way out once the new binary answers: `filedrawer-server check-outbound` reaches the SMTP server (a login and a NOOP, nothing sent), api.anthropic.com, api.github.com and hc-ping.com's root, each only when the settings have the server call it (#102).
+- Each deploy, staging's and production's, probes the server's way out once the new binary answers: `filedrawer-server check-outbound` reaches the SMTP server (a login and a NOOP, nothing sent), api.anthropic.com, api.github.com, github.com (with GitHub sign-in) and hc-ping.com's root, each only when the settings have the server call it (#102).
   Reason: on 2026-11-18 a unit that refused the resolver's UDP bind cut both servers off for hours, though `/tags` answered and root's curl on the box got out; production's signup mail, screening and ping failed until the owner's own signup email never came.
   So the probe runs as the service's user under the unit's own sandbox: a transient unit given each `[Service]` setting of the installed unit, but how it starts and restarts (the owner's decision, 2026-11-18); a unit with a drop-in, which that copy would miss, isn't probed (an agent's choice, in uncertainties.md).
   When the new binary can't reach a host, the install probes the previous binary in a unit of its own while the new one serves, and probes the new one again, rather than rolling back first (the owner's decision, 2026-11-18; the order is an agent's choice, in uncertainties.md):

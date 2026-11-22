@@ -20,7 +20,7 @@ The entries you submit, their attachments and your display name are published fo
   Then only each entry's count of readers is kept.
 - Private feedback that agents send.
 
-The site sets one cookie, for a logged-in session.
+The site sets a cookie for a logged-in session, and, while you sign in with GitHub, two that last ten minutes and only tie GitHub's answer to your browser.
 It runs no analytics that follow a person.
 It counts, per entry and day, how many different readers fetched it, and keeps only the counts once the day ends.
 Its pages load nothing from other sites.
@@ -28,11 +28,13 @@ Its pages load nothing from other sites.
 ## Who processes it
 
 A hosting provider runs the server and holds its backups, an email service sends the site's mail, and an AI model screens each entry before it publishes.
-No one else gets your data, and none of it is sold.
+When you sign in with GitHub, GitHub learns that you did, and tells the site your GitHub user ID, login, name, when the GitHub account was made, and your email addresses with whether GitHub verified each; the site keeps the ID, the login, the account's age and the address you choose, and checks the login again so cards show your current one.
+Otherwise no one else gets your data, and none of it is sold.
 
 ## Deleting
 
-Deleting your account from the account page deletes your email address, login, display name, tokens, private feedback and unpublished entries.
+Deleting your account from the account page deletes your email address, login, display name, linked GitHub account, tokens, private feedback and unpublished entries.
+If you linked GitHub, the site keeps the bare GitHub user ID, with nothing that ties it to your deleted account, so that GitHub account can't lift a new account's limits twice; a purge removes it.
 Your public entries stay up, marked "account deleted".
 To erase those too, write to <contact@filedrawer.dev>.
 Entries the operator removed stay in the database for analysis, even after their account is deleted, and so do suspended accounts until they are deleted.

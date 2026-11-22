@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT l.account_id FROM github_links l JOIN accounts a ON a.id = l.account_id\n         WHERE l.github_id = ? AND a.deleted_at IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "account_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "github_links",
+            "name": "account_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "e36fb33138be8f398f874738de5255d8410426b7a4d55e153e1b882ce5b4c212"
+}

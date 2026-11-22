@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO github_signups\n           (key_hash, github_id, login, name, github_created_at, emails, next, created_at,\n            expires_at)\n         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 9
+    },
+    "nullable": []
+  },
+  "hash": "a97b5cbd10c9ded8af1aca3ce2c37810dcbaa1af9586e7cc88b561fd21529e41"
+}

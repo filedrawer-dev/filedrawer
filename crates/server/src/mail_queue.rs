@@ -388,7 +388,8 @@ async fn prepare(
             let body = format!(
                 "Someone tried to sign up for File Drawer with this address, which already \
                  has an account.\n\nIf it was you, log in at {url}/login, or choose a new \
-                 password at {url}/reset. If it wasn't, ignore this email.\n"
+                 password at {url}/reset. To sign in with GitHub too, log in and link GitHub \
+                 from your account page. If it wasn't you, ignore this email.\n"
             );
             (
                 "Someone tried to sign up with your email".to_string(),

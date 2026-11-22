@@ -48,6 +48,10 @@ pub struct Config {
     /// 60 (design.md, Submission and screening, step 2). Production refuses to run
     /// without one.
     pub github_token: Option<GithubToken>,
+    /// The environment's GitHub OAuth App, for GitHub sign-in
+    /// (`FILEDRAWER_GITHUB_CLIENT_ID` and `FILEDRAWER_GITHUB_CLIENT_SECRET`); without
+    /// one, GitHub sign-in is off.
+    pub github_oauth: Option<crate::github_login::OAuthApp>,
     /// Whether submissions fetch their `code` and `logs` links. Off only for the
     /// tests that run the server binary, so they reach no real host; production
     /// refuses off.
@@ -167,6 +171,37 @@ pub enum ConfigError {
         "production's daily email pings healthchecks.io, so a dead job or mailer gets noticed, so it needs FILEDRAWER_DAILY_EMAIL_PING"
     )]
     NoDailyEmailPingInProduction,
+    #[error(
+        "set both FILEDRAWER_GITHUB_CLIENT_ID and FILEDRAWER_GITHUB_CLIENT_SECRET, or neither; {0} is missing"
+    )]
+    PartialGithubOauth(&'static str),
+}
+
+/// The GitHub OAuth App, if both its settings are set.
+fn github_oauth(
+    var: &impl Fn(&str) -> Option<String>,
+) -> Result<Option<crate::github_login::OAuthApp>, ConfigError> {
+    let set = |name| {
+        var(name)
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    };
+    match (
+        set("FILEDRAWER_GITHUB_CLIENT_ID"),
+        set("FILEDRAWER_GITHUB_CLIENT_SECRET"),
+    ) {
+        (Some(client_id), Some(secret)) => Ok(Some(crate::github_login::OAuthApp {
+            client_id,
+            client_secret: crate::github_login::ClientSecret(secret),
+        })),
+        (None, None) => Ok(None),
+        (Some(_), None) => Err(ConfigError::PartialGithubOauth(
+            "FILEDRAWER_GITHUB_CLIENT_SECRET",
+        )),
+        (None, Some(_)) => Err(ConfigError::PartialGithubOauth(
+            "FILEDRAWER_GITHUB_CLIENT_ID",
+        )),
+    }
 }
 
 /// The daily email's ping URL, if set: an https URL on `hc-ping.com` with a path.
@@ -374,7 +409,9 @@ impl Config {
         if environment == Environment::Production && daily_email_ping.is_none() {
             return Err(ConfigError::NoDailyEmailPingInProduction);
         }
+        let github_oauth = github_oauth(&var)?;
         Ok(Config {
+            github_oauth,
             daily_email_ping,
             backups_dir,
             link_checks,

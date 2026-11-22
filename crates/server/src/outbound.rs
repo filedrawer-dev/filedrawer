@@ -73,11 +73,18 @@ pub fn plan(config: &Config) -> Vec<Planned> {
             matches!(config.screener, Screener::Models(_)),
             "FILEDRAWER_SCREENER isn't anthropic",
         ),
+        // GitHub sign-in reads the user from the API too, link checks or not.
         http(
             "api.github.com",
             crate::link_checks::GITHUB_API,
-            config.link_checks,
-            "FILEDRAWER_LINK_CHECKS=off",
+            config.link_checks || config.github_oauth.is_some(),
+            "FILEDRAWER_LINK_CHECKS=off and no GitHub OAuth App",
+        ),
+        http(
+            "github.com",
+            crate::github_login::GITHUB_WEB,
+            config.github_oauth.is_some(),
+            "no FILEDRAWER_GITHUB_CLIENT_ID",
         ),
         // The host's root, never the ping URL, which would report the daily job;
         // the settings take no other host.
@@ -186,6 +193,7 @@ mod tests {
                 ("SMTP".to_string(), false),
                 ("api.anthropic.com".to_string(), false),
                 ("api.github.com".to_string(), true),
+                ("github.com".to_string(), false),
                 ("hc-ping.com".to_string(), false),
             ]
         );
@@ -209,6 +217,7 @@ mod tests {
                 ("smtp.example:465".to_string(), true),
                 ("api.anthropic.com".to_string(), true),
                 ("api.github.com".to_string(), false),
+                ("github.com".to_string(), false),
                 ("hc-ping.com".to_string(), true),
             ]
         );

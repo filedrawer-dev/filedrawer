@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT account_id FROM github_links WHERE github_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "account_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "github_links",
+            "name": "account_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "9e7fb73382cbbb0bb0acb517241f0ea236f834ecd08830456fd233431ccda910"
+}

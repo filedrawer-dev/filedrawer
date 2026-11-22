@@ -115,6 +115,9 @@ pub async fn delete(state: &AppState, account_id: &str) -> Result<(), sqlx::Erro
     ] {
         statement.execute(&mut *transaction).await?;
     }
+    // Its GitHub link goes; the bare GitHub ID stays, so it can't exempt another
+    // account from the new-account limit.
+    crate::github_accounts::forget_account(&mut transaction, account_id).await?;
     // Attachment sets no kept entry cites go, and then files no set holds.
     attachments::delete_uncited_sets(&mut transaction, Some(account_id), None).await?;
     let lone = attachments::delete_lone_files(&writer, &mut transaction).await?;

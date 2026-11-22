@@ -156,6 +156,30 @@ pub fn display_name(text: &str) -> Option<&str> {
     analyzer::is_label(text, DISPLAY_NAME_CHARS).then_some(text)
 }
 
+/// The prefixes of linked handles on a card's byline, which a name may not hold, so
+/// it can't pose as a handle the server checked (design.md, Accounts).
+const HANDLE_PREFIXES: [&str; 2] = ["github:", "orcid:"];
+
+/// `text` trimmed, if it can be a display name ([`display_name`], and holding no
+/// handle's prefix), or why not, for the signup forms to say.
+pub fn display_name_refusal(text: &str) -> Result<&str, String> {
+    let Some(name) = display_name(text) else {
+        return Err(format!(
+            "A display name is 1 to {DISPLAY_NAME_CHARS} characters on one line, with no invisible characters."
+        ));
+    };
+    let lower = name.to_lowercase();
+    match HANDLE_PREFIXES
+        .iter()
+        .find(|prefix| lower.contains(*prefix))
+    {
+        Some(prefix) => Err(format!(
+            "A display name can't hold \"{prefix}\": cards show an account's linked GitHub or ORCID handle that way, so a name holding it would look like one."
+        )),
+        None => Ok(name),
+    }
+}
+
 /// A new email link's secret for `account_id`, and its hash, which is all that is
 /// stored.
 pub async fn new_email_link(
@@ -363,6 +387,18 @@ pub async fn admin_ids(conn: &mut SqliteConnection) -> Result<Vec<String>, sqlx:
     )
     .fetch_all(conn)
     .await
+}
+
+/// Whether the account has a password, which an account that signed up with GitHub
+/// may not.
+pub async fn has_password(pool: &SqlitePool, account_id: &str) -> Result<bool, sqlx::Error> {
+    let hash = sqlx::query_scalar!(
+        "SELECT password_hash FROM accounts WHERE id = ?",
+        account_id
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(hash.flatten().is_some())
 }
 
 /// Whether `account_id` is the admin (design.md, Admin).

@@ -56,6 +56,10 @@ branches or in one of its tags: its commit page first, then its API, spending at
 most half of the token's hourly allowance.
 FILEDRAWER_GITHUB_TOKEN, a token with no repository access, raises GitHub's
 allowance from 60 calls an hour to 5,000; production refuses to start without it.
+FILEDRAWER_GITHUB_CLIENT_ID and FILEDRAWER_GITHUB_CLIENT_SECRET, an environment's
+own GitHub OAuth App's, turn on GitHub sign-in: set both or neither. The app's
+callback is the site's /login/github/callback, and it asks GitHub only for the
+user:email scope; the token it gets is revoked at once.
 FILEDRAWER_LINK_CHECKS=off fetches nothing, for tests that run this binary;
 production refuses it. FILEDRAWER_PUBLISHER_SECONDS sets how often the screening
 queue runs, which is when an entry with attached code is screened: 30 seconds unless
@@ -89,8 +93,9 @@ on the field-test entries' attachment sets.
 
 check-outbound reads serve's settings and calls, each within 10 seconds, every host
 they have the server call: the SMTP server (a login and a NOOP; nothing is sent),
-api.anthropic.com and api.github.com (an unauthenticated request, whose answer of
-any kind shows the way out), and hc-ping.com (its root, never the ping URL). It
+api.anthropic.com, api.github.com and, with GitHub sign-in, github.com (an
+unauthenticated request, whose answer of any kind shows the way out), and
+hc-ping.com (its root, never the ping URL). It
 prints a line a host, `reached HOST`, `skipped HOST (why)` or `can't reach HOST:
 causes`, and exits 0 when every host it called answered, 3 when one didn't, and 2
 when it can't read the settings. It never opens the database. filedrawer-install
@@ -375,6 +380,15 @@ async fn serve() -> ExitCode {
         reads: Default::default(),
         request_log: RequestLog::for_environment(config.environment, &config.database)
             .map(Arc::new),
+        github_login: config.github_oauth.clone().map(|app| {
+            Arc::new(filedrawer_server::github_login::GithubLogin {
+                oauth: Arc::new(filedrawer_server::github_login::HttpGithubOAuth::new(
+                    app.clone(),
+                )),
+                app,
+                web_base: filedrawer_server::github_login::GITHUB_WEB.to_string(),
+            })
+        }),
     };
     tokio::spawn(filedrawer_server::jobs::run_publisher(
         state.clone(),

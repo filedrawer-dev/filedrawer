@@ -226,7 +226,8 @@ fn check_outbound_with_nothing_to_call_says_so_and_never_opens_the_database() {
         [
             "skipped SMTP (no SMTP settings)",
             "skipped api.anthropic.com (FILEDRAWER_SCREENER isn't anthropic)",
-            "skipped api.github.com (FILEDRAWER_LINK_CHECKS=off)",
+            "skipped api.github.com (FILEDRAWER_LINK_CHECKS=off and no GitHub OAuth App)",
+            "skipped github.com (no FILEDRAWER_GITHUB_CLIENT_ID)",
             "skipped hc-ping.com (no FILEDRAWER_DAILY_EMAIL_PING)",
         ]
     );

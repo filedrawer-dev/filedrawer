@@ -6,3 +6,4 @@
 # A migration's own text is sqlx's checksum, so its line goes here, never in the file.
 0033 breaks it drops entries.embargo_until and series.public_at, which an older binary reads and writes, and deletes embargoed and waiting entries and unread hidden series
 0037 safe an older binary reads attachment_files.repo_url, which sets stored from 0037 on leave NULL, so it lists their files without the repo URL; the sets it stores itself count no origins toward the storage cap
+0038 safe it adds a view, github_handles, and tables an older binary doesn't read; an older binary's account deletion leaves the link row, which the view hides and the tidy deletes

@@ -21,6 +21,8 @@ mod entries;
 mod error;
 pub mod event_log;
 pub mod file_store;
+pub mod github_accounts;
+pub mod github_login;
 mod ids;
 mod invites;
 pub mod jobs;
@@ -167,6 +169,9 @@ pub struct AppState {
     pub searches: std::sync::Arc<search::Places>,
     /// Today's readers of each entry, for Most read, and the salt they're hashed with.
     pub reads: std::sync::Arc<reads::ReadCounter>,
+    /// GitHub sign-in, when this environment has an OAuth App
+    /// (`Config::github_oauth`); without one its routes aren't served.
+    pub github_login: Option<std::sync::Arc<github_login::GithubLogin>>,
 }
 
 /// The free disk an upload must leave (design.md, Attached code: 5 GB).
@@ -262,6 +267,34 @@ fn build(state: AppState) -> Routes<Router> {
                 get(account::login_page).post(account::login),
                 MAX_FORM_BYTES,
             ),
+        )
+        .route_if(
+            state.github_login.is_some(),
+            "/login/github",
+            limited(post(routes::github::sign_in), MAX_FORM_BYTES),
+        )
+        .route_if(
+            state.github_login.is_some(),
+            github_login::CALLBACK_PATH,
+            get(routes::github::callback),
+        )
+        .route_if(
+            state.github_login.is_some(),
+            "/signup/github",
+            limited(
+                get(routes::github::signup_page).post(routes::github::signup),
+                MAX_FORM_BYTES,
+            ),
+        )
+        .route_if(
+            state.github_login.is_some(),
+            "/account/github/link",
+            post(routes::github::link),
+        )
+        .route_if(
+            state.github_login.is_some(),
+            "/account/github/unlink",
+            post(routes::github::unlink),
         )
         .route("/logout", post(account::logout))
         .route(

@@ -88,11 +88,17 @@ pub async fn entry(
     let runs = entries::entry_runs(&state.pool, &entry.id).await?;
     let cited = shown_series(&state, entry.seq).await?;
     let mut text = format!(
-        "id: {}\nstatus: public\nanalyzer: v{ANALYZER_VERSION}\nsubmitted: {}\npublished: {}\nauthor: account {}, {}\n",
+        "id: {}\nstatus: public\nanalyzer: v{ANALYZER_VERSION}\nsubmitted: {}\npublished: {}\nauthor: account {}, {}{}\n",
         entry.id,
         entry.submitted_at,
         entry.published_at.as_deref().unwrap_or(""),
         entry.account_id,
+        // The handle is the server's, so it comes before the name, as on the card.
+        entry
+            .github_login
+            .as_deref()
+            .map(|login| format!("{}, ", entries::github_handle(login)))
+            .unwrap_or_default(),
         author_name(entry.display_name.as_deref())
     );
     if let Some(previous) = &entry.previous_id {

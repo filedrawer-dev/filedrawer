@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE github_exemptions SET account_id = NULL\n         WHERE account_id IN (SELECT id FROM accounts WHERE deleted_at IS NOT NULL)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "eddce8826f09b98cb6ebe2e04c788e1f0e7298ac20fab8f2f3901ad1f1524f05"
+}

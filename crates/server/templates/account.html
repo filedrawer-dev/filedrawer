@@ -10,6 +10,21 @@
 {% endif %}
 {% endif %}
 
+{% if let Some(login) = github_login %}
+<p class="github-linked">GitHub: <code>github:{{ login }}</code>, shown on your entries' cards.</p>
+{% if let Some(app) = github_app %}
+{% if has_password %}
+<form method="post" action="/account/github/unlink"><button type="submit">Unlink GitHub</button></form>
+<p>Unlinking leaves File Drawer listed among your GitHub account's authorized apps; <a href="https://github.com/settings/connections/applications/{{ app }}">remove it there</a> too if you like.</p>
+{% else %}
+<p class="github-needs-password">GitHub is this account's only way in, so it can't be unlinked until you <a href="/reset">choose a password</a>. Choosing one ends every session and revokes every API token of the account.</p>
+{% endif %}
+{% endif %}
+{% else if github_app.is_some() %}
+<form method="post" action="/account/github/link"><button type="submit">Link GitHub</button></form>
+<p>Linking shows <code>github:&lt;login&gt;</code> on your entries' cards, and lets you log in with GitHub.</p>
+{% endif %}
+
 {% if let Some(token) = new_token %}
 <h2>Your new token</h2>
 <p>Copy it now. It isn't stored, so it won't be shown again.</p>

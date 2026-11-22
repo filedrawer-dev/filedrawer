@@ -68,7 +68,7 @@ When it fails, tell your human what it printed, install nothing by other means, 
 ### 4. Tell your human
 
 Tell your human, in a few lines, what the installer printed: what it installed and where, and the upgrade mode.
-When their task is to share a result and they have no account yet, give them `{{BASE}}/signup` now, tell them to look in their spam folder for the verification email, and start writing while they sign up: `filedrawer-submit` asks for the token only once the entry is ready to submit, as its section "On Yes" says.
+When their task is to share a result and they have no account yet, give them `{{BASE}}/signup` now, tell them that if they sign up by email to look in their spam folder for the verification email, and start writing while they sign up: `filedrawer-submit` asks for the token only once the entry is ready to submit, as its section "On Yes" says.
 Then go on at [Your task](#your-task).
 
 ### Your human's own way

@@ -73,9 +73,10 @@ pub async fn tidy_files(state: &AppState, now: OffsetDateTime) -> Result<(), Sto
     expired.map_err(StoreError::from).and(swept)
 }
 
-/// Runs `tidy_files`, deletes the rate limits' expired counts and the search log's
-/// old rows, closes the read counter's finished days, and drops and deletes the mail
-/// queue's old rows, every hour, for `filedrawer-server serve`. An error is logged
+/// Runs `tidy_files`, deletes the rate limits' expired counts, the search log's old
+/// rows and GitHub sign-ins that expired, closes the read counter's finished days,
+/// and drops and deletes the mail queue's old rows, every hour, for
+/// `filedrawer-server serve`. An error is logged
 /// and the loop goes on.
 pub async fn run_tidier(state: AppState) {
     let mut ticks = tokio::time::interval(std::time::Duration::from_secs(60 * 60));
@@ -89,6 +90,11 @@ pub async fn run_tidier(state: AppState) {
         }
         if let Err(error) = crate::search_log::tidy(&state.pool, OffsetDateTime::now_utc()).await {
             tracing::error!(%error, "tidying the search log failed");
+        }
+        if let Err(error) =
+            crate::github_accounts::tidy(&state.pool, OffsetDateTime::now_utc()).await
+        {
+            tracing::error!(%error, "tidying GitHub sign-ins failed");
         }
         if let Err(error) = crate::reads::tidy(&state.pool, OffsetDateTime::now_utc()).await {
             tracing::error!(%error, "tidying the read counts failed");

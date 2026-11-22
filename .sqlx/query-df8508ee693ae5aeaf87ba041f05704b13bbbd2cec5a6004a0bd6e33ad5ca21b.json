@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO github_exemptions (github_id, account_id) VALUES (?, ?)\n         ON CONFLICT (github_id) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "df8508ee693ae5aeaf87ba041f05704b13bbbd2cec5a6004a0bd6e33ad5ca21b"
+}

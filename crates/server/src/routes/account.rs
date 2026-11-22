@@ -20,7 +20,7 @@ use crate::pages::{
     VerifyPage, page,
 };
 use crate::time::now_utc;
-use crate::{AppState, admin, deletion, invites, passwords, series, withdraw};
+use crate::{AppState, admin, deletion, github_accounts, invites, passwords, series, withdraw};
 
 const COOKIE: &str = "fd_session";
 
@@ -33,22 +33,25 @@ pub struct SessionAccount {
 /// The `Set-Cookie` value that sets the session cookie to `secret` for `max_age`
 /// seconds; an empty secret with 0 clears it. Lax, so a link from another site, such
 /// as an email's, keeps the session (design.md, Accounts).
-fn session_cookie(secret: &str, max_age: i64) -> String {
+pub(super) fn session_cookie(secret: &str, max_age: i64) -> String {
     format!("{COOKIE}={secret}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age={max_age}")
 }
 
-/// The session cookie's secret, if the request carries one.
-fn session_secret(headers: &HeaderMap) -> Option<String> {
+/// The value of the cookie `name`, if the request carries one that isn't empty.
+pub(super) fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
+    let prefix = format!("{name}=");
     headers
         .get_all(header::COOKIE)
         .iter()
         .filter_map(|value| value.to_str().ok())
         .flat_map(|value| value.split(';'))
-        .find_map(|pair| {
-            pair.trim()
-                .strip_prefix(&format!("{COOKIE}="))
-                .map(str::to_string)
-        })
+        .find_map(|pair| pair.trim().strip_prefix(&prefix).map(str::to_string))
+        .filter(|value| !value.is_empty())
+}
+
+/// The session cookie's secret, if the request carries one.
+fn session_secret(headers: &HeaderMap) -> Option<String> {
+    cookie_value(headers, COOKIE)
 }
 
 /// The account of the request's session, if it carries a live one; unlike
@@ -95,7 +98,7 @@ fn to_login(parts: &Parts) -> Response {
 /// `next` if it names a page on this site; otherwise none, so a crafted login link
 /// can't send a browser elsewhere. Browsers read `\` as `/`, so `/\host` would be
 /// `//host`, another site; and a header takes only visible ASCII.
-fn page_on_this_site(next: &str) -> Option<&str> {
+pub(super) fn page_on_this_site(next: &str) -> Option<&str> {
     let on_site = next.starts_with('/')
         && !next.starts_with("//")
         && next
@@ -110,9 +113,13 @@ pub struct SignupQuery {
 }
 
 /// The signup form; a link such as `/signup?invite=inv-...` fills in the code.
-pub async fn signup_page(Query(query): Query<SignupQuery>) -> Response {
+pub async fn signup_page(
+    State(state): State<AppState>,
+    Query(query): Query<SignupQuery>,
+) -> Response {
     let template = SignupPage {
         invite: query.invite.as_deref().unwrap_or("").trim(),
+        github: state.github_login.is_some(),
         ..SignupPage::default()
     };
     page(StatusCode::OK, &template)
@@ -135,7 +142,7 @@ pub async fn signup(
     Form(form): Form<SignupForm>,
 ) -> Result<Response, AppError> {
     let email = accounts::normalize_email(&form.email);
-    let display_name = accounts::display_name(&form.display_name);
+    let display_name = accounts::display_name_refusal(&form.display_name);
     let invite = Some(form.invite.trim()).filter(|code| !code.is_empty());
     let again = |problem: &str| {
         let template = SignupPage {
@@ -143,6 +150,7 @@ pub async fn signup(
             email: &email,
             display_name: form.display_name.trim(),
             invite: invite.unwrap_or(""),
+            github: state.github_login.is_some(),
         };
         page(StatusCode::UNPROCESSABLE_ENTITY, &template)
     };
@@ -150,15 +158,10 @@ pub async fn signup(
         Some("That isn't an email address.".to_string())
     } else if let Some(problem) = passwords::problem(&form.password) {
         Some(problem)
-    } else if display_name.is_none() {
-        Some(format!(
-            "A display name is 1 to {} characters on one line, with no invisible characters.",
-            accounts::DISPLAY_NAME_CHARS
-        ))
     } else {
-        None
+        display_name.as_ref().err().cloned()
     };
-    let (None, Some(display_name)) = (&problem, display_name) else {
+    let (None, Ok(display_name)) = (&problem, display_name) else {
         return Ok(again(&problem.unwrap_or_default()));
     };
     // Before anything is counted, so a refusal for want of a place costs no signup.
@@ -262,9 +265,13 @@ pub struct LoginQuery {
     next: Option<String>,
 }
 
-pub async fn login_page(Query(query): Query<LoginQuery>) -> Response {
+pub async fn login_page(
+    State(state): State<AppState>,
+    Query(query): Query<LoginQuery>,
+) -> Response {
     let template = LoginPage {
         next: query.next.as_deref().and_then(page_on_this_site),
+        github: state.github_login.is_some(),
         ..LoginPage::default()
     };
     page(StatusCode::OK, &template)
@@ -303,6 +310,7 @@ pub async fn login(
             error: Some("The email or the password is wrong."),
             email: "",
             next,
+            github: state.github_login.is_some(),
         };
         return Ok(page(StatusCode::UNAUTHORIZED, &template));
     };
@@ -418,7 +426,16 @@ async fn account_page(
     let view = accounts::view(&state.pool, account_id).await?;
     let series = series::created_by(&state.pool, account_id).await?;
     let withdrawable = withdraw::listing(&state.pool, account_id).await?;
+    let github_login = github_accounts::login_of(&state.pool, account_id).await?;
+    let has_password = accounts::has_password(&state.pool, account_id).await?;
+    let github_app = state
+        .github_login
+        .as_ref()
+        .map(|github| github.app.client_id.as_str());
     let template = AccountPage {
+        github_login: github_login.as_deref(),
+        github_app,
+        has_password,
         series: &series,
         withdrawable: &withdrawable,
         display_name: &view.display_name,
@@ -496,32 +513,61 @@ async fn delete_form(
     error: Option<&str>,
 ) -> Result<Response, AppError> {
     let preview = deletion::preview(&state.pool, account_id).await?;
+    let confirm_login = confirm_login(state, account_id).await?;
     let template = DeletePage {
         error,
         unpublished: preview.unpublished,
         public: preview.public,
+        confirm_login: confirm_login.as_deref(),
     };
     Ok(page(status, &template))
 }
 
-#[derive(Deserialize)]
-pub struct DeleteForm {
-    password: String,
+/// The GitHub login an account with no password types to confirm its deletion:
+/// none when it has a password, which it types instead (the owner's decision,
+/// 2026-11-22).
+async fn confirm_login(state: &AppState, account_id: &str) -> Result<Option<String>, sqlx::Error> {
+    if accounts::has_password(&state.pool, account_id).await? {
+        return Ok(None);
+    }
+    github_accounts::login_of(&state.pool, account_id).await
 }
 
-/// Deletes the account once its password is confirmed (the owner's decision,
-/// 2026-11-05: everything not yet public goes, public entries stay without the
-/// name), then ends the session.
+#[derive(Deserialize)]
+pub struct DeleteForm {
+    #[serde(default)]
+    password: String,
+    #[serde(default)]
+    login: String,
+}
+
+/// Deletes the account once its password is confirmed, or, for an account that
+/// signed up with GitHub and has none, its GitHub login typed (the owner's
+/// decisions, 2026-11-05: everything not yet public goes, public entries stay
+/// without the name; 2026-11-22), then ends the session.
 pub async fn delete_account(
     State(state): State<AppState>,
     session: SessionAccount,
     Form(form): Form<DeleteForm>,
 ) -> Result<Response, AppError> {
-    let stored = deletion::password_hash(&state.pool, &session.id).await?;
-    let place = state.passwords.place().await?;
-    if !place.matches(form.password, stored).await {
-        let error = "The password is wrong.";
-        return delete_form(&state, &session.id, StatusCode::UNAUTHORIZED, Some(error)).await;
+    if let Some(login) = confirm_login(&state, &session.id).await? {
+        if !form.login.trim().eq_ignore_ascii_case(&login) {
+            let error = "Type the GitHub login shown, to confirm.";
+            return delete_form(
+                &state,
+                &session.id,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Some(error),
+            )
+            .await;
+        }
+    } else {
+        let stored = deletion::password_hash(&state.pool, &session.id).await?;
+        let place = state.passwords.place().await?;
+        if !place.matches(form.password, stored).await {
+            let error = "The password is wrong.";
+            return delete_form(&state, &session.id, StatusCode::UNAUTHORIZED, Some(error)).await;
+        }
     }
     deletion::delete(&state, &session.id).await?;
     let clear = session_cookie("", 0);

@@ -352,6 +352,22 @@ pub struct SignupPage<'a> {
     pub email: &'a str,
     pub display_name: &'a str,
     pub invite: &'a str,
+    /// Whether this environment offers GitHub sign-in.
+    pub github: bool,
+}
+
+/// The form that finishes a GitHub signup: the name to show, which of GitHub's
+/// verified addresses to keep, and the invite code.
+#[derive(Template)]
+#[template(path = "github_signup.html")]
+pub struct GithubSignupPage<'a> {
+    pub error: Option<&'a str>,
+    pub login: &'a str,
+    pub display_name: &'a str,
+    pub emails: &'a [String],
+    /// The address selected, by its place in `emails`.
+    pub chosen: usize,
+    pub invite: &'a str,
 }
 
 #[derive(Template, Default)]
@@ -361,6 +377,8 @@ pub struct LoginPage<'a> {
     pub email: &'a str,
     /// The page on this site to land on once logged in; none lands on the account page.
     pub next: Option<&'a str>,
+    /// Whether this environment offers GitHub sign-in.
+    pub github: bool,
 }
 
 #[derive(Template)]
@@ -386,11 +404,18 @@ pub struct DeletePage<'a> {
     pub error: Option<&'a str>,
     pub unpublished: i64,
     pub public: i64,
+    /// For an account with no password, the GitHub login it types to confirm.
+    pub confirm_login: Option<&'a str>,
 }
 
 #[derive(Template)]
 #[template(path = "account.html")]
 pub struct AccountPage<'a> {
+    /// The linked GitHub account's login, as stored.
+    pub github_login: Option<&'a str>,
+    /// This environment's OAuth App's client ID, when it offers GitHub sign-in.
+    pub github_app: Option<&'a str>,
+    pub has_password: bool,
     pub display_name: &'a str,
     pub account_id: &'a str,
     pub email: Option<&'a str>,

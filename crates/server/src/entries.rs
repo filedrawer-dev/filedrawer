@@ -23,6 +23,8 @@ pub struct PublicEntry {
     pub account_id: String,
     /// `None` once the account is deleted.
     pub display_name: Option<String>,
+    /// The linked GitHub account's login, while the card shows it.
+    pub github_login: Option<String>,
     pub submitted_at: String,
     pub published_at: Option<String>,
     /// The version this one replaced.
@@ -43,14 +45,19 @@ pub struct PublicEntry {
 }
 
 /// The card context only the server knows: the entry's ID and its author, whose
-/// name is `None` once the account is deleted.
-pub fn card_context(id: &str, account_id: &str, display_name: Option<&str>) -> CardContext {
+/// name is `None` once the account is deleted, with the GitHub login it linked.
+pub fn card_context(
+    id: &str,
+    account_id: &str,
+    display_name: Option<&str>,
+    github_login: Option<&str>,
+) -> CardContext {
     CardContext {
         id: Some(id.to_string()),
         author: Some(Author {
             display_name: display_name.map(str::to_string),
             account_id: account_id.to_string(),
-            handles: Vec::new(),
+            handles: github_login.into_iter().map(github_handle).collect(),
         }),
         ..CardContext::default()
     }
@@ -66,11 +73,22 @@ pub async fn own_card_context(
     display_name: &str,
     analysis: &Analysis,
 ) -> Result<CardContext, sqlx::Error> {
+    let github_login = sqlx::query_scalar!(
+        "SELECT login FROM github_handles WHERE account_id = ?",
+        account_id
+    )
+    .fetch_optional(pool)
+    .await?;
     Ok(CardContext {
         code_attached: analysis.fields.attachments.is_some(),
         superseded_by: named_successor(pool, account_id, id, analysis).await?,
-        ..card_context(id, account_id, Some(display_name))
+        ..card_context(id, account_id, Some(display_name), github_login.as_deref())
     })
+}
+
+/// A linked GitHub login as the card and the `author:` line show it.
+pub fn github_handle(login: &str) -> String {
+    format!("github:{login}")
 }
 
 impl PublicEntry {
@@ -101,7 +119,12 @@ impl PublicEntry {
                 .or_else(|| self.named_successor.clone()),
             screening_note: self.screening_note.clone(),
             code_attached: self.code_attached,
-            ..card_context(&self.id, &self.account_id, self.display_name.as_deref())
+            ..card_context(
+                &self.id,
+                &self.account_id,
+                self.display_name.as_deref(),
+                self.github_login.as_deref(),
+            )
         });
         render_card(analysis, &context)
     }
@@ -810,7 +833,7 @@ pub async fn public_entry(pool: &SqlitePool, id: &str) -> Result<Option<PublicEn
     let entry = sqlx::query_as!(
         PublicEntry,
         r#"SELECT e.seq AS "seq!: i64", e.id, e.source, e.account_id,
-                  a.display_name AS "display_name?: String", e.submitted_at, e.published_at,
+                  a.display_name AS "display_name?: String", h.login AS "github_login?: String", e.submitted_at, e.published_at,
                   (SELECT p.id FROM entries p WHERE p.seq = e.previous_seq AND p.status = 'public') AS "previous_id?",
                   (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS "superseded_by?",
                   e.screening_note,
@@ -821,6 +844,7 @@ pub async fn public_entry(pool: &SqlitePool, id: &str) -> Result<Option<PublicEn
                   -- Filled by `with_named_successors`, after the query.
                   NULL AS "named_successor?: String"
          FROM entries e JOIN authors a ON a.id = e.account_id
+         LEFT JOIN github_handles h ON h.account_id = e.account_id
          LEFT JOIN link_flags f ON f.entry_seq = e.seq
          WHERE e.id = ? AND e.status = 'public'"#,
         id
@@ -958,7 +982,7 @@ pub async fn search(
                  SELECT entry_seq, 1 FROM entry_readers WHERE day >= ?13)
                WHERE ?13 IS NOT NULL GROUP BY entry_seq)
            SELECT e.seq AS "seq!: i64", e.id, e.source, e.account_id,
-                  a.display_name AS "display_name?: String", e.submitted_at, e.published_at,
+                  a.display_name AS "display_name?: String", h.login AS "github_login?: String", e.submitted_at, e.published_at,
                   (SELECT p.id FROM entries p WHERE p.seq = e.previous_seq AND p.status = 'public') AS "previous_id?",
                   (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS "superseded_by?",
                   e.screening_note,
@@ -970,6 +994,7 @@ pub async fn search(
                   -- Every match, before LIMIT: the sort visits them all anyway.
                   COUNT(*) OVER () AS "total!: i64"
            FROM entries e JOIN authors a ON a.id = e.account_id
+         LEFT JOIN github_handles h ON h.account_id = e.account_id
            LEFT JOIN link_flags f ON f.entry_seq = e.seq
            LEFT JOIN read_counts rc ON rc.seq = e.seq
            LEFT JOIN matched m ON m.seq = e.seq
@@ -1029,6 +1054,7 @@ pub async fn search(
             source: row.source,
             account_id: row.account_id,
             display_name: row.display_name,
+            github_login: row.github_login,
             submitted_at: row.submitted_at,
             published_at: row.published_at,
             previous_id: row.previous_id,
@@ -1054,7 +1080,7 @@ pub async fn all_public(pool: &SqlitePool) -> Result<Vec<PublicEntry>, sqlx::Err
     let entries = sqlx::query_as!(
         PublicEntry,
         r#"SELECT e.seq AS "seq!: i64", e.id, e.source, e.account_id,
-                  a.display_name AS "display_name?: String", e.submitted_at, e.published_at,
+                  a.display_name AS "display_name?: String", h.login AS "github_login?: String", e.submitted_at, e.published_at,
                   (SELECT p.id FROM entries p WHERE p.seq = e.previous_seq AND p.status = 'public') AS "previous_id?",
                   (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS "superseded_by?",
                   e.screening_note,
@@ -1065,6 +1091,7 @@ pub async fn all_public(pool: &SqlitePool) -> Result<Vec<PublicEntry>, sqlx::Err
                   -- Filled by `with_named_successors`, after the query.
                   NULL AS "named_successor?: String"
          FROM entries e JOIN authors a ON a.id = e.account_id
+         LEFT JOIN github_handles h ON h.account_id = e.account_id
          LEFT JOIN link_flags f ON f.entry_seq = e.seq
          WHERE e.status = 'public'
            AND NOT EXISTS (SELECT 1 FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public')
@@ -1660,6 +1687,7 @@ pub struct OwnerEntry {
     pub source: String,
     pub account_id: String,
     pub display_name: Option<String>,
+    pub github_login: Option<String>,
     pub submitted_at: String,
     pub batch_id: Option<String>,
     /// Why the screen sent it to review; `None` for entries from before reasons
@@ -1686,8 +1714,9 @@ async fn owner_entries(
     sqlx::query_as!(
         OwnerEntry,
         r#"SELECT e.seq AS "seq!: i64", e.id, e.status, e.source, e.account_id,
-                  a.display_name, e.submitted_at, b.id AS "batch_id?", e.review_reason
+                  a.display_name, h.login AS "github_login?: String", e.submitted_at, b.id AS "batch_id?", e.review_reason
            FROM entries e JOIN authors a ON a.id = e.account_id
+         LEFT JOIN github_handles h ON h.account_id = e.account_id
            LEFT JOIN batches b ON b.seq = e.batch_seq
            WHERE (?1 IS NULL AND e.status IN ('review', 'held', 'frozen')) OR e.id = ?1
            ORDER BY e.queue_position, e.submitted_at, e.seq"#,

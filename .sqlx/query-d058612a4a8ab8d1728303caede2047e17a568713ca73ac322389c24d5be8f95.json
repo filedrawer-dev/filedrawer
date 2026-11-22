@@ -1,0 +1,86 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT github_id, login, name, github_created_at, emails, next FROM github_signups\n         WHERE key_hash = ? AND expires_at > ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "github_id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "github_signups",
+            "name": "github_id"
+          }
+        }
+      },
+      {
+        "name": "login",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "github_signups",
+            "name": "login"
+          }
+        }
+      },
+      {
+        "name": "name",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "github_signups",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "github_created_at",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "github_signups",
+            "name": "github_created_at"
+          }
+        }
+      },
+      {
+        "name": "emails",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "github_signups",
+            "name": "emails"
+          }
+        }
+      },
+      {
+        "name": "next",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "github_signups",
+            "name": "next"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "d058612a4a8ab8d1728303caede2047e17a568713ca73ac322389c24d5be8f95"
+}

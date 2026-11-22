@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM github_links WHERE account_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "dbd07352016c6a5f944774288b51ce4fe181638dda2a5b634bfe72f4d980dff8"
+}

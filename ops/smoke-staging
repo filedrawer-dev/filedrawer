@@ -18,7 +18,9 @@ Runs File Drawer's smoke test against URL (default https://staging.filedrawer.de
 as the submit skill tells an agent to: submit, the hour's hold, a fix with PUT, publish,
 search, a new version, and a batch with slugs and runs. It also checks that a browser
 opening / gets the home page, as one behind staging's password does, and an agent plain
-text. Prints PASS or FAIL for each check, then a tally, and exits 1 when any check fails.
+text, and, where GitHub sign-in is on, that a start redirects to GitHub with the exact
+callback, only the user:email scope, PKCE and the account picker. Prints PASS or FAIL
+for each check, then a tally, and exits 1 when any check fails.
 
   --wait SECONDS  first wait up to SECONDS for URL/skill.md to answer 200, as just
                   after a deploy (default: try once)
@@ -1108,6 +1110,24 @@ fi
 req GET /skill.md
 check "skill.md is live" '[[ $CODE == 200 ]]'
 read_checks
+
+# GitHub sign-in's start, which checks the environment's OAuth App settings without
+# GitHub's consent page (#119): its redirect names GitHub's authorize page, the exact
+# callback, the one scope, PKCE and the account picker. A start writes a row, so read
+# mode skips it; a server without an OAuth App answers 404, which skips it too.
+heads=$(curl -s -o /dev/null -D - -X POST -H "Origin: $base" --data 'next=' -K <(headers) "$base/login/github" | tr -d '\r')
+CODE=$(printf '%s\n' "$heads" | sed -n '1s/^HTTP[^ ]* \([0-9]*\).*/\1/p')
+# shellcheck disable=SC2034  # check's conditions read it
+LOCATION=$(printf '%s\n' "$heads" | sed -n 's/^[Ll]ocation: //p')
+# shellcheck disable=SC2034  # check's conditions read it
+callback=$(printf '%s' "$base/login/github/callback" | sed 's/:/%3A/g; s#/#%2F#g')
+if [[ $CODE == 404 ]]; then
+  echo "SKIP github sign-in: off here"
+else
+  check "github sign-in: starts at GitHub's authorize page, naming the app" '[[ $CODE == 303 && $LOCATION == https://github.com/login/oauth/authorize\?client_id=?* ]]'
+  check "github sign-in: the exact callback" '[[ $LOCATION == *"redirect_uri=$callback&"* ]]'
+  check "github sign-in: only user:email, with PKCE and the picker" '[[ $LOCATION == *"scope=user%3Aemail&"* && $LOCATION == *"code_challenge_method=S256"* && $LOCATION == *"prompt=select_account"* ]]'
+fi
 
 make_entry single "compute: 1h" > "$dir/e1.md"
 req POST /entries "$dir/e1.md"

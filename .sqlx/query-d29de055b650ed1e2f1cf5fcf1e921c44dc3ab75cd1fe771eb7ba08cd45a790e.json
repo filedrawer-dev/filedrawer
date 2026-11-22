@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO github_starts\n           (state_hash, browser_hash, verifier, purpose, account_id, next, client_hash,\n            created_at, expires_at)\n         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 9
+    },
+    "nullable": []
+  },
+  "hash": "d29de055b650ed1e2f1cf5fcf1e921c44dc3ab75cd1fe771eb7ba08cd45a790e"
+}

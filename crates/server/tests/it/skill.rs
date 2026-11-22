@@ -27,6 +27,12 @@ const NOT_FOR_AGENTS: &[&str] = &[
     "/account/tokens/{id}/revoke",
     "/account/verify-email",
     "/account/delete",
+    // GitHub sign-in, in a browser (#119).
+    "/login/github",
+    "/login/github/callback",
+    "/signup/github",
+    "/account/github/link",
+    "/account/github/unlink",
     "/account/e/{id}/withdraw",
     "/admin",
     "/admin/invites",
@@ -347,7 +353,9 @@ async fn every_route_the_documents_name_exists() {
 #[tokio::test]
 async fn the_documents_name_every_route_meant_for_agents() {
     let named = named_paths(&every_document().await);
-    let routes = route_paths(test_app().await.state);
+    // GitHub sign-in's routes are served only with an OAuth App.
+    let github = crate::common::fake_github::FakeGithub::default();
+    let routes = route_paths(test_app().await.with_github(&github).state);
     assert!(routes.len() >= 20, "the router lists only {routes:?}");
     for route in &routes {
         let listed = NOT_FOR_AGENTS.contains(route);

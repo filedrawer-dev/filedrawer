@@ -46,8 +46,9 @@ fn exempt(state: &AppState, account_id: &str) -> bool {
 struct Start {
     /// The UTC day it was made.
     created: Date,
-    /// Whether it signed up with an invite code that isn't revoked, or is the admin,
-    /// which skips the new-account limit (design.md, Limits and abuse).
+    /// Whether it signed up with an invite code that isn't revoked, is the admin, or
+    /// is the first account a GitHub account at least 90 days old linked, which
+    /// skips the new-account limit (design.md, Limits and abuse).
     invited: bool,
 }
 
@@ -77,8 +78,10 @@ async fn start_of(
     .await?;
     let created =
         OffsetDateTime::parse(&account.created_at, &Rfc3339).map_or(today, |at| at.date());
-    // The owner's decision, 2026-11-09.
-    let invited = account.is_admin || invites::invited(conn, account_id).await?;
+    // The owner's decisions, 2026-11-09 and 2026-11-22.
+    let invited = account.is_admin
+        || invites::invited(&mut *conn, account_id).await?
+        || crate::github_accounts::exempt(conn, account_id, today.midnight().assume_utc()).await?;
     Ok(Start { created, invited })
 }
 

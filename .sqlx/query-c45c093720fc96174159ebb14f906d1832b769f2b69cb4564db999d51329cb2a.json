@@ -1,0 +1,28 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT count(*) AS \"in_all!: i64\",\n                  coalesce(sum(client_hash = ?), 0) AS \"this_client!: i64\"\n           FROM github_starts WHERE expires_at > ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "in_all!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "this_client!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "c45c093720fc96174159ebb14f906d1832b769f2b69cb4564db999d51329cb2a"
+}

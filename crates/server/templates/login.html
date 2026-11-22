@@ -9,5 +9,13 @@
 {% if let Some(next) = next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
 <button type="submit">Log in</button>
 </form>
+{% if github %}
+<form method="post" action="/login/github" class="github-sign-in">
+{% if let Some(next) = next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
+<button type="submit">Log in with GitHub</button>
+</form>
+{% else %}
+<p class="github-off">Signed up with GitHub? GitHub sign-in is off here for now: choose a password at <a href="/reset">/reset</a> to log in, which ends every session and revokes every API token of the account.</p>
+{% endif %}
 <p><a href="/signup">Sign up</a> · <a href="/reset">Forgot your password?</a></p>
 {% endblock %}

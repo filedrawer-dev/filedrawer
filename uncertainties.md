@@ -394,6 +394,18 @@ The owner set 10 an hour and 50 a day per account (#60); an agent chose the rest
   No scope: a leak of one account's secrets is a reset of that account, which its owner can already do.
   Series join keys are secrets too, shown once and stored hashed, and it leaves them alone; invite codes are stored as they are, so a copy of the database exposes them, and the runbook says to replace the live ones.
 
+#### GitHub sign-ins under way: 20 per IP
+
+- Options: 20 sign-ins under way per IP (or IPv6 /64) in a 10-minute window, and 10,000 in all; a higher per-IP cap; or none per IP, only the global one.
+- Chosen: 20 per IP, so one client can't fill the table, and an expired start frees its place in 10 minutes (#119).
+- Against: an in-person sprint behind one NAT, which design.md gives invite codes for, could have more than 20 people starting at once, and the cap refuses the 21st for a few minutes; invite codes don't lift it, since the code is typed after GitHub's round trip.
+
+#### A purge after deletion can't find the kept GitHub ID
+
+- Options: account deletion keeps the bare GitHub ID with no tie to the account (as built); it keeps a hash of the account ID beside it, so a later purge finds it; or it keeps nothing, so a deleted account's GitHub account can exempt a new account again.
+- Chosen: the bare ID, as the owner chose (2026-11-22); a purge asked for before deletion removes it (`ON DELETE CASCADE`, and #15's note).
+- Against: someone who deletes their account and then asks for a purge can't have the ID found, short of giving their GitHub login, which the owner would look up through GitHub's API to get the ID.
+
 ### Versions and batches
 
 #### Versions form one line

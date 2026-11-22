@@ -112,7 +112,12 @@ pub async fn entry(
             &analysis,
         )
         .await?,
-        ..entries::card_context(&entry.id, &entry.account_id, entry.display_name.as_deref())
+        ..entries::card_context(
+            &entry.id,
+            &entry.account_id,
+            entry.display_name.as_deref(),
+            entry.github_login.as_deref(),
+        )
     });
     let card = render_card(&analysis, &context);
     // Shown with the entry once public, so the owner reads them too.
