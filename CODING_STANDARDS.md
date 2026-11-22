@@ -104,7 +104,7 @@ Entry text, series descriptions, feedback and screening notes are written by str
 
 ## Python in `bin/`
 
-- Each script runs with plain `python3` or through `uvx`.
+- Each script runs with plain `python3`, through `uvx`, or as a `uv run --script` script, as `bin/live-preview` and `ops/release-cli` do.
   A script that needs packages declares them in an inline `# /// script` block with pinned versions.
   Never call `.venv/bin/...`, since the hooks also run on the host.
 - `-h` prints what the script does and its options.

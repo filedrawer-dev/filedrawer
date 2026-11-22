@@ -1267,6 +1267,24 @@ An agent chose these with #87's fix, after its brief review.
 - Chosen: once `check` passes and the commit is still main's tip, so staging's deploy and smoke runs, which can fail for reasons of their own, don't hold a release back; file by file against crates.io (`Cargo.toml.orig` in, the Cargo.toml cargo writes out), since CI can't push tags without a deploy key; `=`, so `cargo install filedrawer` builds with the analyzer the binaries hold, `--locked` or not (`bin/release-plan`; #84).
 - Against: a release can go out from a commit staging never ran; a workspace-level change (`edition`, `license`) shows only in the Cargo.toml cargo writes, so it slips past the comparison; and `=` makes every analyzer bump a CLI edit too.
 
+#### How ops/release-cli resumes
+
+An agent chose these on 2026-11-21, building the owner's one-command release, after a review of its brief.
+
+- Options: keep a state file of the step reached; or work the step out on each run from git, GitHub and the registries.
+- Chosen: from what is true.
+  Every registry has the checkout's version and nothing in `crates/cli`, `crates/analyzer`, `Cargo.lock` or the workspace's `Cargo.toml` changed since the commit that set it: nothing to do.
+  Every registry has it and those changed: a new release, bumped.
+  A registry lacks it: no bump; push if ahead, wait for `check`, then watch a release run in progress for that commit or start one, even after one that succeeded, since the workflow publishes only what's missing.
+  It refuses to finish a version crates.io has and another registry lacks when those files changed since the commit that set it, since that would publish one version from two commits; while crates.io lacks it nothing of it is out, so a fix since, say for a failed `check`, goes into it.
+  A "no" at the push drops the commit that run made, so the next run starts clean; a commit an earlier run made stays.
+  Before the commit it runs `cargo metadata --locked` and `bin/release-plan plan` on the host, so the refusals CI would give come before the push.
+  It waits about an hour for `check` and five minutes for the registries, then stops saying to rerun; it refuses with `AI_AGENT` set or while the main tree's `CLAUDE_WORKING` flag is there.
+  It is Python in `ops/`, as `ops/remove-entries` is, with a `uv run --script` shebang so it gets Python 3.11's `tomllib` on an older Ubuntu.
+- Against: a `Cargo.lock` or workspace `Cargo.toml` change for the server alone counts as a change to what ships, and makes a rerun bump an identical CLI; a registry whose cache lags past five minutes makes a rerun start the run again, which then fails on npm's refusal to publish a version twice, though nothing is lost.
+- The analyzer takes the CLI's level, as the owner's brief put it, though "Versions" above says the analyzer's version moves with its API: a patch release of the CLI with a breaking analyzer change gets a patch analyzer, and `major` makes the analyzer's next version a major one with no API reason.
+  Options: the same level, as built; or the analyzer by patch unless told otherwise, with a flag for its level.
+
 #### npm's trusted publishers, set up again on each run
 
 - Options: for a package npm has only as the 0.0.0 placeholder, set up its trusted publisher afresh on each run of `ops/claim-names` (revoke any, then add); add one only where `npm trust list` shows none; or ask the owner to look at the package's settings page.

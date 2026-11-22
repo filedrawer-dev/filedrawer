@@ -5,10 +5,10 @@
 # @filedrawer/cli-<os>-<cpu> around the same filedrawer binaries, from
 # crates/cli/npm/pack.mjs.
 #
-# A release is started by hand, with ops/release-cli, once a version bump of
-# crates/cli/Cargo.toml is on main and CI's check job has passed on it; crates.io's
-# trusted publishing refuses a workflow_run, so CI's completion can't start it
-# (design.md, Distribution). bin/release-plan says what each registry lacks, after
+# A release is started by hand: ops/release-cli bumps crates/cli/Cargo.toml's
+# version, pushes it, waits for CI's check job on it, then starts this on main.
+# crates.io's trusted publishing refuses a workflow_run, so CI's completion can't
+# start it (design.md, Distribution). bin/release-plan says what each registry lacks, after
 # the analyzer rule. Every publish goes through trusted publishing, so no token is
 # stored, from main's tip. A rerun finishes a release that stopped partway. A pull
 # request that touches the packages builds and tests them only.

@@ -77,7 +77,15 @@ if tool == "curl":
             )
     elif url == "https://registry.npmjs.org/@filedrawer/cli":
         if registries["npm"]:
-            body = json.dumps({"versions": {v: {} for v in registries["npm"]}})
+            optional = registries.get("npm_optional", {})
+            body = json.dumps({"versions": {
+                v: {"optionalDependencies": {f"@filedrawer/{p}": v for p in optional.get(v, [])}}
+                for v in registries["npm"]
+            }})
+    elif m := re.fullmatch(r"https://registry\.npmjs\.org/@filedrawer/(cli-[^/]+)", url):
+        versions = registries.get("npm_platforms", {}).get(m.group(1))
+        if versions is not None:
+            body = json.dumps({"versions": {v: {} for v in versions}})
     else:
         sys.exit(6)
     if body is not None:
@@ -213,6 +221,16 @@ class Box:
     def plan(self, *args: str, **env: str):
         return subprocess.run(
             [str(SCRIPT), "plan", *args],
+            cwd=self.repo,
+            env={**self.env, **env},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def run(self, *args: str, **env: str):
+        return subprocess.run(
+            [str(SCRIPT), *args],
             cwd=self.repo,
             env={**self.env, **env},
             capture_output=True,
@@ -556,9 +574,124 @@ def test_the_gate_takes_a_ref_and_a_sha(tmp_path, args):
     assert "required" in done.stderr
 
 
+# analyzer
+
+
+def test_an_analyzer_as_crates_io_has_it_is_unchanged(tmp_path):
+    box = Box(tmp_path)
+    box.released("0.1.0")
+    assert outputs(box.run("analyzer")) == {"changed": "false"}
+
+
+def test_an_analyzer_that_differs_from_crates_ios_is_changed(tmp_path):
+    box = Box(tmp_path)
+    box.released("0.1.0")
+    (box.repo / "crates/analyzer/src/lib.rs").write_text("pub fn changed() {}\n")
+    assert outputs(box.run("analyzer")) == {"changed": "true"}
+
+
+def test_an_analyzer_version_crates_io_lacks_is_unchanged_since_a_release_publishes_it(
+    tmp_path,
+):
+    box = Box(tmp_path, analyzer="0.1.1", requirement="=0.1.1")
+    box.released("0.1.0")
+    (box.repo / "crates/analyzer/src/lib.rs").write_text("pub fn changed() {}\n")
+    assert outputs(box.run("analyzer")) == {"changed": "false"}
+
+
+def test_a_yanked_analyzer_cant_be_told(tmp_path):
+    box = Box(tmp_path)
+    box.released("0.1.0", yanked=True)
+    done = box.run("analyzer")
+    assert done.returncode == 1 and "yanked" in done.stdout
+
+
+# published
+
+PLATFORMS = ["cli-linux-x64", "cli-darwin-arm64"]
+
+
+def everywhere(box: Box, cli: str) -> None:
+    box.released(cli)
+    box.registries["npm_optional"] = {cli: PLATFORMS}
+    box.registries["npm_platforms"] = {p: [cli] for p in PLATFORMS}
+    box.save()
+
+
+def test_a_version_every_registry_has_is_published(tmp_path):
+    box = Box(tmp_path, cli="0.1.0")
+    everywhere(box, "0.1.0")
+    done = box.run("published")
+    assert done.returncode == 0, done.stdout + done.stderr
+
+
+@pytest.mark.parametrize(
+    ("missing", "named"),
+    [
+        (
+            lambda r: r["crates"]["filedrawer"].pop("0.1.0"),
+            "crates.io filedrawer 0.1.0",
+        ),
+        (
+            lambda r: r["crates"]["filedrawer-analyzer"].pop("0.1.0"),
+            "crates.io filedrawer-analyzer 0.1.0",
+        ),
+        (lambda r: r.update(pypi_files={"0.1.0": 5}), "PyPI filedrawer 0.1.0"),
+        (lambda r: r.update(npm=["0.0.0"]), "npm @filedrawer/cli 0.1.0"),
+        (
+            lambda r: r["npm_platforms"].update({"cli-darwin-arm64": ["0.0.0"]}),
+            "npm @filedrawer/cli-darwin-arm64 0.1.0",
+        ),
+    ],
+)
+def test_each_registry_that_lacks_the_version_is_named(tmp_path, missing, named):
+    """npm answered 404 for some minutes after its job passed, on 2026-11-21."""
+    box = Box(tmp_path, cli="0.1.0")
+    everywhere(box, "0.1.0")
+    missing(box.registries)
+    box.save()
+    done = box.run("published")
+    assert done.returncode == 1, done.stdout + done.stderr
+    assert done.stdout.splitlines() == [named]
+
+
+def test_a_registry_that_doesnt_answer_is_couldnt_tell_not_missing(tmp_path):
+    box = Box(tmp_path, cli="0.1.0")
+    everywhere(box, "0.1.0")
+    done = box.run("published", FAKE_DOWN="pypi.org")
+    assert done.returncode == 3
+    assert "::error::" in done.stdout
+
+
+# ci
+
+
+def test_ci_says_whether_check_passed_failed_or_is_pending(tmp_path):
+    box = Box(tmp_path)
+    assert outputs(box.run("ci", "--repo", SLUG, TIP))["state"] == "absent"
+    box.github["runs"].append(
+        {"id": 8, "name": "CI", "head_sha": TIP, "event": "push", "html_url": "u8"}
+    )
+    box.github["jobs"]["8"] = [{"name": "check", "conclusion": None}]
+    box.save_github()
+    assert outputs(box.run("ci", "--repo", SLUG, TIP)) == {
+        "state": "pending",
+        "url": "u8",
+    }
+    box.github["jobs"]["8"] = [{"name": "check", "conclusion": "failure"}]
+    box.save_github()
+    assert outputs(box.run("ci", "--repo", SLUG, TIP)) == {
+        "state": "failed",
+        "url": "u8",
+    }
+    ci_run(box, 9, TIP)
+    assert outputs(box.run("ci", "--repo", SLUG, TIP))["state"] == "passed"
+
+
 def test_help_says_what_it_does():
     done = subprocess.run(
         [str(SCRIPT), "-h"], capture_output=True, text=True, check=False
     )
     assert done.returncode == 0
-    assert "plan" in done.stdout and "gate" in done.stdout
+    for command in ("plan", "gate", "analyzer", "published", "ci"):
+        assert command in done.stdout

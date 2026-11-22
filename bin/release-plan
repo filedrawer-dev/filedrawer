@@ -4,9 +4,12 @@
 
     bin/release-plan gate --repo OWNER/NAME --ref REF --sha SHA
     bin/release-plan plan [--version X.Y.Z]
+    bin/release-plan analyzer
+    bin/release-plan published
+    bin/release-plan ci --repo OWNER/NAME SHA
 
-A release is started by hand, with ops/release-cli X.Y.Z, once a version bump is
-on main and CI's `check` job has passed on it. The workflow then publishes that
+The owner makes a release with ops/release-cli, which bumps the version, pushes
+it, waits for CI's `check` job and starts the workflow, which publishes that
 version to each registry that lacks it. (crates.io's trusted publishing refuses a
 run that CI's completion started, so a push can't start it; design.md,
 Distribution.)
@@ -37,6 +40,18 @@ be published first or be unchanged:
 
 Between releases nothing checks the analyzer. Only a registry's 404 counts as
 absent; any other answer fails. --version, a dispatch's input, must be the CLI's.
+
+ops/release-cli asks the rest, from the repo root of its checkout:
+
+  - `analyzer` prints `changed=true` when crates/analyzer packs to other files than
+    crates.io's at its version, so a release must bump it, else `changed=false`
+    (crates.io lacking that version included: the release publishes it);
+  - `published` exits 0 when every registry has the checkout's versions: crates.io
+    both crates, PyPI every file, npm the launcher and each platform package its
+    optionalDependencies name; 1, naming each one that lacks it, a line each; and 3
+    when a registry didn't answer, so it can't tell;
+  - `ci` prints `state=` passed, failed, pending or absent, for CI's `check` job in
+    the push runs of SHA, and `url=` the run's page.
 """
 
 import argparse
@@ -172,8 +187,9 @@ def crate_files(data: bytes) -> dict[str, bytes]:
     return files
 
 
-def check_analyzer(version: str, yanked: bool) -> None:
-    """Refused unless the repo's analyzer packs to crates.io's VERSION, file for file."""
+def analyzer_differs(version: str, yanked: bool) -> list[str]:
+    """The files in which the repo's analyzer packs differently from crates.io's
+    VERSION; Refused when that version is yanked or not served yet."""
     if yanked:
         raise Refused(
             f"crates.io's filedrawer-analyzer {version} is yanked: bump crates/analyzer's version and crates/cli's requirement"
@@ -192,10 +208,15 @@ def check_analyzer(version: str, yanked: bool) -> None:
         raise Refused(f"cargo package -p {name} failed; its message above says why")
     ours = crate_files(Path(f"target/package/{name}-{version}.crate").read_bytes())
     theirs = crate_files(published)
-    differ = sorted(
+    return sorted(
         p for p in ours.keys() | theirs.keys() if ours.get(p) != theirs.get(p)
     )
-    if differ:
+
+
+def check_analyzer(version: str, yanked: bool) -> None:
+    """Refused unless the repo's analyzer packs to crates.io's VERSION, file for file."""
+    name = "filedrawer-analyzer"
+    if differ := analyzer_differs(version, yanked):
         raise Refused(
             f"crates/analyzer differs from crates.io's {name} {version} in {', '.join(differ)}: "
             "bump crates/analyzer's version and crates/cli's requirement on it (=X)"
@@ -242,6 +263,42 @@ def plan(dispatched: str | None) -> dict[str, str]:
     } | {k: str(v).lower() for k, v in flags.items()}
 
 
+def analyzer_changed() -> dict[str, str]:
+    version = release_version("crates/analyzer/Cargo.toml")
+    versions = crate_versions("filedrawer-analyzer")
+    changed = version in versions and bool(analyzer_differs(version, versions[version]))
+    return {"changed": str(changed).lower()}
+
+
+def npm_has(package: str, version: str) -> dict | None:
+    """npm's document of PACKAGE at VERSION, or None when npm lacks it."""
+    found = get_json(f"https://registry.npmjs.org/{package}")
+    return ((found or {}).get("versions") or {}).get(version)
+
+
+def missing() -> list[str]:
+    """What each registry lacks of the checkout's versions, a line each."""
+    cli = release_version("crates/cli/Cargo.toml")
+    analyzer = release_version("crates/analyzer/Cargo.toml")
+    lines = [
+        f"crates.io {name} {version}"
+        for name, version in (("filedrawer", cli), ("filedrawer-analyzer", analyzer))
+        if version not in crate_versions(name)
+    ]
+    if pypi_lacks(cli):
+        lines.append(f"PyPI filedrawer {cli}")
+    launcher = npm_has("@filedrawer/cli", cli)
+    if launcher is None:
+        lines.append(f"npm @filedrawer/cli {cli}")
+    else:
+        for package, version in sorted(
+            (launcher.get("optionalDependencies") or {}).items()
+        ):
+            if npm_has(package, version) is None:
+                lines.append(f"npm {package} {version}")
+    return lines
+
+
 def gh(path: str) -> object:
     done = subprocess.run(
         ["gh", "api", path], capture_output=True, text=True, check=False
@@ -256,10 +313,37 @@ def gh(path: str) -> object:
         ) from None
 
 
-def check_passed(repo: str, run: int) -> bool:
-    """Whether CI's check job passed in RUN."""
-    jobs = gh(f"repos/{repo}/actions/runs/{run}/jobs")["jobs"]
-    return any(j["name"] == "check" and j["conclusion"] == "success" for j in jobs)
+def ci_state(repo: str, sha: str) -> tuple[str, str]:
+    """CI's `check` job in SHA's push runs: passed (in any run), else pending (in
+    any), else failed, or absent with no run; and that run's page."""
+    try:
+        runs = [
+            r
+            for r in gh(f"repos/{repo}/actions/runs?head_sha={sha}&event=push")[
+                "workflow_runs"
+            ]
+            if r["name"] == CI_WORKFLOW
+        ]
+        found = {}
+        for run in runs:
+            jobs = gh(f"repos/{repo}/actions/runs/{run['id']}/jobs")["jobs"]
+            checks = [j["conclusion"] for j in jobs if j["name"] == "check"]
+            state = (
+                "passed"
+                if "success" in checks
+                else "failed"
+                if checks and None not in checks
+                else "pending"
+            )
+            found.setdefault(state, run.get("html_url", ""))
+    except (KeyError, TypeError) as error:
+        raise Refused(
+            f"GitHub answered in a shape this doesn't know ({error!r})"
+        ) from None
+    for state in ("passed", "pending", "failed"):
+        if state in found:
+            return state, found[state]
+    return "absent", ""
 
 
 def gate(repo: str, ref: str, sha: str) -> dict[str, str]:
@@ -271,21 +355,15 @@ def gate(repo: str, ref: str, sha: str) -> dict[str, str]:
         # The branch's own ref: `commits/main` would leave it to GitHub which ref
         # the name means, were a tag ever called main too.
         tip = gh(f"repos/{repo}/git/ref/heads/main")["object"]["sha"]
-        if sha != tip:
-            raise Refused(
-                f"main moved from {sha}, the commit this run started at, to {tip}: start the release again"
-            )
-        runs = gh(f"repos/{repo}/actions/runs?head_sha={tip}&event=push")[
-            "workflow_runs"
-        ]
-        passed = any(
-            r["name"] == CI_WORKFLOW and check_passed(repo, r["id"]) for r in runs
-        )
     except (KeyError, TypeError) as error:
         raise Refused(
             f"GitHub answered in a shape this doesn't know ({error!r})"
         ) from None
-    if not passed:
+    if sha != tip:
+        raise Refused(
+            f"main moved from {sha}, the commit this run started at, to {tip}: start the release again"
+        )
+    if ci_state(repo, tip)[0] != "passed":
         raise Refused(
             f"CI's check hasn't passed on main's tip, {tip}: wait for it, then start the release again"
         )
@@ -311,15 +389,33 @@ def main() -> int:
     p.add_argument(
         "--version", help="the version a dispatch was given, which must be the CLI's"
     )
+    commands.add_parser(
+        "analyzer", help="whether crates/analyzer differs from crates.io's"
+    )
+    commands.add_parser(
+        "published", help="whether every registry has the checkout's versions"
+    )
+    c = commands.add_parser("ci", help="CI's check job on a commit")
+    c.add_argument("--repo", required=True)
+    c.add_argument("sha")
     args = parser.parse_args()
     try:
         if args.command == "gate":
             found = gate(args.repo, args.ref, args.sha)
-        else:
+        elif args.command == "plan":
             found = plan(args.version)
+        elif args.command == "analyzer":
+            found = analyzer_changed()
+        elif args.command == "ci":
+            state, url = ci_state(args.repo, args.sha)
+            found = {"state": state, "url": url}
+        else:
+            lacking = missing()
+            print("\n".join(lacking))
+            return 1 if lacking else 0
     except Refused as refused:
         print(f"::error::{refused}")
-        return 1
+        return 3 if args.command == "published" else 1
     for key, value in found.items():
         print(f"{key}={value}")
     return 0

@@ -1,28 +1,421 @@
-#!/usr/bin/env bash
-# Starts a release of the `filedrawer` command (design.md, Distribution): a run of
-# .github/workflows/release-cli.yml on main, which publishes main's version to each
-# of crates.io, PyPI and npm that lacks it.
-#
-# Usage: ops/release-cli [VERSION]     (logged in to gh, from anywhere)
-#
-# Run it once the version bump is on main and CI's check job has passed on it: the
-# run's gate fails until then, saying to wait, and you run this again. VERSION, as
-# main's crates/cli/Cargo.toml has it, makes the run refuse if main has another.
-# It is `gh workflow run release-cli.yml --repo filedrawer-dev/filedrawer --ref main`,
-# with `-f version=VERSION` when given.
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# ///
+"""Makes a release of the `filedrawer` command, start to end (design.md, Distribution).
 
-set -euo pipefail
+    ops/release-cli [patch|minor|major]      (patch when not given)
 
-REPO="filedrawer-dev/filedrawer"
+Run it on your own machine, from a checkout of the repo on main, logged in to gh,
+with git, curl, cargo and uv on PATH. It:
 
-if [[ ${1:-} == -h || ${1:-} == --help ]]; then
-  sed -n '2,/^$/s/^# \{0,1\}//p' "$0"
-  exit 0
-fi
-if (( $# > 1 )) || [[ $# == 1 && ! $1 =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "usage: ops/release-cli [X.Y.Z]" >&2
-  exit 2
-fi
+  1. refuses unless the checkout is on main, with no changes to tracked files, at
+     origin/main or ahead of it after a fetch, with no landing in progress (the
+     main tree's CLAUDE_WORKING flag), and not run by an agent (AI_AGENT);
+  2. bumps crates/cli/Cargo.toml's version by the level given, and crates/analyzer's
+     by the same level when it packs to other files than crates.io's at its version,
+     with the CLI requiring the analyzer at exactly its version and Cargo.lock in
+     step; checks them with `cargo metadata --locked` and
+     `bin/release-plan plan`, shows the diff, and commits "Release filedrawer X.Y.Z"
+     through the hooks; a check or commit that fails puts the files back;
+  3. asks once before pushing, listing the commits; the push deploys staging too;
+  4. waits for CI's `check` job on that commit, and stops with the run's page if it
+     fails;
+  5. starts .github/workflows/release-cli.yml on main and watches the run;
+  6. asks the registries until each lists the new version, for a few minutes.
 
-gh workflow run release-cli.yml --repo "$REPO" --ref main ${1:+-f "version=$1"}
-echo "Started. Watch it at https://github.com/$REPO/actions/workflows/release-cli.yml"
+A rerun picks up where the last one stopped, from what is true rather than from a
+file it keeps. While some registry lacks the checkout's version, it bumps nothing:
+it pushes, waits for check, and watches a release run in progress or starts one,
+which publishes only what is missing. Once every registry has it, a rerun with
+nothing in crates/cli, crates/analyzer, Cargo.lock or Cargo.toml changed since says
+there is nothing to do; with something changed, it is a new release.
+
+It refuses to finish a version crates.io has and another registry lacks when those
+files changed since the commit that set it, since that would publish one version
+from two commits: finish the release at that commit by hand, or set a new version
+past it. While crates.io lacks it, nothing of it is out, so a fix since goes in.
+
+By hand, when this can't run: bump the versions as in step 2, push main, wait for
+CI's check on it, then
+    gh workflow run release-cli.yml --repo filedrawer-dev/filedrawer --ref main -f version=X.Y.Z
+
+It exits 0 once released or with nothing to do, 1 when it stops, 2 for a usage error.
+"""
+
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+import tomllib
+from pathlib import Path
+
+REPO = "filedrawer-dev/filedrawer"
+WORKFLOW = "release-cli.yml"
+# What the packages are built from: the two crates, the lock, and the workspace
+# manifest, whose edition and license go into both.
+SHIPPED = ["crates/cli", "crates/analyzer", "Cargo.lock", "Cargo.toml"]
+CLI_MANIFEST = "crates/cli/Cargo.toml"
+ANALYZER_MANIFEST = "crates/analyzer/Cargo.toml"
+BUMPED = [CLI_MANIFEST, ANALYZER_MANIFEST, "Cargo.lock"]
+POLL = float(os.environ.get("RELEASE_CLI_POLL_SECONDS", "15"))
+# How many times to ask: CI's check (about an hour), the new run's listing, and the
+# registries (about five minutes), at POLL seconds apart.
+CHECK_TRIES = 240
+RUN_TRIES = 20
+REGISTRY_TRIES = 20
+
+
+class Stop(Exception):
+    """A reason to stop, printed on stderr."""
+
+
+def run(*cmd: str, check: bool = True) -> subprocess.CompletedProcess:
+    done = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if check and done.returncode != 0:
+        raise Stop(
+            f"{' '.join(cmd[:3])} failed: {(done.stderr or done.stdout).strip()}"
+        )
+    return done
+
+
+def said(done: subprocess.CompletedProcess) -> str:
+    """What a failed command said: its output, else its last line of errors, as a
+    traceback's."""
+    errors = done.stderr.strip().splitlines()
+    return done.stdout.strip() or (errors[-1] if errors else f"exit {done.returncode}")
+
+
+def git(*args: str) -> str:
+    return run("git", *args).stdout.strip()
+
+
+def gh_json(path: str):
+    try:
+        return json.loads(run("gh", "api", path).stdout)
+    except json.JSONDecodeError:
+        raise Stop(f"GitHub answered {path} with something that isn't JSON") from None
+
+
+def release_plan(*args: str) -> subprocess.CompletedProcess:
+    return run(sys.executable, "bin/release-plan", *args, check=False)
+
+
+def outputs(text: str) -> dict[str, str]:
+    return dict(line.split("=", 1) for line in text.splitlines() if "=" in line)
+
+
+def version(manifest: str, commit: str | None = None) -> str:
+    """The package version in MANIFEST, on disk or at COMMIT."""
+    text = git("show", f"{commit}:{manifest}") if commit else Path(manifest).read_text()
+    return tomllib.loads(text)["package"]["version"]
+
+
+def bumped(current: str, level: str) -> str:
+    major, minor, patch = (int(n) for n in current.split("."))
+    return {
+        "major": f"{major + 1}.0.0",
+        "minor": f"{major}.{minor + 1}.0",
+        "patch": f"{major}.{minor}.{patch + 1}",
+    }[level]
+
+
+def preflight() -> None:
+    if os.environ.get("AI_AGENT"):
+        raise Stop(
+            "AI_AGENT is set: the owner runs this, since only the owner may push main"
+        )
+    for tool in ("git", "gh", "curl", "cargo"):
+        if not shutil.which(tool):
+            raise Stop(f"{tool} isn't on PATH")
+    os.chdir(git("rev-parse", "--show-toplevel"))
+    if Path("CLAUDE_WORKING").exists():
+        raise Stop(
+            "CLAUDE_WORKING is here: a landing holds this checkout; rerun once it is gone"
+        )
+    if git("branch", "--show-current") != "main":
+        raise Stop("this checkout isn't on main")
+    if git("status", "--porcelain", "--untracked-files=no"):
+        raise Stop("this checkout has changes to tracked files; commit or stash them")
+    if run("gh", "auth", "status", "--hostname", "github.com", check=False).returncode:
+        raise Stop("gh isn't logged in to github.com: run gh auth login")
+    git("fetch", "-q", "origin")
+    if run(
+        "git", "merge-base", "--is-ancestor", "origin/main", "HEAD", check=False
+    ).returncode:
+        raise Stop("this checkout is behind or apart from origin/main: pull first")
+
+
+def missing() -> list[str]:
+    """What the registries lack of the checkout's versions; Stop when they can't tell."""
+    done = release_plan("published")
+    if done.returncode == 0:
+        return []
+    lines = done.stdout.strip().splitlines()
+    if done.returncode == 1 and lines:
+        return lines
+    raise Stop(f"the registries couldn't be read: {said(done)}")
+
+
+def setter(cli: str) -> str:
+    """The commit that set the CLI's version to CLI."""
+    return git(
+        "log",
+        "-1",
+        "--format=%H",
+        f'-G^version = "{re.escape(cli)}"$',
+        "--",
+        CLI_MANIFEST,
+    )
+
+
+def shipped_since(commit: str) -> bool:
+    return bool(commit) and bool(
+        git("diff", "--name-only", commit, "HEAD", "--", *SHIPPED)
+    )
+
+
+def set_version(path: str, name: str, new: str) -> None:
+    """Sets the package version in a manifest, or NAME's in Cargo.lock, to NEW."""
+    text = Path(path).read_text()
+    if path == "Cargo.lock":
+        pattern = rf'(name = "{re.escape(name)}"\nversion = )"[^"]*"'
+    else:
+        pattern = r'(?m)^(version = )"[^"]*"'
+    changed, count = re.subn(pattern, rf'\1"{new}"', text, count=1)
+    if count != 1:
+        raise Stop(f"{path} has no version line for {name}")
+    Path(path).write_text(changed)
+
+
+def bump(level: str) -> str:
+    """Bumps and commits; returns the new CLI version."""
+    analyzer_check = release_plan("analyzer")
+    if analyzer_check.returncode:
+        raise Stop(f"can't tell whether the analyzer changed: {said(analyzer_check)}")
+    cli = bumped(version(CLI_MANIFEST), level)
+    analyzer = version(ANALYZER_MANIFEST)
+    if outputs(analyzer_check.stdout).get("changed") == "true":
+        analyzer = bumped(analyzer, level)
+    try:
+        set_version(CLI_MANIFEST, "filedrawer", cli)
+        set_version(ANALYZER_MANIFEST, "filedrawer-analyzer", analyzer)
+        set_version("Cargo.lock", "filedrawer", cli)
+        set_version("Cargo.lock", "filedrawer-analyzer", analyzer)
+        text = Path(CLI_MANIFEST).read_text()
+        text, count = re.subn(
+            r'(?m)^(filedrawer-analyzer = \{.*version = )"[^"]*"',
+            rf'\1"={analyzer}"',
+            text,
+        )
+        if count != 1:
+            raise Stop(f"{CLI_MANIFEST} has no filedrawer-analyzer requirement")
+        Path(CLI_MANIFEST).write_text(text)
+        run("cargo", "metadata", "--locked", "--format-version", "1")
+        plan = release_plan("plan", "--version", cli)
+        if plan.returncode:
+            raise Stop(f"bin/release-plan refuses the release: {said(plan)}")
+        print(git("diff", "--", *BUMPED))
+        subject = f"Release filedrawer {cli}"
+        if analyzer != version(ANALYZER_MANIFEST, "HEAD"):
+            subject += f" and filedrawer-analyzer {analyzer}"
+        commit = subprocess.run(
+            [
+                "git",
+                "commit",
+                "-q",
+                "-m",
+                subject,
+                "-m",
+                "Made by ops/release-cli.",
+                "--",
+                *BUMPED,
+            ],
+            check=False,
+        )
+        if commit.returncode:
+            raise Stop("the commit was refused; its hook said why above")
+    except BaseException:
+        # A refusal, or Ctrl-C midway: the next run starts from a clean checkout.
+        git("checkout", "HEAD", "--", *BUMPED)
+        raise
+    print(f"Committed: {subject}")
+    return cli
+
+
+def push(made_now: bool) -> None:
+    ahead = git("log", "--oneline", "origin/main..HEAD")
+    if not ahead:
+        return
+    print(f"To push to origin main ({len(ahead.splitlines())}):\n{ahead}")
+    print("The push also deploys staging.")
+    print("Push? [y/N] ", end="", flush=True)
+    if sys.stdin.readline().strip().lower() not in ("y", "yes"):
+        if made_now:
+            git("reset", "-q", "--keep", "HEAD~1")
+            raise Stop(
+                "Not pushed; the release commit is dropped. Rerun to start again."
+            )
+        raise Stop("Not pushed. Rerun to push and release.")
+    git("push", "-q", "origin", "HEAD:main")
+    git("fetch", "-q", "origin")
+
+
+def wait_for_check(sha: str) -> None:
+    print(f"Waiting for CI's check job on {sha[:12]}...")
+    for _ in range(CHECK_TRIES):
+        done = release_plan("ci", "--repo", REPO, sha)
+        if done.returncode:
+            raise Stop(f"can't read CI's runs: {said(done)}")
+        found = outputs(done.stdout)
+        if found.get("state") == "passed":
+            print("CI's check passed.")
+            return
+        if found.get("state") == "failed":
+            raise Stop(f"CI's check failed on {sha[:12]}: {found.get('url', '')}")
+        time.sleep(POLL)
+    raise Stop("CI's check hasn't finished; rerun to keep waiting")
+
+
+def release_runs(sha: str) -> list[dict]:
+    found = gh_json(
+        f"repos/{REPO}/actions/workflows/{WORKFLOW}/runs"
+        f"?head_sha={sha}&event=workflow_dispatch&branch=main"
+    )
+    return found.get("workflow_runs", [])
+
+
+def start_run(sha: str, cli: str) -> dict:
+    tip = run("git", "ls-remote", "origin", "refs/heads/main").stdout.split()[:1]
+    if tip != [sha]:
+        raise Stop(
+            f"main moved past {sha[:12]} on origin: pull, then rerun, which checks the new tip"
+        )
+    before = {r["id"] for r in release_runs(sha)}
+    run(
+        "gh",
+        "workflow",
+        "run",
+        WORKFLOW,
+        "--repo",
+        REPO,
+        "--ref",
+        "main",
+        "-f",
+        f"version={cli}",
+    )
+    for _ in range(RUN_TRIES):
+        new = [r for r in release_runs(sha) if r["id"] not in before]
+        if new:
+            return new[0]
+        time.sleep(POLL)
+    raise Stop(
+        f"started {WORKFLOW}, but no new run of it on {sha[:12]} showed up: "
+        f"https://github.com/{REPO}/actions/workflows/{WORKFLOW}"
+    )
+
+
+def watch(found: dict) -> None:
+    print(f"Watching the release: {found.get('html_url', '')}")
+    for _ in range(3):
+        subprocess.run(
+            [
+                "gh",
+                "run",
+                "watch",
+                str(found["id"]),
+                "--repo",
+                REPO,
+                "--exit-status",
+                "-i",
+                "10",
+            ],
+            check=False,
+        )
+        found = gh_json(f"repos/{REPO}/actions/runs/{found['id']}")
+        if found.get("status") == "completed":
+            break
+    if found.get("conclusion") != "success":
+        raise Stop(
+            f"the release run ended {found.get('conclusion') or found.get('status')}: "
+            f"{found.get('html_url', '')}; rerun once its cause is fixed"
+        )
+
+
+def confirm(cli: str) -> None:
+    lacking: list[str] = []
+    for _ in range(REGISTRY_TRIES):
+        try:
+            lacking = missing()
+        except Stop as stop:
+            lacking = [str(stop)]
+        if not lacking:
+            print(f"Released filedrawer {cli}: crates.io, PyPI and npm list it.")
+            return
+        time.sleep(POLL)
+    raise Stop(
+        "the release run succeeded, but these don't list it yet: "
+        + "; ".join(lacking)
+        + ". Registries can lag: rerun later, which starts the run again only if still missing"
+    )
+
+
+def release(level: str) -> None:
+    preflight()
+    cli = version(CLI_MANIFEST)
+    lacking = missing()
+    made_now = False
+    if not lacking:
+        if not shipped_since(setter(cli)):
+            print(
+                f"filedrawer {cli} is out, and nothing it ships changed since: nothing to do."
+            )
+            return
+        cli = bump(level)
+        made_now = True
+    elif f"crates.io filedrawer {cli}" not in lacking and shipped_since(setter(cli)):
+        # crates.io goes first, and PyPI and npm wait for it, so while it lacks the
+        # version nothing of it is out, and a fix since can still go in it.
+        raise Stop(
+            f"{cli} isn't out everywhere ({'; '.join(lacking)}), and {', '.join(SHIPPED)} "
+            f"changed since the commit that set it, so finishing it would publish one version "
+            f"from two commits. Finish it at that commit by hand, or set a new version past it."
+        )
+    push(made_now)
+    sha = git("rev-parse", "HEAD")
+    wait_for_check(sha)
+    going = [r for r in release_runs(sha) if r.get("status") != "completed"]
+    watch(going[0] if going else start_run(sha, cli))
+    confirm(cli)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        prog="ops/release-cli",
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "level", nargs="?", default="patch", choices=["patch", "minor", "major"]
+    )
+    args = parser.parse_args()
+    try:
+        release(args.level)
+    except Stop as stop:
+        print(f"ops/release-cli: {stop}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        print(
+            "\nops/release-cli: interrupted; rerun to pick up where it stopped",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
