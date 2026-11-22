@@ -513,9 +513,13 @@ const FAILING: &[(&str, &str)] = &[
 ];
 
 /// Runs a screen-test mode of the script against `server` without waiting for a
-/// verdict, so a case not decided at once is left undecided.
-fn without_waiting(mode_and_args: &[&str], server: &Server, token: &str) -> Output {
-    let mut command = script(&[mode_and_args, &[&server.url]].concat(), Some("unused"));
+/// verdict, so a case not decided at once is left undecided. It waits for the server
+/// to answer, as every run here does, since `serve_with` doesn't.
+fn without_verdict_wait(mode_and_args: &[&str], server: &Server, token: &str) -> Output {
+    let mut command = script(
+        &[mode_and_args, &["--wait", "30", &server.url]].concat(),
+        Some("unused"),
+    );
     let empty = scratch_dir(&format!("{}-nowait-settings", mode_and_args[0]));
     command
         .env("FILEDRAWER_OPS_DIR", empty.path())
@@ -527,7 +531,7 @@ fn without_waiting(mode_and_args: &[&str], server: &Server, token: &str) -> Outp
 #[test]
 fn eval_stops_at_the_first_undecided_case_and_says_the_day_is_spent() {
     let (server, token) = screening_server("eval-spent", SPENT);
-    let output = without_waiting(&["eval", "--field-test", "0"], &server, &token);
+    let output = without_verdict_wait(&["eval", "--field-test", "0"], &server, &token);
     let printed = text(&output);
     assert_eq!(output.status.code(), Some(1), "{printed}");
     assert_eq!(printed.matches("WAIT ").count(), 1, "{printed}");
@@ -542,7 +546,7 @@ fn eval_stops_at_the_first_undecided_case_and_says_the_day_is_spent() {
 #[test]
 fn eval_says_when_screening_fails() {
     let (server, token) = screening_server("eval-failing", FAILING);
-    let output = without_waiting(&["eval", "--field-test", "0"], &server, &token);
+    let output = without_verdict_wait(&["eval", "--field-test", "0"], &server, &token);
     let printed = text(&output);
     assert_eq!(output.status.code(), Some(1), "{printed}");
     assert_eq!(printed.matches("WAIT ").count(), 1, "{printed}");
@@ -556,7 +560,7 @@ fn eval_says_when_screening_fails() {
 #[test]
 fn screen_exits_3_when_the_days_cap_is_spent() {
     let (server, token) = screening_server("screen-spent", SPENT);
-    let output = without_waiting(&["screen"], &server, &token);
+    let output = without_verdict_wait(&["screen"], &server, &token);
     let printed = text(&output);
     assert_eq!(output.status.code(), Some(3), "{printed}");
     assert!(
@@ -571,7 +575,7 @@ fn screen_exits_3_when_the_days_cap_is_spent() {
 #[test]
 fn screen_fails_when_screening_fails() {
     let (server, token) = screening_server("screen-failing", FAILING);
-    let output = without_waiting(&["screen"], &server, &token);
+    let output = without_verdict_wait(&["screen"], &server, &token);
     let printed = text(&output);
     assert_eq!(output.status.code(), Some(1), "{printed}");
     assert!(
