@@ -1512,3 +1512,70 @@ async fn an_account_past_its_hours_link_checks_is_refused_and_nothing_is_fetched
     let reply = app.post("/entries", entry("No links", "")).await;
     assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
 }
+
+/// GitHub answers its commit-history pages 429 to anyone not logged in, which would
+/// pause github.com's checks for every account (security review, links), so the
+/// server leaves them unchecked, as it does a link on an unlisted host, and says so.
+#[tokio::test]
+async fn a_github_commit_history_page_is_left_unchecked_with_a_warning() {
+    let app = test_app().await;
+    for page in [
+        "https://github.com/ada/steering/commits/main".to_string(),
+        "https://github.com/ada/steering/commits".to_string(),
+        format!("https://github.com/Ada/Steering/commits/{SHA}?author=ada"),
+    ] {
+        let reply = app.post("/entries", with_logs(&page)).await;
+        assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
+        assert_eq!(app.web.fetched(), Vec::<String>::new(), "{page}");
+        let said = warnings(&reply.body);
+        assert!(
+            said.iter()
+                .any(|line| line.contains(&page) && line.contains("commit-history")),
+            "{said:?}"
+        );
+        assert!(!flags(&reply.body).contains("dead"), "{}", reply.body);
+    }
+}
+
+#[tokio::test]
+async fn a_commit_history_page_spelled_with_an_escape_is_left_unchecked_too() {
+    let app = test_app().await;
+    let page = "https://github.com/ada/steering/%63ommits/main";
+    let reply = app.post("/entries", with_logs(page)).await;
+    assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
+    assert_eq!(app.web.fetched(), Vec::<String>::new());
+}
+
+/// A redirect to a commit-history page counts as live, as one to a download host
+/// does, so the page that would answer 429 is never asked.
+#[tokio::test]
+async fn a_redirect_to_a_commit_history_page_is_live_and_isnt_followed() {
+    let app = test_app().await;
+    let logs = format!("https://github.com/ada/steering/tree/{SHA}");
+    app.web.redirect(&logs, 302, "/ada/steering/commits/main");
+    let reply = app.post("/entries", with_logs(&logs)).await;
+    assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
+    assert_eq!(app.web.fetched(), [logs]);
+    assert!(!flags(&reply.body).contains("dead"), "{}", reply.body);
+}
+
+#[tokio::test]
+async fn a_pull_requests_commit_page_is_still_checked() {
+    let app = test_app().await;
+    let logs = format!("https://github.com/ada/steering/pull/7/commits/{SHA}");
+    let reply = app.post("/entries", with_logs(&logs)).await;
+    assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
+    assert_eq!(app.web.fetched(), [logs]);
+}
+
+#[tokio::test]
+async fn a_commit_history_link_listed_twice_draws_one_warning() {
+    let app = test_app().await;
+    let page = "https://github.com/ada/steering/commits/main";
+    let reply = app
+        .post("/entries", with_logs(&format!("{page}, {page}")))
+        .await;
+    let said = warnings(&reply.body);
+    let about: Vec<_> = said.iter().filter(|line| line.contains(page)).collect();
+    assert_eq!(about.len(), 1, "{said:?}");
+}

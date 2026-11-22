@@ -252,17 +252,58 @@ pub struct CheckedLink {
 /// host is listed, and a `code` link to a Zenodo DOI, which is checked on Zenodo.
 fn checked_links(fields: &Fields) -> Vec<(Field, String)> {
     let mut links = Vec::new();
-    let code = fields.code.iter().map(|url| (Field::Code, url));
-    let logs = fields.logs.iter().map(|url| (Field::Logs, url));
-    for (field, url) in code.chain(logs) {
+    for (field, url) in links_of(fields) {
         let url = url.trim().to_string();
-        let checked = listed_host(&url).is_some()
+        let checked = (listed_host(&url).is_some() && !is_github_commit_history(&url))
             || (field == Field::Code && code_pin(&url) == Pin::CheckedOnline);
         if checked && !links.contains(&(field, url.clone())) {
             links.push((field, url));
         }
     }
     links
+}
+
+/// The entry's `code` and `logs` links, each with its field.
+fn links_of(fields: &Fields) -> impl Iterator<Item = (Field, &String)> {
+    let code = fields.code.iter().map(|url| (Field::Code, url));
+    let logs = fields.logs.iter().map(|url| (Field::Logs, url));
+    code.chain(logs)
+}
+
+/// Whether `url` is one of GitHub's commit-history pages,
+/// `github.com/<owner>/<repo>/commits[/<ref>]`. GitHub answers them 429 to a client
+/// that isn't logged in, and a 429 pauses every github.com check, every account's,
+/// so one such link could keep them paused (security review, links). The server
+/// never fetches one.
+fn is_github_commit_history(url: &str) -> bool {
+    Url::parse(url.trim()).is_ok_and(|url| leads_to_commit_history(&url))
+}
+
+/// [`is_github_commit_history`] for a parsed URL, such as a redirect's target. The
+/// segment is read decoded, since `%63ommits` opens the same page.
+fn leads_to_commit_history(url: &Url) -> bool {
+    let third = url.path_segments().and_then(|mut segments| segments.nth(2));
+    url.host_str() == Some("github.com")
+        && third.is_some_and(|segment| {
+            percent_encoding::percent_decode_str(segment).decode_utf8_lossy() == "commits"
+        })
+}
+
+/// The warnings for links the server leaves unchecked by their shape: GitHub's
+/// commit-history pages, one for each link however often it is listed.
+pub fn unchecked_warnings(fields: &Fields) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    links_of(fields)
+        .map(|(field, url)| (field, url.trim()))
+        .filter(|(field, url)| is_github_commit_history(url) && seen.insert((field.name(), *url)))
+        .map(|(field, url)| {
+            format!(
+                "the server doesn't check `{}: {}`: GitHub answers its commit-history pages 429 to anyone not logged in; link a commit or a tree to have it checked",
+                field.name(),
+                one_line(url)
+            )
+        })
+        .collect()
 }
 
 /// Whether the server may fetch `url`: plain http(s) on a listed host, with no user
@@ -509,7 +550,10 @@ async fn reach(state: &AppState, url: &str) -> Reach {
                     return Reach::Dead(format!("answered {status} without a Location"));
                 };
                 let host = next.host_str().unwrap_or("").to_ascii_lowercase();
-                if is_download_host(&host) {
+                // A commit-history page answers 429 to the server, which would pause
+                // every account's github.com checks; the redirect shows the link
+                // leads somewhere real.
+                if is_download_host(&host) || leads_to_commit_history(&next) {
                     return Reach::Live;
                 }
                 if !fetchable(&next) {

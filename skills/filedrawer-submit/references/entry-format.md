@@ -136,6 +136,7 @@ The server warns about both.
   Fill in only what the agent can see; Claude Code's version is in `$AI_AGENT`.
 - `code` and `logs` belong on the allowed hosts listed in design.md, [Submission and screening](design.md#submission-and-screening); a link elsewhere draws a warning.
   The server fetches each link on those hosts at submission, and a dead one draws a warning and the card's flag.
+  It doesn't fetch GitHub's commit-history pages (`github.com/<owner>/<repo>/commits`, with or without a ref), which draw a warning and no flag; link a commit or a tree instead.
   Only an unpinned `code` link is refused, or a Zenodo concept record.
   A `code` link to GitHub or Hugging Face spelled another way, with `www.`, a final dot, as `hf.co`, or as pip's `git+https://...@<commit>`, is held to the same pin, but isn't fetched, so a pinned one gets the unlisted host's warning and "pin not verified"; write it as above to have it checked.
   A pinned link has the 40-character commit hash in its path, where it selects what the link opens: `https://github.com/<owner>/<repo>/tree/<commit>`, or `blob/<commit>/<file>` or `commit/<commit>`, and the same on Hugging Face.

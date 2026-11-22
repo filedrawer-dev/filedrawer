@@ -294,6 +294,8 @@ An unpinned `code` link fails an entry, since readers run the code, and so does 
 Everything else only warns and flags: a dead link ("code link dead", "logs link dead"), a GitHub commit on no branch or tag of its repository ("commit on no branch"), a link on a host outside the list ("pin not verified"), and a pin check that couldn't run, because the link is dead, GitHub or Zenodo didn't answer, or the hour's calls or the account's share were spent ("pin not verified").
 A link that answered "retry later" draws a warning and no flag.
 The server never fetches an unlisted host.
+Nor does it fetch GitHub's commit-history pages, `github.com/<owner>/<repo>/commits[/<ref>]`, which answer 429 to a client that isn't logged in: a 429 pauses every account's github.com checks, so one such `logs` link could keep them paused (the owner's decision, 2026-11-21, from the security review).
+How it shows is in uncertainties.md, "GitHub's commit-history pages".
 Links are checked again, whatever the entry's status, except a rejected, withdrawn or removed entry: a dead link, or a pin found bad, a week after its check; a link that answered "retry later", or a pin the check couldn't confirm, an hour after it (the owner's decision, 2026-11-07), then 2, 4 and so on hours after each retry that still couldn't, at most a week (uncertainties.md).
 A submission or a PUT starts the retries again, so resubmitting can't push a check out.
 A recheck that finds a bad pin flags the card "code pin failed" and never rejects.

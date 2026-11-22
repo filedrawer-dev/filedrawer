@@ -27,6 +27,7 @@ pub async fn entry_warnings(
 ) -> Result<Vec<String>, sqlx::Error> {
     let mut warnings: Vec<String> = analysis.warnings.iter().map(ToString::to_string).collect();
     warnings.extend(link_checks::warnings(links));
+    warnings.extend(link_checks::unchecked_warnings(&analysis.fields));
     warnings.extend(unopenable_files(pool, seq, source, analysis, links).await?);
     warnings.extend(references_naming_nothing(pool, account_id, analysis).await?);
     Ok(warnings)

@@ -582,6 +582,7 @@ dependencies = [
  "hyper-util",
  "lettre",
  "lzma-rust2",
+ "percent-encoding",
  "pulldown-cmark",
  "rand",
  "reqwest",

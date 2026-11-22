@@ -671,6 +671,14 @@ The owner set 10 an hour and 50 a day per account (#60); an agent chose the rest
 
 ### Link checks
 
+#### GitHub's commit-history pages
+
+- Options: a card flag such as "logs link not checked", which changes the card's format; a warning to the author only; or nothing.
+- Chosen: a warning at submission and no flag, as for a link on an unlisted host; no row is stored, so no recheck.
+  A redirect to such a page counts as live, as one to a download host does.
+  The match is github.com with `commits` as the third path segment, decoded, so `pull/<n>/commits/<hash>` stays checked.
+- Against: a reader of the card can't tell the `logs` link went unchecked; `entry-check` offline doesn't warn either, since the rule is about what the server fetches.
+
 #### What a link check counts as dead
 
 - Options: count only 404 and 410 as dead, or any 4xx but 408 and 429; follow a redirect to a listed host's download domain, or count it live unfetched.
