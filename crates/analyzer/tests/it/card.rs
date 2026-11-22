@@ -20,7 +20,11 @@ fn lines(text: &str) -> Vec<String> {
 
 /// The rest of the card line that starts with `label`, such as `"flags: "`.
 fn line_starting(text: &str, label: &str) -> String {
-    let card = card(text);
+    line_after(&card(text), label)
+}
+
+/// The rest of the line of `card` that starts with `label`.
+fn line_after(card: &str, label: &str) -> String {
     card.lines()
         .find_map(|line| line.strip_prefix(label))
         .unwrap_or_else(|| panic!("no line starts with {label:?} in\n{card}"))
@@ -100,7 +104,7 @@ fn the_server_context_fills_the_id_flags_and_author() {
         code_link_dead: false,
         logs_link_dead: true,
         pin: None,
-        superseded_by_version: Some("fd-9zz1".into()),
+        superseded_by: Some("fd-9zz1".into()),
         replications: vec![
             Replication {
                 id: "fd-r1".into(),
@@ -338,7 +342,7 @@ fn flags_come_from_the_fields() {
         .replace("Command not recorded.", "Re-analyses the stored transcripts: `python analyze.py`.");
     assert_eq!(
         line_starting(&text, "flags: "),
-        "analyzer v2; code that ran not committed; pin not verified; no data; now part of a paper arXiv:2507.01410; superseded by slug:main-run"
+        "analyzer v2; code that ran not committed; pin not verified; no data; now part of a paper arXiv:2507.01410"
     );
     let no_code = with_results("no_effect", EFFECT_TABLE);
     assert_eq!(line_starting(&no_code, "flags: "), "analyzer v2; no code");
@@ -790,9 +794,29 @@ fn line_10_shows_a_paper_or_successor_only_as_the_server_reads_it() {
         flags(&format!("published_in: \"{longest}x\"")),
         "analyzer v2; no code; unrecognized published_in"
     );
+}
+
+/// An author's `superseded_by` reads like the server's record of a newer version,
+/// so the card shows it only as the server checked it: the entry the server found
+/// it names, given in the context (entry-format.md, The card).
+#[test]
+fn an_authors_successor_shows_only_as_the_server_found_it() {
+    let text = with_results("no_effect", EFFECT_TABLE).replace(
+        "hypothesis: H\n",
+        "hypothesis: H\nsuperseded_by: https://filedrawer.dev/e/0123456789\n",
+    );
+    let flags = |context: &CardContext| {
+        let card = render_card(&analyze(&text), context);
+        line_after(&card, "flags: ")
+    };
+    assert_eq!(flags(&CardContext::default()), "analyzer v2; no code");
+    let found = CardContext {
+        superseded_by: Some("abcdefghjk".into()),
+        ..CardContext::default()
+    };
     assert_eq!(
-        flags("superseded_by: https://filedrawer.dev/e/0123456789"),
-        "analyzer v2; no code; superseded by 0123456789"
+        flags(&found),
+        "analyzer v2; no code; superseded by abcdefghjk"
     );
 }
 

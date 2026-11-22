@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH RECURSIVE chain(seq) AS (\n               SELECT seq FROM entries WHERE id = ?1 AND account_id = ?2\n               UNION ALL\n               SELECT e.seq FROM entries e JOIN chain c ON e.previous_seq = c.seq\n           )\n           SELECT e.id AS \"id!\" FROM entries e JOIN chain c ON c.seq = e.seq\n           WHERE e.status = 'public' ORDER BY e.seq DESC LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "f3b5a9ad5a3541d09d9a8e8c018bc2ead2e07c8dec3283aef73450bddd4219d9"
+}

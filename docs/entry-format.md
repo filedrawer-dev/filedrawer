@@ -120,6 +120,7 @@ The server warns about both.
 - `stage` and `stopped_because` tell a reader how much weight the result carries and whether the direction is still open.
   A line of work dropped for a pivot is not a line that failed.
   A pilot that a later run replaced sets `superseded_by`.
+  The card says "superseded by <id>" for it only once it names a public entry of the same account, as that entry or the latest public version after it, and never a version of its own chain, since an author could otherwise name any entry as the newer one (the owner's decision, 2026-11-21); the submission response warns when it names none of the account's entries.
 - `models` lists every model with its role and route, so a filter on a model finds the entries where it was the subject, not those where it only judged.
   A model that plays two roles, or was reached by two routes, gets two items.
   A model whose validation is the result, such as a judge checked against a gold set, is the `subject`.
@@ -292,7 +293,7 @@ Cards render from the stored entry at each read, so every card, an old entry's t
 7. `models: `, then the subject models and the tags, up to 200 characters.
 8. On an `effect` card, `first caveat: `, then the first caveat, up to 300 characters.
 9. `not tried: `, then the first three items of `## Not tried`, up to 300 characters.
-10. `flags: `, then the flags, as they apply, up to 300 characters: the analyzer version and any screening note first, then "no code" or "code attached", "code that ran not committed", "code link dead" or "logs link dead", "pin not verified" (or "commit on no branch", when the GitHub commit is on no branch or tag of its repository, or "code pin failed", when a check after submission finds a Zenodo concept record), "no data" when `## Reproduce` re-analyzes stored data that `data` doesn't link, "now part of a paper" with its DOI or arXiv ID, "superseded by <id>", and the replications.
+10. `flags: `, then the flags, as they apply, up to 300 characters: the analyzer version and any screening note first, then "no code" or "code attached", "code that ran not committed", "code link dead" or "logs link dead", "pin not verified" (or "commit on no branch", when the GitHub commit is on no branch or tag of its repository, or "code pin failed", when a check after submission finds a Zenodo concept record), "no data" when `## Reproduce` re-analyzes stored data that `data` doesn't link, "now part of a paper" with its DOI or arXiv ID, "superseded by <id>" (the newer public version, or else the entry the author's `superseded_by` names, as Fields says), and the replications.
 11. `author: `, then the account ID, the author's display name, and any linked GitHub or ORCID handle, as `account <id>, <name>, <handle>`, up to 100 characters.
     The ID comes first, since a name is author text and may hold something shaped like an ID (the owner's decision, 2026-11-21).
     Once the account is deleted, the account ID and "account deleted", with no name.
@@ -303,6 +304,7 @@ Text after a label that is shaped like the server's, such as another card's line
 No line is blank, since a blank line ends a card where cards are listed: where a stored entry's title or hypothesis shows nothing, the line reads "title: (no title)" or "hypothesis: (no hypothesis)", and a display name that shows nothing reads "(no name)".
 A value in a field whose values the server knows, such as `positive_control.outcome`, that it doesn't recognize renders as "unrecognized <field>", never as written.
 So do, among line 10's flags, a `published_in` the server reads as neither a DOI nor an arXiv ID of at most 100 characters, and a `superseded_by` that is neither an entry ID nor `slug:<name>`; the submission response warns about each.
+The `superseded_by:` line of `/e/<id>`'s header, and `superseded_by` in its JSON, give only the server's record of a newer version, never the author's.
 
 ## Example
 

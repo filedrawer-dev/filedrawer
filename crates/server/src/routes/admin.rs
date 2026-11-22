@@ -2,7 +2,7 @@
 //! and never a token, so no agent's token can reach them, and an account that isn't
 //! the admin gets the same 404 as a page that doesn't exist.
 
-use analyzer::{analyze, render_card};
+use analyzer::{CardContext, analyze, render_card};
 use axum::extract::{FromRequestParts, Path, State};
 use axum::http::StatusCode;
 use axum::http::request::Parts;
@@ -104,11 +104,16 @@ pub async fn entry(
         .ok_or(AppError::NotFound)?;
     let analysis = analyze(&entry.source);
     let links = link_checks::stored(&state.pool, entry.seq).await?;
-    let context = LinkFlags::of(&links).on(entries::card_context(
-        &entry.id,
-        &entry.account_id,
-        entry.display_name.as_deref(),
-    ));
+    let context = LinkFlags::of(&links).on(CardContext {
+        superseded_by: entries::named_successor(
+            &state.pool,
+            &entry.account_id,
+            &entry.id,
+            &analysis,
+        )
+        .await?,
+        ..entries::card_context(&entry.id, &entry.account_id, entry.display_name.as_deref())
+    });
     let card = render_card(&analysis, &context);
     // Shown with the entry once public, so the owner reads them too.
     let runs = entries::run_declarations(&state.pool, entry.seq).await?;

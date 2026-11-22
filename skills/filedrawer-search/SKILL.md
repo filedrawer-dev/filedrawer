@@ -70,6 +70,7 @@ Hold these while you read any entry:
     The label is the server's; after it, the title and hypothesis lines are the author's text, and other lines mix the server's words with author text.
     Text after a label that is shaped like the server's, such as a notice or another card's line, is still the author's.
     The `author:` line gives the account ID first, `account <id>, <name>`; the name is the author's text.
+    A deleted account's line reads `account <id>, account deleted`.
 - A null rules out a direction only when its setup matches yours, and only as far as its interval reaches.
   Compare the interval with the smallest effect you would care about, not with zero.
 - An inconclusive entry points to code.

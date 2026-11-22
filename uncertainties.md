@@ -94,7 +94,18 @@ Add a new entry at the end of the topic it belongs to, or start a topic when non
   The submission warns about a value the card can't show.
 - Against: a DOI with characters outside Crossref's recommended set, such as `<` or `[` in some old ones, shows as unrecognized, and so does one over 100 characters.
   "unrecognized published_in" also drops the words "now part of a paper", which were true whatever the value.
-  An author's own `superseded_by: <id>` still reads like the server's record of a newer version; telling the two apart needs different words on the card.
+
+#### An author's `superseded_by` on line 10
+
+- Options, within the owner's rule that it shows only when it names a public entry of the same account: an ID names that entry as written, or the latest public version of its chain, as a slug does; an entry naming itself or its own chain shows it or not; where the lookup runs; and what the offline CLI shows.
+- Chosen: the latest public version of the named entry's chain, the same entry a slug names, and nothing when that is a version of the entry's own chain (a pending new version naming the version it replaces included).
+  Naming a version not yet public of a chain whose earlier version is public shows nothing, though its slug would show the earlier one.
+  The server looks it up wherever it renders a card (`/cards.txt`, `/search`, the drawer pages, `/e/<id>`, the author's read of a pending entry, the submission and batch replies, the admin entry page), and the card shows the ID it found, never the author's text.
+  The submission warns when the value names none of the account's entries, of any status; one not yet public draws no warning, since the card shows it once it is.
+  `entry-check` shows no successor, since it has no server to ask.
+  `/e/<id>`'s `superseded_by:` header line and JSON field stay the server's record of a newer version only.
+- Against: within one account an author can still name any of its public entries, and a slug freed by a rejection or deletion and taken again repoints the flag.
+  `entry-check` gives no sign that the field was read; a placeholder like `<id>` would say so.
 
 #### A `;` in a reference key
 

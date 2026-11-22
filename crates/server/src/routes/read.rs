@@ -84,16 +84,7 @@ pub async fn entry(
         &slug_references(&entry.source),
     )
     .await?;
-    let successor_slug = analysis
-        .fields
-        .superseded_by
-        .as_deref()
-        .and_then(|value| value.strip_prefix("slug:"));
-    let resolved_successor = successor_slug.and_then(|name| links.get(name)).cloned();
-    let card = entry.card_from(
-        &analysis,
-        entry.superseded_by.clone().or(resolved_successor),
-    );
+    let card = entry.card_from(&analysis);
     let runs = entries::entry_runs(&state.pool, &entry.id).await?;
     let cited = shown_series(&state, entry.seq).await?;
     let mut text = format!(
@@ -433,11 +424,13 @@ async fn own_entry(
     }
     let links = link_checks::stored(&state.pool, entry.seq).await?;
     let context = LinkFlags::of(&links).on(entries::own_card_context(
+        &state.pool,
         &entry.id,
         &account.id,
         &account.display_name,
         &analysis,
-    ));
+    )
+    .await?);
     let card = render_card(&analysis, &context);
     let warnings = warnings::entry_warnings(
         &state.pool,

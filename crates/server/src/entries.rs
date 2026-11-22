@@ -38,6 +38,8 @@ pub struct PublicEntry {
     pub logs_link_dead: bool,
     /// The `link_flags` view's `pin_flag` (`link_checks::pin_flag`).
     pub pin_flag: Option<String>,
+    /// The entry its author's `superseded_by` names, as [`named_successor`] found it.
+    pub named_successor: Option<String>,
 }
 
 /// The card context only the server knows: the entry's ID and its author, whose
@@ -55,42 +57,48 @@ pub fn card_context(id: &str, account_id: &str, display_name: Option<&str>) -> C
 }
 
 /// The card context of an entry not yet public, as its author sees it: its
-/// attachment set, checked at submission, means "code attached".
-pub fn own_card_context(
+/// attachment set, checked at submission, means "code attached", and the entry its
+/// `superseded_by` names shows once that entry is public.
+pub async fn own_card_context(
+    pool: &SqlitePool,
     id: &str,
     account_id: &str,
     display_name: &str,
     analysis: &Analysis,
-) -> CardContext {
-    CardContext {
+) -> Result<CardContext, sqlx::Error> {
+    Ok(CardContext {
         code_attached: analysis.fields.attachments.is_some(),
+        superseded_by: named_successor(pool, account_id, id, analysis).await?,
         ..card_context(id, account_id, Some(display_name))
-    }
+    })
 }
 
 impl PublicEntry {
     /// The card, rendered from the stored text by the current analyzer.
     pub fn card(&self) -> String {
-        self.card_from(&analyze(&self.source), self.superseded_by.clone())
+        self.card_from(&analyze(&self.source))
     }
 
     /// The card and the outcome its stamp shows, from one reading of the entry.
     pub fn card_and_outcome(&self) -> (String, Choice<Outcome>) {
         let analysis = analyze(&self.source);
-        let card = self.card_from(&analysis, self.superseded_by.clone());
+        let card = self.card_from(&analysis);
         (card, analysis.fields.outcome)
     }
 
-    /// The card from `analysis`, this entry's, with `superseded_by` as the server's
-    /// record of what replaced it.
-    pub fn card_from(&self, analysis: &Analysis, superseded_by: Option<String>) -> String {
+    /// The card from `analysis`, this entry's. It is superseded by its newer public
+    /// version, if any, or else by the entry its author named, as the server found it.
+    pub fn card_from(&self, analysis: &Analysis) -> String {
         let flags = LinkFlags {
             code_link_dead: self.code_link_dead,
             logs_link_dead: self.logs_link_dead,
             pin: link_checks::pin_flag(self.pin_flag.as_deref()),
         };
         let context = flags.on(CardContext {
-            superseded_by_version: superseded_by,
+            superseded_by: self
+                .superseded_by
+                .clone()
+                .or_else(|| self.named_successor.clone()),
             screening_note: self.screening_note.clone(),
             code_attached: self.code_attached,
             ..card_context(&self.id, &self.account_id, self.display_name.as_deref())
@@ -707,9 +715,99 @@ pub async fn latest_public_seq(pool: &SqlitePool, seq: i64) -> Result<i64, sqlx:
     .await
 }
 
+/// The entry that `account_id`'s entry `own_id`, read as `analysis`, names in its
+/// `superseded_by`, as the card may show it (the owner's decision, 2026-11-21): the
+/// latest public version of the chain of the account's entry with that ID, or of the
+/// chain the account gave that slug, unless that is a version of `own_id`'s own
+/// chain. `None` when there is no such entry, or no value in a form the server reads.
+pub async fn named_successor(
+    pool: &SqlitePool,
+    account_id: &str,
+    own_id: &str,
+    analysis: &Analysis,
+) -> Result<Option<String>, sqlx::Error> {
+    let Some(value) = analysis.fields.superseded_by.as_deref() else {
+        return Ok(None);
+    };
+    let found = match Reference::parse(value) {
+        Some(Reference::Entry(id)) => latest_public_version(pool, account_id, &id).await?,
+        Some(Reference::Slug(slug)) => {
+            public_by_slugs(pool, account_id, &BTreeSet::from([slug.clone()]))
+                .await?
+                .remove(&slug)
+        }
+        _ => None,
+    };
+    match found {
+        Some(found) if !same_chain(pool, own_id, &found).await? => Ok(Some(found)),
+        _ => Ok(None),
+    }
+}
+
+/// Whether entries `a` and `b` are versions of one chain, or the same entry.
+async fn same_chain(pool: &SqlitePool, a: &str, b: &str) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar!(
+        r#"WITH RECURSIVE
+             earlier(seq, previous_seq) AS (
+               SELECT seq, previous_seq FROM entries WHERE id = ?1
+               UNION ALL
+               SELECT e.seq, e.previous_seq FROM entries e JOIN earlier p ON e.seq = p.previous_seq
+             ),
+             later(seq) AS (
+               SELECT seq FROM entries WHERE id = ?1
+               UNION ALL
+               SELECT e.seq FROM entries e JOIN later l ON e.previous_seq = l.seq
+             )
+           SELECT EXISTS (SELECT 1 FROM entries
+               WHERE id = ?2 AND (seq IN (SELECT seq FROM earlier) OR seq IN (SELECT seq FROM later)))
+             AS "same!: bool""#,
+        a,
+        b
+    )
+    .fetch_one(pool)
+    .await
+}
+
+/// The latest public version of the chain that `account_id`'s entry `id` starts.
+async fn latest_public_version(
+    pool: &SqlitePool,
+    account_id: &str,
+    id: &str,
+) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar!(
+        r#"WITH RECURSIVE chain(seq) AS (
+               SELECT seq FROM entries WHERE id = ?1 AND account_id = ?2
+               UNION ALL
+               SELECT e.seq FROM entries e JOIN chain c ON e.previous_seq = c.seq
+           )
+           SELECT e.id AS "id!" FROM entries e JOIN chain c ON c.seq = e.seq
+           WHERE e.status = 'public' ORDER BY e.seq DESC LIMIT 1"#,
+        id,
+        account_id
+    )
+    .fetch_optional(pool)
+    .await
+}
+
+/// `entries` with each one's [`named_successor`] filled in. Only an entry whose text
+/// names the field is read again.
+async fn with_named_successors(
+    pool: &SqlitePool,
+    mut entries: Vec<PublicEntry>,
+) -> Result<Vec<PublicEntry>, sqlx::Error> {
+    for entry in &mut entries {
+        if entry.source.contains("superseded_by") {
+            let analysis = analyze(&entry.source);
+            entry.named_successor =
+                named_successor(pool, &entry.account_id, &entry.id, &analysis).await?;
+        }
+    }
+    Ok(entries)
+}
+
 /// A public entry by ID.
 pub async fn public_entry(pool: &SqlitePool, id: &str) -> Result<Option<PublicEntry>, sqlx::Error> {
-    sqlx::query_as!(
+    let entry = sqlx::query_as!(
         PublicEntry,
         r#"SELECT e.seq AS "seq!: i64", e.id, e.source, e.account_id,
                   a.display_name AS "display_name?: String", e.submitted_at, e.published_at,
@@ -719,14 +817,19 @@ pub async fn public_entry(pool: &SqlitePool, id: &str) -> Result<Option<PublicEn
                   e.attachment_set_seq IS NOT NULL AS "code_attached!: bool",
                   IFNULL(f.code_link_dead, 0) AS "code_link_dead!: bool",
                   IFNULL(f.logs_link_dead, 0) AS "logs_link_dead!: bool",
-                  f.pin_flag AS "pin_flag?: String"
+                  f.pin_flag AS "pin_flag?: String",
+                  -- Filled by `with_named_successors`, after the query.
+                  NULL AS "named_successor?: String"
          FROM entries e JOIN authors a ON a.id = e.account_id
          LEFT JOIN link_flags f ON f.entry_seq = e.seq
          WHERE e.id = ? AND e.status = 'public'"#,
         id
     )
     .fetch_optional(pool)
-    .await
+    .await?;
+    Ok(with_named_successors(pool, entry.into_iter().collect())
+        .await?
+        .pop())
 }
 
 /// What `/search` filters on. `None` means no filter.
@@ -911,6 +1014,8 @@ pub async fn search(
     )
     .fetch_all(&mut *connection)
     .await?;
+    // The lookups below take a connection of their own, outside the search's budget.
+    drop(connection);
     let total = rows.first().map_or(0, |row| row.total);
     let readers = match order {
         Order::MostRead { .. } => rows.iter().map(|row| (row.seq, row.readers)).collect(),
@@ -933,8 +1038,10 @@ pub async fn search(
             code_link_dead: row.code_link_dead,
             logs_link_dead: row.logs_link_dead,
             pin_flag: row.pin_flag,
+            named_successor: None,
         })
         .collect();
+    let entries = with_named_successors(pool, entries).await?;
     Ok(Found {
         entries,
         total,
@@ -944,7 +1051,7 @@ pub async fn search(
 
 /// Every public entry, oldest first, for `/cards.txt`.
 pub async fn all_public(pool: &SqlitePool) -> Result<Vec<PublicEntry>, sqlx::Error> {
-    sqlx::query_as!(
+    let entries = sqlx::query_as!(
         PublicEntry,
         r#"SELECT e.seq AS "seq!: i64", e.id, e.source, e.account_id,
                   a.display_name AS "display_name?: String", e.submitted_at, e.published_at,
@@ -954,7 +1061,9 @@ pub async fn all_public(pool: &SqlitePool) -> Result<Vec<PublicEntry>, sqlx::Err
                   e.attachment_set_seq IS NOT NULL AS "code_attached!: bool",
                   IFNULL(f.code_link_dead, 0) AS "code_link_dead!: bool",
                   IFNULL(f.logs_link_dead, 0) AS "logs_link_dead!: bool",
-                  f.pin_flag AS "pin_flag?: String"
+                  f.pin_flag AS "pin_flag?: String",
+                  -- Filled by `with_named_successors`, after the query.
+                  NULL AS "named_successor?: String"
          FROM entries e JOIN authors a ON a.id = e.account_id
          LEFT JOIN link_flags f ON f.entry_seq = e.seq
          WHERE e.status = 'public'
@@ -962,7 +1071,8 @@ pub async fn all_public(pool: &SqlitePool) -> Result<Vec<PublicEntry>, sqlx::Err
          ORDER BY e.seq"#
     )
     .fetch_all(pool)
-    .await
+    .await?;
+    with_named_successors(pool, entries).await
 }
 
 /// Tags on public entries, most used first.

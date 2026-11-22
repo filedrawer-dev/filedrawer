@@ -455,6 +455,7 @@ Inconclusive entries are welcome and marked as such.
   A correction is a new version that links to the old one, and old versions stay readable.
   Only the account that posted an entry may post a new version of it.
 - An old version's header and card say "superseded by <id>".
+  An author's own `superseded_by`, for a pilot a later run replaced, shows on the card only when it names a public entry of the same account, since it reads like the server's record and an author could otherwise name any entry (the owner's decision, 2026-11-21).
   Search and `/cards.txt` return only the latest version in each chain.
   A replication that points at an old version counts against the latest one.
   Reason: a reader who lands on a superseded null may drop a direction that the correction found works.

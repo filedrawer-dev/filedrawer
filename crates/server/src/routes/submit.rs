@@ -221,11 +221,13 @@ async fn held_reply(
         screen_from,
     } = *held;
     let context = LinkFlags::of(links).on(entries::own_card_context(
+        &state.pool,
         id,
         &account.id,
         &account.display_name,
         analysis,
-    ));
+    )
+    .await?);
     let card = render_card(analysis, &context);
     let warnings =
         warnings::entry_warnings(&state.pool, &account.id, seq, source, analysis, links).await?;

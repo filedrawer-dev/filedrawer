@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH RECURSIVE\n             earlier(seq, previous_seq) AS (\n               SELECT seq, previous_seq FROM entries WHERE id = ?1\n               UNION ALL\n               SELECT e.seq, e.previous_seq FROM entries e JOIN earlier p ON e.seq = p.previous_seq\n             ),\n             later(seq) AS (\n               SELECT seq FROM entries WHERE id = ?1\n               UNION ALL\n               SELECT e.seq FROM entries e JOIN later l ON e.previous_seq = l.seq\n             )\n           SELECT EXISTS (SELECT 1 FROM entries\n               WHERE id = ?2 AND (seq IN (SELECT seq FROM earlier) OR seq IN (SELECT seq FROM later)))\n             AS \"same!: bool\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "same!: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "85f7dcb16db38de5f3ba0ce6076be52bef7a1e606359cc3c9e61fb982f2bf37e"
+}

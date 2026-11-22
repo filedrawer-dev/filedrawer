@@ -510,3 +510,176 @@ async fn every_card_line_starts_with_the_servers_label() {
         );
     }
 }
+
+/// The flags line of entry `id`'s card in `/cards.txt`.
+async fn flags_in_cards(app: &common::TestApp, id: &str) -> String {
+    let body = app.get("/cards.txt").await.body;
+    let card = body
+        .split("\n\n")
+        .find(|card| card.starts_with(&format!("entry: {id}; ")))
+        .unwrap_or_else(|| panic!("no card for {id} in\n{body}"));
+    card.lines()
+        .find_map(|line| line.strip_prefix("flags: "))
+        .expect(card)
+        .to_string()
+}
+
+/// An author's `superseded_by` reads like the server's record of a newer version,
+/// so a card shows it only when it names a public entry of the same account, as
+/// the latest public version of that entry's chain (the owner's decision,
+/// 2026-11-21).
+#[tokio::test]
+async fn an_authors_successor_shows_only_when_it_names_a_public_entry_of_the_same_account() {
+    let app = test_app().await;
+    let first = app.submit(&entry("Main run", "slug: main-run\n")).await;
+    let reply = app
+        .post(
+            &format!("/e/{first}/versions"),
+            entry("Main run, fixed", ""),
+        )
+        .await;
+    assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
+    let main = common::id_in(&reply.body);
+    app.post(&format!("/e/{main}/publish"), "").await;
+    let pending = app.submit_held(&entry("Not public yet", "")).await;
+    let other = app.other_token().await;
+    let reply = app
+        .post_as("/entries", Some(&other), entry("Another account's", ""))
+        .await;
+    let theirs = common::id_in(&reply.body);
+    app.post_as(&format!("/e/{theirs}/publish"), Some(&other), "")
+        .await;
+
+    let shown = format!("analyzer v2; no code; superseded by {main}");
+    for (named, flags) in [
+        (main.clone(), shown.as_str()),
+        // An older version's ID and the slug both name the chain's latest version.
+        (first.clone(), shown.as_str()),
+        ("slug:main-run".to_string(), shown.as_str()),
+        (format!("https://filedrawer.dev/e/{first}"), shown.as_str()),
+        (pending.clone(), "analyzer v2; no code"),
+        (theirs.clone(), "analyzer v2; no code"),
+        ("0000000000".to_string(), "analyzer v2; no code"),
+        ("slug:no-such-run".to_string(), "analyzer v2; no code"),
+    ] {
+        let pilot = app
+            .submit(&entry("Pilot", &format!("superseded_by: \"{named}\"\n")))
+            .await;
+        assert_eq!(flags_in_cards(&app, &pilot).await, flags, "{named}");
+        let page = app.get(&format!("/e/{pilot}")).await.body;
+        assert!(
+            page.contains(&format!("\n  flags: {flags}\n")),
+            "{named}: {page}"
+        );
+        let search = app.get_json("/search?q=pilot&limit=100").await;
+        let card = search["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|result| result["id"] == pilot.as_str())
+            .expect("the pilot is found")["card"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(
+            card.contains(&format!("\nflags: {flags}\n")),
+            "{named}: {card}"
+        );
+    }
+    // An entry can't name itself.
+    let own = app
+        .submit(&entry(
+            "Self",
+            "slug: self-run\nsuperseded_by: slug:self-run\n",
+        ))
+        .await;
+    assert_eq!(flags_in_cards(&app, &own).await, "analyzer v2; no code");
+    // Nor can a pending new version name its own chain, whose latest public
+    // version is the one it replaces.
+    for named in [first.as_str(), main.as_str(), "slug:main-run"] {
+        let reply = app
+            .post(
+                &format!("/e/{main}/versions"),
+                entry("Main run, again", &format!("superseded_by: \"{named}\"\n")),
+            )
+            .await;
+        assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
+        assert!(
+            reply.body.contains("\n  flags: analyzer v2; no code\n"),
+            "{named}: {}",
+            reply.body
+        );
+        let newer = common::id_in(&reply.body);
+        app.delete_as(&format!("/e/{newer}"), &app.token, false)
+            .await;
+    }
+}
+
+/// The author's own replies show the successor too, as soon as it is public: the
+/// submission's reply and the read of the pending entry.
+#[tokio::test]
+async fn an_authors_successor_shows_on_their_pending_entry_once_it_is_public() {
+    let app = test_app().await;
+    let main = app
+        .submit_held(&entry("Main run", "slug: main-run\n"))
+        .await;
+    let reply = app
+        .post("/entries", entry("Pilot", "superseded_by: slug:main-run\n"))
+        .await;
+    assert!(
+        reply.body.contains("\n  flags: analyzer v2; no code\n"),
+        "{}",
+        reply.body
+    );
+    let pilot = common::id_in(&reply.body);
+    app.post(&format!("/e/{main}/publish"), "").await;
+    let own = app.get_as_author(&format!("/e/{pilot}")).await.body;
+    assert!(
+        own.contains(&format!(
+            "\n  flags: analyzer v2; no code; superseded by {main}\n"
+        )),
+        "{own}"
+    );
+    let reply = app
+        .post(
+            "/entries",
+            entry("Pilot 2", "superseded_by: slug:main-run\n"),
+        )
+        .await;
+    assert!(
+        reply.body.contains(&format!(
+            "\n  flags: analyzer v2; no code; superseded by {main}\n"
+        )),
+        "{}",
+        reply.body
+    );
+}
+
+/// The submission warns when `superseded_by` names none of the account's entries,
+/// since the card would never show it, but not for one that isn't public yet.
+#[tokio::test]
+async fn a_successor_naming_none_of_the_accounts_entries_is_warned() {
+    let app = test_app().await;
+    let pending = app.submit_held(&entry("Not public yet", "")).await;
+    let other = app.other_token().await;
+    let reply = app
+        .post_as("/entries", Some(&other), entry("Another account's", ""))
+        .await;
+    let theirs = common::id_in(&reply.body);
+    let warned = |body: &str| body.contains("names none of this account's entries");
+    for (named, warns) in [
+        (pending.as_str(), false),
+        (theirs.as_str(), true),
+        ("0000000000", true),
+        ("slug:later-run", true),
+    ] {
+        let reply = app
+            .post(
+                "/entries",
+                entry("Pilot", &format!("superseded_by: \"{named}\"\n")),
+            )
+            .await;
+        assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
+        assert_eq!(warned(&reply.body), warns, "{named}: {}", reply.body);
+    }
+}

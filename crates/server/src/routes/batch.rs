@@ -235,10 +235,19 @@ pub async fn submit_batch(
             links,
         )
         .await?;
+        let context = LinkFlags::of(links).on(entries::own_card_context(
+            &state.pool,
+            &id,
+            &account.id,
+            &account.display_name,
+            &member.analysis,
+        )
+        .await?);
+        let card = render_card(&member.analysis, &context);
         replied.push(Member {
             id,
             accepted: member,
-            links,
+            card,
             warnings,
         });
     }
@@ -257,7 +266,8 @@ pub async fn submit_batch(
 struct Member<'a> {
     id: String,
     accepted: &'a Accepted,
-    links: &'a [CheckedLink],
+    /// Its card, as its author sees it while it is pending.
+    card: String,
     /// Every warning for it (`warnings::entry_warnings`).
     warnings: Vec<String>,
 }
@@ -345,22 +355,15 @@ fn batch_reply(
     for Member {
         id,
         accepted: member,
-        links,
+        card,
         warnings,
     } in members
     {
-        let context = LinkFlags::of(links).on(entries::own_card_context(
-            id,
-            &account.id,
-            &account.display_name,
-            &member.analysis,
-        ));
-        let card = render_card(&member.analysis, &context);
         text.push_str(&format!(
             "\nentry {id}, slug {}\nprimary row: {}\n{}",
             member.analysis.fields.slug.as_deref().unwrap_or(""),
             member.analysis.primary_row_summary(),
-            card_and_warnings(&card, warnings)
+            card_and_warnings(card, warnings)
         ));
         json_members.push(json!({
             "id": id,

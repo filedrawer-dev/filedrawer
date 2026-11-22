@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT e.seq AS \"seq!: i64\", e.id, e.source, e.account_id,\n                  a.display_name AS \"display_name?: String\", e.submitted_at, e.published_at,\n                  (SELECT p.id FROM entries p WHERE p.seq = e.previous_seq AND p.status = 'public') AS \"previous_id?\",\n                  (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS \"superseded_by?\",\n                  e.screening_note,\n                  e.attachment_set_seq IS NOT NULL AS \"code_attached!: bool\",\n                  IFNULL(f.code_link_dead, 0) AS \"code_link_dead!: bool\",\n                  IFNULL(f.logs_link_dead, 0) AS \"logs_link_dead!: bool\",\n                  f.pin_flag AS \"pin_flag?: String\"\n         FROM entries e JOIN authors a ON a.id = e.account_id\n         LEFT JOIN link_flags f ON f.entry_seq = e.seq\n         WHERE e.id = ? AND e.status = 'public'",
+  "query": "SELECT e.seq AS \"seq!: i64\", e.id, e.source, e.account_id,\n                  a.display_name AS \"display_name?: String\", e.submitted_at, e.published_at,\n                  (SELECT p.id FROM entries p WHERE p.seq = e.previous_seq AND p.status = 'public') AS \"previous_id?\",\n                  (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public') AS \"superseded_by?\",\n                  e.screening_note,\n                  e.attachment_set_seq IS NOT NULL AS \"code_attached!: bool\",\n                  IFNULL(f.code_link_dead, 0) AS \"code_link_dead!: bool\",\n                  IFNULL(f.logs_link_dead, 0) AS \"logs_link_dead!: bool\",\n                  f.pin_flag AS \"pin_flag?: String\",\n                  -- Filled by `with_named_successors`, after the query.\n                  NULL AS \"named_successor?: String\"\n         FROM entries e JOIN authors a ON a.id = e.account_id\n         LEFT JOIN link_flags f ON f.entry_seq = e.seq\n         WHERE e.status = 'public'\n           AND NOT EXISTS (SELECT 1 FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public')\n         ORDER BY e.seq",
   "describe": {
     "columns": [
       {
@@ -131,10 +131,16 @@
         "ordinal": 13,
         "type_info": "Text",
         "origin": "Expression"
+      },
+      {
+        "name": "named_successor?: String",
+        "ordinal": 14,
+        "type_info": "Null",
+        "origin": "Expression"
       }
     ],
     "parameters": {
-      "Right": 1
+      "Right": 0
     },
     "nullable": [
       false,
@@ -150,8 +156,9 @@
       false,
       false,
       false,
+      true,
       true
     ]
   },
-  "hash": "cc2c9580046686414d3d3bfd7a08843f097596f1ed5c3841a9a27a008314e628"
+  "hash": "2f5367355a1f1ac10f8a361ba816f46559e371e2f96edf0e4274be1e7f73a200"
 }

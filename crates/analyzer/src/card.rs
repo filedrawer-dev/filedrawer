@@ -51,8 +51,10 @@ pub struct CardContext {
     pub logs_link_dead: bool,
     /// What the server's online check of the `code` link's pin flags, if anything.
     pub pin: Option<PinFlag>,
-    /// The ID of the version that superseded this one.
-    pub superseded_by_version: Option<String>,
+    /// The entry that supersedes this one, as the server found it: a newer public
+    /// version, or else the public entry of the same account that the author's
+    /// `superseded_by` names. The card shows the author's value only through this.
+    pub superseded_by: Option<String>,
     /// The entries that replicate this one, line 10.
     pub replications: Vec<Replication>,
 }
@@ -639,16 +641,15 @@ fn flags(analysis: &Analysis, context: &CardContext) -> Vec<Part> {
             None => parts.push(server("; unrecognized published_in")),
         }
     }
-    if let Some(version) = &context.superseded_by_version {
-        parts.push(server(format!("; superseded by {version}")));
-    }
-    // The server's own record of a successor, a newer version or a resolved
-    // `slug:` reference, replaces the author's text for it.
-    if let (Some(successor), None) = (&fields.superseded_by, &context.superseded_by_version) {
-        match successor_key(successor) {
-            Some(key) => parts.extend([server("; superseded by "), author(key)]),
-            None => parts.push(server("; unrecognized superseded_by")),
+    // An author's `superseded_by` shows only as the server found it, since an
+    // author could otherwise name any entry as the newer one; a value in no form
+    // the server reads is flagged.
+    match (&context.superseded_by, &fields.superseded_by) {
+        (Some(successor), _) => parts.push(server(format!("; superseded by {successor}"))),
+        (None, Some(named)) if successor_key(named).is_none() => {
+            parts.push(server("; unrecognized superseded_by"));
         }
+        (None, _) => {}
     }
     for replication in &context.replications {
         let kind = if replication.self_replication {

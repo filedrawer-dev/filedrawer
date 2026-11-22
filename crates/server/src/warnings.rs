@@ -1,8 +1,8 @@
 //! The warnings a submission's reply and its author's read of a pending entry list
-//! (design.md, Agent interface): the analyzer's, the link checks', and two only the
+//! (design.md, Agent interface): the analyzer's, the link checks', and three only the
 //! server can give, since they need the entry's attachment set or other entries:
-//! files its body names that a reader can't open, and `replicates`/`reanalyzes`
-//! items that name no entry.
+//! files its body names that a reader can't open, `replicates`/`reanalyzes` items
+//! that name no entry, and a `superseded_by` that names none of the account's.
 
 use analyzer::{Analysis, Reference, WARNING_FEEDBACK, file_mentions};
 use sqlx::SqlitePool;
@@ -30,7 +30,34 @@ pub async fn entry_warnings(
     warnings.extend(link_checks::unchecked_warnings(&analysis.fields));
     warnings.extend(unopenable_files(pool, seq, source, analysis, links).await?);
     warnings.extend(references_naming_nothing(pool, account_id, analysis).await?);
+    warnings.extend(successor_naming_nothing(pool, account_id, analysis).await?);
     Ok(warnings)
+}
+
+/// A warning when `superseded_by` names none of the account's entries, whose card
+/// would then never show it: the card shows an author's successor only once it is a
+/// public entry of the same account (entries::named_successor). An entry of the
+/// account not yet public draws none, since the card shows it once it is.
+async fn successor_naming_nothing(
+    pool: &SqlitePool,
+    account_id: &str,
+    analysis: &Analysis,
+) -> Result<Option<String>, sqlx::Error> {
+    let Some(value) = analysis.fields.superseded_by.as_deref() else {
+        return Ok(None);
+    };
+    let names_one = match Reference::parse(value) {
+        Some(Reference::Slug(slug)) => entries::slug_taken(pool, account_id, &slug).await?,
+        Some(Reference::Entry(id)) => entries::own_entry(pool, &id, account_id).await?.is_some(),
+        // The analyzer warns about a value in no form the server reads.
+        _ => return Ok(None),
+    };
+    Ok((!names_one).then(|| {
+        format!(
+            "`superseded_by: {}` names none of this account's entries, so the card shows it only once a public entry of this account has that ID or slug {WARNING_FEEDBACK}",
+            one_line(value)
+        )
+    }))
 }
 
 /// The files the body names in code spans that are neither in the entry's attachment
