@@ -1142,6 +1142,15 @@ An agent added this on 2026-11-20, with the owner away; deleting `.github/workfl
 
 ### Production deploys
 
+#### Who may open the apps' ports
+
+- Options: reject only the users found to reach them (as before, staging's user to 8080); allow only Caddy and root; or per port, each app's own Caddy site alone.
+- Chosen: only Caddy and root, for new TCP connections to 8080, 8081 and 2019 at any local address (`fib daddr type local`), so a listener left on the public address is covered too; a packet of an open connection or of a socket in TIME_WAIT passes, since it has no user to match.
+  `loopback.sh` runs from staging's Caddy stage as well as production's, refuses before Caddy is installed, and after loading checks that Caddy still connects to each listening app and `nobody` can't, putting the previous rules back when Caddy can't.
+  The audit reports Caddy's reach and whether the unit is active, not only enabled.
+- Against: an owner's `ssh -L` tunnel to an app's port works only as root now.
+  A load that fails at boot keeps production down, since its unit requires the rules, and leaves staging's port open, since staging's doesn't; the audit shows it, nothing alerts.
+
 #### Production's commit is public
 
 - Options: `X-Filedrawer-Commit` on `/skill.md` for anyone, as #42 asked; or behind a key, with `ops/deploy-production` reading it over ssh instead.

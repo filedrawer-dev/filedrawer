@@ -512,6 +512,15 @@ def test_a_rerun_runs_every_stage_without_asking_for_anything_saved(rerun):
     assert not rerun.opened.exists(), rerun.opened.read_text()
 
 
+def test_staging_loads_the_loopback_rules_once_caddy_is_installed(rerun):
+    result = rerun.run()
+    assert result.returncode == 0, result.stdout + result.stderr
+    sent = rerun.sent()
+    # The rules name the user caddy, which Caddy's install makes.
+    caddy = next(i for i, text in enumerate(sent) if text.endswith(script("caddy.sh")))
+    assert sent.index(script("loopback.sh")) > caddy
+
+
 def test_a_rerun_runs_a_stage_whose_settings_the_server_lacks(rerun):
     rerun.present(
         "/etc/filedrawer/staging-mail.env",
@@ -636,8 +645,6 @@ def test_production_sends_each_script_for_production_in_order(production):
     )
     # The timer starts with backup.sh, so the program it runs is there first.
     assert sent.index(script("filedrawer-backup")) < at("backup.sh")
-    # loopback.sh names staging's user, so it must exist first.
-    assert at("service-user.sh", "ENVIRONMENT=staging") < at("loopback.sh")
     # The install script that knows production goes to the server.
     assert script("filedrawer-install") in sent
     assert "ENVIRONMENT=staging" not in " ".join(
@@ -1009,8 +1016,6 @@ STAGING_RERUN_EXEMPT = {
     "ci-account.sh": "Sent when a CI account's ID or token is missing, or when a "
     "run with --ask-all (ops/provision-vps or ops/provision-vps smoke) is asked for "
     "a new token.",
-    "loopback.sh": "Production's wizard sends it on every run: its rules keep "
-    "staging off production's port.",
     "ping.sh": "Production's wizard sends it on every run.",
     "backup.sh": "Production's wizard sends it on every run: only production has "
     "backups.",

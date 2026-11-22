@@ -53,10 +53,8 @@ production_service_stage() {
   stage "Production's user, service and loopback rules"
   say "A 'filedrawer-prod' system user, /srv/filedrawer/production with a data folder"
   say "only it reads, and filedrawer-production.service on 127.0.0.1:8080, which waits"
-  say "for its first binary (#42). Staging's user can't connect to that port, and each"
-  say "service may bind only its own."
-  # Staging's user first: the loopback rules name it.
-  remote service-user.sh ENVIRONMENT=staging
+  say "for its first binary (#42). Only Caddy and root may connect to that port, and"
+  say "each service may bind only its own."
   remote service-user.sh ENVIRONMENT=production
   remote loopback.sh
   remote service.sh ENVIRONMENT=production

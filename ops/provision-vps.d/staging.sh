@@ -104,6 +104,9 @@ staging_caddy_stage() {
   remote_with_secret caddy.sh STAGING_SECRETS "$STAGING_PASSWORD"$'\t'"$STAGING_KEY" \
     ENVIRONMENT=staging "STAGING_USER=$STAGING_USER"
   unset STAGING_PASSWORD
+  # Only Caddy and root may open the apps' ports, so no local user skips the key;
+  # it names the user caddy, so it comes after Caddy's install.
+  remote loopback.sh
   note "The staging key is in $ENV_FILE. Give it to agents with their API token."
   pause
 }

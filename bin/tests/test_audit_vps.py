@@ -307,6 +307,17 @@ def test_a_probe_that_cant_run_as_the_user_says_so_and_claims_nothing(server):
     assert "no connection" not in out
 
 
+def test_the_audit_probes_caddys_reach_and_whether_the_loopback_rules_are_loaded(
+    server,
+):
+    out = server.run().stdout
+    # Caddy cut off from an app takes its site down; the install's check runs as root
+    # and wouldn't see it.
+    for port in ("8080", "8081"):
+        assert f"caddy -> 127.0.0.1:{port}: " in out
+    assert "systemctl is-active filedrawer-loopback.service" in out
+
+
 ADMIN_SOCKET = "/var/lib/caddy/admin.sock"
 # A runuser that runs the command as the test's own user.
 AS_ITSELF = 'shift 3; exec "$@"'

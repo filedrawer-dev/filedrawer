@@ -150,6 +150,8 @@ heading "firewall"
 run ufw status verbose
 run nft list ruleset
 run systemctl is-enabled filedrawer-loopback.service
+# Enabled isn't loaded: a load that failed at boot leaves the ports open.
+run systemctl is-active filedrawer-loopback.service
 
 heading "loopback reach, by user"
 # Caddy's admin API, on its default port and on the socket ops/remote/caddy.sh
@@ -163,6 +165,9 @@ for user in "$STAGING_USER" "$PRODUCTION_USER" deploy nobody; do
   reach "$user" 8080
   reach "$user" 8081
 done
+# Caddy must still reach both apps, or the sites are down behind it.
+reach caddy 8080
+reach caddy 8081
 
 heading "sshd"
 run sshd -T

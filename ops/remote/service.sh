@@ -3,8 +3,8 @@
 # stays idle until a deploy puts the binary at /srv/filedrawer/<env>/bin/filedrawer.
 # Each runs as its own user (service-user.sh) and may bind only its own TCP port, so
 # a binary sent with staging's deploy key can't take production's while production is
-# down. Production's unit also needs loopback.sh's rules loaded, which keep staging's
-# user from connecting to production's port. Settings files are root's alone: systemd
+# down. Production's unit also needs loopback.sh's rules loaded, which let only Caddy
+# and root connect to either app's port. Settings files are root's alone: systemd
 # reads them as root. Runs as root; safe to rerun. When the unit or the base settings
 # change, it restarts a running service, so a wizard rerun takes effect even
 # when no settings script that restarts it runs after (#102). Exits 2 for an

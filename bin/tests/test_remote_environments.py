@@ -1,6 +1,6 @@
 """Tests for the VPS scripts that keep staging and production apart:
 ops/remote/service-user.sh (each environment's user, directories and settings files)
-and ops/remote/loopback.sh (staging's user can't reach production's port). They run
+and ops/remote/loopback.sh (only Caddy and root reach the apps' ports). They run
 against a temp root, with fakes of the tools that need root first on PATH.
 """
 
@@ -38,9 +38,21 @@ def box(tmp_path):
     log = tmp_path / "log"
     log.touch()
     users = tmp_path / "users"
-    users.write_text("filedrawer\n")
+    users.write_text("filedrawer\ncaddy\n")
     for tool in ("systemctl", "chown", "useradd", "nft", "apt-get"):
         executable(fakes / tool, f'#!/bin/sh\necho "{tool} $*" >> {log}\n')
+    # ss lists a listener on each port in $FAKE_LISTENING; runuser -u USER connects
+    # when USER is in $FAKE_REACH, as the real rules would let it.
+    executable(
+        fakes / "ss",
+        '#!/bin/sh\nfor port in $FAKE_LISTENING; do case "$*" in *":$port"*) '
+        'echo "LISTEN 0 4096 127.0.0.1:$port 0.0.0.0:*";; esac; done\n',
+    )
+    executable(
+        fakes / "runuser",
+        f'#!/bin/sh\necho "runuser $*" >> {log}\n'
+        'case " $FAKE_REACH " in *" $2 "*) exit 0;; esac\nexit 1\n',
+    )
     # id knows the users in `users`.
     executable(fakes / "id", f'#!/bin/sh\ngrep -qx "$1" {users}\n')
     env = {"PATH": f"{fakes}:{os.environ['PATH']}", "FILEDRAWER_ROOT": str(root)}
@@ -130,14 +142,21 @@ def test_service_user_refuses_another_environment(box, environment):
 # loopback.sh
 
 
-def test_loopback_drops_stagings_connections_to_productions_port(box):
+PORTS = "ct state new fib daddr type local tcp dport { 8080, 8081, 2019 }"
+
+
+def test_loopback_lets_only_caddy_and_root_reach_the_apps_and_caddys_ports(box):
     result = run(box, LOOPBACK)
     assert result.returncode == 0, result.stderr
     rules_file = box.root / "etc/filedrawer/loopback.nft"
     assert mode(rules_file) == 0o644
+    lines = [line.strip() for line in rules_file.read_text().splitlines()]
+    # Any local address, not loopback alone: a Caddy admin left on the public IP
+    # would otherwise be open to every local user.
+    at = lines.index(f'{PORTS} meta skuid "root" accept')
+    assert lines[at + 1] == f'{PORTS} meta skuid "caddy" accept'
+    assert lines[at + 2] == f"{PORTS} reject with tcp reset"
     rules = rules_file.read_text()
-    assert 'meta skuid "filedrawer" ip daddr 127.0.0.0/8 tcp dport 8080 reject' in rules
-    assert 'meta skuid "filedrawer" ip6 daddr ::1 tcp dport 8080 reject' in rules
     # Its own table, replaced whole on a rerun, so ufw's rules stay as they are.
     assert "flush ruleset" not in rules
     assert rules.index("delete table inet filedrawer_loopback") < rules.index(
@@ -154,8 +173,57 @@ def test_the_loopback_unit_loads_the_rules_before_production_starts(box):
     assert result.returncode == 0, result.stderr
     unit = (box.root / "etc/systemd/system/filedrawer-loopback.service").read_text()
     assert "ExecStart=/usr/sbin/nft -f /etc/filedrawer/loopback.nft" in unit
-    assert "Before=filedrawer-production.service" in unit
+    assert "Before=filedrawer-production.service filedrawer-staging.service" in unit
     assert "RemainAfterExit=yes" in unit
+
+
+def test_loopback_refuses_before_caddy_is_installed(box):
+    box.users.write_text("filedrawer\n")
+    result = run(box, LOOPBACK)
+    assert result.returncode != 0
+    assert "caddy" in result.stderr
+    assert "nft" not in box.log.read_text()
+
+
+def test_loopback_checks_caddy_still_reaches_each_listening_app(box):
+    result = run(box, LOOPBACK, FAKE_LISTENING="8080 8081", FAKE_REACH="caddy")
+    assert result.returncode == 0, result.stderr
+    log = box.log.read_text()
+    for user in ("caddy", "nobody"):
+        for port in ("8080", "8081"):
+            connect = f"exec 3<>/dev/tcp/127.0.0.1/{port}"
+            assert f"runuser -u {user} -- timeout 5 bash -c {connect}" in log
+
+
+def test_loopback_puts_the_old_rules_back_when_caddy_is_cut_off(box):
+    rules_file = box.root / "etc/filedrawer/loopback.nft"
+    rules_file.parent.mkdir(parents=True)
+    rules_file.write_text("# the rules before\n")
+    result = run(box, LOOPBACK, FAKE_LISTENING="8080", FAKE_REACH="")
+    assert result.returncode != 0
+    assert "caddy can't reach 127.0.0.1:8080" in result.stderr
+    assert rules_file.read_text() == "# the rules before\n"
+    restarts = box.log.read_text().count(
+        "systemctl restart filedrawer-loopback.service"
+    )
+    assert restarts == 2
+
+
+def test_loopback_on_its_first_run_leaves_no_rules_when_caddy_is_cut_off(box):
+    result = run(box, LOOPBACK, FAKE_LISTENING="8080", FAKE_REACH="")
+    assert result.returncode != 0
+    rules = (box.root / "etc/filedrawer/loopback.nft").read_text()
+    # An empty file would leave the new table loaded; this one deletes it.
+    assert rules.splitlines() == [
+        "table inet filedrawer_loopback",
+        "delete table inet filedrawer_loopback",
+    ]
+
+
+def test_loopback_fails_when_the_rules_let_another_user_through(box):
+    result = run(box, LOOPBACK, FAKE_LISTENING="8081", FAKE_REACH="caddy nobody")
+    assert result.returncode != 0
+    assert "nobody reaches 127.0.0.1:8081" in result.stderr
 
 
 def test_loopback_writes_nothing_when_nft_refuses_the_rules(box):
@@ -185,10 +253,11 @@ def test_every_script_maps_each_environment_to_the_same_user_and_port():
             if "port=" in line:
                 assert f"port={port} " in line + " ", (name, line)
     loopback = LOOPBACK.read_text()
-    staging_user, _ = ENVIRONMENTS["staging"]
-    _, production_port = ENVIRONMENTS["production"]
-    assert f'meta skuid "{staging_user}"' in loopback
-    assert f"dport {production_port} " in loopback
+    ports = ", ".join(
+        str(port) for _, port in sorted(ENVIRONMENTS.values(), key=lambda e: e[1])
+    )
+    assert f"dport {{ {ports}, 2019 }}" in loopback
+    assert f"ports=({ports.replace(', ', ' ')})" in loopback
 
 
 # service.sh
