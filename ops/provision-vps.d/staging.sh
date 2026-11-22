@@ -1,7 +1,8 @@
 # shellcheck shell=bash
 # Staging's stages, in the order ops/provision-vps runs them, then the ones it also
-# runs alone (smoke, screening, github, mail and admin), then the GitHub helpers only
-# they use. Production's stages, caddy-upgrades included, are in production.sh.
+# runs alone (smoke, screening, github, github-oauth, mail and admin), then the
+# GitHub helpers only they use. Production's stages, caddy-upgrades included, are in
+# production.sh.
 
 staging_preflight_stage() {
   stage "Preflight: reach the server"
@@ -325,6 +326,13 @@ github_stage_body() {
   note "The token is on the server only, in one file staging and production both read."
   note "Until it is there, staging logs 'no FILEDRAWER_GITHUB_TOKEN' at each start, and"
   note "production won't start."
+  pause
+}
+
+# github_oauth_stage: staging's own GitHub OAuth App, for GitHub sign-in (#119).
+github_oauth_stage() {
+  stage "GitHub sign-in: staging's OAuth App"
+  github_oauth_setup staging https://staging.filedrawer.dev "" github-oauth
   pause
 }
 

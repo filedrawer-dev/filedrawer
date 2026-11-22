@@ -8,10 +8,15 @@ Pick what to revoke by what leaked:
 - **Password hashes**, such as a copy of the database or of a nightly backup: add `--passwords`.
   Weak passwords can be cracked offline, and a forced login alone would let a cracked one back in.
   Every account then has no password until its owner chooses one through `/reset`; a login meanwhile gets the answer a wrong password gets.
+  An account that signed up with GitHub has no password to lose, needs no reset, and an account linked to GitHub can still log in with GitHub.
   The same copy holds the invite codes as they are: make new codes for any sprint still running, and revoke the old ones at `/admin/invites`, which freezes the unscreened entries of the accounts that joined with them.
+- **The server's settings**, such as a copy of `/etc/filedrawer` or a compromised server: also rotate the GitHub OAuth App's client secret, as below.
+  The database holds no GitHub token, since the server revokes each one as soon as it has read the account, so the client secret is the only GitHub sign-in secret to rotate.
+  The other secrets there, such as the link checks' GitHub token, the Anthropic API keys and the SMTP passwords, are each replaced by their stage of `ops/provision-vps --ask-all`, after you revoke the old one where it was made.
 
 Nobody is emailed.
-Announce it yourself, and say that people must give their agents a new token, and with `--passwords` choose a new password through `/reset`.
+Announce it yourself, and say that people must give their agents a new token, and with `--passwords` choose a new password through `/reset`, unless they log in with GitHub.
+Every session ends either way: people who log in with GitHub just log in with GitHub again.
 
 ## Run it
 
@@ -48,3 +53,16 @@ The running server sees the change at once: it reads sessions and tokens from th
 - On staging, CI's smoke-test and screen-test accounts lose their tokens, and so does the token agents use as `FILEDRAWER_STAGING_API_KEY`.
   `ops/provision-vps --ask-all smoke` makes new ones for CI: answer yes to replacing `SMOKE_TEST_TOKEN` and `CI_SCREEN_TOKEN`.
 - A reset or verification email queued before the run still goes out with a working link, since the link is made when the email is sent.
+
+## Rotating the GitHub OAuth App's client secret
+
+Each environment has an OAuth App of its own, under the `filedrawer-dev` organization's settings, OAuth apps, so rotate only the one whose server's settings leaked.
+
+1. On the app's page, click "Generate a new client secret" and copy it.
+2. From your wizard checkout, give it to the server, which restarts the service: `ops/provision-vps --ask-all production github-oauth` for production, `ops/provision-vps --ask-all github-oauth` for staging.
+   Answer yes to changing the client secret, and Enter to keep the client ID.
+   The run ends by checking the new secret with GitHub.
+3. Back on the app's page, delete the old secret.
+   Until then it still works for anyone who holds it.
+
+Sessions are untouched, since the client secret plays no part in them.

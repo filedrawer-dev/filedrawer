@@ -295,6 +295,7 @@ def test_production_gets_its_own_settings_and_unit(box):
         "EnvironmentFile=-/etc/filedrawer/production-screening.env",
         "EnvironmentFile=-/etc/filedrawer/production-ping.env",
         "EnvironmentFile=-/etc/filedrawer/github.env",
+        "EnvironmentFile=-/etc/filedrawer/production-github-oauth.env",
         "ExecStart=/srv/filedrawer/production/bin/filedrawer serve",
         "ConditionPathIsExecutable=/srv/filedrawer/production/bin/filedrawer",
         "ReadWritePaths=/srv/filedrawer/production/data",
@@ -324,6 +325,7 @@ def test_staging_keeps_its_settings_and_unit_and_may_bind_only_its_tcp_port(box)
     for line in (
         "User=filedrawer",
         "EnvironmentFile=-/etc/filedrawer/staging-smoke.env",
+        "EnvironmentFile=-/etc/filedrawer/staging-github-oauth.env",
         "SocketBindAllow=tcp:8081",
         "SocketBindAllow=udp",
         "SocketBindDeny=any",
@@ -331,6 +333,9 @@ def test_staging_keeps_its_settings_and_unit_and_may_bind_only_its_tcp_port(box)
     ):
         assert f"\n{line}\n" in text, line
     assert "loopback" not in text
+    # Each environment's OAuth App is its own: production's secret never reaches
+    # staging's binary (design.md, Hosting and operations).
+    assert "production-github-oauth" not in text
     # Screening's settings are read after the unit's own, so they replace pass-all.
     assert text.index("staging.env\n") < text.index("staging-screening.env\n")
 
@@ -1258,3 +1263,107 @@ def test_mail_keeps_the_stored_user_and_from_line_sent_empty(box):
     )
     assert result.returncode == 0, result.stderr
     assert stored(box, "staging-mail.env") == before
+
+
+# github-oauth.sh: each environment's GitHub OAuth App, for GitHub sign-in (#119)
+
+GITHUB_OAUTH = REPO / "ops/remote/github-oauth.sh"
+CLIENT_ID = "Ov23liAbCdEf01234567"
+CLIENT_SECRET = "0123456789abcdef" * 2 + "01234567"
+
+
+def oauth(box, secret=CLIENT_SECRET, client_id=CLIENT_ID, environment="staging"):
+    return run(
+        box,
+        GITHUB_OAUTH,
+        ENVIRONMENT=environment,
+        CLIENT_ID=client_id,
+        CLIENT_SECRET=secret,
+    )
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_github_oauth_writes_the_environments_own_file_and_restarts_only_it(
+    box, environment
+):
+    result = oauth(box, environment=environment)
+    assert result.returncode == 0, result.stderr
+    path = box.root / f"etc/filedrawer/{environment}-github-oauth.env"
+    assert settings(box, path.name) == {
+        "FILEDRAWER_GITHUB_CLIENT_ID": CLIENT_ID,
+        "FILEDRAWER_GITHUB_CLIENT_SECRET": f"'{CLIENT_SECRET}'",
+    }
+    assert mode(path) == 0o600
+    assert f"chown root:root {path}" in chowns(box)
+    assert (
+        restarts(box, "staging" if environment == "production" else "production") == []
+    )
+    assert restarts(box, environment) == [
+        f"systemctl try-restart filedrawer-{environment}.service"
+    ]
+    # Never the file both environments read.
+    assert not (box.root / "etc/filedrawer/github.env").exists()
+    assert CLIENT_SECRET not in result.stdout + result.stderr
+
+
+def test_github_oauth_rerun_that_changes_nothing_leaves_the_service_running(box):
+    assert oauth(box).returncode == 0
+    box.log.write_text("")
+    result = oauth(box, secret="", client_id="")
+    assert result.returncode == 0, result.stderr
+    assert "unchanged" in result.stdout
+    assert restarts(box, "staging") == []
+    assert (
+        settings(box, "staging-github-oauth.env")["FILEDRAWER_GITHUB_CLIENT_SECRET"]
+        == f"'{CLIENT_SECRET}'"
+    )
+    assert CLIENT_SECRET not in result.stdout + result.stderr
+
+
+def test_github_oauth_wont_keep_one_apps_secret_for_another(box):
+    """A client secret belongs to its app, so a new client ID needs its own."""
+    assert oauth(box).returncode == 0
+    before = stored(box, "staging-github-oauth.env")
+    result = oauth(box, secret="", client_id="Ov23liOther000000000")
+    assert result.returncode == 1
+    assert "--ask-all github-oauth" in result.stderr
+    assert stored(box, "staging-github-oauth.env") == before
+
+
+@pytest.mark.parametrize(
+    ("environment", "stage"),
+    [
+        ("staging", "--ask-all github-oauth"),
+        ("production", "--ask-all production github-oauth"),
+    ],
+)
+def test_github_oauth_refuses_an_empty_secret_with_none_stored(box, environment, stage):
+    result = oauth(box, secret="", environment=environment)
+    assert result.returncode == 1
+    assert stage in result.stderr
+    assert not (box.root / f"etc/filedrawer/{environment}-github-oauth.env").exists()
+
+
+@pytest.mark.parametrize(
+    ("client_id", "secret"),
+    [
+        ("", CLIENT_SECRET),
+        ("Ov23 li", CLIENT_SECRET),
+        ("Ov23li'x", CLIENT_SECRET),
+        (CLIENT_ID, "abc'def"),
+        (CLIENT_ID, "abc def"),
+        (CLIENT_ID, "abc\ndef"),
+    ],
+)
+def test_github_oauth_refuses_what_systemd_or_github_cant_take(box, client_id, secret):
+    result = oauth(box, secret=secret, client_id=client_id)
+    assert result.returncode == 1
+    assert not (box.root / "etc/filedrawer/staging-github-oauth.env").exists()
+    assert "abc" not in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("environment", ["", "dev", "../staging"])
+def test_github_oauth_refuses_another_environment(box, environment):
+    result = oauth(box, environment=environment)
+    assert result.returncode == 2
+    assert not list(box.root.rglob("*.env"))

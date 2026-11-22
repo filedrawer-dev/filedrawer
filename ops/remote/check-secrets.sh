@@ -2,8 +2,10 @@
 # Checks each secret the server holds with the service that takes it, unattended,
 # so a rerun of ops/provision-vps that keeps a secret still shows whether it works
 # (#112): the Anthropic API keys (a free list of models), the GitHub token (its rate
-# limit, which names its expiry), and the healthchecks.io ping URLs (their /log
-# endpoint, which records an event and leaves the check's state alone). The SMTP
+# limit, which names its expiry), each environment's GitHub OAuth client secret (a
+# code exchange with a made-up code, which GitHub refuses after checking the app's
+# credentials), and the healthchecks.io ping URLs (their /log endpoint, which
+# records an event and leaves the check's state alone). The SMTP
 # logins aren't here: each run that restarts a service probes them as the service's
 # own user (filedrawer-install check-outbound).
 #
@@ -118,6 +120,31 @@ header = $(quoted "User-Agent: filedrawer-check-secrets")")
   esac
 }
 
+# github_oauth ENV WHAT STAGE: ENV's OAuth App, through the code exchange with a code
+# no one was given. GitHub answers 200 with an error either way: it checks the
+# client ID and secret first (incorrect_client_credentials), then the code
+# (bad_verification_code), so the second means the secret works (#119).
+github_oauth() {
+  local file="$1-github-oauth.env" what="$2" stage="$3" id secret status error
+  id=$(value "$file" FILEDRAWER_GITHUB_CLIENT_ID)
+  secret=$(value "$file" FILEDRAWER_GITHUB_CLIENT_SECRET)
+  [[ -n "$secret" ]] || return 0
+  status=$(call "url = $(quoted https://github.com/login/oauth/access_token)
+header = $(quoted "Accept: application/json")
+header = $(quoted "User-Agent: filedrawer-check-secrets")
+data-urlencode = $(quoted "client_id=$id")
+data-urlencode = $(quoted "client_secret=$secret")
+data-urlencode = $(quoted "code=filedrawer-check-secrets")")
+  error=$(sed -n 's/.*"error" *: *"\([a-z_]*\)".*/\1/p' "$work/body" | tail -n 1)
+  case "$status:$error" in
+    200:bad_verification_code) report ok "$what" "GitHub takes it with client ID $id" ;;
+    200:incorrect_client_credentials)
+      report failed "$what" "GitHub refused it with client ID $id" "$stage" ;;
+    200:*) report unchecked "$what" "GitHub answered ${error:-something else}" ;;
+    *) unanswered "$what" GitHub "$status" ;;
+  esac
+}
+
 ping_check() {
   local file="$1" name="$2" what="$3" stage="$4" url status body
   url=$(value "$file" "$name")
@@ -144,6 +171,8 @@ data = $(quoted "ops/provision-vps: checking the URL")")
 anthropic staging "staging's Anthropic API key" screening
 anthropic production "production's Anthropic API key" "production screening"
 github
+github_oauth staging "staging's GitHub OAuth client secret" github-oauth
+github_oauth production "production's GitHub OAuth client secret" "production github-oauth"
 ping_check production-ping.env FILEDRAWER_DAILY_EMAIL_PING "the daily email's ping URL" "production pings"
 ping_check production-backup.env BACKUP_PING "the nightly copy's ping URL" "production pings"
 ping_check caddy-upgrades.env PING "the Caddy guard's ping URL" caddy-upgrades

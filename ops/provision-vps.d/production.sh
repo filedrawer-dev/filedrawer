@@ -173,6 +173,14 @@ production_github_stage() {
   github_stage_body
 }
 
+# production_github_oauth_stage: production's own GitHub OAuth App, for GitHub
+# sign-in (#119); production starts without it, with GitHub sign-in off.
+production_github_oauth_stage() {
+  stage "GitHub sign-in: production's OAuth App"
+  github_oauth_setup production https://filedrawer.dev PROD_ "production github-oauth"
+  pause
+}
+
 # ping_url URL: whether URL is a healthchecks.io ping URL, as the server checks it.
 ping_url() {
   [[ "$1" =~ ^https://hc-ping\.com/[A-Za-z0-9_./-]+$ ]]
@@ -413,12 +421,13 @@ production_account_stage() {
   pause
 }
 
-# production [STAGE]: production's stages; or one alone, mail, screening or pings;
+# production [STAGE]: production's stages; or one alone, mail, screening,
+# github-oauth or pings;
 # or account, the one after the first deploy.
 production() {
   case "${1:-}" in
     "")
-      TOTAL_STAGES=12
+      TOTAL_STAGES=13
       banner "File Drawer VPS: production setup"
       production_preflight_stage
       production_dns_stage
@@ -427,6 +436,7 @@ production() {
       production_mail_stage
       production_screening_stage
       production_github_stage
+      production_github_oauth_stage
       production_pings_stage
       production_backup_stage
       caddy_upgrades_stage
@@ -438,15 +448,15 @@ production() {
       TOTAL_STAGES=1
       production_account_stage
       ;;
-    mail | screening | pings)
+    mail | screening | github-oauth | pings)
       TOTAL_STAGES=1
       need_vps_host
-      "production_$1_stage"
+      "production_${1//-/_}_stage"
       outbound_check production
       ;;
     *)
-      warn "ops/provision-vps production takes no stage, or one of account, mail, screening"
-      warn "and pings, as in: ops/provision-vps production account"
+      warn "ops/provision-vps production takes no stage, or one of account, mail, screening,"
+      warn "github-oauth and pings, as in: ops/provision-vps production account"
       exit 2
       ;;
   esac

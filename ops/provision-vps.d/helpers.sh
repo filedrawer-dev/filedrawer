@@ -223,3 +223,76 @@ outbound_check() {
   SKIPPED+=("$env's outbound probe failed ($why): fix, then rerun")
   pause
 }
+
+# github_oauth_setup ENV SITE PREFIX STAGE: ENV's own GitHub OAuth App, for GitHub
+# sign-in (#119), at SITE. Each environment has an app of its own, so production's
+# client secret never reaches staging's binary. It is optional: without it the site
+# runs with GitHub sign-in off, and a no is saved as PREFIX"GITHUB_SIGNIN" in
+# ops/.vps.env, so a rerun asks nothing and --ask-all asks again. A held app keeps
+# the server's client ID unless --ask-all is given another, and a yes to changing
+# its secret rotates it (ops/revoke-all.md). PREFIX is "" or PROD_, as for the
+# other saved values; STAGE names the wizard stage.
+github_oauth_setup() {
+  local env="$1" site="$2" id_name="${3}GITHUB_CLIENT_ID" off_name="${3}GITHUB_SIGNIN" \
+    stage="$4" file="/etc/filedrawer/$1-github-oauth.env" held=0 keep=0 id=""
+  local name="File Drawer" off="GitHub sign-in ($1): off. To set it up: ops/provision-vps --ask-all $4"
+  [[ $env == staging ]] && name="File Drawer staging"
+  # The unit first, so it reads the file github-oauth.sh writes.
+  remote service.sh "ENVIRONMENT=$env"
+  if remote_has "$file"; then
+    held=1
+    keep_secret "GitHub OAuth client secret" "$file" "$stage" && keep=1
+  fi
+  if (( held && ! keep )); then
+    open_url "https://github.com/organizations/filedrawer-dev/settings/applications"
+    step "Open $env's app ($name), click 'Generate a new client secret' and copy it."
+    step "Once this run has checked it, delete the old secret there."
+  elif (( ! held )); then
+    if (( ! ASK_ALL )) && [[ "$(_existing "$off_name" || true)" == off ]]; then
+      say "GitHub sign-in stays off for $env. To set it up: ops/provision-vps --ask-all $stage"
+      SKIPPED+=("$off")
+      return 0
+    fi
+    say "People can sign up and log in with GitHub through an OAuth App of $env's own,"
+    say "which asks only for their email addresses. Without one, $env runs with GitHub"
+    say "sign-in off, and email sign-up works as before."
+    if ! confirm "Set up GitHub sign-in for $env now?"; then
+      write_env "$off_name" off
+      SKIPPED+=("$off")
+      return 0
+    fi
+    write_env "$off_name" on
+    open_url "https://github.com/organizations/filedrawer-dev/settings/applications/new"
+    step "Application name: $name"
+    step "Homepage URL: $site"
+    step "Authorization callback URL: $site/login/github/callback"
+    step "That one callback URL, exactly, with wildcard matching off for it: wildcard"
+    step "matching would let GitHub send sign-in codes to any subdomain or path below"
+    step "it. An app that had a single callback URL before 2026-08-03 has it on; turn"
+    step "it off in the app's settings."
+    step "Leave Enable Device Flow unchecked, then click Register application."
+    step "On the app's page, copy the Client ID, then click 'Generate a new client"
+    step "secret' and copy the secret, which GitHub shows only once."
+  fi
+  # A plain rerun leaves the server's client ID as it is, whatever this checkout
+  # saved; under --ask-all, Enter on a held app keeps it too.
+  if (( ! held || ASK_ALL )); then
+    ask "$id_name" "The client ID:" || printf -v "$id_name" '%s' ""
+    id="${!id_name}"
+    if [[ -n "$id" ]] || (( ! held )); then
+      if [[ ! "$id" =~ ^[A-Za-z0-9.]+$ ]]; then
+        warn "That isn't a client ID (letters and digits, as Ov23li...). Rerun to try again."
+        exit 1
+      fi
+      write_env "$id_name" "$id"
+    fi
+  fi
+  CLIENT_SECRET=""
+  (( keep )) || ask_new_secret CLIENT_SECRET "The client secret:"
+  remote_with_secret github-oauth.sh CLIENT_SECRET "$CLIENT_SECRET" "ENVIRONMENT=$env" "CLIENT_ID=$id"
+  unset CLIENT_SECRET
+  if (( ! keep )); then
+    note "The secret is on the server only; the end of this run checks it with GitHub."
+    note "To try it, log in at $site/login with GitHub."
+  fi
+}

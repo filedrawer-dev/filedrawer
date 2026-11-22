@@ -363,6 +363,119 @@ def test_github_sends_the_token_on_stdin_and_saves_nothing(stage):
         assert GITHUB_TOKEN not in where
 
 
+CLIENT_ID = "Ov23liAbCdEf01234567"
+CLIENT_SECRET = "0123456789abcdef" * 2 + "01234567"
+PROD_CLIENT_ID = "Ov23liProd0123456789"
+PROD_CLIENT_SECRET = "fedcba9876543210" * 2 + "fedcba98"
+
+
+@pytest.mark.parametrize(
+    ("args", "environment", "site", "saved"),
+    [
+        (["github-oauth"], "staging", "https://staging.filedrawer.dev", "GITHUB"),
+        (
+            ["production", "github-oauth"],
+            "production",
+            "https://filedrawer.dev",
+            "PROD_GITHUB",
+        ),
+    ],
+)
+def test_github_oauth_walks_an_app_with_one_exact_callback_and_sends_its_secret_on_stdin(
+    stage, args, environment, site, saved
+):
+    result = stage.run(*args, f"y\n{CLIENT_ID}\n{CLIENT_SECRET}\n{CLIENT_SECRET}\n\n")
+    assert result.returncode == 0, result.stdout + result.stderr
+    # The unit first, so it reads the new file, then the settings.
+    assert stage.scripts()[:2] == [
+        script("service.sh"),
+        f"{CLIENT_SECRET}\n" + script("github-oauth.sh"),
+    ]
+    log = stage.log.read_text()
+    assert f"ENVIRONMENT={environment} CLIENT_ID={CLIENT_ID} bash -s" in log
+    assert "read -r CLIENT_SECRET" in log
+    assert f"{saved}_CLIENT_ID='{CLIENT_ID}'" in stage.env_file.read_text()
+    assert (
+        stage.opened.read_text()
+        == "https://github.com/organizations/filedrawer-dev/settings/applications/new\n"
+    )
+    out = result.stdout
+    assert f"Homepage URL: {site}\n" in out
+    assert f"Authorization callback URL: {site}/login/github/callback\n" in out
+    assert "wildcard" in out
+    for where in (log, stage.env_file.read_text(), result.stdout + result.stderr):
+        assert CLIENT_SECRET not in where
+    probe = f"/usr/local/sbin/filedrawer-install check-outbound {environment}"
+    assert probe in stage.host.calls()
+
+
+def test_github_oauth_declined_is_saved_so_a_rerun_asks_nothing(stage):
+    result = stage.run("github-oauth", "n\n\n")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not any(s.endswith(script("github-oauth.sh")) for s in stage.scripts())
+    assert "GITHUB_SIGNIN='off'" in stage.env_file.read_text()
+    assert not stage.opened.exists()
+    assert "GitHub sign-in (staging): off" in result.stdout.split("Setup complete")[1]
+    again = stage.run("github-oauth", "")
+    assert again.returncode == 0, again.stdout + again.stderr
+    assert "Set up GitHub sign-in" not in again.stdout
+    assert "--ask-all github-oauth" in again.stdout
+    # --ask-all asks again.
+    asked = stage.run("--ask-all", "github-oauth", "n\n\n")
+    assert asked.returncode == 0, asked.stdout + asked.stderr
+    assert "Set up GitHub sign-in" in asked.stdout
+
+
+@pytest.mark.parametrize("client_id", ["Ov23 li", "Iv1'x", ""])
+def test_github_oauth_refuses_a_client_id_it_cant_use_and_sends_nothing(
+    stage, client_id
+):
+    result = stage.run("github-oauth", f"y\n{client_id}\n")
+    assert result.returncode != 0
+    assert not any(s.endswith(script("github-oauth.sh")) for s in stage.scripts())
+    assert "GITHUB_CLIENT_ID" not in stage.env_file.read_text()
+
+
+def test_github_oauth_stops_when_the_two_secrets_differ(stage):
+    result = stage.run("github-oauth", f"y\n{CLIENT_ID}\n{CLIENT_SECRET}\nother\n\n")
+    assert result.returncode == 1
+    assert not any(s.endswith(script("github-oauth.sh")) for s in stage.scripts())
+
+
+def oauth_held(stage, saved=""):
+    """`stage`, on a server that holds staging's OAuth App, with `saved` in
+    ops/.vps.env."""
+    stage.host.answer("test -f *", status=1)
+    stage.host.answer("test -f /etc/filedrawer/staging-github-oauth.env")
+    stage.env_file.write_text(f"VPS_HOST='h'\n{saved}")
+
+
+def test_github_oauth_ask_all_rotates_a_held_apps_secret_and_keeps_its_id(stage):
+    """revoke-all.md's rotation: yes to a new secret, Enter on the client ID."""
+    oauth_held(stage)
+    result = stage.run(
+        "--ask-all", "github-oauth", f"y\n\n{CLIENT_SECRET}\n{CLIENT_SECRET}\n\n"
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"{CLIENT_SECRET}\n" + script("github-oauth.sh") in stage.scripts()
+    assert "ENVIRONMENT=staging CLIENT_ID= bash -s" in stage.log.read_text()
+    assert "Set up GitHub sign-in" not in result.stdout
+    assert "Generate a new client secret" in result.stdout
+    assert "applications/new" not in (
+        stage.opened.read_text() if stage.opened.exists() else ""
+    )
+    assert "GITHUB_SIGNIN" not in stage.env_file.read_text()
+
+
+def test_github_oauth_plain_rerun_leaves_the_servers_client_id_alone(stage):
+    """A checkout whose saved ID differs from the server's mustn't stop the run."""
+    oauth_held(stage, f"GITHUB_CLIENT_ID='{PROD_CLIENT_ID}'\n")
+    result = stage.run("github-oauth", "")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "\n" + script("github-oauth.sh") in stage.scripts()
+    assert "ENVIRONMENT=staging CLIENT_ID= bash -s" in stage.log.read_text()
+
+
 def test_screening_stops_when_the_two_keys_differ(stage):
     result = stage.run("screening", f"1\n{API_KEY}\nsk-ant-other\n\n")
     assert result.returncode == 1
@@ -420,6 +533,7 @@ def rerun(tmp_path, fake_host):
         "/etc/filedrawer/staging-mail.env",
         "/etc/filedrawer/staging-screening.env",
         "/etc/filedrawer/github.env",
+        "/etc/filedrawer/staging-github-oauth.env",
         BASE_MARKER,
         "/etc/caddy/sites/staging.caddy",
     )
@@ -490,8 +604,9 @@ def test_a_rerun_runs_every_stage_without_asking_for_anything_saved(rerun):
     assert script("base.sh") in sent
     # Caddy keeps the password hash on the server: no password, only the key.
     assert f"\t{STAGING_KEY}\n" + script("caddy.sh") in sent
-    # Mail, screening and the GitHub token are in place already: kept, sent empty.
-    for name in ("mail.sh", "screening.sh", "github-token.sh"):
+    # Mail, screening, the GitHub token and the OAuth App are in place already:
+    # kept, sent empty.
+    for name in ("mail.sh", "screening.sh", "github-token.sh", "github-oauth.sh"):
         assert "\n" + script(name) in sent, name
     # The deploy key stays; its scripts are reinstalled.
     log = rerun.log.read_text()
@@ -589,6 +704,8 @@ FULL_RUN = (
     + f"{SMTP_PASSWORD}\n{SMTP_PASSWORD}\n\n"
     + f"\n\n{PROD_KEY}\n{PROD_KEY}\n\n"
     + f"{GITHUB_TOKEN}\n{GITHUB_TOKEN}\n\n"
+    # Yes to GitHub sign-in, then the OAuth App's client ID and secret.
+    + f"y\n{PROD_CLIENT_ID}\n{PROD_CLIENT_SECRET}\n{PROD_CLIENT_SECRET}\n\n"
     + f"{DAILY_PING}\n{BACKUP_PING}\n"
     # The pings stage's pause, the backup stage's, then the Caddy guard's address
     # (Enter takes ops@filedrawer.dev), its ping URL, and yes, the test arrived.
@@ -624,6 +741,7 @@ def test_production_sends_each_script_for_production_in_order(production):
         at("mail.sh", "ENVIRONMENT=production"),
         at("screening.sh", "ENVIRONMENT=production"),
         at("github-token.sh"),
+        at("github-oauth.sh", "ENVIRONMENT=production"),
         at("ping.sh"),
         at("backup.sh"),
         at("caddy-upgrades.sh"),
@@ -659,6 +777,7 @@ def test_production_sends_each_secret_on_stdin_and_shows_or_saves_none(productio
     assert f"{SMTP_PASSWORD}\n" + script("mail.sh") in sent
     assert f"{PROD_KEY}\n" + script("screening.sh") in sent
     assert f"{GITHUB_TOKEN}\n" + script("github-token.sh") in sent
+    assert f"{PROD_CLIENT_SECRET}\n" + script("github-oauth.sh") in sent
     assert f"{DAILY_PING}\t{BACKUP_PING}\n" + script("ping.sh") in sent
     assert f"ops@filedrawer.dev\t{CADDY_PING}\n" + script("caddy-upgrades.sh") in sent
     shown = (
@@ -671,6 +790,7 @@ def test_production_sends_each_secret_on_stdin_and_shows_or_saves_none(productio
         SMTP_PASSWORD,
         PROD_KEY,
         GITHUB_TOKEN,
+        PROD_CLIENT_SECRET,
         DAILY_PING,
         BACKUP_PING,
         CADDY_PING,
@@ -685,6 +805,8 @@ def test_production_saves_its_values_apart_from_stagings(production):
     assert "PROD_SMTP_USER='prod@filedrawer.dev'" in saved
     assert "PROD_MAIL_FROM='File Drawer <noreply@filedrawer.dev>'" in saved
     assert "PROD_SCREENING_DAILY_USD='1'" in saved
+    assert f"PROD_GITHUB_CLIENT_ID='{PROD_CLIENT_ID}'" in saved
+    assert "\nGITHUB_CLIENT_ID=" not in saved
     # Staging's stay as they were.
     assert "SMTP_USER='staging@filedrawer.dev'" in saved
     assert "SCREENING_DAILY_USD='5'" in saved
@@ -802,6 +924,7 @@ def rerun_production(production) -> subprocess.CompletedProcess:
         "production-ping.env",
         "production-backup.env",
         "github.env",
+        "production-github-oauth.env",
         "caddy-upgrades.env",
     ):
         production.host.answer(f"test -f /etc/filedrawer/{path}")
@@ -826,7 +949,7 @@ def test_a_production_rerun_asks_for_nothing_the_server_has(production):
     assert any(s.endswith(script("service.sh")) for s in sent)
     assert any(s.endswith(script("caddy.sh")) for s in sent)
     # Each secret is kept: its script goes, with the secret empty.
-    for kept in ("mail.sh", "screening.sh"):
+    for kept in ("mail.sh", "screening.sh", "github-oauth.sh"):
         assert "\n" + script(kept) in sent, kept
     assert "\t\n" + script("ping.sh") in sent
     assert not any(s.endswith(script("github-token.sh")) for s in sent)
@@ -1155,6 +1278,7 @@ def test_a_failed_probe_warns_and_lists_the_hosts_but_finishes(rerun):
     [
         ("screening", f"0.25\n{API_KEY}\n{API_KEY}\n\n", True),
         ("github", f"{GITHUB_TOKEN}\n{GITHUB_TOKEN}\n\n", True),
+        ("github-oauth", f"y\n{CLIENT_ID}\n{CLIENT_SECRET}\n{CLIENT_SECRET}\n\n", True),
         ("caddy-upgrades", "\n" + "https://hc-ping.com/" + "c" * 36 + "\ny\n", False),
     ],
 )
@@ -1267,6 +1391,8 @@ def test_an_ssh_failure_stops_the_wizard_rather_than_ask_again(held):
         (["production", "mail"], "mail.sh", ""),
         (["production", "screening"], "screening.sh", ""),
         (["production", "pings"], "ping.sh", "\t"),
+        (["github-oauth"], "github-oauth.sh", ""),
+        (["production", "github-oauth"], "github-oauth.sh", ""),
     ],
 )
 def test_each_secret_has_a_stage_of_its_own(stage, args, script_name, first_line):
@@ -1288,7 +1414,7 @@ def test_a_plain_rerun_sends_each_held_secret_empty(rerun):
     result = rerun.run()
     assert result.returncode == 0, result.stdout + result.stderr
     sent = rerun.sent()
-    for name in ("mail.sh", "screening.sh", "github-token.sh"):
+    for name in ("mail.sh", "screening.sh", "github-token.sh", "github-oauth.sh"):
         assert "\n" + script(name) in sent, name
     assert "ssh-keygen" not in rerun.log.read_text()
 
@@ -1297,7 +1423,7 @@ def test_ask_all_with_enter_everywhere_keeps_everything(rerun):
     result = rerun.run("--ask-all", answers="\n" * 80)
     assert result.returncode == 0, result.stdout + result.stderr
     sent = rerun.sent()
-    for name in ("mail.sh", "screening.sh", "github-token.sh"):
+    for name in ("mail.sh", "screening.sh", "github-token.sh", "github-oauth.sh"):
         assert "\n" + script(name) in sent, name
     assert "Make a new deploy key" in result.stdout
     log = rerun.log.read_text()

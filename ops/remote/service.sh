@@ -80,6 +80,9 @@ $extra_settings
 # The GitHub token for the link checks, which ops/remote/github-token.sh writes, one
 # file for both environments. Without it, 60 API calls an hour.
 EnvironmentFile=-/etc/filedrawer/github.env
+# This environment's own GitHub OAuth App, for GitHub sign-in, which
+# ops/remote/github-oauth.sh writes. Without it, sign-in with GitHub is off.
+EnvironmentFile=-/etc/filedrawer/$env-github-oauth.env
 ExecStart=$home/bin/filedrawer serve
 Restart=on-failure
 RestartSec=2

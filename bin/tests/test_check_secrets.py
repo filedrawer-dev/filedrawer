@@ -19,6 +19,8 @@ KEY = "sk-ant-api03-" + "k" * 40
 TOKEN = "github_pat_" + "t" * 40
 DAILY = "https://hc-ping.com/aaaaaaaa-0000-4000-8000-000000000001"
 GUARD = "https://hc-ping.com/aaaaaaaa-0000-4000-8000-000000000003"
+CLIENT_ID = "Ov23liAbCdEf01234567"
+CLIENT_SECRET = "0123456789abcdef" * 2 + "01234567"
 NOW = 1_800_000_000
 DAY = 86400
 
@@ -69,7 +71,21 @@ def box(tmp_path):
 def secrets_shown(box, result):
     shown = result.stdout + result.stderr
     argv = " ".join(" ".join(call["argv"]) for call in box.calls())
-    return [s for s in (KEY, TOKEN, DAILY, GUARD) if s in shown or s in argv]
+    return [
+        s for s in (KEY, TOKEN, DAILY, GUARD, CLIENT_SECRET) if s in shown or s in argv
+    ]
+
+
+def put_oauth(box, environment):
+    box.put(
+        f"{environment}-github-oauth.env",
+        f"FILEDRAWER_GITHUB_CLIENT_ID={CLIENT_ID}\n"
+        f"FILEDRAWER_GITHUB_CLIENT_SECRET='{CLIENT_SECRET}'\n",
+    )
+
+
+def oauth_error(error):
+    return json.dumps({"error": error, "error_description": "x", "error_uri": "y"})
 
 
 def test_a_server_holding_nothing_checks_nothing(box):
@@ -181,6 +197,49 @@ def test_a_ping_url_with_a_suffix_isnt_sent(box):
     assert box.calls() == []
 
 
+@pytest.mark.parametrize(
+    ("environment", "what", "stage"),
+    [
+        ("staging", "staging's GitHub OAuth client secret", "github-oauth"),
+        (
+            "production",
+            "production's GitHub OAuth client secret",
+            "production github-oauth",
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    ("status", "body", "verdict", "code"),
+    [
+        # GitHub checks the app's credentials before the code, so a made-up code
+        # tells a good secret from a bad one (#119).
+        (200, oauth_error("bad_verification_code"), "ok", 0),
+        (200, oauth_error("incorrect_client_credentials"), "failed", 1),
+        (200, oauth_error("unverified_user_email"), "unchecked", 0),
+        (200, "<html>not json</html>", "unchecked", 0),
+        (503, "", "unchecked", 0),
+    ],
+)
+def test_each_environments_oauth_secret_is_checked_with_a_code_github_refuses(
+    box, environment, what, stage, status, body, verdict, code
+):
+    put_oauth(box, environment)
+    box.answer("github.com/login/oauth/access_token", status, body, "")
+    result = box.run()
+    assert result.returncode == code
+    assert result.stdout.startswith(f"{verdict}: {what}"), result.stdout
+    if verdict == "failed":
+        assert f"ops/provision-vps --ask-all {stage}" in result.stdout
+    [call] = box.calls()
+    config = call["config"]
+    assert 'url = "https://github.com/login/oauth/access_token"' in config
+    assert 'header = "Accept: application/json"' in config
+    assert f'data-urlencode = "client_id={CLIENT_ID}"' in config
+    assert f'data-urlencode = "client_secret={CLIENT_SECRET}"' in config
+    assert 'data-urlencode = "code=' in config
+    assert secrets_shown(box, result) == []
+
+
 def test_every_secret_held_gets_a_line(box):
     box.put("staging-screening.env", f"FILEDRAWER_ANTHROPIC_API_KEY='{KEY}'\n")
     box.put("production-screening.env", f"FILEDRAWER_ANTHROPIC_API_KEY='{KEY}'\n")
@@ -188,12 +247,15 @@ def test_every_secret_held_gets_a_line(box):
     box.put("production-ping.env", f"FILEDRAWER_DAILY_EMAIL_PING={DAILY}\n")
     box.put("production-backup.env", f"BACKUP_PING={DAILY}\n")
     box.put("caddy-upgrades.env", f"ALERT_TO=a@b.dev\nPING={GUARD}\n")
+    put_oauth(box, "staging")
+    put_oauth(box, "production")
     box.answer("api.anthropic.com", 200, "{}", "")
+    box.answer("github.com/login/oauth", 200, oauth_error("bad_verification_code"), "")
     box.answer("api.github.com", 200, "{}", "x-ratelimit-limit: 5000\r\n")
     box.answer("hc-ping.com", 200, "OK", "")
     result = box.run()
     assert result.returncode == 0, result.stdout + result.stderr
-    assert len(result.stdout.splitlines()) == 6
+    assert len(result.stdout.splitlines()) == 8
     assert all(
         line.startswith(("ok: ", "accepted: ")) for line in result.stdout.splitlines()
     )

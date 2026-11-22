@@ -10,6 +10,8 @@
 # test's and the screen check's) and their secrets, on a server the full wizard has
 # set up; `ops/provision-vps screening` only staging's API key and cap;
 # `ops/provision-vps github` only the GitHub token the link checks use;
+# `ops/provision-vps github-oauth` only staging's GitHub OAuth App, for GitHub
+# sign-in, which is optional (#119);
 # `ops/provision-vps caddy-upgrades` only the guard on the server's Caddy (#100),
 # which production's run also sets up; `ops/provision-vps reboots` only the reboots
 # for new kernels, with notice, which production's run also sets up; and
@@ -22,12 +24,13 @@
 # for each secret the server holds it asks "Change ...? [y/N]" before any tab.
 # `--only-new`, the old name for a rerun, is still taken.
 # `ops/provision-vps production` sets up production beside staging, on a server the
-# staging wizard has set up; `production mail`, `production screening` and
-# `production pings` run one of its stages alone; and
+# staging wizard has set up; `production mail`, `production screening`,
+# `production github-oauth` and `production pings` run one of its stages alone; and
 # `ops/provision-vps production account`, after the first production deploy (#42),
 # makes your production account the admin and sets up the uptime check.
 # A run that restarts a service (the whole wizard, production's and its mail,
-# screening and pings stages, and the smoke, screening, github and mail stages) ends
+# screening, github-oauth and pings stages, and the smoke, screening, github,
+# github-oauth and mail stages) ends
 # by probing that environment's way out as its server would (#102), and lists what
 # it couldn't reach.
 #
@@ -48,7 +51,7 @@ for part in library helpers staging production; do
 done
 
 run_wizard() {
-TOTAL_STAGES=13
+TOTAL_STAGES=14
 ENV_FILE="ops/.vps.env"
 REMOTE="$here/remote"
 [[ -d "$REMOTE" ]] || { echo "run this from the repo: $REMOTE is missing" >&2; exit 1; }
@@ -98,20 +101,20 @@ case "${1:-}" in
     shift
     production "$@"
     return 0 ;;
-  smoke | screening | admin | github | caddy-upgrades | reboots | mail)
+  smoke | screening | admin | github | github-oauth | caddy-upgrades | reboots | mail)
     TOTAL_STAGES=1
     need_vps_host
     "${1//-/_}_stage"
     # The stages that restart staging's service.
-    case "$1" in smoke | screening | github | mail) outbound_check staging ;; esac
+    case "$1" in smoke | screening | github | github-oauth | mail) outbound_check staging ;; esac
     finish
     return 0 ;;
   *)
     # A typo would otherwise run the whole staging setup.
     warn "ops/provision-vps doesn't know '$1'. It takes, after an optional --ask-all:"
-    warn "  nothing (staging's setup), production [account, mail, screening or pings],"
-    warn "  or one stage alone: smoke, screening, admin, github, caddy-upgrades, reboots"
-    warn "  or mail."
+    warn "  nothing (staging's setup), production [account, mail, screening,"
+    warn "  github-oauth or pings], or one stage alone: smoke, screening, admin, github,"
+    warn "  github-oauth, caddy-upgrades, reboots or mail."
     exit 2 ;;
 esac
 
@@ -127,6 +130,7 @@ deploy_key_stage
 staging_check_stage
 screening_stage
 github_stage
+github_oauth_stage
 admin_stage
 smoke_stage
 outbound_check staging
