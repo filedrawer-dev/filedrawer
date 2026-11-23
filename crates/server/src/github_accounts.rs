@@ -28,9 +28,16 @@ pub enum Purpose {
     SignIn,
     /// Linking GitHub to this account, whose session started it.
     Link(String),
+    /// Confirming that the session that asked to change this account's address to
+    /// `new_email` holds the GitHub account linked to it, for an account with no
+    /// password to confirm with (design.md, Accounts).
+    ChangeEmail {
+        account_id: String,
+        new_email: String,
+    },
 }
 
-/// A sign-in under way, as its callback finds it.
+/// A round trip to GitHub under way, as its callback finds it.
 pub struct Start {
     pub purpose: Purpose,
     pub verifier: String,
@@ -72,21 +79,30 @@ pub async fn start(
     let verifier = ids::new_secret();
     let state_hash = ids::token_hash(&state);
     let browser_hash = ids::token_hash(browser_secret);
-    let (purpose_text, account_id) = match purpose {
-        Purpose::SignIn => ("sign_in", None),
-        Purpose::Link(account) => ("link", Some(account.as_str())),
+    let (purpose_text, account_id, new_email) = match purpose {
+        Purpose::SignIn => ("sign_in", None, None),
+        Purpose::Link(account) => ("link", Some(account.as_str()), None),
+        Purpose::ChangeEmail {
+            account_id,
+            new_email,
+        } => (
+            "change_email",
+            Some(account_id.as_str()),
+            Some(new_email.as_str()),
+        ),
     };
     let expires_at = stamp(now_utc() + Duration::minutes(START_MINUTES));
     sqlx::query!(
         "INSERT INTO github_starts
-           (state_hash, browser_hash, verifier, purpose, account_id, next, client_hash,
-            created_at, expires_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+           (state_hash, browser_hash, verifier, purpose, account_id, new_email, next,
+            client_hash, created_at, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         state_hash,
         browser_hash,
         verifier,
         purpose_text,
         account_id,
+        new_email,
         next,
         client_hash,
         now,
@@ -112,7 +128,7 @@ pub async fn take_start(
     let row = sqlx::query!(
         "DELETE FROM github_starts
          WHERE state_hash = ? AND browser_hash = ? AND expires_at > ?
-         RETURNING purpose, account_id, verifier, next",
+         RETURNING purpose, account_id, new_email, verifier, next",
         state_hash,
         browser_hash,
         now
@@ -120,9 +136,13 @@ pub async fn take_start(
     .fetch_optional(pool)
     .await?;
     Ok(row.and_then(|row| {
-        let purpose = match (row.purpose.as_str(), row.account_id) {
-            ("sign_in", _) => Purpose::SignIn,
-            ("link", Some(account)) => Purpose::Link(account),
+        let purpose = match (row.purpose.as_str(), row.account_id, row.new_email) {
+            ("sign_in", _, _) => Purpose::SignIn,
+            ("link", Some(account), _) => Purpose::Link(account),
+            ("change_email", Some(account_id), Some(new_email)) => Purpose::ChangeEmail {
+                account_id,
+                new_email,
+            },
             _ => return None,
         };
         Some(Start {
@@ -585,7 +605,8 @@ async fn refresh_one(
     Ok(Some(()))
 }
 
-/// Deletes sign-ins and signups that expired, and the links of accounts an older
+/// Deletes the round trips and signups that expired, with the address a change of
+/// address's start holds, and the links of accounts an older
 /// binary deleted without them (crates/server/migration-rollback.txt, 0038), for the
 /// hourly tidy.
 pub async fn tidy(pool: &SqlitePool, at: OffsetDateTime) -> Result<(), sqlx::Error> {

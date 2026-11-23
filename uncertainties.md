@@ -448,6 +448,15 @@ The owner set 10 an hour and 50 a day per account (#60); an agent chose the rest
   A reset cancels it, since whoever asked for it knew the old password.
 - Against: the cancel button is one more control on a page with many.
 
+#### Changing an email address: GitHub's round trip
+
+- Options, for an account with no password: the request is recorded and counted when the form is sent, and GitHub's answer releases its emails; or the address asked for waits in the round trip's own row, `github_starts`, for its 10 minutes, and the request is recorded and counted only when GitHub's answer comes back as the linked account (as built).
+- Chosen: at GitHub's answer.
+  A round trip left unfinished, or one GitHub fails, then counts nothing against the new address's emails and leaves a change already waiting, and its link, alone.
+- Against: a second table holds an address for a short while, until the hourly tidy deletes the expired start.
+  The request's limits answer on the page GitHub returns to, not on the form, and as plain text, as every limit's refusal is.
+  A round trip that fails before the server reads what it was for (cancelled at GitHub, expired, GitHub not answering) gets the sign-in's pages, which say "sign-in" and link to the login page.
+
 #### Changing an email address: an address taken before the confirm
 
 - Options: when another account took the new address after the link went, the confirm says so and changes nothing (as built); or it answers as for a dead link.
@@ -981,12 +990,12 @@ The owner settled the email's sections and the rules in design.md's Admin sectio
   When the records don't commit, the upload removes the bytes it wrote.
 - Against: `syncfs` also flushes whatever else the disk holds unwritten, staging's and production's alike, so one upload's latency depends on the rest of the machine; and it is Linux only.
 
-#### Rolling back across the change-of-address migration
+#### Rolling back across the change-of-address migrations
 
-- Options: `crates/server/migration-rollback.txt` marks 0039 `breaks`, so `ops/deploy-production` refuses to roll production back past it (as built); or `safe`.
-- Chosen: `breaks`, since it rebuilds `outgoing_mail` to widen the CHECK on `kind`, which CODING_STANDARDS.md lists as breaking.
+- Options: `crates/server/migration-rollback.txt` marks 0039 and 0040 `breaks`, so `ops/deploy-production` refuses to roll production back past them (as built); or `safe`.
+- Chosen: `breaks`, since each rebuilds a table to widen a CHECK, `outgoing_mail`'s on `kind` and `github_starts`'s on `purpose`, which CODING_STANDARDS.md lists as breaking.
 - Against: what an older binary does wrong is small.
-  It deletes a `change` or `change_notice` email unsent, or sends an admin's as an empty notice, so a change asked for just before the rollback never gets its link; and its account deletion leaves the address a pending change holds, until a newer binary's tidy.
+  It deletes a `change` or `change_notice` email unsent, or sends an admin's as an empty notice, so a change asked for just before the rollback never gets its link; its account deletion leaves the address a pending change holds, until a newer binary's tidy; and it treats a `change_email` GitHub start as expired.
   `safe` would keep the rollback, and 0038's line calls a like case safe.
 
 ### API

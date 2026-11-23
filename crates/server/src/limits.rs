@@ -580,7 +580,8 @@ async fn insert(
     Ok(rows)
 }
 
-/// Counts a verification or password-reset email to `address`, and against the IP
+/// Counts an account email to `address`, such as a verification, a password reset or
+/// the link of a change of address, and against the IP
 /// that asked for it when `from` names one: an invited account's emails count per
 /// address only (design.md, Limits and abuse).
 pub async fn count_email(

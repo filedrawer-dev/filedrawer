@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "DELETE FROM github_starts\n         WHERE state_hash = ? AND browser_hash = ? AND expires_at > ?\n         RETURNING purpose, account_id, verifier, next",
+  "query": "DELETE FROM github_starts\n         WHERE state_hash = ? AND browser_hash = ? AND expires_at > ?\n         RETURNING purpose, account_id, new_email, verifier, next",
   "describe": {
     "columns": [
       {
@@ -26,8 +26,19 @@
         }
       },
       {
-        "name": "verifier",
+        "name": "new_email",
         "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "github_starts",
+            "name": "new_email"
+          }
+        }
+      },
+      {
+        "name": "verifier",
+        "ordinal": 3,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -38,7 +49,7 @@
       },
       {
         "name": "next",
-        "ordinal": 3,
+        "ordinal": 4,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -54,9 +65,10 @@
     "nullable": [
       false,
       true,
+      true,
       false,
       true
     ]
   },
-  "hash": "6cb52f149f02f3bcffb32faa9e285094ca675100a55914861dcee3e28399ca19"
+  "hash": "96a24d726e9d9d7a7f02743358f33a0a75d79668b3627a5c70dd9e20947b2966"
 }

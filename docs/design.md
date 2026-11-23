@@ -91,10 +91,11 @@ The owner expects most contributors to be independent researchers, newcomers to 
   The change spends every unused verification and reset link of the account and drops its waiting verification and reset email, and a waiting note that someone tried to use its address, since those were for the old inbox.
   Its sessions, API tokens and linked GitHub account stay.
   Reason: whoever asked knew the password, where a reset proves only the inbox.
+  An account with no password confirms with a fresh round trip to GitHub instead, which must come back as the GitHub account linked to it, under the session that asked.
   A new address that another account uses gets the same answer on the page, and that account gets the note signup sends an address that has an account; the change checks again that the address is free.
   The pending change, one per account, holds the new address and the hash of its link, and a new request replaces it.
   A request counts against the new address's emails and the IP's, and a wrong password is limited as a failed login is (see [Limits and abuse](#limits-and-abuse)).
-  What the owner hasn't settled is in uncertainties.md, "Changing an email address": the session the confirm page asks for, how wrong passwords are counted, the link's day, the note, and what ends a pending change.
+  What the owner hasn't settled is in uncertainties.md, "Changing an email address": the session the confirm page asks for, how wrong passwords are counted, the link's day, the note, what ends a pending change, and where the address waits during GitHub's round trip.
 - Display names are pseudonymous and need not be unique, since different researchers share names.
   A display name is at most 50 characters.
   Signup refuses one holding `github:` or `orcid:`, in any case, with a message that says why (the owner's decision, 2026-11-22).

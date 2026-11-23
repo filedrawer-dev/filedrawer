@@ -20,7 +20,7 @@ use crate::limits::{self, ClientIp, Counted};
 use crate::mail_queue::{self, Queued};
 use crate::pages::{GithubSignupPage, Message, page};
 use crate::time::now_utc;
-use crate::{AppState, invites};
+use crate::{AppState, email_change, invites};
 
 /// The browser's cookie for its sign-ins under way. Its path is the whole site, so
 /// a browser sends it to the next start too, which keeps it, and a second tab
@@ -56,8 +56,11 @@ const WHEN_GITHUB_FAILS: &str = "If you signed up with GitHub, you can choose a 
      at /reset instead; that ends every session, revokes every API token and unlinks GitHub, \
      which you can link again from your account page.";
 
-/// Sends the browser to GitHub for `purpose`, keeping what the callback needs.
-async fn start(
+/// Sends the browser to GitHub for `purpose`, keeping what the callback needs. The
+/// account page's form starts a `Purpose::ChangeEmail` here, for an account with no
+/// password to confirm a change of address with: nothing waits and nothing is
+/// counted until GitHub's answer comes back.
+pub(super) async fn start(
     state: &AppState,
     headers: &HeaderMap,
     ip: &ClientIp,
@@ -110,6 +113,17 @@ pub async fn link(
     start(&state, &headers, &ip, Purpose::Link(session.id), None).await
 }
 
+/// Whether the request's session is `account_id`'s: a link or a change of address
+/// finishes only under the session of the account that started it.
+async fn in_session_of(
+    state: &AppState,
+    headers: &HeaderMap,
+    account_id: &str,
+) -> Result<bool, sqlx::Error> {
+    let session = optional_session_account(headers, state).await?;
+    Ok(session.as_deref() == Some(account_id))
+}
+
 #[derive(Deserialize)]
 pub struct CallbackQuery {
     code: Option<String>,
@@ -121,6 +135,7 @@ pub struct CallbackQuery {
 pub async fn callback(
     State(state): State<AppState>,
     headers: HeaderMap,
+    ip: ClientIp,
     Query(query): Query<CallbackQuery>,
 ) -> Result<Response, AppError> {
     let github = github(&state)?;
@@ -203,8 +218,7 @@ pub async fn callback(
     };
     match started.purpose {
         Purpose::Link(account_id) => {
-            let session = optional_session_account(&headers, &state).await?;
-            if session.as_deref() != Some(account_id.as_str()) {
+            if !in_session_of(&state, &headers, &account_id).await? {
                 return Ok(message(
                     StatusCode::FORBIDDEN,
                     "Log in to link GitHub",
@@ -227,6 +241,39 @@ pub async fn callback(
                     Some(("/account", "Your account")),
                 )),
             }
+        }
+        Purpose::ChangeEmail {
+            account_id,
+            new_email,
+        } => {
+            if !in_session_of(&state, &headers, &account_id).await? {
+                return Ok(message(
+                    StatusCode::FORBIDDEN,
+                    "Log in to change your email",
+                    "The session that asked for the change has ended. Log in, then ask again from your account page.",
+                    Some(("/login", "Log in")),
+                ));
+            }
+            let linked = github_accounts::account_of(&state.pool, identity.github_id).await?;
+            if linked.as_deref() != Some(account_id.as_str()) {
+                return Ok(message(
+                    StatusCode::FORBIDDEN,
+                    "That isn't this account's GitHub account",
+                    "Changing the email address takes the GitHub account linked to this File Drawer account. Nothing changed.",
+                    Some(("/account", "Your account")),
+                ));
+            }
+            // The form refused the account's own address; a change confirmed while
+            // GitHub's page was open may have made this one its own since.
+            let current = accounts::view(&state.pool, &account_id).await?.email;
+            if current.as_deref() == Some(new_email.as_str()) {
+                return Ok(Redirect::to("/account").into_response());
+            }
+            // Counted now that the request is known to be the account's: it sends
+            // an email to the new address either way.
+            limits::count_email(&state, Some(&ip), &new_email).await?;
+            email_change::request(&state, &account_id, &new_email).await?;
+            Ok(Redirect::to("/account").into_response())
         }
         Purpose::SignIn => {
             if let Some(account_id) =

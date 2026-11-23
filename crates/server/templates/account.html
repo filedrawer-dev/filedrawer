@@ -20,6 +20,12 @@
 <button type="submit">Change email</button>
 </form>
 <p>We send a link to the new address, and the change happens once you open it and confirm. Your current address gets a note that a change was asked for.</p>
+{% else if github_login.is_some() && github_app.is_some() %}
+<form method="post" action="/account/email" class="email-change">
+<label>New email address <input type="email" name="email" maxlength="254" required></label>
+<button type="submit">Change email, confirming with GitHub</button>
+</form>
+<p>This account has no password, so GitHub confirms it is you. Then we send a link to the new address, and the change happens once you open it and confirm. Your current address gets a note that a change was asked for.</p>
 {% endif %}
 
 {% if let Some(login) = github_login %}

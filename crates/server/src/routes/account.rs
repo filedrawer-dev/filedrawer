@@ -646,10 +646,12 @@ fn change_message(status: StatusCode, title: &str, text: &str) -> Response {
 }
 
 /// `POST /account/email`: asks to change the account's address, once its password
-/// is confirmed. Nothing changes until the link sent to the new address is
-/// confirmed from a session of this account (design.md, Accounts).
+/// is confirmed, or, for an account with none, once a round trip to GitHub
+/// confirms its linked account. Nothing changes until the link sent to the new
+/// address is confirmed from a session of this account (design.md, Accounts).
 pub async fn change_email(
     State(state): State<AppState>,
+    headers: HeaderMap,
     ip: ClientIp,
     session: SessionAccount,
     Form(form): Form<ChangeEmailForm>,
@@ -671,6 +673,14 @@ pub async fn change_email(
         ));
     }
     let Some(stored) = deletion::password_hash(&state.pool, &session.id).await? else {
+        let linked = github_accounts::login_of(&state.pool, &session.id).await?;
+        if linked.is_some() && state.github_login.is_some() {
+            let purpose = github_accounts::Purpose::ChangeEmail {
+                account_id: session.id,
+                new_email,
+            };
+            return super::github::start(&state, &headers, &ip, purpose, None).await;
+        }
         return Err(AppError::Forbidden(
             "this account has no password to confirm a change of address with".into(),
         ));

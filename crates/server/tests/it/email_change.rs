@@ -6,6 +6,7 @@
 use crate::common;
 
 use axum::http::StatusCode;
+use common::fake_github::{FakeGithub, octo};
 use common::{
     PASSWORD, Reply, TestApp, browser_account, entry, logged_in, signed_up_and_verified, test_app,
 };
@@ -602,4 +603,213 @@ async fn an_account_with_no_password_cant_change_its_address_with_the_form() {
     let refused = ask(&app, &cookie, NEW, "").await;
     assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.body);
     assert_eq!(pending_rows(&app).await, 0);
+}
+
+// An account with no password confirms through GitHub.
+
+/// The app with GitHub sign-in on, and its fake GitHub.
+async fn github_app() -> (TestApp, FakeGithub) {
+    let github = FakeGithub::default();
+    let app = test_app().await.with_github(&github);
+    (app, github)
+}
+
+/// The `state` in the GitHub authorize URL a start redirected to.
+fn state_in(reply: &Reply) -> String {
+    assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.body);
+    let url = url::Url::parse(reply.location().unwrap()).unwrap();
+    assert_eq!(url.host_str(), Some("github.test"), "{url}");
+    let state = url.query_pairs().find(|(key, _)| key == "state");
+    state.expect("the authorize URL has a state").1.into_owned()
+}
+
+/// Comes back from GitHub with `code`, carrying `cookies`.
+async fn come_back(app: &TestApp, state: &str, code: &str, cookies: &str) -> Reply {
+    let path = format!("/login/github/callback?code={code}&state={state}");
+    app.page(&path, Some(cookies)).await
+}
+
+/// Grace signed up with GitHub, as GitHub user 1 with `OLD`, and has no password:
+/// her session cookie.
+async fn grace_from_github(app: &TestApp, github: &FakeGithub) -> String {
+    github.code_for("signup", octo(1, "grace-gh", OLD));
+    let started = app.form("/login/github", &[], None).await;
+    let browser = started.cookie().unwrap();
+    let back = come_back(app, &state_in(&started), "signup", &browser).await;
+    let pending = back.cookie().unwrap();
+    let fields = [("display_name", "Grace"), ("email", "0")];
+    let done = app.form("/signup/github", &fields, Some(&pending)).await;
+    assert_eq!(done.location(), Some("/account"), "{}", done.body);
+    done.cookie().expect("the signup logs in")
+}
+
+/// Asks to change the session's address to `to` from the form of an account with no
+/// password, and returns GitHub's state and the cookies to come back with.
+async fn ask_through_github(app: &TestApp, session: &str, to: &str) -> (String, String) {
+    let started = app
+        .form("/account/email", &[("email", to)], Some(session))
+        .await;
+    let state = state_in(&started);
+    let browser = started.cookie().expect("the start sets its cookie");
+    (state, format!("{session}; {browser}"))
+}
+
+#[tokio::test]
+async fn an_account_with_no_password_changes_its_address_once_github_confirms_it() {
+    let (app, github) = github_app().await;
+    let session = grace_from_github(&app, &github).await;
+    let page = app.page("/account", Some(&session)).await;
+    assert!(
+        page.body.contains(r#"action="/account/email""#),
+        "{}",
+        page.body
+    );
+    assert!(!page.body.contains(r#"name="password""#), "{}", page.body);
+
+    let (state, cookies) = ask_through_github(&app, &session, NEW).await;
+    // Nothing waits and no email goes until GitHub's answer comes back.
+    assert!(!waiting(&app, &session).await);
+    assert!(emails_to(&app, NEW).await.is_empty());
+    github.code_for("again", octo(1, "grace-gh", OLD));
+    let back = come_back(&app, &state, "again", &cookies).await;
+    assert_eq!(back.status, StatusCode::SEE_OTHER, "{}", back.body);
+    assert_eq!(back.location(), Some("/account"));
+    assert!(waiting(&app, &session).await);
+
+    let secret = emailed_token(&app, NEW).await;
+    assert_eq!(
+        confirm(&app, &session, &secret).await.status,
+        StatusCode::OK
+    );
+    let page = app.page("/account", Some(&session)).await;
+    assert!(page.body.contains(NEW), "{}", page.body);
+    assert!(page.body.contains("github:grace-gh"), "GitHub stays linked");
+}
+
+#[tokio::test]
+async fn another_github_account_confirms_nothing() {
+    let (app, github) = github_app().await;
+    let session = grace_from_github(&app, &github).await;
+    let (state, cookies) = ask_through_github(&app, &session, NEW).await;
+    github.code_for("other", octo(2, "mallory-gh", "mallory@example.com"));
+    let back = come_back(&app, &state, "other", &cookies).await;
+    assert_eq!(back.status, StatusCode::FORBIDDEN, "{}", back.body);
+    assert_eq!(pending_rows(&app).await, 0);
+    assert!(emails_to(&app, NEW).await.is_empty());
+}
+
+#[tokio::test]
+async fn a_round_trip_finished_under_another_accounts_session_confirms_nothing() {
+    let (app, github) = github_app().await;
+    let session = grace_from_github(&app, &github).await;
+    let (other, _) = browser_account(&app, "hopper@example.com").await;
+    let (state, cookies) = ask_through_github(&app, &session, NEW).await;
+    let swapped = cookies.replace(&session, &other);
+    github.code_for("again", octo(1, "grace-gh", OLD));
+    let back = come_back(&app, &state, "again", &swapped).await;
+    assert_eq!(back.status, StatusCode::FORBIDDEN, "{}", back.body);
+    assert_eq!(pending_rows(&app).await, 0);
+}
+
+#[tokio::test]
+async fn round_trips_left_unfinished_count_nothing_and_leave_a_waiting_change_alone() {
+    let (app, github) = github_app().await;
+    let session = grace_from_github(&app, &github).await;
+    let (state, cookies) = ask_through_github(&app, &session, NEW).await;
+    github.code_for("again", octo(1, "grace-gh", OLD));
+    come_back(&app, &state, "again", &cookies).await;
+    let secret = emailed_token(&app, NEW).await;
+    // More starts than the address's 5 emails an hour, none of them finished.
+    for _ in 0..6 {
+        ask_through_github(&app, &session, NEW).await;
+    }
+    assert_eq!(
+        confirm(&app, &session, &secret).await.status,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn a_finished_round_trip_counts_against_the_new_addresss_emails() {
+    let (app, github) = github_app().await;
+    let session = grace_from_github(&app, &github).await;
+    let mut last = None;
+    for round in 0..6 {
+        let (state, cookies) = ask_through_github(&app, &session, NEW).await;
+        let code = format!("again{round}");
+        github.code_for(&code, octo(1, "grace-gh", OLD));
+        last = Some(come_back(&app, &state, &code, &cookies).await);
+    }
+    let sixth = last.unwrap();
+    assert_eq!(
+        sixth.status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "{}",
+        sixth.body
+    );
+}
+
+#[tokio::test]
+async fn a_github_account_linked_to_another_account_confirms_nothing() {
+    let (app, github) = github_app().await;
+    let session = grace_from_github(&app, &github).await;
+    // Hopper's account links GitHub user 2.
+    let (hopper, _) = browser_account(&app, "hopper@example.com").await;
+    let linking = app.form("/account/github/link", &[], Some(&hopper)).await;
+    let browser = linking.cookie().unwrap();
+    github.code_for("link", octo(2, "hopper-gh", "hopper@example.com"));
+    let linked = come_back(
+        &app,
+        &state_in(&linking),
+        "link",
+        &format!("{hopper}; {browser}"),
+    )
+    .await;
+    assert_eq!(linked.location(), Some("/account"), "{}", linked.body);
+
+    let (state, cookies) = ask_through_github(&app, &session, NEW).await;
+    github.code_for("other", octo(2, "hopper-gh", "hopper@example.com"));
+    let back = come_back(&app, &state, "other", &cookies).await;
+    assert_eq!(back.status, StatusCode::FORBIDDEN, "{}", back.body);
+    assert_eq!(pending_rows(&app).await, 0);
+}
+
+#[tokio::test]
+async fn a_round_trip_that_comes_back_to_an_address_the_account_has_by_now_records_nothing() {
+    let (app, github) = github_app().await;
+    let session = grace_from_github(&app, &github).await;
+    let (first, cookies) = ask_through_github(&app, &session, NEW).await;
+    // The same browser starts a second round trip, as from another tab.
+    let (second, _) = ask_through_github(&app, &cookies, NEW).await;
+    github.code_for("one", octo(1, "grace-gh", OLD));
+    come_back(&app, &first, "one", &cookies).await;
+    let secret = emailed_token(&app, NEW).await;
+    assert_eq!(
+        confirm(&app, &session, &secret).await.status,
+        StatusCode::OK
+    );
+    let before = app.sent().await.len();
+    github.code_for("two", octo(1, "grace-gh", OLD));
+    let back = come_back(&app, &second, "two", &cookies).await;
+    assert_eq!(back.location(), Some("/account"), "{}", back.body);
+    assert_eq!(pending_rows(&app).await, 0);
+    assert_eq!(app.sent().await.len(), before);
+}
+
+#[tokio::test]
+async fn with_github_on_an_account_with_no_password_and_no_github_gets_no_form() {
+    let (app, _github) = github_app().await;
+    let (cookie, _) = grace(&app).await;
+    sqlx::query("UPDATE accounts SET password_hash = NULL")
+        .execute(&app.pool)
+        .await
+        .unwrap();
+    let page = app.page("/account", Some(&cookie)).await;
+    assert!(
+        !page.body.contains(r#"action="/account/email""#),
+        "{}",
+        page.body
+    );
+    let refused = ask(&app, &cookie, NEW, "").await;
+    assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.body);
 }
