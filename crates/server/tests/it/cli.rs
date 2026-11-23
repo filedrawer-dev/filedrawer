@@ -601,3 +601,31 @@ fn revoke_all_refuses_a_flag_it_doesnt_know_or_one_given_twice() {
         assert_eq!(output.status.code(), Some(2), "{flags:?}");
     }
 }
+
+#[tokio::test]
+async fn revoke_all_ends_a_pending_change_of_address_and_its_link() {
+    let database = scratch_database("revoke-change");
+    let test = app_over(&database).await;
+    let (cookie, _) = common::browser_account(&test, "ada@example.com").await;
+    let asked = [("email", "ada@new.example"), ("password", common::PASSWORD)];
+    test.form("/account/email", &asked, Some(&cookie)).await;
+    let link = test.link_in_last_email_to("ada@new.example").await;
+    let said = printed(&server(&database, &["admin", "revoke-all"], &[]));
+    // The verification link was used at signup, so the change's is the one left.
+    assert!(said.contains("1 email link"), "{said}");
+    printed(&server(&database, &["admin", "revoke-all", "--yes"], &[]));
+    let cookie = common::logged_in(&test, "ada@example.com", common::PASSWORD).await;
+    let page = test.page(&link, Some(&cookie)).await;
+    assert_eq!(
+        page.status,
+        axum::http::StatusCode::BAD_REQUEST,
+        "{}",
+        page.body
+    );
+    let account = test.page("/account", Some(&cookie)).await;
+    assert!(
+        !account.has_class("email-change-pending"),
+        "{}",
+        account.body
+    );
+}

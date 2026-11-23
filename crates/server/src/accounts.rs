@@ -341,6 +341,8 @@ pub async fn reset_with_link(
     .execute(&mut *transaction)
     .await?;
     mark_verified(&mut transaction, &account_id).await?;
+    // A change of address someone asked for with the old password ends with it.
+    crate::email_change::cancel_in(&mut transaction, &account_id).await?;
     // GitHub can list as verified an address its user no longer holds, so whoever
     // reset through it may not be who linked GitHub (the owner's decision,
     // 2026-11-22).

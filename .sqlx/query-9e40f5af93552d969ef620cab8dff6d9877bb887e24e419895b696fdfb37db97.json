@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT new_email FROM email_changes\n         WHERE account_id = ? AND link_hash = ? AND expires_at > ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "new_email",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email_changes",
+            "name": "new_email"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "9e40f5af93552d969ef620cab8dff6d9877bb887e24e419895b696fdfb37db97"
+}

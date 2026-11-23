@@ -5,6 +5,7 @@ Pick what to revoke by what leaked:
 
 - **Live secrets**, such as session cookies, API tokens or email links in a log, a crash dump or a compromised process: run it without `--passwords`.
   Sessions, tokens and email links are stored only as hashes of random secrets, so a copy of the database alone doesn't call for this.
+  A pending change of an account's email address ends too, since its link is an email link; the person asks for the change again.
 - **Password hashes**, such as a copy of the database or of a nightly backup: add `--passwords`.
   Weak passwords can be cracked offline, and a forced login alone would let a cracked one back in.
   Every account then has no password until its owner chooses one through `/reset`; a login meanwhile gets the answer a wrong password gets.

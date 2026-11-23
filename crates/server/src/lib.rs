@@ -17,6 +17,7 @@ pub mod config;
 pub mod daily_email;
 pub mod db;
 mod deletion;
+pub mod email_change;
 mod entries;
 mod error;
 pub mod event_log;
@@ -315,6 +316,18 @@ fn build(state: AppState) -> Routes<Router> {
         .route("/account/tokens", post(account::create_token))
         .route("/account/tokens/{id}/revoke", post(account::revoke_token))
         .route("/account/verify-email", post(account::resend_verification))
+        .route(
+            "/account/email",
+            limited(post(account::change_email), MAX_FORM_BYTES),
+        )
+        .route("/account/email/cancel", post(account::cancel_email_change))
+        .route(
+            "/account/email/confirm",
+            limited(
+                get(account::confirm_email_page).post(account::confirm_email),
+                MAX_FORM_BYTES,
+            ),
+        )
         .route(
             "/account/delete",
             get(account::delete_page).post(account::delete_account),

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO email_changes (account_id, new_email, created_at, expires_at)\n         VALUES (?, ?, ?, ?)\n         ON CONFLICT (account_id) DO UPDATE\n         SET new_email = excluded.new_email, link_hash = NULL,\n             created_at = excluded.created_at, expires_at = excluded.expires_at",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "c1f0863df2dfc44e4ac80f99818a961a042277c02b695c45563e1dc6e02a00c6"
+}

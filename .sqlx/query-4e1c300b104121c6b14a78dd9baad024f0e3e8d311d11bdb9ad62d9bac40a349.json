@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM outgoing_mail\n         WHERE account_id = ? AND dropped_at IS NULL\n           AND kind IN ('verify', 'reset', 'taken', 'change', 'change_notice')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "4e1c300b104121c6b14a78dd9baad024f0e3e8d311d11bdb9ad62d9bac40a349"
+}

@@ -84,6 +84,17 @@ The owner expects most contributors to be independent researchers, newcomers to 
   Unlinking needs a password, so the person keeps a way in, and takes the handle off every card; an account with none sets one through a reset, which unlinks GitHub itself; GitHub keeps listing the app among the person's authorized ones, which the account page links to, since the server holds no token to revoke the grant with.
 - An account with no password confirms its deletion by typing its GitHub login instead (the owner's decision, 2026-11-22).
   Reason: the password guards against a deletion by accident, and a session can already withdraw entries for good.
+- A person changes their account's email address from the account page, with their password (#125; the owner's decisions, 2026-11-23).
+  The server emails a link to the new address, and the account's address changes, verified, once that link's page is confirmed; until then nothing changes.
+  An unverified account changes its address the same way, which is how someone who mistyped it at signup gets out.
+  The address the account has gets a note when the change is asked for, saying what to do if it wasn't them; the note holds no link that undoes the change.
+  The change spends every unused verification and reset link of the account and drops its waiting verification and reset email, and a waiting note that someone tried to use its address, since those were for the old inbox.
+  Its sessions, API tokens and linked GitHub account stay.
+  Reason: whoever asked knew the password, where a reset proves only the inbox.
+  A new address that another account uses gets the same answer on the page, and that account gets the note signup sends an address that has an account; the change checks again that the address is free.
+  The pending change, one per account, holds the new address and the hash of its link, and a new request replaces it.
+  A request counts against the new address's emails and the IP's, and a wrong password is limited as a failed login is (see [Limits and abuse](#limits-and-abuse)).
+  What the owner hasn't settled is in uncertainties.md, "Changing an email address": the session the confirm page asks for, how wrong passwords are counted, the link's day, the note, and what ends a pending change.
 - Display names are pseudonymous and need not be unique, since different researchers share names.
   A display name is at most 50 characters.
   Signup refuses one holding `github:` or `orcid:`, in any case, with a message that says why (the owner's decision, 2026-11-22).
@@ -114,7 +125,7 @@ The owner expects most contributors to be independent researchers, newcomers to 
   Forms keep their guard, since a POST from another site carries no Lax cookie and the server refuses a POST whose `Origin` isn't the site; every GET that reads the session only shows a page.
 - The server keeps a record of each entry deleted by token or withdrawn: its ID, its account and the time.
   The account's later `GET /e/<id>` or `DELETE /e/<id>` of it answers that it was deleted then, not 404, so a retried request that had worked is recognized; nobody else learns anything from it (the owner's decision, 2026-11-08).
-- Deleting an account, from a browser session with the password (or, with none, the GitHub login typed), deletes the email address, login, display name, linked GitHub account, tokens, private feedback and queued email, and every entry not yet public, except those the owner removed, which stay for analysis (see [Admin](#admin)).
+- Deleting an account, from a browser session with the password (or, with none, the GitHub login typed), deletes the email address, a pending change of it, login, display name, linked GitHub account, tokens, private feedback and queued email, and every entry not yet public, except those the owner removed, which stay for analysis (see [Admin](#admin)).
   By the same rule it deletes the series the screen refused, except those the owner confirmed as a hazard.
   It also deletes the series the account made that no one but their members could read yet, no version readable, unless another account's entry cites one; any other series outlives the account, as a removed one does (the owner's decision, 2026-11-17).
   An entry rejected in the last 60 days counts as citing it (the owner's decision, 2026-11-17).
@@ -134,6 +145,7 @@ The owner expects little abuse and prefers limits to login friction.
   Reason: refused requests cost no allowance, but each still costs the server CPU, and once link checks run, the GitHub API quota that every account shares.
 - Signups are rate limited per IP: 10 an hour and 40 a day.
   Verification and password-reset emails are limited per address, 5 an hour and 20 a day, and per IP, 20 an hour and 60 a day; an email signup counts as one, since it always sends an email.
+  A request to change an account's address counts as one to the new address and one from the IP (the owner's decision, 2026-11-23).
   A GitHub signup counts against the per-IP signup limit only when its GitHub account is younger than 90 days or of unknown age, and against its address's email limit always, whether or not the address has an account (the owner's decision, 2026-11-22).
   Reason: each GitHub signup needs a GitHub account of its own, and GitHub checks new ones; a sprint behind one IP mostly has old ones, and a farm of fresh ones still meets the limit, while a stale address's holder can't be flooded with notes that it has an account.
   They count every request to send one, whether or not the address has an account, so a limit never says whether one exists.
@@ -141,6 +153,7 @@ The owner expects little abuse and prefers limits to login friction.
   Reason: a flood of them would hurt the domain's mail reputation, and with it every email the site sends.
   The numbers are the owner's (2026-11-06), the daily and per-IP email figures in proportion to the hourly ones.
 - Failed logins are limited per email address, 10 an hour, whether or not an account uses it; past that, every login to the address waits for the window, the right password too.
+  A wrong password on the form that changes an account's address is limited the same way, counted per account (uncertainties.md, "Changing an email address: wrong passwords are counted per account").
   Password reset stays open under its own limits.
   Reason (the owner's decision, 2026-11-06): the per-IP limit alone let each address guess 300 passwords a minute, and a client with many addresses guess without bound.
   The cost: a stranger can lock an account's browser login for an hour; its API tokens keep working.
@@ -936,7 +949,7 @@ Every page's footer links both, the signup form says beside its button that sign
 The owner is the only admin in v1.
 `filedrawer admin grant --account ID`, run from a shell on the server, makes an account the admin; nothing over HTTP can.
 `filedrawer admin revoke-all [--passwords]`, also from a shell on the server, ends every session and token of every account, the admin's included, after a leak, and with `--passwords` clears every password, so each person resets by email, which unlinks GitHub, or logs in with GitHub; it emails nobody, and a cleared account's login gets the answer a wrong password gets (the owner's decisions, 2026-11-21; `ops/revoke-all.md`).
-It also spends every unused email link (uncertainties.md, "What revoke-all ends").
+It also spends every unused email link, and ends every pending change of address with its link (uncertainties.md, "What revoke-all ends").
 Admin pages answer only the admin's browser session.
 Admin pages and an admin API cover the review queue, the series the screen refused as a likely hazard, the entries that passed with a hazard doubt, invite codes, frozen entries, withdrawals, removals, suspensions, purges and the unknown-field report.
 Every admin write needs the owner's browser session, except the triage agent's appends to the admin inbox.
@@ -1046,6 +1059,7 @@ Python is fine for scripts and internal tools.
 - Every email to a person is queued in the database and sent by one job, which retries a failed send and drops it unsent after a day (#103, after production lost a verification email while it couldn't reach SMTP on 2026-11-18; the retry and drop rules are in uncertainties.md).
   A queued verification or reset email holds no link and no address: the job reads the account's address and mints the link when it sends, so neither sits in the database, its replica or the nightly copies while mail is down (the owner's decision, 2026-11-18).
   An account has at most one waiting verification and one waiting reset email; asking again replaces it (the owner's decision, 2026-11-18).
+  The two emails of a change of address (#125) follow both rules: the link's email reads the new address from the account's pending change when it sends, and the note goes to the account's own.
   Queuing wakes the job, so an email goes as fast as before when SMTP answers (the owner's decision, 2026-11-18).
   Delivery is at least once: a restart between a send and its record, or a restored copy of the database, sends again.
   Production's daily email reports the emails dropped unsent and those waiting over an hour, and either sends it; staging's and dev's only list them (the owner's decision, 2026-11-18).

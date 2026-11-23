@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM email_changes",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "de86e122cb8feab5501ab5c7a73bb8236faa5527c9c7ddf380643d0dd87046df"
+}

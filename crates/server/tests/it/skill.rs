@@ -26,6 +26,9 @@ const NOT_FOR_AGENTS: &[&str] = &[
     "/account/tokens",
     "/account/tokens/{id}/revoke",
     "/account/verify-email",
+    "/account/email",
+    "/account/email/cancel",
+    "/account/email/confirm",
     "/account/delete",
     // GitHub sign-in, in a browser (#119).
     "/login/github",

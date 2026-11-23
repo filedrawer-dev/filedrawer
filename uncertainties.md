@@ -406,6 +406,55 @@ The owner set 10 an hour and 50 a day per account (#60); an agent chose the rest
 - Chosen: the bare ID, as the owner chose (2026-11-22); a purge asked for before deletion removes it (`ON DELETE CASCADE`, and #15's note).
 - Against: someone who deletes their account and then asks for a purge can't have the ID found, short of giving their GitHub login, which the owner would look up through GitHub's API to get the ID.
 
+#### Changing an email address: the confirm page asks for a session
+
+- Options: the emailed link's page and its button work only in a browser logged in to the account that asked (as built); or the link works alone, as signup's verification link does.
+- Chosen: a session of the account.
+  A link that worked alone would hand the account to whoever holds a mistyped new address: they confirm, then reset the password through that inbox.
+  Without a session the link opens the login page, which comes back to it, with a password or with GitHub.
+- Against: design.md lets signup's link verify alone (the owner's decision, 2026-11-22), since a second prompt loses people in a hurry; someone who opens the link on their phone, logged in only on their laptop, has to log in there first.
+
+#### Changing an email address: wrong passwords are counted per account
+
+- Options: a wrong password on the change form counts against the failed logins of the account's address, as the owner's "a wrong password counts as a failed login" reads (2026-11-23); or against a count of its own, per account, with the same numbers, 10 an hour (as built).
+- Chosen: a count of its own.
+  With the address's count, a stranger's ten failed logins an hour would lock the form for the logged-in holder, right password included, and typos on the form would lock the account's login.
+- Against: it departs from the letter of the owner's decision, and a guesser holding a session gets ten guesses an hour here on top of login's ten.
+  The delete form and GitHub's unlink form check a password with no limit at all, which this leaves as it was.
+
+#### Changing an email address: the link's day runs from the request
+
+- Options: the link works for 24 hours from when the change was asked for (as built); or for 24 hours from when its email went, as verification and reset links do.
+- Chosen: from the request, so the pending change, which holds the new address, has one expiry, and the hourly tidy deletes it a day after it was asked for.
+  The email states the time the link stops working, in UTC.
+- Against: while SMTP is down the email goes late, and its link has less than a day left; the other links' "24 hours" then means something else.
+
+#### Changing an email address: the note to the current address
+
+- Options, for what it says: the new address named, or left out (as built); for whom: every account, or only one whose address is verified (as built); and after the change: sent anyway, to the address the account had, or dropped when it still waits (as built).
+  That it goes when the change is asked for is the owner's decision (2026-11-23).
+- Chosen: the note names no address, since a note that reaches the wrong person shouldn't give them one.
+  An unverified address gets none: nobody proved to hold it, and otherwise an account that signed up with a stranger's address could send them a note per request.
+  A note still waiting at the change is dropped, since the queue holds no address and the account's is the new one by then.
+  It says to reset the password, which cancels the change, and, when no reset email comes because the address has changed already, to write to the contact address.
+- Against: when the current inbox turns mail away for a while (a greylist, a full mailbox) and the new one doesn't, a quick confirm means the note never goes.
+  Someone whose password leaked learns of the change from a note that arrives after it, and can only write to the owner; a link in the note that undoes the change would cover that, and the owner left it out (2026-11-23).
+
+#### Changing an email address: what ends a pending change
+
+- Options: only the confirm, a new request and the day running out; or also a cancel button on the account page, a password reset, the account's deletion and `revoke-all` (as built).
+- Chosen: all of them.
+  The account page shows the waiting change with a button that cancels it, so a mistyped new address needn't wait out its day.
+  A reset cancels it, since whoever asked for it knew the old password.
+- Against: the cancel button is one more control on a page with many.
+
+#### Changing an email address: an address taken before the confirm
+
+- Options: when another account took the new address after the link went, the confirm says so and changes nothing (as built); or it answers as for a dead link.
+- Chosen: it says so, with 409.
+  Only someone logged in who holds the link from that inbox reads it, and "this link doesn't work" would send them to ask again, into the same wall.
+- Against: it is the one page of the flow that says an address has an account.
+
 ### Versions and batches
 
 #### Versions form one line
@@ -931,6 +980,14 @@ The owner settled the email's sections and the rules in design.md's Admin sectio
   The time an upload holds the store's lock, which deletions wait for, then doesn't grow with a sync for each file, and other writers never wait on a file sync.
   When the records don't commit, the upload removes the bytes it wrote.
 - Against: `syncfs` also flushes whatever else the disk holds unwritten, staging's and production's alike, so one upload's latency depends on the rest of the machine; and it is Linux only.
+
+#### Rolling back across the change-of-address migration
+
+- Options: `crates/server/migration-rollback.txt` marks 0039 `breaks`, so `ops/deploy-production` refuses to roll production back past it (as built); or `safe`.
+- Chosen: `breaks`, since it rebuilds `outgoing_mail` to widen the CHECK on `kind`, which CODING_STANDARDS.md lists as breaking.
+- Against: what an older binary does wrong is small.
+  It deletes a `change` or `change_notice` email unsent, or sends an admin's as an empty notice, so a change asked for just before the rollback never gets its link; and its account deletion leaves the address a pending change holds, until a newer binary's tidy.
+  `safe` would keep the rollback, and 0038's line calls a like case safe.
 
 ### API
 

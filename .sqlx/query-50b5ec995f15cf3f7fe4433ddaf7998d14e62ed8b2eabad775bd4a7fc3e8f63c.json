@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email_changes SET link_hash = ? WHERE account_id = ? RETURNING expires_at",
+  "describe": {
+    "columns": [
+      {
+        "name": "expires_at",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email_changes",
+            "name": "expires_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "50b5ec995f15cf3f7fe4433ddaf7998d14e62ed8b2eabad775bd4a7fc3e8f63c"
+}

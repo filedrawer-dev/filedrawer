@@ -20,6 +20,7 @@ mod config;
 mod daily_email;
 mod db;
 mod deletion;
+mod email_change;
 mod entries_mine;
 mod entry_deletion;
 mod error_bodies;

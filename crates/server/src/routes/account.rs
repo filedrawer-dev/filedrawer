@@ -12,12 +12,13 @@ use axum::response::{IntoResponse, Redirect, Response};
 use serde::Deserialize;
 
 use crate::accounts::{self, EMAIL_LINK_HOURS, Login, Purpose, SESSION_DAYS, Signup};
+use crate::email_change::{self, Confirmed};
 use crate::error::AppError;
 use crate::limits::{self, ClientIp, Counted};
 use crate::mail_queue::{self, Queued};
 use crate::pages::{
-    AccountPage, DeletePage, LoginPage, Message, ResetConfirmPage, ResetPage, SignupPage,
-    VerifyPage, page,
+    AccountPage, DeletePage, EmailChangePage, LoginPage, Message, ResetConfirmPage, ResetPage,
+    SignupPage, VerifyPage, page,
 };
 use crate::time::now_utc;
 use crate::{AppState, admin, deletion, github_accounts, invites, passwords, series, withdraw};
@@ -430,6 +431,7 @@ async fn account_page(
     let withdrawable = withdraw::listing(&state.pool, account_id).await?;
     let github_login = github_accounts::login_of(&state.pool, account_id).await?;
     let has_password = accounts::has_password(&state.pool, account_id).await?;
+    let pending_email = email_change::pending(&state.pool, account_id).await?;
     let github_app = state
         .github_login
         .as_ref()
@@ -444,6 +446,7 @@ async fn account_page(
         account_id: &view.id,
         email: view.email.as_deref(),
         verified: view.verified,
+        pending_email: pending_email.as_deref(),
         tokens: &view.tokens,
         new_token,
     };
@@ -621,4 +624,140 @@ pub async fn same_origin(
         }
     }
     next.run(request).await
+}
+
+#[derive(Deserialize)]
+pub struct ChangeEmailForm {
+    email: String,
+    #[serde(default)]
+    password: String,
+}
+
+/// A page about a change of address, which leads back to the account page.
+fn change_message(status: StatusCode, title: &str, text: &str) -> Response {
+    page(
+        status,
+        &Message {
+            title,
+            text,
+            link: Some(("/account", "Your account")),
+        },
+    )
+}
+
+/// `POST /account/email`: asks to change the account's address, once its password
+/// is confirmed. Nothing changes until the link sent to the new address is
+/// confirmed from a session of this account (design.md, Accounts).
+pub async fn change_email(
+    State(state): State<AppState>,
+    ip: ClientIp,
+    session: SessionAccount,
+    Form(form): Form<ChangeEmailForm>,
+) -> Result<Response, AppError> {
+    let new_email = accounts::normalize_email(&form.email);
+    if !accounts::looks_like_email(&new_email) {
+        return Ok(change_message(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "That isn't an email address",
+            "Nothing changed.",
+        ));
+    }
+    let view = accounts::view(&state.pool, &session.id).await?;
+    if view.email.as_deref() == Some(new_email.as_str()) {
+        return Ok(change_message(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "That is this account's address already",
+            "Nothing changed.",
+        ));
+    }
+    let Some(stored) = deletion::password_hash(&state.pool, &session.id).await? else {
+        return Err(AppError::Forbidden(
+            "this account has no password to confirm a change of address with".into(),
+        ));
+    };
+    // Before the guess is counted, so a refusal for want of a place costs none.
+    let place = state.passwords.place().await?;
+    // Each guess takes its place before the password is checked, and a right one
+    // gives it back, as a login's does; the count is the account's own, so it and
+    // the address's failed logins don't lock each other.
+    let guesses = [Counted::wrong_passwords_of(
+        &state.rate_limits.limits,
+        &session.id,
+    )];
+    let slot = limits::take_slot(&state.pool, &guesses, now_utc()).await?;
+    if !place.matches(form.password, Some(stored)).await {
+        return Ok(change_message(
+            StatusCode::UNAUTHORIZED,
+            "The password is wrong",
+            "Nothing changed.",
+        ));
+    }
+    limits::give_back(&state.pool, slot).await?;
+    // A request sends an email to the new address either way, the link or a note
+    // that the address has an account, so it counts as one.
+    limits::count_email(&state, Some(&ip), &new_email).await?;
+    email_change::request(&state, &session.id, &new_email).await?;
+    Ok(Redirect::to("/account").into_response())
+}
+
+/// `POST /account/email/cancel`: ends the account's pending change of address.
+pub async fn cancel_email_change(
+    State(state): State<AppState>,
+    session: SessionAccount,
+) -> Result<Response, AppError> {
+    email_change::cancel(&state.pool, &session.id).await?;
+    Ok(Redirect::to("/account").into_response())
+}
+
+fn change_link_dead() -> Response {
+    let text = format!(
+        "It was used, replaced or expired, or you are logged in to another account than the \
+         one that asked for the change. The link works once, for {EMAIL_LINK_HOURS} hours from \
+         when the change was asked for."
+    );
+    change_message(StatusCode::BAD_REQUEST, "This link doesn't work", &text)
+}
+
+/// `GET /account/email/confirm`: the page the emailed link opens, for a session of
+/// the account that asked; without one, the login page comes back here.
+pub async fn confirm_email_page(
+    State(state): State<AppState>,
+    session: SessionAccount,
+    Query(query): Query<TokenQuery>,
+) -> Result<Response, AppError> {
+    let Some(new_email) =
+        email_change::linked_address(&state.pool, &session.id, &query.token).await?
+    else {
+        return Ok(change_link_dead());
+    };
+    let template = EmailChangePage {
+        token: &query.token,
+        new_email: &new_email,
+    };
+    Ok(page(StatusCode::OK, &template))
+}
+
+/// `POST /account/email/confirm`: the confirm page's button, which changes the
+/// address.
+pub async fn confirm_email(
+    State(state): State<AppState>,
+    session: SessionAccount,
+    Form(form): Form<TokenQuery>,
+) -> Result<Response, AppError> {
+    match email_change::confirm(&state.pool, &session.id, &form.token).await? {
+        Confirmed::Dead => Ok(change_link_dead()),
+        // Only someone logged in who holds the link from that inbox reads this.
+        Confirmed::Taken => Ok(change_message(
+            StatusCode::CONFLICT,
+            "Another account uses that address now",
+            "It signed up after you asked for the change, so nothing changed. If that account \
+             is yours, delete it from its account page, then ask for the change again.",
+        )),
+        Confirmed::Done(new_email) => {
+            let text = format!(
+                "This account's email address is now {new_email}. Log in with it from now on."
+            );
+            Ok(change_message(StatusCode::OK, "Email changed", &text))
+        }
+    }
 }

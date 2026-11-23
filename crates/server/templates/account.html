@@ -9,6 +9,18 @@
 <form method="post" action="/account/verify-email"><button type="submit">Send the verification email again</button></form>
 {% endif %}
 {% endif %}
+{% if let Some(pending) = pending_email %}
+<p class="email-change-pending">A change to {{ pending }} is waiting: open the link we sent there, in a browser logged in to this account. It works for a day from when you asked.</p>
+<form method="post" action="/account/email/cancel"><button type="submit">Cancel the change</button></form>
+{% endif %}
+{% if has_password %}
+<form method="post" action="/account/email" class="email-change">
+<label>New email address <input type="email" name="email" maxlength="254" required></label>
+<label>Your password <input type="password" name="password" required></label>
+<button type="submit">Change email</button>
+</form>
+<p>We send a link to the new address, and the change happens once you open it and confirm. Your current address gets a note that a change was asked for.</p>
+{% endif %}
 
 {% if let Some(login) = github_login %}
 <p class="github-linked">GitHub: <code>github:{{ login }}</code>, shown on your entries' cards.</p>

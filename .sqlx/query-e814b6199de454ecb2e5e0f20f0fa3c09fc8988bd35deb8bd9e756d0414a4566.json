@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email_changes SET link_hash = NULL WHERE link_hash = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "e814b6199de454ecb2e5e0f20f0fa3c09fc8988bd35deb8bd9e756d0414a4566"
+}

@@ -2,9 +2,10 @@
 //! server sends a person waits in `outgoing_mail` until the one sender sends it,
 //! retried with a doubling wait and dropped unsent after a day.
 //!
-//! No row holds a link's secret or an address: the sender reads the account's address
-//! and mints a verify or reset link as it sends, so neither sits in the database, its
-//! replica or its nightly copies while mail is down. Delivery is at least once: a
+//! No row holds a link's secret or an address: the sender reads the account's address,
+//! or for a change of address the one its pending change holds, and mints a link as
+//! it sends, so no secret sits in the database, its replica or its nightly copies
+//! while mail is down. Delivery is at least once: a
 //! restart between a send and its row's delete sends it again.
 
 use sqlx::{SqliteConnection, SqlitePool};
@@ -14,7 +15,7 @@ use tokio::sync::Notify;
 use crate::accounts::{self, EMAIL_LINK_HOURS, Purpose};
 use crate::mail::{Email, MailError};
 use crate::time::{now_utc, stamp};
-use crate::{AppState, db};
+use crate::{AppState, db, email_change};
 
 /// The wait after a row's first failed try; it doubles with each try after.
 const FIRST_WAIT: Duration = Duration::minutes(1);
@@ -36,8 +37,14 @@ pub enum Queued {
     Verify,
     /// A link to choose a new password.
     Reset,
-    /// A note that someone tried to sign up with the account's address.
+    /// A note that someone tried to sign up with the account's address, or to
+    /// change another account's address to it.
     Taken,
+    /// The link that confirms the account's pending change of address, to the new
+    /// address.
+    Change,
+    /// A note to the account's current address that a change of it was asked for.
+    ChangeNotice,
     /// A notice to an admin, with its own text.
     Notice { subject: String, body: String },
 }
@@ -48,6 +55,8 @@ impl Queued {
             Queued::Verify => "verify",
             Queued::Reset => "reset",
             Queued::Taken => "taken",
+            Queued::Change => "change",
+            Queued::ChangeNotice => "change_notice",
             Queued::Notice { .. } => "notice",
         }
     }
@@ -58,6 +67,8 @@ impl Queued {
             "verify" => Queued::Verify,
             "reset" => Queued::Reset,
             "taken" => Queued::Taken,
+            "change" => Queued::Change,
+            "change_notice" => Queued::ChangeNotice,
             _ => Queued::Notice {
                 subject: subject.unwrap_or_default(),
                 body: body.unwrap_or_default(),
@@ -244,8 +255,10 @@ pub async fn send_due(state: &AppState, now: OffsetDateTime) -> Result<Run, sqlx
         let failure = SendFailure::of(&error);
         tracing::warn!(%failure, kind = %row.kind, "an email wasn't sent");
         queue.note(now, Some(&failure));
-        if let Some(link) = link {
-            accounts::retire_email_link(&state.pool, &link).await?;
+        match link {
+            Some(Minted::Token(hash)) => accounts::retire_email_link(&state.pool, &hash).await?,
+            Some(Minted::Change(hash)) => email_change::retire_link(&state.pool, &hash).await?,
+            None => {}
         }
         let class = failure.to_string();
         match failure {
@@ -314,16 +327,27 @@ async fn next_due(pool: &SqlitePool, now: OffsetDateTime) -> Result<Option<Row>,
     .await
 }
 
+/// The hash of a link an email carries, by where it is kept, to retire it when the
+/// email doesn't go.
+enum Minted {
+    /// In `email_tokens`: a verify or reset link.
+    Token(Vec<u8>),
+    /// In `email_changes`: the link that confirms a change of address.
+    Change(Vec<u8>),
+}
+
 /// The email `row` stands for, with the hash of the link it minted, if any; or none,
 /// with the row deleted, when it has no one to go to: the account is deleted, has no
 /// address or has one stored before signup took only a bare address, its address is
-/// verified already, or it is no longer an admin. The
+/// verified already, it is no longer an admin, or, for a change of address, no
+/// change waits, another account holds the new address, or, for the notice, nobody
+/// proved to hold the current one. The
 /// account is read and the link minted in one transaction, so a deletion can't come
 /// between them.
 async fn prepare(
     state: &AppState,
     row: &Row,
-) -> Result<Option<(Email, Option<Vec<u8>>)>, sqlx::Error> {
+) -> Result<Option<(Email, Option<Minted>)>, sqlx::Error> {
     let mut tx = db::write_tx(&state.pool).await?;
     let account = sqlx::query!(
         r#"SELECT email, email_verified_at IS NOT NULL AS "verified: bool",
@@ -334,14 +358,27 @@ async fn prepare(
     .fetch_optional(&mut *tx)
     .await?;
     let mail = Queued::stored(&row.kind, row.subject.clone(), row.body.clone());
-    let to = account
-        .as_ref()
-        .and_then(|account| account.email.clone())
-        .filter(|to| accounts::looks_like_email(to));
+    // The link to a new address goes there, not to the account's own.
+    let change = match (&mail, &account) {
+        (Queued::Change, Some(_)) => email_change::mint_link(&mut tx, &row.account_id).await?,
+        _ => None,
+    };
+    let change_waits = matches!(mail, Queued::ChangeNotice)
+        && email_change::pending_in(&mut tx, &row.account_id)
+            .await?
+            .is_some();
+    let to = match &mail {
+        Queued::Change => change.as_ref().map(|link| link.to.clone()),
+        _ => account.as_ref().and_then(|account| account.email.clone()),
+    }
+    .filter(|to| accounts::looks_like_email(to));
     let wanted = account.as_ref().is_some_and(|account| match mail {
         Queued::Verify => !account.verified,
         Queued::Notice { .. } => account.is_admin,
-        Queued::Reset | Queued::Taken => true,
+        // An address nobody proved to hold gets no notice: an account that signed
+        // up with a stranger's address could send them one per request.
+        Queued::ChangeNotice => account.verified && change_waits,
+        Queued::Reset | Queued::Taken | Queued::Change => true,
     });
     let (Some(to), true) = (to, wanted) else {
         sqlx::query!("DELETE FROM outgoing_mail WHERE id = ?", row.id)
@@ -351,7 +388,40 @@ async fn prepare(
         return Ok(None);
     };
     let url = &state.public_url;
+    let contact = crate::respond::CONTACT;
     let (subject, body, link) = match mail {
+        Queued::Change => {
+            let link = change.expect("a change's address came from its link");
+            let body = format!(
+                "Someone, probably you, asked to change a File Drawer account's email address \
+                 to this one.\n\nTo confirm, open this link in a browser logged in to that \
+                 account, and press the button:\n{url}/account/email/confirm?token={secret}\n\n\
+                 The link works until {expires} (UTC), a day from when the change was asked \
+                 for. If you didn't ask, don't press the button: ignore this email.\n",
+                secret = link.secret,
+                expires = link.expires_at,
+            );
+            (
+                "Confirm your new email for File Drawer".to_string(),
+                body,
+                Some(Minted::Change(link.hash)),
+            )
+        }
+        Queued::ChangeNotice => {
+            let body = format!(
+                "Someone logged in to your File Drawer account asked to change its email \
+                 address from this one to another. The change happens once the link sent to \
+                 the new address is confirmed.\n\nIf it was you, there is nothing to do here. \
+                 If it wasn't, choose a new password at {url}/reset now: that ends every \
+                 session and cancels the change. If no reset email comes, the address has \
+                 changed already: write to {contact}.\n"
+            );
+            (
+                "A change of your File Drawer email address was asked for".to_string(),
+                body,
+                None,
+            )
+        }
         Queued::Verify => {
             let (secret, hash) =
                 accounts::new_email_link(&mut tx, &row.account_id, Purpose::Verify).await?;
@@ -364,7 +434,7 @@ async fn prepare(
             (
                 "Verify your email for File Drawer".to_string(),
                 body,
-                Some(hash),
+                Some(Minted::Token(hash)),
             )
         }
         Queued::Reset => {
@@ -382,18 +452,19 @@ async fn prepare(
             (
                 "Choose a new File Drawer password".to_string(),
                 body,
-                Some(hash),
+                Some(Minted::Token(hash)),
             )
         }
         Queued::Taken => {
             let body = format!(
-                "Someone tried to sign up for File Drawer with this address, which already \
-                 has an account.\n\nIf it was you, log in at {url}/login, or choose a new \
+                "Someone tried to use this address for a File Drawer account, by signing up \
+                 or by changing an account's address to it, but it already has an \
+                 account.\n\nIf it was you, log in at {url}/login, or choose a new \
                  password at {url}/reset. To sign in with GitHub too, log in and link GitHub \
                  from your account page. If it wasn't you, ignore this email.\n"
             );
             (
-                "Someone tried to sign up with your email".to_string(),
+                "Someone tried to use your email for File Drawer".to_string(),
                 body,
                 None,
             )

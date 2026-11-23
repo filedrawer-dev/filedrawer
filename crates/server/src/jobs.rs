@@ -92,7 +92,8 @@ pub async fn run_github_refresh(state: AppState) {
 
 /// Runs `tidy_files`, deletes the rate limits' expired counts, the search log's old
 /// rows and GitHub sign-ins that expired, closes the read counter's finished days,
-/// and drops and deletes the mail queue's old rows, every hour, for
+/// drops and deletes the mail queue's old rows, and deletes the changes of address
+/// that expired, every hour, for
 /// `filedrawer-server serve`. An error is logged
 /// and the loop goes on.
 pub async fn run_tidier(state: AppState) {
@@ -118,6 +119,10 @@ pub async fn run_tidier(state: AppState) {
         }
         if let Err(error) = crate::mail_queue::tidy(&state.pool, OffsetDateTime::now_utc()).await {
             tracing::error!(%error, "tidying the mail queue failed");
+        }
+        if let Err(error) = crate::email_change::tidy(&state.pool, OffsetDateTime::now_utc()).await
+        {
+            tracing::error!(%error, "tidying the pending changes of address failed");
         }
     }
 }

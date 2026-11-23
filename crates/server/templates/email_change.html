@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Confirm your new email{% endblock %}
+{% block content %}
+<h1>Confirm your new email</h1>
+<p>This changes your account's email address to <span class="email-change-new">{{ new_email }}</span>. Its sessions, API tokens and linked GitHub account stay as they are.</p>
+<form method="post" action="/account/email/confirm">
+<input type="hidden" name="token" value="{{ token }}">
+<button type="submit">Change my email</button>
+</form>
+{% endblock %}

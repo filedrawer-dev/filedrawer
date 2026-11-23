@@ -381,6 +381,14 @@ pub struct LoginPage<'a> {
     pub github: bool,
 }
 
+/// The page the link emailed to a new address opens (design.md, Accounts).
+#[derive(Template)]
+#[template(path = "email_change.html")]
+pub struct EmailChangePage<'a> {
+    pub token: &'a str,
+    pub new_email: &'a str,
+}
+
 #[derive(Template)]
 #[template(path = "verify.html")]
 pub struct VerifyPage<'a> {
@@ -420,6 +428,8 @@ pub struct AccountPage<'a> {
     pub account_id: &'a str,
     pub email: Option<&'a str>,
     pub verified: bool,
+    /// The address the account asked to change to, while that change waits.
+    pub pending_email: Option<&'a str>,
     pub tokens: &'a [TokenView],
     /// The series this account made.
     pub series: &'a [Owned],

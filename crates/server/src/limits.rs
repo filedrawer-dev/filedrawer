@@ -420,6 +420,18 @@ impl<'a> Counted<'a> {
         )
     }
 
+    /// Wrong passwords typed into a logged-in account's own form, per account, at
+    /// the failed logins' numbers; counted apart from the address's failed logins,
+    /// so neither locks the other.
+    pub fn wrong_passwords_of(limits: &'a Limits, account_id: &str) -> Self {
+        Counted::new(
+            "password-account",
+            account_id,
+            &limits.failed_logins_per_address,
+            "wrong passwords on this account's forms",
+        )
+    }
+
     pub fn emails_from(limits: &'a Limits, ip: &ClientIp) -> Self {
         Counted::new(
             "email-ip",

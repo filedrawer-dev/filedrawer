@@ -284,7 +284,7 @@ async fn signing_up_with_a_taken_email_looks_the_same_and_warns_its_owner() {
     let warning = &app.sent().await[first];
     assert_eq!(warning.to, "grace@example.com");
     assert!(
-        warning.body.contains("tried to sign up"),
+        warning.body.contains("tried to use this address"),
         "{}",
         warning.body
     );

@@ -47,6 +47,14 @@ pub async fn revoke_all(pool: &SqlitePool, revoke: Revoke) -> Result<Revoked, Ad
     )
     .fetch_one(&mut *tx)
     .await?;
+    // A pending change of address is an emailed link too.
+    let change_links = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM email_changes WHERE link_hash IS NOT NULL AND expires_at > ?",
+        at
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+    let links = links + change_links;
     let passwords =
         sqlx::query_scalar!("SELECT COUNT(*) FROM accounts WHERE password_hash IS NOT NULL")
             .fetch_one(&mut *tx)
@@ -75,6 +83,9 @@ pub async fn revoke_all(pool: &SqlitePool, revoke: Revoke) -> Result<Revoked, Ad
         )
         .execute(&mut *tx)
         .await?;
+        sqlx::query!("DELETE FROM email_changes")
+            .execute(&mut *tx)
+            .await?;
         if revoke.passwords {
             sqlx::query!("UPDATE accounts SET password_hash = NULL")
                 .execute(&mut *tx)
