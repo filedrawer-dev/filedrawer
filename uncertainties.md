@@ -394,11 +394,18 @@ The owner set 10 an hour and 50 a day per account (#60); an agent chose the rest
   No scope: a leak of one account's secrets is a reset of that account, which its owner can already do.
   Series join keys are secrets too, shown once and stored hashed, and it leaves them alone; invite codes are stored as they are, so a copy of the database exposes them, and the runbook says to replace the live ones.
 
-#### GitHub sign-ins under way: 20 per IP
+#### GitHub sign-ins under way: the cookie's details
 
-- Options: 20 sign-ins under way per IP (or IPv6 /64) in a 10-minute window, and 10,000 in all; a higher per-IP cap; or none per IP, only the global one.
-- Chosen: 20 per IP, so one client can't fill the table, and an expired start frees its place in 10 minutes (#119).
-- Against: an in-person sprint behind one NAT, which design.md gives invite codes for, could have more than 20 people starting at once, and the cap refuses the 21st for a few minutes; invite codes don't lift it, since the code is typed after GitHub's round trip.
+The owner chose to keep starts in the browser's cookie, unsigned, the last 3 of them, and to leave the `github_starts` table unused (design.md, Accounts; 2026-11-23); these details are the agent's.
+- Options: what the cookie binds a start to beyond its random verifier; whether the callback rewrites the cookie; what gives way when the cookie would pass browsers' 4 KB.
+- Chosen: the cookie is `__Host-fd_github`, so no subdomain can set it, and a request carrying two of them finishes nothing.
+  A start's state is a hash of its verifier, so a cookie written around a state seen in a leaked callback link has no verifier that fits, whether or not GitHub checks PKCE.
+  A link start keeps a hash of the session's secret, so a cookie planted in another browser can't link GitHub to that browser's account.
+  The cookie's value is at most 3,800 bytes: a start that would pass it drops its own `next`, then the oldest starts.
+  The callback doesn't rewrite the cookie, since that could drop a start another tab made meanwhile, and the next start drops expired ones.
+- Against: a callback works once only because GitHub refuses a spent code, which RFC 6749 requires and GitHub's docs don't say outright; a reload of a finished callback asks GitHub again.
+  When older starts with long pages fill the cookie, the newest start, the tab in use, loses its page first, landing on the account page, while an older tab keeps its page; real pages are short.
+  A sign-in under way across a deploy, either way, gets "This sign-in didn't finish" once.
 
 #### A purge after deletion can't find the kept GitHub ID
 
@@ -450,10 +457,10 @@ The owner set 10 an hour and 50 a day per account (#60); an agent chose the rest
 
 #### Changing an email address: GitHub's round trip
 
-- Options, for an account with no password: the request is recorded and counted when the form is sent, and GitHub's answer releases its emails; or the address asked for waits in the round trip's own row, `github_starts`, for its 10 minutes, and the request is recorded and counted only when GitHub's answer comes back as the linked account (as built).
+- Options, for an account with no password: the request is recorded and counted when the form is sent, and GitHub's answer releases its emails; or the address asked for waits in the round trip's start, which the browser's cookie holds, for its 10 minutes, and the request is recorded and counted only when GitHub's answer comes back as the linked account (as built).
 - Chosen: at GitHub's answer.
   A round trip left unfinished, or one GitHub fails, then counts nothing against the new address's emails and leaves a change already waiting, and its link, alone.
-- Against: a second table holds an address for a short while, until the hourly tidy deletes the expired start.
+- Against: the cookie is unsigned, so the browser can edit the address in it; the callback checks it as the form did, and the change still waits for the link sent to it.
   The request's limits answer on the page GitHub returns to, not on the form, and as plain text, as every limit's refusal is.
   A round trip that fails before the server reads what it was for (cancelled at GitHub, expired, GitHub not answering) gets the sign-in's pages, which say "sign-in" and link to the login page.
 

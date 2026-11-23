@@ -29,6 +29,8 @@ const COOKIE: &str = "fd_session";
 /// the request is sent to the login page.
 pub struct SessionAccount {
     pub id: String,
+    /// The session cookie's secret.
+    pub secret: String,
 }
 
 /// The `Set-Cookie` value that sets the session cookie to `secret` for `max_age`
@@ -40,18 +42,27 @@ pub(super) fn session_cookie(secret: &str, max_age: i64) -> String {
 
 /// The value of the cookie `name`, if the request carries one that isn't empty.
 pub(super) fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
+    cookie_values(headers, name)
+        .next()
+        .filter(|value| !value.is_empty())
+}
+
+/// Every value the request's cookies give `name`, in the order they came.
+pub(super) fn cookie_values<'a>(
+    headers: &'a HeaderMap,
+    name: &str,
+) -> impl Iterator<Item = String> + 'a {
     let prefix = format!("{name}=");
     headers
         .get_all(header::COOKIE)
         .iter()
         .filter_map(|value| value.to_str().ok())
         .flat_map(|value| value.split(';'))
-        .find_map(|pair| pair.trim().strip_prefix(&prefix).map(str::to_string))
-        .filter(|value| !value.is_empty())
+        .filter_map(move |pair| pair.trim().strip_prefix(&prefix).map(str::to_string))
 }
 
 /// The session cookie's secret, if the request carries one.
-fn session_secret(headers: &HeaderMap) -> Option<String> {
+pub(super) fn session_secret(headers: &HeaderMap) -> Option<String> {
     cookie_value(headers, COOKIE)
 }
 
@@ -76,7 +87,7 @@ impl FromRequestParts<AppState> for SessionAccount {
             return Err(to_login(parts));
         };
         match accounts::session_account(&state.pool, &secret).await {
-            Ok(Some(id)) => Ok(SessionAccount { id }),
+            Ok(Some(id)) => Ok(SessionAccount { id, secret }),
             Ok(None) => Err(to_login(parts)),
             Err(error) => Err(AppError::from(error).into_response()),
         }
@@ -676,10 +687,10 @@ pub async fn change_email(
         let linked = github_accounts::login_of(&state.pool, &session.id).await?;
         if linked.is_some() && state.github_login.is_some() {
             let purpose = github_accounts::Purpose::ChangeEmail {
-                account_id: session.id,
+                session: github_accounts::SessionTag::of(&session.secret),
                 new_email,
             };
-            return super::github::start(&state, &headers, &ip, purpose, None).await;
+            return super::github::start(&state, &headers, purpose, None);
         }
         return Err(AppError::Forbidden(
             "this account has no password to confirm a change of address with".into(),

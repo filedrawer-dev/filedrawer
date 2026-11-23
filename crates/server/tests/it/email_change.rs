@@ -712,6 +712,61 @@ async fn a_round_trip_finished_under_another_accounts_session_confirms_nothing()
 }
 
 #[tokio::test]
+async fn an_address_edited_in_the_cookie_is_checked_again() {
+    // The cookie is the browser's to edit, so the callback checks the address the
+    // form did.
+    use filedrawer_server::github_accounts::{Purpose, SessionTag, add_start};
+    let (app, github) = github_app().await;
+    let session = grace_from_github(&app, &github).await;
+    let secret = session.split_once('=').unwrap().1;
+    for edited in ["not an address", "Mallory@Example.com"] {
+        let purpose = Purpose::ChangeEmail {
+            session: SessionTag::of(secret),
+            new_email: edited.into(),
+        };
+        let (started, kept) = add_start(None, purpose, None, time::OffsetDateTime::now_utc());
+        github.code_for("again", octo(1, "grace-gh", OLD));
+        let cookies = format!("{session}; __Host-fd_github={kept}");
+        let back = come_back(&app, &started.state, "again", &cookies).await;
+        assert_eq!(
+            back.status,
+            StatusCode::BAD_REQUEST,
+            "{edited}: {}",
+            back.body
+        );
+    }
+    assert_eq!(pending_rows(&app).await, 0);
+}
+
+#[tokio::test]
+async fn a_round_trip_written_into_the_cookie_for_an_account_with_a_password_confirms_nothing() {
+    // The form sends only an account with no password through GitHub; a start
+    // written into the cookie by hand mustn't stand in for the password.
+    use filedrawer_server::github_accounts::{Purpose, SessionTag, add_start};
+    let (app, github) = github_app().await;
+    let (session, _) = browser_account(&app, "hopper@example.com").await;
+    let linking = app.form("/account/github/link", &[], Some(&session)).await;
+    let browser = linking.cookie().unwrap();
+    github.code_for("link", octo(2, "hopper-gh", "hopper@example.com"));
+    let cookies = format!("{session}; {browser}");
+    let linked = come_back(&app, &state_in(&linking), "link", &cookies).await;
+    assert_eq!(linked.location(), Some("/account"), "{}", linked.body);
+
+    let secret = session.split_once('=').unwrap().1;
+    let purpose = Purpose::ChangeEmail {
+        session: SessionTag::of(secret),
+        new_email: NEW.into(),
+    };
+    let (started, kept) = add_start(None, purpose, None, time::OffsetDateTime::now_utc());
+    github.code_for("again", octo(2, "hopper-gh", "hopper@example.com"));
+    let cookies = format!("{session}; __Host-fd_github={kept}");
+    let back = come_back(&app, &started.state, "again", &cookies).await;
+    assert_eq!(back.status, StatusCode::FORBIDDEN, "{}", back.body);
+    assert_eq!(pending_rows(&app).await, 0);
+    assert!(emails_to(&app, NEW).await.is_empty());
+}
+
+#[tokio::test]
 async fn round_trips_left_unfinished_count_nothing_and_leave_a_waiting_change_alone() {
     let (app, github) = github_app().await;
     let session = grace_from_github(&app, &github).await;
@@ -779,8 +834,13 @@ async fn a_round_trip_that_comes_back_to_an_address_the_account_has_by_now_recor
     let (app, github) = github_app().await;
     let session = grace_from_github(&app, &github).await;
     let (first, cookies) = ask_through_github(&app, &session, NEW).await;
-    // The same browser starts a second round trip, as from another tab.
-    let (second, _) = ask_through_github(&app, &cookies, NEW).await;
+    // The same browser starts a second round trip, as from another tab; its start
+    // cookie then holds both.
+    let started = app
+        .form("/account/email", &[("email", NEW)], Some(&cookies))
+        .await;
+    let second = state_in(&started);
+    let cookies = format!("{session}; {}", started.cookie().unwrap());
     github.code_for("one", octo(1, "grace-gh", OLD));
     come_back(&app, &first, "one", &cookies).await;
     let secret = emailed_token(&app, NEW).await;

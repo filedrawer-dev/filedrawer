@@ -1,7 +1,8 @@
 //! GitHub sign-in in the browser (design.md, Accounts; #119): signing in and up with
 //! GitHub, linking it to an account and unlinking it. Every start is a POST from
 //! this site, so another site or a crawler can't begin one; the browser that
-//! started it must finish it, through a cookie only it holds.
+//! started it must finish it, through a cookie only it holds, which carries the
+//! start itself, so the server keeps nothing for a sign-in under way.
 
 use axum::Form;
 use axum::extract::{Query, State};
@@ -10,11 +11,11 @@ use axum::response::{AppendHeaders, IntoResponse, Redirect, Response};
 use serde::Deserialize;
 
 use super::account::{
-    SessionAccount, cookie_value, optional_session_account, page_on_this_site, session_cookie,
+    SessionAccount, cookie_value, cookie_values, page_on_this_site, session_cookie, session_secret,
 };
 use crate::accounts::{self, SESSION_DAYS};
 use crate::error::AppError;
-use crate::github_accounts::{self, Finished, Linking, Purpose};
+use crate::github_accounts::{self, Finished, Linking, Purpose, SessionTag};
 use crate::github_login::{CALLBACK_PATH, Failure, GithubLogin};
 use crate::limits::{self, ClientIp, Counted};
 use crate::mail_queue::{self, Queued};
@@ -22,10 +23,12 @@ use crate::pages::{GithubSignupPage, Message, page};
 use crate::time::now_utc;
 use crate::{AppState, email_change, invites};
 
-/// The browser's cookie for its sign-ins under way. Its path is the whole site, so
-/// a browser sends it to the next start too, which keeps it, and a second tab
+/// The browser's cookie for its sign-ins under way, the last few of them
+/// (`github_accounts::add_start`). `__Host-`, so a browser takes it only from this
+/// host, with Secure and the path `/`, and no subdomain can plant one; that path
+/// also sends it to the next start, which keeps the earlier ones, so a second tab
 /// doesn't strand the first's sign-in.
-const START_COOKIE: &str = "fd_github";
+const START_COOKIE: &str = "__Host-fd_github";
 /// The browser's cookie for its signup waiting for the form.
 const SIGNUP_COOKIE: &str = "fd_github_signup";
 
@@ -56,33 +59,30 @@ const WHEN_GITHUB_FAILS: &str = "If you signed up with GitHub, you can choose a 
      at /reset instead; that ends every session, revokes every API token and unlinks GitHub, \
      which you can link again from your account page.";
 
-/// Sends the browser to GitHub for `purpose`, keeping what the callback needs. The
-/// account page's form starts a `Purpose::ChangeEmail` here, for an account with no
-/// password to confirm a change of address with: nothing waits and nothing is
-/// counted until GitHub's answer comes back.
-pub(super) async fn start(
+/// The request's start cookie, if it carries exactly one: a second one with the
+/// name, which a browser that lets a subdomain set a cookie with no name could
+/// send first, makes the request's starts unknown.
+fn start_cookie(headers: &HeaderMap) -> Option<String> {
+    let mut values = cookie_values(headers, START_COOKIE);
+    let value = values.next()?;
+    values.next().is_none().then_some(value)
+}
+
+/// Sends the browser to GitHub for `purpose`, its cookie keeping what the callback
+/// needs. The account page's form starts a `Purpose::ChangeEmail` here, for an
+/// account with no password to confirm a change of address with: nothing waits and
+/// nothing is counted until GitHub's answer comes back.
+pub(super) fn start(
     state: &AppState,
     headers: &HeaderMap,
-    ip: &ClientIp,
     purpose: Purpose,
     next: Option<&str>,
 ) -> Result<Response, AppError> {
     let github = github(state)?;
-    // A browser keeps its secret across starts, so a second tab's start doesn't
-    // strand the first's.
-    let browser = cookie_value(headers, START_COOKIE).unwrap_or_else(crate::ids::new_secret);
-    let Some(started) =
-        github_accounts::start(&state.pool, &browser, &ip.0, &purpose, next).await?
-    else {
-        return Ok(message(
-            StatusCode::TOO_MANY_REQUESTS,
-            "Too many sign-ins under way",
-            "Too many GitHub sign-ins were started from here in the last few minutes. Wait ten minutes, then try again.",
-            None,
-        ));
-    };
+    let earlier = start_cookie(headers);
+    let (started, kept) = github_accounts::add_start(earlier.as_deref(), purpose, next, now_utc());
     let to = github.authorize_url(&callback_url(state), &started.state, &started.verifier);
-    let cookie = scoped_cookie(START_COOKIE, &browser, "/", START_SECONDS);
+    let cookie = scoped_cookie(START_COOKIE, &kept, "/", START_SECONDS);
     Ok(([(header::SET_COOKIE, cookie)], Redirect::to(&to)).into_response())
 }
 
@@ -96,32 +96,35 @@ pub struct StartForm {
 pub async fn sign_in(
     State(state): State<AppState>,
     headers: HeaderMap,
-    ip: ClientIp,
     Form(form): Form<StartForm>,
 ) -> Result<Response, AppError> {
     let next = page_on_this_site(&form.next);
-    start(&state, &headers, &ip, Purpose::SignIn, next).await
+    start(&state, &headers, Purpose::SignIn, next)
 }
 
 /// `POST /account/github/link`: links GitHub to the session's account.
 pub async fn link(
     State(state): State<AppState>,
     headers: HeaderMap,
-    ip: ClientIp,
     session: SessionAccount,
 ) -> Result<Response, AppError> {
-    start(&state, &headers, &ip, Purpose::Link(session.id), None).await
+    let purpose = Purpose::Link(SessionTag::of(&session.secret));
+    start(&state, &headers, purpose, None)
 }
 
-/// Whether the request's session is `account_id`'s: a link or a change of address
-/// finishes only under the session of the account that started it.
-async fn in_session_of(
+/// The account of the request's session, if it is the session `tag` is of: a link
+/// or a change of address finishes only under the session that started it.
+async fn tagged_session_account(
     state: &AppState,
     headers: &HeaderMap,
-    account_id: &str,
-) -> Result<bool, sqlx::Error> {
-    let session = optional_session_account(headers, state).await?;
-    Ok(session.as_deref() == Some(account_id))
+    tag: &SessionTag,
+) -> Result<Option<String>, sqlx::Error> {
+    match session_secret(headers) {
+        Some(secret) if SessionTag::of(&secret) == *tag => {
+            accounts::session_account(&state.pool, &secret).await
+        }
+        _ => Ok(None),
+    }
 }
 
 #[derive(Deserialize)]
@@ -180,15 +183,14 @@ pub async fn callback(
             ));
         }
     }
-    let (Some(code), Some(github_state), Some(browser)) = (
-        query.code,
-        query.state,
-        cookie_value(&headers, START_COOKIE),
-    ) else {
+    // The start stays in the cookie: GitHub refuses its code a second time, and
+    // rewriting the cookie here could drop a start another tab made meanwhile.
+    let (Some(code), Some(github_state), Some(kept)) =
+        (query.code, query.state, start_cookie(&headers))
+    else {
         return Ok(expired());
     };
-    let Some(started) = github_accounts::take_start(&state.pool, &github_state, &browser).await?
-    else {
+    let Some(started) = github_accounts::find_start(&kept, &github_state, now_utc()) else {
         return Ok(expired());
     };
     let identity = match github
@@ -216,16 +218,18 @@ pub async fn callback(
             ));
         }
     };
+    // The browser can edit its cookie, so its page is checked again.
+    let next = started.next.as_deref().and_then(page_on_this_site);
     match started.purpose {
-        Purpose::Link(account_id) => {
-            if !in_session_of(&state, &headers, &account_id).await? {
+        Purpose::Link(tag) => {
+            let Some(account_id) = tagged_session_account(&state, &headers, &tag).await? else {
                 return Ok(message(
                     StatusCode::FORBIDDEN,
                     "Log in to link GitHub",
                     "The session that started linking GitHub has ended. Log in, then link it again from your account page.",
                     Some(("/login", "Log in")),
                 ));
-            }
+            };
             match github_accounts::link(&state.pool, &account_id, &identity).await? {
                 Linking::Done => Ok(Redirect::to("/account").into_response()),
                 Linking::OtherAccount => Ok(message(
@@ -242,16 +246,32 @@ pub async fn callback(
                 )),
             }
         }
-        Purpose::ChangeEmail {
-            account_id,
-            new_email,
-        } => {
-            if !in_session_of(&state, &headers, &account_id).await? {
+        Purpose::ChangeEmail { session, new_email } => {
+            let Some(account_id) = tagged_session_account(&state, &headers, &session).await? else {
                 return Ok(message(
                     StatusCode::FORBIDDEN,
                     "Log in to change your email",
                     "The session that asked for the change has ended. Log in, then ask again from your account page.",
                     Some(("/login", "Log in")),
+                ));
+            };
+            // The browser can edit its cookie, so what the form checked is checked
+            // again: the address, and that the account has no password, which
+            // GitHub would otherwise stand in for.
+            if !accounts::looks_like_email(&new_email)
+                || accounts::normalize_email(&new_email) != new_email
+            {
+                return Ok(expired());
+            }
+            if crate::deletion::password_hash(&state.pool, &account_id)
+                .await?
+                .is_some()
+            {
+                return Ok(message(
+                    StatusCode::FORBIDDEN,
+                    "Confirm with your password",
+                    "This account has a password, so changing its email address takes the password, from your account page. Nothing changed.",
+                    Some(("/account", "Your account")),
                 ));
             }
             let linked = github_accounts::account_of(&state.pool, identity.github_id).await?;
@@ -282,7 +302,7 @@ pub async fn callback(
                 github_accounts::note_login(&state.pool, &identity).await?;
                 let secret = accounts::new_session(&state.pool, &account_id).await?;
                 let cookie = session_cookie(&secret, SESSION_DAYS * 24 * 60 * 60);
-                let landing = Redirect::to(started.next.as_deref().unwrap_or("/account"));
+                let landing = Redirect::to(next.unwrap_or("/account"));
                 return Ok(([(header::SET_COOKIE, cookie)], landing).into_response());
             }
             if identity.emails.is_empty() {
@@ -293,8 +313,7 @@ pub async fn callback(
                     Some(("/signup", "Sign up")),
                 ));
             }
-            let key = github_accounts::hold_signup(&state.pool, &identity, started.next.as_deref())
-                .await?;
+            let key = github_accounts::hold_signup(&state.pool, &identity, next).await?;
             let cookie = scoped_cookie(SIGNUP_COOKIE, &key, SIGNUP_PATH, START_SECONDS);
             Ok(([(header::SET_COOKIE, cookie)], Redirect::to(SIGNUP_PATH)).into_response())
         }

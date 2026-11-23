@@ -80,9 +80,15 @@ async fn a_start_sends_the_browser_to_github_with_pkce_the_email_scope_and_the_p
     assert_eq!(query["prompt"], "select_account");
     assert!(!query["code_challenge"].is_empty());
     let cookie = reply.headers.get("set-cookie").unwrap().to_str().unwrap();
-    // Path=/, so a browser sends it to the next start too, and a second tab's start
-    // keeps the first tab's sign-in.
-    assert!(cookie.contains("Path=/;"), "{cookie}");
+    // `__Host-` with Secure and Path=/, so no subdomain can plant one; that path
+    // also sends it to the next start, and a second tab's start keeps the first
+    // tab's sign-in.
+    assert!(cookie.starts_with("__Host-fd_github="), "{cookie}");
+    assert!(
+        cookie.contains("Path=/;") && cookie.contains("Secure"),
+        "{cookie}"
+    );
+    assert!(!cookie.contains("Domain"), "{cookie}");
     assert!(
         cookie.contains("HttpOnly") && cookie.contains("SameSite=Lax"),
         "{cookie}"
@@ -249,13 +255,16 @@ async fn a_callback_works_once_and_only_in_the_browser_that_started_it() {
     let (app, github) = github_app().await;
     github.code_for("c1", octo(1, "octo", "octo@example.com"));
     let (state, browser) = start(&app, "/login/github", None).await;
-    let elsewhere = come_back(&app, &state, "c1", "fd_github=someone-else").await;
-    assert_eq!(
-        elsewhere.status,
-        StatusCode::BAD_REQUEST,
-        "{}",
-        elsewhere.body
-    );
+    let (_, other_browser) = start(&app, "/login/github", None).await;
+    for cookie in [other_browser.as_str(), "__Host-fd_github=someone-else"] {
+        let elsewhere = come_back(&app, &state, "c1", cookie).await;
+        assert_eq!(
+            elsewhere.status,
+            StatusCode::BAD_REQUEST,
+            "{cookie}: {}",
+            elsewhere.body
+        );
+    }
     let no_cookie = app
         .page(
             &format!("/login/github/callback?code=c1&state={state}"),
@@ -266,30 +275,129 @@ async fn a_callback_works_once_and_only_in_the_browser_that_started_it() {
     // Neither spent the start, so its own browser still finishes it.
     let back = come_back(&app, &state, "c1", &browser).await;
     assert_eq!(back.status, StatusCode::SEE_OTHER, "{}", back.body);
+    // The server keeps no start to spend: a copy of the cookie gets the start
+    // again, and GitHub refuses its spent code.
     let again = come_back(&app, &state, "c1", &browser).await;
     assert_eq!(again.status, StatusCode::BAD_REQUEST);
-    assert_eq!(github.exchanges.lock().unwrap().len(), 1);
+    assert_eq!(github.exchanges.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn a_callback_with_two_start_cookies_finishes_nothing() {
+    // A browser that lets a subdomain set a cookie with no name could send one
+    // ahead of the real one: someone's own start, finished with their code, would
+    // sign the browser in to their account.
+    let (app, github) = github_app().await;
+    github.code_for("c1", octo(1, "octo", "octo@example.com"));
+    let (_, browser) = start(&app, "/login/github", None).await;
+    let (theirs, planted) = start(&app, "/login/github", None).await;
+    let back = come_back(&app, &theirs, "c1", &format!("{planted}; {browser}")).await;
+    assert_eq!(back.status, StatusCode::BAD_REQUEST, "{}", back.body);
+    assert!(github.exchanges.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_start_with_a_garbled_cookie_starts_afresh() {
+    let (app, github) = github_app().await;
+    github.code_for("c1", octo(1, "octo", "octo@example.com"));
+    let (state, browser) =
+        start(&app, "/login/github", Some("__Host-fd_github=%%not-base64")).await;
+    let back = come_back(&app, &state, "c1", &browser).await;
+    assert_eq!(back.status, StatusCode::SEE_OTHER, "{}", back.body);
 }
 
 #[tokio::test]
 async fn two_tabs_each_finish_their_own_sign_in() {
     let (app, github) = github_app().await;
     let (first, browser) = start(&app, "/login/github", None).await;
-    let (second, again) = start(&app, "/login/github", Some(&browser)).await;
-    assert_eq!(
-        browser, again,
-        "the second start keeps the browser's cookie"
-    );
+    let (second, both) = start(&app, "/login/github", Some(&browser)).await;
     github.code_for("c1", octo(1, "octo", "octo@example.com"));
     github.code_for("c2", octo(2, "cat", "cat@example.com"));
     assert_eq!(
-        come_back(&app, &first, "c1", &browser).await.status,
+        come_back(&app, &first, "c1", &both).await.status,
         StatusCode::SEE_OTHER
     );
     assert_eq!(
-        come_back(&app, &second, "c2", &browser).await.status,
+        come_back(&app, &second, "c2", &both).await.status,
         StatusCode::SEE_OTHER
     );
+}
+
+#[tokio::test]
+async fn a_fourth_start_drops_the_oldest() {
+    let (app, github) = github_app().await;
+    let (oldest, mut cookie) = start(&app, "/login/github", None).await;
+    let mut states = vec![];
+    for _ in 1..=filedrawer_server::github_accounts::STARTS_KEPT {
+        let (state, kept) = start(&app, "/login/github", Some(&cookie)).await;
+        states.push(state);
+        cookie = kept;
+    }
+    github.code_for("c1", octo(1, "octo", "octo@example.com"));
+    let dropped = come_back(&app, &oldest, "c1", &cookie).await;
+    assert_eq!(dropped.status, StatusCode::BAD_REQUEST, "{}", dropped.body);
+    for (n, state) in states.iter().enumerate() {
+        let code = format!("k{n}");
+        github.code_for(&code, octo(1, "octo", "octo@example.com"));
+        let back = come_back(&app, state, &code, &cookie).await;
+        assert_eq!(back.status, StatusCode::SEE_OTHER, "{n}: {}", back.body);
+    }
+}
+
+#[tokio::test]
+async fn a_next_page_edited_in_the_cookie_is_checked_again() {
+    // The cookie is the browser's to edit, so the callback doesn't trust its page.
+    use filedrawer_server::github_accounts::{Purpose, add_start};
+    let (app, github) = github_app().await;
+    github.code_for("c1", octo(1, "octo", "octo@example.com"));
+    github_signup(&app, "c1").await;
+    let (started, kept) = add_start(
+        None,
+        Purpose::SignIn,
+        Some("//evil.example"),
+        time::OffsetDateTime::now_utc(),
+    );
+    github.code_for("again", octo(1, "octo", "octo@example.com"));
+    let cookie = format!("__Host-fd_github={kept}");
+    let back = come_back(&app, &started.state, "again", &cookie).await;
+    assert_eq!(back.location(), Some("/account"), "{}", back.body);
+}
+
+#[test]
+fn a_start_that_cant_fit_drops_the_oldest_starts() {
+    use filedrawer_server::github_accounts::{Purpose, START_COOKIE_BYTES, add_start, find_start};
+    let at = time::macros::datetime!(2026-11-23 12:00 UTC);
+    // A start whose page fills nearly the whole cookie by itself.
+    let (big, cookie) = (1..)
+        .map(|n| {
+            add_start(
+                None,
+                Purpose::SignIn,
+                Some(&format!("/{}", "a".repeat(n))),
+                at,
+            )
+        })
+        .find(|(_, cookie)| cookie.len() > START_COOKIE_BYTES - 40)
+        .unwrap();
+    assert!(cookie.len() <= START_COOKIE_BYTES);
+    let (newest, both) = add_start(Some(&cookie), Purpose::SignIn, None, at);
+    assert!(both.len() <= START_COOKIE_BYTES, "{}", both.len());
+    assert!(find_start(&both, &big.state, at).is_none());
+    assert!(find_start(&both, &newest.state, at).is_some());
+}
+
+#[test]
+fn a_start_expires_after_ten_minutes() {
+    use filedrawer_server::github_accounts::{Purpose, START_MINUTES, add_start, find_start};
+    let at = time::macros::datetime!(2026-11-23 12:00 UTC);
+    let (started, cookie) = add_start(None, Purpose::SignIn, None, at);
+    let just_before = at + time::Duration::minutes(START_MINUTES) - time::Duration::seconds(1);
+    assert!(find_start(&cookie, &started.state, just_before).is_some());
+    let at_expiry = at + time::Duration::minutes(START_MINUTES);
+    assert!(find_start(&cookie, &started.state, at_expiry).is_none());
+    // A later start drops it from the cookie.
+    let (_, later) = add_start(Some(&cookie), Purpose::SignIn, None, at_expiry);
+    assert!(find_start(&later, &started.state, at).is_none());
 }
 
 #[tokio::test]
@@ -784,18 +892,45 @@ async fn a_display_name_cant_pose_as_a_handle() {
 }
 
 #[tokio::test]
-async fn starts_under_way_are_capped_per_client() {
+async fn starts_from_one_client_are_never_refused() {
+    // The server keeps nothing for a start, so there is no table to fill.
     let (app, _) = github_app().await;
-    for _ in 0..filedrawer_server::github_accounts::STARTS_PER_CLIENT {
+    for _ in 0..50 {
         start(&app, "/login/github", None).await;
     }
-    let refused = app.form("/login/github", &[], None).await;
-    assert_eq!(
-        refused.status,
-        StatusCode::TOO_MANY_REQUESTS,
-        "{}",
-        refused.body
-    );
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM github_starts")
+        .fetch_one(&app.pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0);
+}
+
+#[tokio::test]
+async fn a_long_next_page_is_dropped_so_the_cookie_fits() {
+    // `"` doubles in the cookie's JSON, so the cap is on the cookie, not on `next`.
+    let (app, github) = github_app().await;
+    github.code_for("c1", octo(1, "octo", "octo@example.com"));
+    github_signup(&app, "c1").await;
+    let long = format!("/{}", "\"".repeat(3000));
+    let mut cookie: Option<String> = None;
+    let mut state = String::new();
+    for _ in 0..filedrawer_server::github_accounts::STARTS_KEPT {
+        let reply = app
+            .form("/login/github", &[("next", &long)], cookie.as_deref())
+            .await;
+        state = state_in(reply.location().unwrap());
+        let set = reply.cookie().unwrap();
+        let value = set.strip_prefix("__Host-fd_github=").unwrap();
+        assert!(
+            value.len() <= filedrawer_server::github_accounts::START_COOKIE_BYTES,
+            "{}",
+            value.len()
+        );
+        cookie = Some(set);
+    }
+    github.code_for("again", octo(1, "octo", "octo@example.com"));
+    let back = come_back(&app, &state, "again", &cookie.unwrap()).await;
+    assert_eq!(back.location(), Some("/account"), "{}", back.body);
 }
 
 #[tokio::test]

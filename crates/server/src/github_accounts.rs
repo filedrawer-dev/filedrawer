@@ -1,7 +1,12 @@
-//! What the server keeps for GitHub sign-in (design.md, Accounts; #119): sign-ins
-//! under way, signups waiting for their form, each account's linked GitHub account,
-//! and which account each GitHub ID first exempted from the new-account limit.
+//! GitHub sign-in's state (design.md, Accounts; #119): the sign-ins under way, which
+//! the browser's cookie holds, and what the server keeps: signups waiting for their
+//! form, each account's linked GitHub account, and which account each GitHub ID
+//! first exempted from the new-account limit.
 
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use sqlx::{SqliteConnection, SqlitePool};
 use time::{Duration, OffsetDateTime};
 
@@ -13,10 +18,14 @@ use crate::time::{now, now_utc, stamp};
 /// codes last 10 minutes.
 pub const START_MINUTES: i64 = 10;
 
-/// The most sign-ins one client may have under way, and the most in all, so a flood
-/// of starts can't fill the table.
-pub const STARTS_PER_CLIENT: i64 = 20;
-pub const STARTS_IN_ALL: i64 = 10_000;
+/// How many sign-ins under way a browser's cookie keeps, so a few tabs each finish
+/// their own; a start past that drops the oldest.
+pub const STARTS_KEPT: usize = 3;
+
+/// The most a start cookie's value may take, under the 4096 bytes a browser keeps
+/// of a cookie's name and value, past which it drops the whole cookie: a start that
+/// would pass it drops its own `next`, then the oldest starts.
+pub const START_COOKIE_BYTES: usize = 3800;
 
 /// How old a GitHub account must be to exempt its first account from the
 /// new-account limit (design.md, Limits and abuse).
@@ -26,15 +35,31 @@ pub const EXEMPT_AFTER_DAYS: i64 = 90;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Purpose {
     SignIn,
-    /// Linking GitHub to this account, whose session started it.
-    Link(String),
-    /// Confirming that the session that asked to change this account's address to
-    /// `new_email` holds the GitHub account linked to it, for an account with no
-    /// password to confirm with (design.md, Accounts).
+    /// Linking GitHub to the account of the session this tag is of, so a cookie
+    /// planted in another browser can't link to that browser's account.
+    Link(SessionTag),
+    /// Confirming that the session this tag is of, which asked to change its
+    /// account's address to `new_email`, holds the GitHub account linked to it, for
+    /// an account with no password to confirm with (design.md, Accounts). Tagged
+    /// like a link, so a planted cookie can't send another browser's account's
+    /// change to an address of the planter's.
     ChangeEmail {
-        account_id: String,
+        session: SessionTag,
         new_email: String,
     },
+}
+
+/// What a link start keeps of the session that started it: a hash of its secret,
+/// apart from the hash the sessions table keeps, which only that session's browser
+/// can match.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionTag(String);
+
+impl SessionTag {
+    pub fn of(session_secret: &str) -> Self {
+        let hash = Sha256::digest(format!("filedrawer github link {session_secret}"));
+        SessionTag(URL_SAFE_NO_PAD.encode(hash))
+    }
 }
 
 /// A round trip to GitHub under way, as its callback finds it.
@@ -50,107 +75,112 @@ pub struct Started {
     pub verifier: String,
 }
 
-/// Records a sign-in under way for the browser holding `browser_secret`, from the
-/// client with `client_key`. None when that client, or every client, has too many
-/// under way.
-pub async fn start(
-    pool: &SqlitePool,
-    browser_secret: &str,
-    client_key: &str,
-    purpose: &Purpose,
-    next: Option<&str>,
-) -> Result<Option<Started>, sqlx::Error> {
-    let mut tx = crate::db::write_tx(pool).await?;
-    let now = now();
-    let client_hash = ids::token_hash(client_key);
-    let live = sqlx::query!(
-        r#"SELECT count(*) AS "in_all!: i64",
-                  coalesce(sum(client_hash = ?), 0) AS "this_client!: i64"
-           FROM github_starts WHERE expires_at > ?"#,
-        client_hash,
-        now
-    )
-    .fetch_one(&mut *tx)
-    .await?;
-    if live.this_client >= STARTS_PER_CLIENT || live.in_all >= STARTS_IN_ALL {
-        return Ok(None);
-    }
-    let state = ids::new_secret();
-    let verifier = ids::new_secret();
-    let state_hash = ids::token_hash(&state);
-    let browser_hash = ids::token_hash(browser_secret);
-    let (purpose_text, account_id, new_email) = match purpose {
-        Purpose::SignIn => ("sign_in", None, None),
-        Purpose::Link(account) => ("link", Some(account.as_str()), None),
-        Purpose::ChangeEmail {
-            account_id,
-            new_email,
-        } => (
-            "change_email",
-            Some(account_id.as_str()),
-            Some(new_email.as_str()),
-        ),
-    };
-    let expires_at = stamp(now_utc() + Duration::minutes(START_MINUTES));
-    sqlx::query!(
-        "INSERT INTO github_starts
-           (state_hash, browser_hash, verifier, purpose, account_id, new_email, next,
-            client_hash, created_at, expires_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        state_hash,
-        browser_hash,
-        verifier,
-        purpose_text,
-        account_id,
-        new_email,
-        next,
-        client_hash,
-        now,
-        expires_at
-    )
-    .execute(&mut *tx)
-    .await?;
-    tx.commit().await?;
-    Ok(Some(Started { state, verifier }))
+/// A start as the cookie keeps it.
+#[derive(Serialize, Deserialize)]
+struct Kept {
+    verifier: String,
+    /// A link's or a change of address's [`SessionTag`]; none for a sign-in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    session: Option<String>,
+    /// A change of address's new address.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    new_email: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    next: Option<String>,
+    /// When it expires, in Unix seconds.
+    expires: i64,
 }
 
-/// Spends the sign-in under way with `state`, if the browser holding
-/// `browser_secret` started it and it hasn't expired. A state another browser
-/// started stays, so a link that carries it can't spend it.
-pub async fn take_start(
-    pool: &SqlitePool,
-    state: &str,
-    browser_secret: &str,
-) -> Result<Option<Start>, sqlx::Error> {
-    let state_hash = ids::token_hash(state);
-    let browser_hash = ids::token_hash(browser_secret);
-    let now = now();
-    let row = sqlx::query!(
-        "DELETE FROM github_starts
-         WHERE state_hash = ? AND browser_hash = ? AND expires_at > ?
-         RETURNING purpose, account_id, new_email, verifier, next",
-        state_hash,
-        browser_hash,
-        now
-    )
-    .fetch_optional(pool)
-    .await?;
-    Ok(row.and_then(|row| {
-        let purpose = match (row.purpose.as_str(), row.account_id, row.new_email) {
-            ("sign_in", _, _) => Purpose::SignIn,
-            ("link", Some(account), _) => Purpose::Link(account),
-            ("change_email", Some(account_id), Some(new_email)) => Purpose::ChangeEmail {
-                account_id,
-                new_email,
-            },
-            _ => return None,
-        };
-        Some(Start {
-            purpose,
-            verifier: row.verifier,
-            next: row.next,
-        })
-    }))
+/// A start's state: a hash of its verifier, apart from PKCE's challenge.
+fn state_of(verifier: &str) -> String {
+    URL_SAFE_NO_PAD.encode(Sha256::digest(format!(
+        "filedrawer github state {verifier}"
+    )))
+}
+
+/// The starts a cookie's value keeps, as base64url of their JSON, so a `next` page
+/// can't break the cookie's syntax; none for a garbled one.
+fn decode(cookie: &str) -> Vec<Kept> {
+    URL_SAFE_NO_PAD
+        .decode(cookie)
+        .ok()
+        .and_then(|json| serde_json::from_slice(&json).ok())
+        .unwrap_or_default()
+}
+
+fn encode(kept: &[Kept]) -> String {
+    URL_SAFE_NO_PAD.encode(serde_json::to_vec(kept).expect("starts serialize"))
+}
+
+/// The browser's start cookie with a new start for `purpose` added, and the new
+/// start's state and verifier. The cookie keeps no state of its own: a start's
+/// state is a hash of its verifier, so a cookie written around a state someone saw,
+/// in a callback link, has no verifier that fits it. A garbled cookie, or none,
+/// starts a fresh one; expired starts drop out.
+pub fn add_start(
+    cookie: Option<&str>,
+    purpose: Purpose,
+    next: Option<&str>,
+    now: OffsetDateTime,
+) -> (Started, String) {
+    let now = now.unix_timestamp();
+    let mut kept = cookie.map(decode).unwrap_or_default();
+    kept.retain(|start| start.expires > now);
+    let verifier = ids::new_secret();
+    let (session, new_email) = match purpose {
+        Purpose::SignIn => (None, None),
+        Purpose::Link(SessionTag(tag)) => (Some(tag), None),
+        Purpose::ChangeEmail {
+            session: SessionTag(tag),
+            new_email,
+        } => (Some(tag), Some(new_email)),
+    };
+    kept.push(Kept {
+        verifier: verifier.clone(),
+        session,
+        new_email,
+        next: next.map(str::to_string),
+        expires: now + START_MINUTES * 60,
+    });
+    kept.drain(..kept.len().saturating_sub(STARTS_KEPT));
+    let mut value = encode(&kept);
+    if value.len() > START_COOKIE_BYTES
+        && let Some(newest) = kept.last_mut()
+    {
+        newest.next = None;
+        value = encode(&kept);
+    }
+    while value.len() > START_COOKIE_BYTES && kept.len() > 1 {
+        kept.remove(0);
+        value = encode(&kept);
+    }
+    let started = Started {
+        state: state_of(&verifier),
+        verifier,
+    };
+    (started, value)
+}
+
+/// The live start in `cookie` whose state is `state`.
+pub fn find_start(cookie: &str, state: &str, now: OffsetDateTime) -> Option<Start> {
+    let now = now.unix_timestamp();
+    let start = decode(cookie)
+        .into_iter()
+        .find(|start| start.expires > now && state_of(&start.verifier) == state)?;
+    let purpose = match (start.session, start.new_email) {
+        (None, None) => Purpose::SignIn,
+        (Some(tag), None) => Purpose::Link(SessionTag(tag)),
+        (Some(tag), Some(new_email)) => Purpose::ChangeEmail {
+            session: SessionTag(tag),
+            new_email,
+        },
+        (None, Some(_)) => return None,
+    };
+    Some(Start {
+        purpose,
+        verifier: start.verifier,
+        next: start.next,
+    })
 }
 
 /// The live account `github_id` is linked to.
@@ -605,10 +635,11 @@ async fn refresh_one(
     Ok(Some(()))
 }
 
-/// Deletes the round trips and signups that expired, with the address a change of
-/// address's start holds, and the links of accounts an older
-/// binary deleted without them (crates/server/migration-rollback.txt, 0038), for the
-/// hourly tidy.
+/// Deletes signups that expired, the expired round trips an older binary kept in
+/// `github_starts`, with the address a change of address's start holds, before the
+/// browser's cookie held them (#127), and the links of accounts an older binary
+/// deleted without them (crates/server/migration-rollback.txt, 0038), for the hourly
+/// tidy.
 pub async fn tidy(pool: &SqlitePool, at: OffsetDateTime) -> Result<(), sqlx::Error> {
     let now = stamp(at);
     sqlx::query!("DELETE FROM github_starts WHERE expires_at <= ?", now)
