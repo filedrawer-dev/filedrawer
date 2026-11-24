@@ -32,6 +32,7 @@ pub use encoded::{
 };
 pub use fields::{DataItem, Fields, Model, PositiveControl, SmallestEffect, Writer};
 pub use file_mentions::file_mentions;
+pub use front_matter::without_attachments;
 pub use links::{
     GithubCommit, LISTED_HOSTS, Pin, code_pin, github_commit, listed_host, zenodo_record,
 };

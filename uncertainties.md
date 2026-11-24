@@ -487,6 +487,15 @@ The owner asked for an account an agent makes with no signup (#130); these choic
   Options: the token in a field of a text or JSON reply, or the header line as the whole body.
   Chosen: the body is the header line, as #54 planned for its poll, so the skill's command saves it unread and merges it only when it is one line of that shape; the status and headers are printed, the account's ID among them.
   Against: a reply with nothing to read above a delimiter is unlike every other one.
+- Identical text.
+  The owner asked for identical text from an unclaimed account to be refused; what is compared is mine.
+  Chosen: the stored text byte for byte, with the `attachments` field left out of both sides, since two posts of one entry name different sets, and without the `series` line, which the server stores apart; against every public entry, the account's own entries that are pending, screening, in review, held, frozen or public, and the same states of other unclaimed accounts.
+  A `PUT` may repeat the text of the entry it replaces, and a rejected, withdrawn or removed entry refuses nothing, so the rest of a rejected batch can be sent again unchanged.
+  Against: a change of one character passes, as does the same text with other line endings; the rule is for reruns, not for someone set on posting twice.
+  Two posts of one text sent at the same moment can both pass, since the check runs before the write.
+  The same entry can't be posted to a second series, and since a chain's earlier versions stay public, an unclaimed account can't post a new version that goes back to an earlier version's text.
+  A comment on the `attachments` line of more than a few sentences hides a duplicate, since candidates are found by length.
+  An unclaimed account can learn that a text waits in another unclaimed account, though not where; and a text one of them holds in review blocks every other one from posting it.
 - A request with an `Origin` that isn't the site's is refused, so a page elsewhere can't make accounts through a visitor's browser; one with none passes, as agents send none.
 - An unclaimed account can do everything a token can, series and feedback included; nothing is kept back until a claim.
 - The skill makes the account without asking first, in a run nobody watches too, so each such run with no lasting home folder makes a new account and can't see what an earlier one posted (the owner has this question open).

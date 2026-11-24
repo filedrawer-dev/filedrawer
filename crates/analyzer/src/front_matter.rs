@@ -64,6 +64,13 @@ pub(crate) fn without_reserved_fields(text: &str) -> String {
     without_fields(text, is_reserved)
 }
 
+/// `text` without its `attachments` front-matter field, which names the set of
+/// attached code an entry cites, so two posts of one entry compare equal whatever
+/// set each names.
+pub fn without_attachments(text: &str) -> String {
+    without_fields(text, |name| name == "attachments")
+}
+
 /// `text` without the top-level front-matter fields `cut` names. Each goes with every
 /// line up to the next top-level key. Text whose front matter doesn't parse, or where a
 /// field to cut shares its line with another key, comes back unchanged.

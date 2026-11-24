@@ -178,6 +178,11 @@ The owner expects little abuse and prefers limits to login friction.
   Reason for the site-wide count: a client with many IPv6 /64s passes the per-IP one (#114).
   An unclaimed account's submissions are processed at 5 a day, queued like any account's.
   A request to claim an account counts as an email to the address and from the IP, as a signup does, and is limited to 3 an hour for the account and 200 in a day across the site, since each sends an email to an address the server knows nothing of.
+  An unclaimed account can't post text that is posted already (#130; the owner's decision, 2026-11-23, "refuse identical text").
+  `POST /entries`, a `PUT`, a new version and each member of a batch are refused with a 409, taking no unit, when the text equals a public entry's, another entry's of the same account, or one another unclaimed account has waiting; which entries are compared is in uncertainties.md.
+  Reason: a run nobody watches, or a cloud agent with no lasting home folder, makes a new account each time and can't see what the last one posted, so it would post the same result again.
+  The reason names the entry when the account may read it, a public one or its own; a hidden entry of an account with an owner refuses nothing, since a refusal would say its text exists.
+  What counts as the same text is there too, under "Accounts an agent makes".
   The review guard, removal and suspension apply to it unchanged, and the owner accepts for the beta that a guarded account's holder can make another with one request (2026-11-23).
 - Failed logins are limited per email address, 10 an hour, whether or not an account uses it; past that, every login to the address waits for the window, the right password too.
   A wrong password on the form that changes an account's address is limited the same way, counted per account (uncertainties.md, "Changing an email address: wrong passwords are counted per account").

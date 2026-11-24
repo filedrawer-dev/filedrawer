@@ -1,0 +1,57 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT e.seq AS \"seq!\", e.id, e.source,\n                  (e.status = 'public' OR e.account_id = ?3) AS \"readable!: bool\"\n           FROM entries e INDEXED BY entries_source_length\n           JOIN accounts a ON a.id = e.account_id\n           WHERE length(CAST(e.source AS BLOB)) BETWEEN ?1 AND ?2\n             AND (e.status = 'public'\n                  OR ((e.account_id = ?3 OR a.unclaimed)\n                      AND e.status IN ('pending', 'screening', 'review', 'held', 'frozen')))\n           ORDER BY 4 DESC, e.seq",
+  "describe": {
+    "columns": [
+      {
+        "name": "seq!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "id",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "source",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "source"
+          }
+        }
+      },
+      {
+        "name": "readable!: bool",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "2251276481cb7ca12afb174768203f12a9e817ecfdb9d31360a9c31403e5156b"
+}

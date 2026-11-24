@@ -24,7 +24,7 @@ use crate::queue;
 use crate::respond::{DELIMITER, Format, card_and_warnings};
 use crate::routes::submit::{Accepted, accept, cited_series, cited_set};
 use crate::series::Cited;
-use crate::{AppState, allowance, time, warnings};
+use crate::{AppState, allowance, duplicates, time, warnings};
 use ::time::{Date, OffsetDateTime};
 
 /// Every string in `value`, however deeply nested.
@@ -155,6 +155,24 @@ pub async fn submit_batch(
         labels.push(label);
     }
     let declarations: BTreeMap<String, String> = runs.iter().cloned().collect();
+    // Text an unclaimed account may not post again refuses the batch: with a 409
+    // when that is all that's wrong, and listed with the rest otherwise. A member
+    // the checks above refused has no label here, and its reasons are listed already.
+    if accepted.len() == labels.len() {
+        let (pool, url) = (&state.pool, &state.public_url);
+        let mut reasons = Vec::new();
+        for (member, label) in accepted.iter().zip(&labels) {
+            let posted = duplicates::refusal(pool, url, &account.id, &member.source, None).await?;
+            reasons.extend(posted.map(|reason| format!("{label}: {reason}")));
+        }
+        if problems.is_empty() && !reasons.is_empty() {
+            return Err(AppError::Refused {
+                status: StatusCode::CONFLICT,
+                reasons,
+            });
+        }
+        problems.extend(reasons);
+    }
     if problems.is_empty() {
         let linked: Vec<Linked<'_>> = accepted
             .iter()

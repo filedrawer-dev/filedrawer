@@ -20,7 +20,7 @@ use crate::links::{self, Linked, SlugRule};
 use crate::provenance::Provenance;
 use crate::respond::{DELIMITER, Format, card_and_warnings};
 use crate::series::{self, Cited};
-use crate::{AppState, allowance, attachments, removed_files, time, warnings};
+use crate::{AppState, allowance, attachments, duplicates, removed_files, time, warnings};
 use ::time::Date;
 use analyzer::{SeriesCite, parse_series_cite, without_series};
 
@@ -158,6 +158,24 @@ async fn one_cite(
         })
 }
 
+/// Refuses text an unclaimed account may not post because it is posted already
+/// (`duplicates`). `replacing` is the pending entry a PUT replaces.
+async fn not_posted_already(
+    state: &AppState,
+    account: &TokenAccount,
+    accepted: &Accepted,
+    replacing: Option<i64>,
+) -> Result<(), AppError> {
+    let (pool, url) = (&state.pool, &state.public_url);
+    match duplicates::refusal(pool, url, &account.id, &accepted.source, replacing).await? {
+        Some(reason) => Err(AppError::Refused {
+            status: StatusCode::CONFLICT,
+            reasons: vec![reason],
+        }),
+        None => Ok(()),
+    }
+}
+
 /// Refuses one entry the account's allowance has no room for, which would be
 /// refused when stored anyway: asked before its links are checked, so it costs no
 /// fetches.
@@ -283,6 +301,7 @@ pub async fn submit(
     body: Bytes,
 ) -> Result<Response, AppError> {
     let accepted = accept(&body)?;
+    not_posted_already(&state, &account, &accepted, None).await?;
     check_references(&state, &account, &accepted, SlugRule::New).await?;
     let cited = one_cite(&state, &account, &accepted).await?;
     let set = one_set(&state, &account, &accepted).await?;
@@ -352,6 +371,7 @@ pub async fn new_version(
         return Err(conflict);
     }
     let accepted = accept(&body)?;
+    not_posted_already(&state, &account, &accepted, None).await?;
     let chain_slug = entries::chain_slug(&state.pool, entry.seq).await?;
     let register_slug = chain_slug.is_none() && accepted.analysis.fields.slug.is_some();
     check_references(&state, &account, &accepted, SlugRule::Version(chain_slug)).await?;
@@ -478,6 +498,7 @@ pub async fn resubmit(
 ) -> Result<Response, AppError> {
     let entry = own_pending(&state, &id, &account).await?;
     let accepted = accept(&body)?;
+    not_posted_already(&state, &account, &accepted, Some(entry.seq)).await?;
     // A slug names the entry for good, and other entries may already refer to it.
     let kept = analyzer::analyze(&entry.source).fields.slug;
     check_references(&state, &account, &accepted, SlugRule::Put(kept)).await?;

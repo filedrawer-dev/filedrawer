@@ -18,6 +18,7 @@ pub mod config;
 pub mod daily_email;
 pub mod db;
 mod deletion;
+mod duplicates;
 pub mod email_change;
 mod entries;
 mod error;
