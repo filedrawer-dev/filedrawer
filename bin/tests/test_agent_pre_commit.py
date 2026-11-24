@@ -67,6 +67,44 @@ LAYOUT = {
         '    (tmp_path / "docs").mkdir()\n'
     ),
     "tool.toml": "",
+    # A bin test that runs a script, which reads a root file: the full check selects
+    # that test for a change to the file.
+    "bin/tests/test_reader.py": (
+        "from pathlib import Path\n"
+        "REPO = Path(__file__).resolve().parents[2]\n"
+        'READER = REPO / "bin/reader"\n'
+    ),
+    "bin/reader": '#!/bin/sh\ncat "$(dirname "$0")/../lib/read.toml"\n',
+    "lib/read.toml": "",
+    # A bin test that reaches all of bin/, which doesn't make it a test of each script.
+    "bin/tests/test_everything.py": (
+        'from pathlib import Path\nBIN = Path(__file__).resolve().parents[2] / "bin"\n'
+    ),
+    # A helper beside the tests, which any of them may import, reads a root file.
+    "bin/tests/helpers.py": (
+        "from pathlib import Path\n"
+        'SHARED = Path(__file__).resolve().parents[2] / "shared.toml"\n'
+    ),
+    "shared.toml": "",
+    # A bin test that joins both a script and the file the script reads, and one that
+    # names two scripts reading the same file.
+    "bin/tests/test_both.py": (
+        "from pathlib import Path\n"
+        "REPO = Path(__file__).resolve().parents[2]\n"
+        'SCRIPT = REPO / "bin/both"\n'
+        'READ = REPO / "lib/both.toml"\n'
+    ),
+    "bin/both": '#!/bin/sh\ncat "$(dirname "$0")/../lib/both.toml"\n',
+    "lib/both.toml": "",
+    "bin/tests/test_pair.py": (
+        "from pathlib import Path\n"
+        "REPO = Path(__file__).resolve().parents[2]\n"
+        'ONE = REPO / "bin/one"\n'
+        'TWO = REPO / "ops/two"\n'
+    ),
+    "bin/one": '#!/bin/sh\ncat "$(dirname "$0")/../lib/pair.toml"\n',
+    "ops/two": '#!/bin/sh\ncat "$(dirname "$0")/../lib/pair.toml"\n',
+    "lib/pair.toml": "",
     # The crate's integration tests, one binary: a file and a folder with mod.rs,
     # each with its `mod` line, and a folder of data that is no module.
     "crates/app/tests/it/main.rs": "mod common;\nmod one;\n",
@@ -225,6 +263,22 @@ def why(tree: Path, path: str) -> str:
     )
     assert done.returncode == 0, done.stdout + done.stderr
     return done.stdout
+
+
+def selected(tree: Path, *paths: str, env: dict | None = None) -> list[str]:
+    """The pytest arguments bin/checks-needed --bin-tests picks for a change to
+    `paths` in `tree`: the bin test files to run, or bin/tests for all of them."""
+    out = tree.parent / "bin-tests"
+    done = subprocess.run(
+        [str(tree / "bin/checks-needed"), "--bin-tests", str(out), str(tree)],
+        input="\0".join(paths),
+        capture_output=True,
+        text=True,
+        check=False,
+        env=None if env is None else os.environ | env,
+    )
+    assert done.returncode == 0, done.stdout + done.stderr
+    return out.read_text().splitlines()
 
 
 RUST = {"nextest", "doctest", "clippy"}
@@ -731,6 +785,81 @@ def test_a_root_file_a_bin_test_reads_runs_bin_tests(repo):
     assert run(repo) == {"pytest"}
 
 
+@pytest.mark.parametrize(
+    "paths, args",
+    [
+        # The test that joins the file.
+        (["tool.toml"], ["bin/tests/test_tool.py"]),
+        # The test that names the script that reads it, not the one that joins all
+        # of bin/.
+        (["lib/read.toml"], ["bin/tests/test_reader.py"]),
+        (
+            ["tool.toml", "lib/read.toml"],
+            ["bin/tests/test_reader.py", "bin/tests/test_tool.py"],
+        ),
+        # A crate's sources hold the references test_checks_needed.py's table follows.
+        (["crates/app/src/lib.rs"], ["bin/tests/test_checks_needed.py"]),
+        (
+            ["crates/app/src/lib.rs", "tool.toml"],
+            ["bin/tests/test_checks_needed.py", "bin/tests/test_tool.py"],
+        ),
+        # A helper beside the tests reads it, and any test may import that.
+        (["shared.toml"], ["bin/tests"]),
+        # Only ops/run reads it, and no test names ops/run.
+        (["conf/settings.toml"], ["bin/tests"]),
+        # bin/ and ops/ are bin/tests' own.
+        (["bin/other"], ["bin/tests"]),
+        (["tool.toml", "bin/other"], ["bin/tests"]),
+        # Nothing changed narrows nothing.
+        ([], ["bin/tests"]),
+        # No bin test reads them.
+        (["docs/notes.md"], []),
+        (["docs/format.md"], []),
+    ],
+)
+def test_bin_tests_selects_the_tests_that_reach_the_change(repo, paths, args):
+    assert selected(repo, *paths) == args
+
+
+@pytest.mark.parametrize(
+    "path, args",
+    [
+        ("lib/both.toml", ["bin/tests/test_both.py"]),
+        ("lib/pair.toml", ["bin/tests/test_pair.py"]),
+    ],
+)
+def test_a_script_reached_down_another_chain_still_counts_as_tested(repo, path, args):
+    # The holders are sets, so their order follows the hash seed: each seed must give
+    # the same selection.
+    for seed in range(8):
+        assert selected(repo, path, env={"PYTHONHASHSEED": str(seed)}) == args, seed
+
+
+def pytest_args(repo: Path) -> list[str]:
+    """What each pytest run through bin/pytest was handed, after bin/pytest's own
+    options."""
+    return [call.split("no:cacheprovider ", 1)[1] for call in uvx_calls(repo)]
+
+
+def test_the_full_check_runs_only_the_bin_tests_a_change_reaches(repo):
+    change(repo, "tool.toml")
+    change(repo, "lib/read.toml")
+    run(repo)
+    assert pytest_args(repo) == ["bin/tests/test_reader.py bin/tests/test_tool.py"]
+
+
+def test_the_full_check_runs_every_bin_test_for_a_change_in_bin(repo):
+    change(repo, "bin/other")
+    run(repo)
+    assert pytest_args(repo) == ["bin/tests"]
+
+
+def test_without_check_base_the_full_check_runs_every_bin_test(repo):
+    change(repo, "tool.toml")
+    run(repo, base=None)
+    assert pytest_args(repo) == ["bin/tests"]
+
+
 def test_without_check_base_as_in_ci_every_check_runs(repo):
     change(repo, "docs/notes.md")
     assert run(repo, base=None) == EVERY
@@ -805,6 +934,18 @@ def test_a_failing_checks_needed_runs_every_check_and_says_so(repo):
     assert ran == EVERY
     assert "broken" in done.stderr
     assert "bin/checks-needed failed, so every check runs" in done.stderr
+    assert pytest_args(repo) == ["bin/tests"]
+
+
+def test_a_checks_needed_that_writes_a_selection_and_fails_runs_every_bin_test(repo):
+    (repo / "bin/checks-needed").write_text(
+        '#!/bin/sh\nwhile [ "$1" != --bin-tests ]; do shift; done\n'
+        'echo bin/tests/test_tool.py > "$2"\nexit 3\n'
+    )
+    commit(repo)
+    change(repo, "tool.toml")
+    run(repo)
+    assert pytest_args(repo) == ["bin/tests"]
 
 
 @pytest.mark.parametrize("committed", [False, True], ids=["staged", "committed"])

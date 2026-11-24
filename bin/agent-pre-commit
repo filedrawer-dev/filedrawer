@@ -17,7 +17,9 @@
 # only the failures and a summary (.config/nextest.toml); it skips doctests, so cargo
 # test --doc runs those.
 # Each check runs only when the change needs it: the Rust checks for a build input,
-# bin/tests for what those tests read. The change is what the index holds against
+# bin/tests for what those tests read, and of bin/tests only the test files that reach
+# the change, as bin/checks-needed --bin-tests picks them, else the whole suite. The
+# change is what the index holds against
 # $CHECK_BASE, which llm-toolbox's agent-commit-gate sets to the nearest commit whose
 # tree passed this script, or for --quick at a commit, either this or the commit check
 # (`agent-commit-gate -h`): at a commit, usually HEAD, so the
@@ -102,7 +104,9 @@ elif tr '\0' '\n' <"$logs/changed" | grep -qxE 'bin/(checks-needed|agent-pre-com
   need_every_check "(the change touches these rules)"
 elif [ ! -x "$tree/bin/checks-needed" ]; then
   need_every_check "(no bin/checks-needed staged)"
-elif ! timeout 60 "$tree/bin/checks-needed" "$tree" <"$logs/changed" >"$logs/needed" 2>"$logs/scope"; then
+elif ! timeout 60 "$tree/bin/checks-needed" --bin-tests "$logs/bin-tests" "$tree" \
+  <"$logs/changed" >"$logs/needed" 2>"$logs/scope"; then
+  rm -f "$logs/bin-tests"
   cat "$logs/scope" >&2
   echo "agent-pre-commit: bin/checks-needed failed, so every check runs" >&2
   need_every_check "(bin/checks-needed failed)"
@@ -170,7 +174,15 @@ if [ -n "$caddy" ] && needs caddy && [ -x bin/pytest ]; then
 fi
 if [ -z "$quick" ] && needs bin-tests; then
   queue_first bin-tests
-  bin/pytest bin/tests >"$logs/pytest" 2>&1 || { cat "$logs/pytest"; failed=1; }
+  # The bin test files that reach what changed, as checks-needed picked them, else
+  # all of bin/tests: without a base, with every check forced, or when it failed.
+  # pytest.ini's workers stay on even for three files, which then take 5 s, not 18 s.
+  bin_tests=bin/tests
+  if [ -s "$logs/bin-tests" ]; then
+    bin_tests=$(cat "$logs/bin-tests") || bin_tests=bin/tests
+  fi
+  # shellcheck disable=SC2086  # paths without spaces, one word each
+  bin/pytest $bin_tests >"$logs/pytest" 2>&1 || { cat "$logs/pytest"; failed=1; }
 fi
 if [ -f Cargo.toml ] && needs rust; then
   queue_first rust

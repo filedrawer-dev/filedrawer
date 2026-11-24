@@ -90,6 +90,65 @@ def test_the_checks_a_change_to_each_path_needs(path, checks):
     assert needed(path) == checks, why(path)
 
 
+def selected(tmp_path: Path, *paths: str) -> list[str]:
+    """The bin test files bin/checks-needed --bin-tests picks for a change to `paths`,
+    or bin/tests for all of them."""
+    out = tmp_path / "bin-tests"
+    done = subprocess.run(
+        [str(SCRIPT), "--bin-tests", str(out), str(REPO)],
+        input="\0".join(paths),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert done.returncode == 0, done.stdout + done.stderr
+    return out.read_text().splitlines()
+
+
+@pytest.mark.parametrize(
+    "path, tests",
+    [
+        # test_analyzer_docs.py reads the analyzer's sources, test_license_copies.py
+        # each crate's LICENSE, and this file's table the crates' references.
+        (
+            "crates/analyzer/src/front_matter.rs",
+            [
+                "bin/tests/test_analyzer_docs.py",
+                "bin/tests/test_checks_needed.py",
+                "bin/tests/test_license_copies.py",
+            ],
+        ),
+        # test_live_preview.py copies the server's templates and static files, not
+        # its sources.
+        (
+            "crates/server/src/routes/read.rs",
+            ["bin/tests/test_checks_needed.py", "bin/tests/test_license_copies.py"],
+        ),
+        (
+            "crates/server/templates/home.html",
+            [
+                "bin/tests/test_checks_needed.py",
+                "bin/tests/test_license_copies.py",
+                "bin/tests/test_live_preview.py",
+            ],
+        ),
+        # test_npm_package.py runs pack.mjs, which packs the launcher beside it.
+        (
+            "crates/cli/npm/filedrawer.js",
+            [
+                "bin/tests/test_checks_needed.py",
+                "bin/tests/test_license_copies.py",
+                "bin/tests/test_npm_package.py",
+            ],
+        ),
+        ("bin/lychee", ["bin/tests"]),
+        ("docs/design.md", []),
+    ],
+)
+def test_a_change_runs_only_the_bin_tests_that_reach_it(tmp_path, path, tests):
+    assert selected(tmp_path, path) == tests
+
+
 def test_why_names_the_crate_source_that_embeds_a_doc():
     output = why("docs/entry-format.md").splitlines()
     # The rust check's chain, up to the next check's name (skills follows it too).

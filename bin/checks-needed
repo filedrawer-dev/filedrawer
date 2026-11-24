@@ -2,6 +2,7 @@
 """Which of bin/agent-pre-commit's checks a change needs.
 
     git diff --cached -z --name-only --no-renames BASE | bin/checks-needed [TREE]
+    ... | bin/checks-needed --bin-tests FILE [TREE]
     bin/checks-needed --why PATH [TREE]
 
 TREE (default .) holds the files as staged; agent-pre-commit passes its copy of the
@@ -11,7 +12,7 @@ gives what's staged. It prints a line for each check the change needs, the check
 name and the first path that needs it:
 
     rust       cargo nextest, cargo test --doc and clippy
-    bin-tests  pytest over bin/tests
+    bin-tests  pytest over bin/tests, or the test files --bin-tests picks
     skills     bin/skills sync --check, which needs no build
     routes     at a commit, the test that every route is named for agents or
                listed in NOT_FOR_AGENTS (the full check's nextest holds it)
@@ -29,6 +30,20 @@ name and the first path that needs it:
                full check's bin-tests holds them)
 
 No paths needs every check: with nothing changed, nothing narrows them.
+
+--bin-tests FILE also writes to FILE what the full check hands pytest for bin-tests,
+one argument a line: the bin test files that reach a changed path, sorted, or
+bin/tests, the whole suite. FILE is empty when no path needs bin-tests. A test reaches
+a path when one of its joins does, or when it names a script that reaches it, in turn;
+past that first step only a join that names the script itself counts, since a test
+that joins all of bin/ is no test of each script in it. A path that is an input of
+rust, skills or routes also picks bin/tests/test_checks_needed.py, whose table of this
+tree follows the references those checks read. The whole suite runs when nothing
+changed, when a changed path lies in bin/ or ops/ or is .gitattributes, and when a
+path is reached by a file in bin/tests that isn't a test_*.py file (a helper any test
+may import) or by a script no test names (one a test may run through PATH). So an
+analyzer source change runs test_analyzer_docs.py, test_checks_needed.py and
+test_license_copies.py, not the whole suite.
 
 --why PATH says why a change to PATH, relative to TREE's root, needs each check it
 needs: the check's name, then the chain of references that made PATH one of its
@@ -61,9 +76,9 @@ A path needs rust when it is a build input, or lies in a folder that is one:
   or one above it doesn't count, since scripts cd there.
 
 A path needs bin-tests when it lies in bin/ or ops/, is .gitattributes, lies in a
-crate (bin/tests/test_checks_needed.py reads their references), or is what the scripts
-there reach, as above. That takes in the bin tests' own `REPO / "..."` joins. Mentions
-in prose don't count.
+crate (bin/tests/test_checks_needed.py reads their references; --bin-tests picks which
+tests), or is what the scripts there reach, as above. That takes in the bin tests' own
+`REPO / "..."` joins. Mentions in prose don't count.
 
 A path needs skills when it lies in skills/, or is docs/entry-format.md or bin/skills.
 
@@ -81,8 +96,11 @@ bin/caddy, a bin test file that holds a real-Caddy test
 (bin/tests/test_remote_environments.py or bin/tests/test_field_test_key.py), or
 bin/tests/conftest.py, which holds their fixture and marks them.
 
-The rules miss a path a crate builds without a `..` step, and a Python path not
-derived from __file__. CI runs every check, so it catches what they miss.
+The rules miss a path a crate builds without a `..` step, a Python path not derived
+from __file__, and what a file in another language reads, such as the .mjs script
+bin/tests/test_npm_package.py runs: a test that runs one joins the folder it reads, so
+--bin-tests picks the test for a change there. CI runs every check, so it catches what
+they miss.
 """
 
 import argparse
@@ -394,6 +412,8 @@ class Inputs:
         # The file names that are inputs wherever they lie, each with its rule's line.
         self.by_name = by_name or {}
         self.steps = dict(starts)
+        # Every reference read, as (the file that makes it, the path it reaches).
+        self.refs: list[tuple[str, str]] = []
         # Breadth first, so each path's first Step lies on a shortest chain.
         todo = deque(self.steps if follow else ())
         read = set()
@@ -406,6 +426,7 @@ class Inputs:
                     continue
                 read.add(path)
                 for found, text in tree.script_refs(path).items():
+                    self.refs.append((path, found))
                     if found not in self.steps:
                         self.steps[found] = Step(text, via=ref)
                         todo.append(found)
@@ -481,6 +502,7 @@ def main(argv: list[str]) -> int:
     )
     parser.add_argument("tree", nargs="?", default=".", metavar="TREE")
     parser.add_argument("--why", metavar="PATH")
+    parser.add_argument("--bin-tests", metavar="FILE")
     args = parser.parse_args(argv)
     why = None if args.why is None else resolve(ROOT, args.why)
     if args.why is not None and (args.why.startswith("/") or not why):
@@ -590,7 +612,63 @@ def main(argv: list[str]) -> int:
             print(f"{name} (nothing differs from the base)")
         elif first := next((path for path in changed if inputs.needs(path)), None):
             print(f"{name} {first}")
+    if args.bin_tests is not None:
+        selection = select_bin_tests(checks, changed)
+        Path(args.bin_tests).write_text("".join(f"{arg}\n" for arg in selection))
     return 0
+
+
+EVERY_BIN_TEST = ["bin/tests"]
+# Runs checks-needed on this tree, so its table changes with any file whose
+# references a check follows.
+TABLE_TEST = "bin/tests/test_checks_needed.py"
+
+
+def select_bin_tests(checks: dict[str, Inputs], changed: list[str]) -> list[str]:
+    """The pytest arguments for the bin-tests check of a change to `changed`: the bin
+    test files that reach it, or bin/tests for all of them; none when the change needs
+    no bin test."""
+    if not changed:
+        return EVERY_BIN_TEST
+    inputs = checks["bin-tests"]
+    selected: set[str] = set()
+    for path in changed:
+        if not inputs.needs(path):
+            continue
+        if any(within(path, start) for start in BIN_TESTS_PATHS):
+            return EVERY_BIN_TEST
+        tests = tests_reaching(inputs, path)
+        if tests is None:
+            return EVERY_BIN_TEST
+        selected |= tests
+        if any(checks[name].needs(path) for name in ("rust", "skills", "routes")):
+            selected.add(TABLE_TEST)
+    return sorted(selected)
+
+
+def tests_reaching(inputs: Inputs, path: str) -> set[str] | None:
+    """The bin test files that reach `path`, directly or through the scripts that do;
+    None when a file beside the tests that isn't a test, which any of them may import,
+    reaches it, or a script that no test names, in turn, does. Past the first step only
+    a reference that names a script itself counts: a test that joins all of bin/ isn't
+    a test of each script in it."""
+    holders = {path: {h for h, ref in inputs.refs if within(path, ref)}}
+    todo = deque(holders[path])
+    while todo:
+        script = todo.popleft()
+        if script in holders or within(script, "bin/tests"):
+            continue
+        holders[script] = {h for h, ref in inputs.refs if ref == script}
+        todo.extend(holders[script])
+    tests = {h for found in holders.values() for h in found if within(h, "bin/tests")}
+    if any(not PurePosixPath(test).name.startswith("test_") for test in tests):
+        return None
+    # A script counts as tested once a test, or a script that counts, names it.
+    scripts = set(holders) - {path}
+    tested: set[str] = set()
+    while more := {s for s in scripts - tested if holders[s] & (tests | tested)}:
+        tested |= more
+    return None if scripts - tested else tests
 
 
 if __name__ == "__main__":

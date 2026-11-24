@@ -20,9 +20,13 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[2]
-PACK = REPO / "crates/cli/npm/pack.mjs"
+# The whole crate, not only pack.mjs: pack.mjs packs the launcher, the README and the
+# LICENSE it finds there, reads bin/checks-needed can't see, so this join is what makes
+# a change to any of them run these tests (bin/checks-needed -h).
+CLI = REPO / "crates/cli"
+PACK = CLI / "npm/pack.mjs"
 CLI_VERSION = re.search(
-    r'^version = "(.*)"$', (REPO / "crates/cli/Cargo.toml").read_text(), re.M
+    r'^version = "(.*)"$', (CLI / "Cargo.toml").read_text(), re.M
 ).group(1)
 REPOSITORY = "git+https://github.com/filedrawer-dev/filedrawer.git"
 # Rust target → (npm package, os, cpu, binary's name), as release-cli.yml builds them.

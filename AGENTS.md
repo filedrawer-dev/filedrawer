@@ -153,6 +153,7 @@ wt-ship runs the full check, `bin/agent-pre-commit`, on each commit when it land
 The change is what differs from `$CHECK_BASE`, which llm-toolbox's `agent-commit-gate` sets to the nearest commit that passed: at a commit, usually HEAD, so what's staged; on wt-ship's recheck, the commit before, or for the first, the tip it rebased onto.
 The Rust checks run for a build input: anything in `crates/`, the Cargo files, `.sqlx/`, `.cargo/` and `.config/`, and the files the crates embed or their tests read, such as `docs/entry-format.md` and `ops/smoke-staging`.
 `bin/tests` runs for a change in `bin/`, `ops/` or a crate (one of its tests reads the crates' references), or to a file those tests read, such as `.pre-commit-config.yaml`.
+Outside `bin/` and `ops/`, it runs only the test files that reach the change, so an analyzer change runs three of them, not the whole suite (`bin/checks-needed -h`, `--bin-tests`).
 A commit of other docs runs neither, and doesn't wait in heavy's queue either.
 Each check asks `agent-commit-gate` for a place there only as it starts (`$CHECK_QUEUE_EXIT`, `agent-commit-gate -h`), so a commit that needs none passes in seconds.
 `bin/checks-needed` finds the embeds and reads in the sources on each commit, so a new `include_str!` needs no list kept by hand; its `-h` gives the rules.

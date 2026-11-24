@@ -125,8 +125,10 @@ class Preview:
 
 def copy_pages(root: Path) -> None:
     """This repo's templates and static files, copied under `root`."""
-    for part in ("templates", "static"):
-        shutil.copytree(REPO / "crates/server" / part, root / "crates/server" / part)
+    # Each folder spelled out, so bin/checks-needed picks these tests for a change to
+    # the pages but not to the server's other files.
+    for source in (REPO / "crates/server/templates", REPO / "crates/server/static"):
+        shutil.copytree(source, root / "crates/server" / source.name)
 
 
 def start(*args, env=None) -> tuple[subprocess.Popen, str, list[str]]:
