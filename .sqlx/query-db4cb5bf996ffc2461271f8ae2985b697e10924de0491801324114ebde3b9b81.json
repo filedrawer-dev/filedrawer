@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE account_claims SET wrong_codes = wrong_codes + 1 WHERE account_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "db4cb5bf996ffc2461271f8ae2985b697e10924de0491801324114ebde3b9b81"
+}

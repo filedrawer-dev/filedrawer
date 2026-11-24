@@ -406,6 +406,18 @@ pub struct ResetConfirmPage<'a> {
     pub error: Option<&'a str>,
 }
 
+/// The page behind a claim's emailed link (design.md, Accounts; #130).
+#[derive(Template)]
+#[template(path = "claim.html")]
+pub struct ClaimPage<'a> {
+    pub token: &'a str,
+    pub account_id: &'a str,
+    /// The entries the account holds.
+    pub entries: i64,
+    pub display_name: &'a str,
+    pub error: Option<&'a str>,
+}
+
 #[derive(Template)]
 #[template(path = "delete.html")]
 pub struct DeletePage<'a> {

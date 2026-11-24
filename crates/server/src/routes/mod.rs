@@ -7,6 +7,7 @@ pub mod assets;
 pub mod attachments;
 pub mod batch;
 pub mod beta;
+pub mod claim;
 pub mod delete;
 pub mod docs;
 pub mod feedback;

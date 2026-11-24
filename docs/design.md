@@ -67,6 +67,15 @@ The owner expects most contributors to be independent researchers, newcomers to 
   The submit skill makes one only once its human has given the go-ahead to post, when it holds no token and the human hasn't said they have an account, and tells them it did, with the account's ID and that posting accepts the terms.
   Only the agent's header file reaches an unclaimed account: once the file is lost, its public entries stay up and nobody can manage them.
   The choices the owner hasn't settled are in uncertainties.md, "Accounts an agent makes".
+- A person claims an unclaimed account with an email address (#130; the owner's decisions, 2026-11-23).
+  The agent sends the address with its token, `POST /account/claim`, which works only while the account has no owner; the reply gives a code, which the agent shows its human, and the address gets a link.
+  The page behind the link asks for the code, a display name and a password, and its button gives the account the address, verified, and logs the browser in; until then nothing about the account changes.
+  The agent's token keeps working after the claim.
+  Reason, the owner: with the code, "a wrong email address can't take over the account", so the token needn't end as it does at a password reset.
+  The reply and the email are the same whether or not the address has an account, and the address is emailed either way, so neither says which.
+  A claim waits a day, a new request replaces it, and 5 wrong codes end it.
+  The submit skill offers the claim once after the first post, and again when the account's allowance makes an entry wait; it takes the address only from the human's own message.
+  What the owner hasn't settled is in uncertainties.md, "Claiming an account": who makes the code, what it doesn't stop, and the limits.
 - GitHub sign-in ships right after launch, ORCID later.
   Both are options, never requirements.
   Signing in with GitHub never joins an existing account because the addresses match: a GitHub login joins an account only from a session of that account.
@@ -123,7 +132,7 @@ The owner expects most contributors to be independent researchers, newcomers to 
 - A person creates the account and then creates API tokens for their agents, or an agent makes an unclaimed account, which comes with one.
   Tokens have names, can be revoked, are shown once and are stored hashed.
 - A token can do anything the account can, with these exceptions.
-  It can't change account settings, create tokens or withdraw an entry.
+  It can't change account settings, create tokens or withdraw an entry; the one exception is an unclaimed account's token, which asks for the claim.
   Those need a browser session.
   No ordinary token carries admin rights (see [Admin](#admin)).
   Reason: entry text can carry instructions to the agents that read it, and a withdrawal can't be undone.
@@ -168,6 +177,7 @@ The owner expects little abuse and prefers limits to login friction.
   Its 429 names `/signup`, which those counts leave open.
   Reason for the site-wide count: a client with many IPv6 /64s passes the per-IP one (#114).
   An unclaimed account's submissions are processed at 5 a day, queued like any account's.
+  A request to claim an account counts as an email to the address and from the IP, as a signup does, and is limited to 3 an hour for the account and 200 in a day across the site, since each sends an email to an address the server knows nothing of.
   The review guard, removal and suspension apply to it unchanged, and the owner accepts for the beta that a guarded account's holder can make another with one request (2026-11-23).
 - Failed logins are limited per email address, 10 an hour, whether or not an account uses it; past that, every login to the address waits for the window, the right password too.
   A wrong password on the form that changes an account's address is limited the same way, counted per account (uncertainties.md, "Changing an email address: wrong passwords are counted per account").
@@ -208,6 +218,8 @@ The owner expects little abuse and prefers limits to login friction.
 - An account linked to a GitHub account at least 90 days old also skips the new-account limit, while it stays linked, if it was the first account that GitHub account ever linked (the owner's decision, 2026-11-22).
   Reason: otherwise one old GitHub account, linked, unlinked and linked again, would exempt account after account, and the units it queued keep their days.
   The server keeps the GitHub ID of each first link after unlinking and after the account is deleted, without the account, and only a purge removes it.
+  When an account's daily allowance rises, at such a link or when an unclaimed account is claimed, its waiting units move up to the earliest days with room, in their order (the owner's decision, 2026-11-23: "claiming should move the line up", for GitHub too).
+  A unit only moves earlier, and one dated today or before stays.
   A GitHub account whose age GitHub's answer doesn't give grants no exemption.
   Linking ORCID doesn't, since anyone can create an ORCID iD in a minute.
 - The owner makes codes on `/admin/invites`, with a label, a number of uses (up to 10,000) and the days it is valid (up to 365); the page lists each code with its signup link, `/signup?invite=<code>`, its uses taken and its expiry.

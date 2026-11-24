@@ -979,3 +979,28 @@ async fn a_password_reset_unlinks_github() {
         .unwrap();
     assert_eq!(kept, 1);
 }
+
+#[tokio::test]
+async fn linking_an_old_github_account_moves_waiting_entries_up() {
+    let (app, github) = github_app().await;
+    let (session, token) = browser_account(&app, "grace@example.com").await;
+    let mut last = String::new();
+    for n in 0..21 {
+        let text = common::entry(&format!("Steering {n}"), "");
+        let reply = app.post_as("/entries", Some(&token), text).await;
+        assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
+        last = common::id_in(&reply.body);
+    }
+    // A new account's 21st entry waits for tomorrow's units.
+    let path = format!("/e/{last}");
+    let waiting = app.get_with_token(&path, &token).await;
+    let tomorrow = common::date_in(1);
+    assert_eq!(field(&waiting.body, "screen_from"), Some(tomorrow.as_str()));
+    github.code_for("c1", octo(1, "grace-gh", "grace@example.com"));
+    let (state, browser) = start(&app, "/account/github/link", Some(&session)).await;
+    let back = come_back(&app, &state, "c1", &format!("{session}; {browser}")).await;
+    assert_eq!(back.location(), Some("/account"), "{}", back.body);
+    // The link lifts the new-account limit, so today has room.
+    let moved = app.get_with_token(&path, &token).await;
+    assert_eq!(field(&moved.body, "screen_from"), None, "{}", moved.body);
+}

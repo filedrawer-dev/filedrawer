@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE account_claims SET link_hash = NULL WHERE link_hash = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "1eeea9067777fa369f27cf575d6f11d986ceefd60a22e5cc66bf464c79a8d9f1"
+}

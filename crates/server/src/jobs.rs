@@ -120,6 +120,9 @@ pub async fn run_tidier(state: AppState) {
         if let Err(error) = crate::mail_queue::tidy(&state.pool, OffsetDateTime::now_utc()).await {
             tracing::error!(%error, "tidying the mail queue failed");
         }
+        if let Err(error) = crate::claims::tidy(&state.pool, OffsetDateTime::now_utc()).await {
+            tracing::error!(%error, "tidying the pending claims failed");
+        }
         if let Err(error) = crate::email_change::tidy(&state.pool, OffsetDateTime::now_utc()).await
         {
             tracing::error!(%error, "tidying the pending changes of address failed");

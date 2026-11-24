@@ -93,6 +93,10 @@ pub async fn delete(state: &AppState, account_id: &str) -> Result<(), sqlx::Erro
         sqlx::query!("DELETE FROM email_tokens WHERE account_id = ?", account_id),
         sqlx::query!("DELETE FROM outgoing_mail WHERE account_id = ?", account_id),
         sqlx::query!("DELETE FROM email_changes WHERE account_id = ?", account_id),
+        sqlx::query!(
+            "DELETE FROM account_claims WHERE account_id = ?",
+            account_id
+        ),
         // The kept entries forget the tokens that submitted them, which go next.
         sqlx::query!(
             "UPDATE entries SET token_id = NULL WHERE account_id = ?",

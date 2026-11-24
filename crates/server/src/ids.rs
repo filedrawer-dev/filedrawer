@@ -45,6 +45,13 @@ pub fn new_secret() -> String {
     random_text(52)
 }
 
+/// A new claim code, which an agent shows its human and the human types: 8
+/// characters, 40 bits, as `xxxx-xxxx`.
+pub fn new_claim_code() -> String {
+    let text = random_text(8);
+    format!("{}-{}", &text[..4], &text[4..])
+}
+
 /// What the database keeps of a token or secret.
 pub fn token_hash(token: &str) -> Vec<u8> {
     Sha256::digest(token.as_bytes()).to_vec()

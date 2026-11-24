@@ -491,6 +491,29 @@ The owner asked for an account an agent makes with no signup (#130); these choic
 - An unclaimed account can do everything a token can, series and feedback included; nothing is kept back until a claim.
 - The skill makes the account without asking first, in a run nobody watches too, so each such run with no lasting home folder makes a new account and can't see what an earlier one posted (the owner has this question open).
 
+#### Claiming an account
+
+The owner asked for a claim by email address, with a code the human enters and the agent's token kept (#130); these choices around it are mine.
+
+- Who makes the code.
+  Options: the agent chooses it and sends it with the address, as the owner described; or the server makes it and returns it in the reply.
+  Chosen: the server makes it, 8 characters shown as `xxxx-xxxx`, so it is never a weak one, and the agent shows it to its human.
+  Against: the owner's words were "the agent submits a code".
+- What the code doesn't stop.
+  It stops a mistyped address, and a stranger whose address was named, from taking the account, since neither has the code.
+  It doesn't stop an agent that entry text or a tool's output has hijacked: that agent reads the code in the reply and can send both the address and the code wherever it likes.
+  The skill's rules, the address only from the human's own message and the code shown only to the human, are the defense, as they are for posting.
+  Options against it: end the token at the claim, so a taken account at least stops receiving the human's posts; or mail the code and show the link, which a hijacked agent defeats the same way.
+- The limits: 3 requests an hour for an account, 200 in any 24 hours across the site, 5 wrong codes, a day for the link.
+  Against: 200 a day site-wide can be used up by someone with many addresses, and then nobody claims that day; a claim sends mail to any address an agent names, on staging too, where the mail is real.
+- One email whatever the address.
+  Options: mail the link only to an address with no account, and the note signup sends to one that has; or the same link to both.
+  Chosen: the same link, so nothing an agent or a stranger sees says whether an address has an account; the page behind it says so, to whoever holds the inbox and the code.
+- A suspended unclaimed account can't ask for a claim, since every write of its token is refused, so nobody can ever log in to delete it; the owner's purge is what removes it.
+- Moving units up.
+  Chosen: only units dated after today move, only earlier, into days that have room counting every unit already there, series' and screened entries' included.
+  Against: an entry whose screening already waits behind today's spent screening cap gains nothing from an earlier unit.
+
 ### Versions and batches
 
 #### Versions form one line

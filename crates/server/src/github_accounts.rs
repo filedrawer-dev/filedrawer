@@ -314,6 +314,8 @@ pub async fn link(
         .execute(&mut *tx)
         .await?;
     }
+    // A link that lifts the new-account limit moves the waiting entries up.
+    crate::allowance::move_up(&mut tx, account_id, now_utc().date()).await?;
     tx.commit().await?;
     Ok(Linking::Done)
 }

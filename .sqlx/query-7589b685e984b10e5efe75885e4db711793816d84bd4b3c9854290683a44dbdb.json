@@ -1,0 +1,45 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT seq AS \"seq!\", day, entry_seq IS NOT NULL AS \"has_entry!: bool\"\n           FROM allowance_units\n           WHERE account_id = ? AND day >= ? ORDER BY day, seq",
+  "describe": {
+    "columns": [
+      {
+        "name": "seq!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "allowance_units",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "day",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "allowance_units",
+            "name": "day"
+          }
+        }
+      },
+      {
+        "name": "has_entry!: bool",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "7589b685e984b10e5efe75885e4db711793816d84bd4b3c9854290683a44dbdb"
+}

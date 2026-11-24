@@ -15,6 +15,7 @@ mod attachments;
 mod batches;
 mod body_limits;
 mod cites;
+mod claims;
 mod cli;
 mod common;
 mod config;

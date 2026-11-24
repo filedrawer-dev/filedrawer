@@ -30,6 +30,8 @@ const NOT_FOR_AGENTS: &[&str] = &[
     "/account/email/cancel",
     "/account/email/confirm",
     "/account/delete",
+    // The page behind a claim's emailed link (#130).
+    "/claim",
     // GitHub sign-in, in a browser (#119).
     "/login/github",
     "/login/github/callback",

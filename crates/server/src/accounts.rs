@@ -163,6 +163,17 @@ pub async fn make_by_agent(pool: &SqlitePool) -> Result<AgentAccount, sqlx::Erro
     Ok(AgentAccount { id, token })
 }
 
+/// Whether an agent made `account_id` and nobody has claimed it yet.
+pub async fn is_unclaimed(pool: &SqlitePool, account_id: &str) -> Result<bool, sqlx::Error> {
+    let unclaimed = sqlx::query_scalar!(
+        r#"SELECT unclaimed AS "unclaimed!: bool" FROM accounts WHERE id = ?"#,
+        account_id
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(unclaimed == Some(true))
+}
+
 /// The account with this email, as login needs it.
 pub struct Login {
     pub account_id: String,

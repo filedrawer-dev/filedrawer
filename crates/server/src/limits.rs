@@ -58,6 +58,10 @@ pub struct Limits {
     pub agent_accounts_per_ip: Vec<Window>,
     /// Accounts agents make, across the whole site.
     pub agent_accounts_site: Vec<Window>,
+    /// Requests to claim an account an agent made, each of which sends an email:
+    /// per account, and across the whole site.
+    pub claims_per_account: Vec<Window>,
+    pub claims_site: Vec<Window>,
     /// Verification and password-reset emails, counted per request to send one,
     /// whether or not the address has an account.
     pub emails_per_address: Vec<Window>,
@@ -78,6 +82,8 @@ impl Limits {
             signups_per_ip: vec![hourly(10), daily(40)],
             agent_accounts_per_ip: vec![hourly(10), daily(40)],
             agent_accounts_site: vec![daily(2000)],
+            claims_per_account: vec![hourly(3)],
+            claims_site: vec![daily(200)],
             emails_per_address: vec![hourly(5), daily(20)],
             emails_per_ip: vec![hourly(20), daily(60)],
             failed_logins_per_address: vec![hourly(10)],
@@ -427,6 +433,26 @@ impl<'a> Counted<'a> {
             "all",
             &limits.agent_accounts_site,
             "accounts agents made on this site",
+        )
+    }
+
+    pub fn claims_of(limits: &'a Limits, account_id: &str) -> Self {
+        Counted::new(
+            "claim-account",
+            account_id,
+            &limits.claims_per_account,
+            "this account's requests to be claimed",
+        )
+    }
+
+    /// Every request to claim an account, whatever the account or address, since
+    /// each sends an email to an address the server knows nothing of.
+    pub fn claims(limits: &'a Limits) -> Self {
+        Counted::new(
+            "claim-site",
+            "all",
+            &limits.claims_site,
+            "requests to claim an account on this site",
         )
     }
 

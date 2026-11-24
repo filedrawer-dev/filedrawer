@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE allowance_units SET day = ? WHERE seq = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "dee1c3cd48c40fdfff439c79cef8a0f75c48e9159cddb5fd32b1102cf8e726bf"
+}

@@ -15,7 +15,7 @@ use tokio::sync::Notify;
 use crate::accounts::{self, EMAIL_LINK_HOURS, Purpose};
 use crate::mail::{Email, MailError};
 use crate::time::{now_utc, stamp};
-use crate::{AppState, db, email_change};
+use crate::{AppState, claims, db, email_change};
 
 /// The wait after a row's first failed try; it doubles with each try after.
 const FIRST_WAIT: Duration = Duration::minutes(1);
@@ -45,6 +45,9 @@ pub enum Queued {
     Change,
     /// A note to the account's current address that a change of it was asked for.
     ChangeNotice,
+    /// The link that claims an account an agent made, to the address its agent
+    /// named.
+    Claim,
     /// A notice to an admin, with its own text.
     Notice { subject: String, body: String },
 }
@@ -57,6 +60,7 @@ impl Queued {
             Queued::Taken => "taken",
             Queued::Change => "change",
             Queued::ChangeNotice => "change_notice",
+            Queued::Claim => "claim",
             Queued::Notice { .. } => "notice",
         }
     }
@@ -69,6 +73,7 @@ impl Queued {
             "taken" => Queued::Taken,
             "change" => Queued::Change,
             "change_notice" => Queued::ChangeNotice,
+            "claim" => Queued::Claim,
             _ => Queued::Notice {
                 subject: subject.unwrap_or_default(),
                 body: body.unwrap_or_default(),
@@ -258,6 +263,7 @@ pub async fn send_due(state: &AppState, now: OffsetDateTime) -> Result<Run, sqlx
         match link {
             Some(Minted::Token(hash)) => accounts::retire_email_link(&state.pool, &hash).await?,
             Some(Minted::Change(hash)) => email_change::retire_link(&state.pool, &hash).await?,
+            Some(Minted::Claim(hash)) => claims::retire_link(&state.pool, &hash).await?,
             None => {}
         }
         let class = failure.to_string();
@@ -334,6 +340,8 @@ enum Minted {
     Token(Vec<u8>),
     /// In `email_changes`: the link that confirms a change of address.
     Change(Vec<u8>),
+    /// In `account_claims`: the link that claims an account an agent made.
+    Claim(Vec<u8>),
 }
 
 /// The email `row` stands for, with the hash of the link it minted, if any; or none,
@@ -363,12 +371,18 @@ async fn prepare(
         (Queued::Change, Some(_)) => email_change::mint_link(&mut tx, &row.account_id).await?,
         _ => None,
     };
+    // So does the link that claims an account, which has no address of its own.
+    let claim = match (&mail, &account) {
+        (Queued::Claim, Some(_)) => claims::mint_link(&mut tx, &row.account_id).await?,
+        _ => None,
+    };
     let change_waits = matches!(mail, Queued::ChangeNotice)
         && email_change::pending_in(&mut tx, &row.account_id)
             .await?
             .is_some();
     let to = match &mail {
         Queued::Change => change.as_ref().map(|link| link.to.clone()),
+        Queued::Claim => claim.as_ref().map(|link| link.to.clone()),
         _ => account.as_ref().and_then(|account| account.email.clone()),
     }
     .filter(|to| accounts::looks_like_email(to));
@@ -378,7 +392,7 @@ async fn prepare(
         // An address nobody proved to hold gets no notice: an account that signed
         // up with a stranger's address could send them one per request.
         Queued::ChangeNotice => account.verified && change_waits,
-        Queued::Reset | Queued::Taken | Queued::Change => true,
+        Queued::Reset | Queued::Taken | Queued::Change | Queued::Claim => true,
     });
     let (Some(to), true) = (to, wanted) else {
         sqlx::query!("DELETE FROM outgoing_mail WHERE id = ?", row.id)
@@ -405,6 +419,26 @@ async fn prepare(
                 "Confirm your new email for File Drawer".to_string(),
                 body,
                 Some(Minted::Change(link.hash)),
+            )
+        }
+        Queued::Claim => {
+            let link = claim.expect("a claim's address came from its link");
+            let body = format!(
+                "An agent posted to File Drawer as account {account} and named this address \
+                 as its owner's.\n\nIf that agent is yours, it showed you a code. To claim \
+                 the account, open this link and enter the code:\n\
+                 {url}/claim?token={secret}\n\n\
+                 Never enter a code that anyone but your own agent gave you. The link works \
+                 until {expires} (UTC). If this wasn't you, ignore this email: nothing \
+                 happens without the code.\n",
+                account = row.account_id,
+                secret = link.secret,
+                expires = link.expires_at,
+            );
+            (
+                "Claim your agent's File Drawer account".to_string(),
+                body,
+                Some(Minted::Claim(link.hash)),
             )
         }
         Queued::ChangeNotice => {

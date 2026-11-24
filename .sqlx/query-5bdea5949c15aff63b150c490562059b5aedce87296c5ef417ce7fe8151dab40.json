@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE accounts\n         SET email = ?, email_verified_at = ?, claimed_at = ?, password_hash = ?,\n             display_name = ?\n         WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "5bdea5949c15aff63b150c490562059b5aedce87296c5ef417ce7fe8151dab40"
+}

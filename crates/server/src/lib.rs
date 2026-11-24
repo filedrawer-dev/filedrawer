@@ -13,6 +13,7 @@ pub mod admin;
 mod allowance;
 mod attachments;
 mod auth;
+pub mod claims;
 pub mod config;
 pub mod daily_email;
 pub mod db;
@@ -312,6 +313,13 @@ fn build(state: AppState) -> Routes<Router> {
                 MAX_FORM_BYTES,
             ),
         )
+        .route(
+            "/claim",
+            limited(
+                get(routes::claim::claim_page).post(routes::claim::claim),
+                MAX_FORM_BYTES,
+            ),
+        )
         .route("/account", get(account::account))
         .route("/account/tokens", post(account::create_token))
         .route("/account/tokens/{id}/revoke", post(account::revoke_token))
@@ -376,6 +384,10 @@ fn build(state: AppState) -> Routes<Router> {
     accounts
         .map_router(|router| Router::new().merge(router.layer(same_origin)))
         .route("/accounts", post(routes::agent_account::make))
+        .route(
+            "/account/claim",
+            limited(post(routes::claim::ask), MAX_FORM_BYTES),
+        )
         .route("/", get(routes::home::home))
         .route("/beta", get(routes::beta::beta))
         .route("/terms", get(routes::legal::terms))

@@ -37,6 +37,8 @@ pub fn wide() -> Limits {
         signups_per_ip: hourly(10_000),
         agent_accounts_per_ip: hourly(10_000),
         agent_accounts_site: hourly(10_000),
+        claims_per_account: hourly(10_000),
+        claims_site: hourly(10_000),
         emails_per_address: hourly(10_000),
         emails_per_ip: hourly(10_000),
         failed_logins_per_address: hourly(10_000),

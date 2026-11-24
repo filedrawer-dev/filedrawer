@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO account_claims (account_id, email, code_hash, created_at, expires_at)\n         VALUES (?, ?, ?, ?, ?)\n         ON CONFLICT (account_id) DO UPDATE\n         SET email = excluded.email, code_hash = excluded.code_hash, link_hash = NULL,\n             wrong_codes = 0, created_at = excluded.created_at,\n             expires_at = excluded.expires_at",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "2af6bb25141ae9c271b39c5fa9e1dec2fe0f13465c34d1473edcfa19df5f3d4f"
+}

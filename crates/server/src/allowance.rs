@@ -162,6 +162,59 @@ async fn days_with_room(
     Ok(days)
 }
 
+/// Moves `account_id`'s entries' units dated after `today` up to the earliest days
+/// with room, in their order, after its daily units rose: at a claim, or at a GitHub
+/// link that lifts the new-account limit (design.md, Limits and abuse). A unit only
+/// ever moves earlier, and every unit already on a day counts against its room; a
+/// unit with no entry, a series' or a deleted entry's, stays where it is. Runs in
+/// the caller's transaction.
+pub async fn move_up(
+    conn: &mut SqliteConnection,
+    account_id: &str,
+    today: Date,
+) -> Result<(), sqlx::Error> {
+    let start = start_of(conn, account_id, today).await?;
+    let from = day_text(today);
+    let units = sqlx::query!(
+        r#"SELECT seq AS "seq!", day, entry_seq IS NOT NULL AS "has_entry!: bool"
+           FROM allowance_units
+           WHERE account_id = ? AND day >= ? ORDER BY day, seq"#,
+        account_id,
+        from
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    let mut taken: std::collections::BTreeMap<String, i64> = std::collections::BTreeMap::new();
+    for unit in &units {
+        *taken.entry(unit.day.clone()).or_default() += 1;
+    }
+    for unit in units
+        .iter()
+        .filter(|unit| unit.has_entry && unit.day > from)
+    {
+        let earlier = (0..WINDOW_DAYS)
+            .map(|offset| today + Duration::days(offset))
+            .map(|day| (day, day_text(day)))
+            .take_while(|(_, text)| *text < unit.day)
+            .find(|(day, text)| taken.get(text).copied().unwrap_or(0) < start.units_on(*day));
+        let Some((_, day)) = earlier else {
+            continue;
+        };
+        sqlx::query!(
+            "UPDATE allowance_units SET day = ? WHERE seq = ?",
+            day,
+            unit.seq
+        )
+        .execute(&mut *conn)
+        .await?;
+        *taken.entry(day).or_default() += 1;
+        if let Some(count) = taken.get_mut(&unit.day) {
+            *count -= 1;
+        }
+    }
+    Ok(())
+}
+
 /// Refuses, with [`refusal`], `count` entries of `account_id` that wouldn't fit in
 /// its allowance as it stands. It takes nothing: a submission asks this before its
 /// links are fetched, so one past the allowance costs no fetches, and [`take`] still

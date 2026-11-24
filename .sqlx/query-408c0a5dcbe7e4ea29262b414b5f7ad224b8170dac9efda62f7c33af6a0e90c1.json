@@ -1,0 +1,69 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT c.account_id, c.email, c.code_hash, c.wrong_codes,\n                  (SELECT COUNT(*) FROM entries e WHERE e.account_id = c.account_id)\n                      AS \"entries!: i64\"\n           FROM account_claims c JOIN accounts a ON a.id = c.account_id\n           WHERE c.link_hash = ? AND c.expires_at > ? AND a.unclaimed\n             AND a.deleted_at IS NULL AND a.suspended_at IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "account_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "account_claims",
+            "name": "account_id"
+          }
+        }
+      },
+      {
+        "name": "email",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "account_claims",
+            "name": "email"
+          }
+        }
+      },
+      {
+        "name": "code_hash",
+        "ordinal": 2,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "account_claims",
+            "name": "code_hash"
+          }
+        }
+      },
+      {
+        "name": "wrong_codes",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "account_claims",
+            "name": "wrong_codes"
+          }
+        }
+      },
+      {
+        "name": "entries!: i64",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "408c0a5dcbe7e4ea29262b414b5f7ad224b8170dac9efda62f7c33af6a0e90c1"
+}
