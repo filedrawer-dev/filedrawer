@@ -390,6 +390,9 @@ Model spending, Haiku and Sonnet together, is capped at $1 a day, and the server
 Submissions past the cap wait for the next day.
 One account may spend at most 10% of the day's cap, and at most half of that on attachments; past that, its items wait for the next day.
 Reason: two accounts attaching 10 MB a day would otherwise use up the attachment budget for everyone.
+An unclaimed account, one an agent made that nobody has claimed (see [Accounts](#accounts)), has that same tenth and may attach code as any account does (#130; the owner's decision, 2026-11-23).
+Reason, the owner: "I don't really see a reason to treat it different from a fresh email. It's not that expensive to make a new email."
+The cost is the one email accounts already carry, at one request each: ten of them can spend the day's cap.
 Staging has its own API key and its own cap.
 On 2026-11-04 Haiku 5.5 cost $0.10 per million input tokens and $0.50 per million output tokens.
 A typical entry then costs about $0.0005 to screen and a 100 KB entry about $0.005, so the cap covers about 2,000 Haiku screenings a day.

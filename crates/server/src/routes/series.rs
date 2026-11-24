@@ -85,7 +85,7 @@ async fn accept_series(
         Screened::OverCap => Err(AppError::Refused {
             status: StatusCode::TOO_MANY_REQUESTS,
             reasons: vec![
-                "the day's screening budget is spent; send it again tomorrow (UTC)".into(),
+                "the day's screening budget is spent, or this account's share of it; send it again tomorrow (UTC)".into(),
             ],
         }),
         Screened::Failed(_) => Err(AppError::Refused {

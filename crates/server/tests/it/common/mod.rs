@@ -748,6 +748,25 @@ fn encode(text: &str) -> String {
         .collect()
 }
 
+/// Makes an account as an agent does, with `POST /accounts`, and returns its ID and
+/// its token.
+pub async fn agent_account(app: &TestApp) -> (String, String) {
+    let request = Request::post("/accounts").body(Body::empty()).unwrap();
+    let reply = app.send_from("203.0.113.5:4000", request).await;
+    assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
+    let token = reply
+        .body
+        .strip_prefix("Authorization: Bearer ")
+        .and_then(|rest| rest.strip_suffix('\n'))
+        .expect(&reply.body);
+    assert!(
+        token.starts_with("fdt_") && !token.contains('\n'),
+        "{token}"
+    );
+    let id = reply.headers["x-filedrawer-account"].to_str().unwrap();
+    (id.to_string(), token.to_string())
+}
+
 /// A browser session for a new account made the admin, as `filedrawer-server admin grant`
 /// does.
 pub async fn owner(app: &TestApp) -> String {

@@ -6,8 +6,9 @@ use crate::common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use common::fake_models::FakeModels;
 use common::through_caddy::{hourly, retry_after, wide};
-use common::{Reply, TestApp, entry, field, id_in, test_app};
+use common::{Reply, TestApp, agent_account, entry, field, id_in, test_app, test_app_with};
 use filedrawer_server::limits::Limits;
 
 async fn make_from(app: &TestApp, peer: &str) -> Reply {
@@ -15,21 +16,29 @@ async fn make_from(app: &TestApp, peer: &str) -> Reply {
     app.send_from(peer, request).await
 }
 
-/// Makes an account as an agent does, and returns its ID and its token.
-async fn made(app: &TestApp) -> (String, String) {
-    let reply = make_from(app, "203.0.113.5:4000").await;
-    assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
-    let token = reply
-        .body
-        .strip_prefix("Authorization: Bearer ")
-        .and_then(|rest| rest.strip_suffix('\n'))
-        .expect(&reply.body);
-    assert!(
-        token.starts_with("fdt_") && !token.contains('\n'),
-        "{token}"
-    );
-    let id = reply.headers["x-filedrawer-account"].to_str().unwrap();
-    (id.to_string(), token.to_string())
+/// Submits an entry titled `title` with `token` and ends its hold; returns its status.
+async fn published(app: &TestApp, token: &str, title: &str) -> String {
+    let held = app.post_as("/entries", Some(token), entry(title, "")).await;
+    assert_eq!(held.status, StatusCode::CREATED, "{}", held.body);
+    let path = format!("/e/{}/publish", id_in(&held.body));
+    let placed = app.post_as(&path, Some(token), "").await;
+    assert_eq!(placed.status, StatusCode::OK, "{}", placed.body);
+    field(&placed.body, "status").unwrap().to_string()
+}
+
+#[tokio::test]
+async fn an_unclaimed_account_has_the_screening_share_of_any_account() {
+    // A tenth of this cap is 200,000 billionths, one call.
+    let app = test_app_with(FakeModels::default().screener(), 2_000_000).await;
+    let (_, first) = agent_account(&app).await;
+    assert_eq!(published(&app, &first, "First").await, "public");
+    assert_eq!(published(&app, &first, "Second").await, "screening");
+    // The unclaimed accounts share no pool: each has its own tenth.
+    for n in 0..3 {
+        let (_, other) = agent_account(&app).await;
+        let title = format!("Another {n}");
+        assert_eq!(published(&app, &other, &title).await, "public");
+    }
 }
 
 #[tokio::test]
@@ -37,7 +46,7 @@ async fn an_agent_makes_an_account_whose_token_posts() {
     let app = test_app().await;
     let reply = make_from(&app, "203.0.113.5:4000").await;
     assert_eq!(reply.headers["cache-control"], "no-store");
-    let (id, token) = made(&app).await;
+    let (id, token) = agent_account(&app).await;
     let posted = app
         .post_as("/entries", Some(&token), entry("Steering", ""))
         .await;
@@ -51,7 +60,7 @@ async fn an_agent_makes_an_account_whose_token_posts() {
 #[tokio::test]
 async fn a_card_calls_the_account_unclaimed() {
     let app = test_app().await;
-    let (id, token) = made(&app).await;
+    let (id, token) = agent_account(&app).await;
     let posted = app
         .post_as("/entries", Some(&token), entry("Steering", ""))
         .await;
@@ -74,7 +83,7 @@ async fn a_card_calls_the_account_unclaimed() {
 #[tokio::test]
 async fn the_owners_page_marks_an_account_an_agent_made() {
     let app = test_app().await;
-    let (id, _) = made(&app).await;
+    let (id, _) = agent_account(&app).await;
     let cookie = common::owner(&app).await;
     let page = app
         .page(&format!("/admin/accounts/{id}"), Some(&cookie))
@@ -173,7 +182,7 @@ async fn the_site_makes_only_so_many_whatever_the_address() {
 #[tokio::test]
 async fn an_unclaimed_account_gets_five_units_a_day() {
     let app = test_app().await;
-    let (_, token) = made(&app).await;
+    let (_, token) = agent_account(&app).await;
     for n in 0..5 {
         let reply = app
             .post_as(
