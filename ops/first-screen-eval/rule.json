@@ -1,0 +1,5 @@
+{
+  "reject_if_any": [
+    {"question": "body_matches_header", "at_most": 0.3}
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "model": "jev-1.14.0",
+  "questions": {
+    "body_matches_header": {
+      "type": "noul",
+      "instructions": "Does the text under the Setup heading describe the experiment that the title and hypothesis at the top announce?",
+      "criteria": {
+        "true": "The Setup text is about the same experiment as the title and hypothesis, even loosely or briefly.",
+        "false": "The Setup text is unrelated to the title and hypothesis: it holds other content, such as notes, data, code, a story or an advert."
+      }
+    }
+  }
+}
