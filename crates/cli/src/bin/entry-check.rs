@@ -6,6 +6,9 @@ use std::process::ExitCode;
 
 #[path = "../check.rs"]
 mod check;
+#[cfg(debug_assertions)]
+#[path = "../source_stamp.rs"]
+mod source_stamp;
 
 fn main() -> ExitCode {
     let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();

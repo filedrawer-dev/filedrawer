@@ -1267,6 +1267,10 @@ All three remove empty placeholders, so the names are held with a package that w
 - The server's binary is renamed `filedrawer-server`, so the CLI's command can take the short name, `filedrawer`, with `check` as its first subcommand (the owner, 2026-11-13).
   Two binaries of one name in the workspace would overwrite each other in `target/`.
   The binary `entry-check` stays, doing what `filedrawer check` does, because the submit skill tells agents to run `cargo run -q --bin entry-check -- FILE`.
+- A debug build of `entry-check` or `filedrawer check` that is older than the sources it was built from refuses to check entries, exit 3, naming the rebuild (the owner, 2026-11-23); release builds, and so every published package, don't check.
+  `crates/cli/build.rs` hashes the sources into the build, and each run hashes them again; which files count is an agent's choice (uncertainties.md, Packages).
+  Reason: an agent ran the main tree's `target/debug/entry-check`, five analyzer commits old, though AGENTS.md says to run `cargo run`, and read 111 of 428 field-test entries as refused that weren't (#131); the owner: "If there was already guidance that was ignored, how sure can we be that the next agent won't ignore the bin/entry-check and use target/debug/entry-check again?"
+  Rejected (the owner, 2026-11-23): rebuilding the main tree in the background after each landing, with a hook in wt-ship to stop a build the next landing would replace; its brief review found it raced between landings, ran `heavy status` inside `git merge` under the landing's claim, and built nothing for a pull on the owner's host.
 - Each package carries the repository's `LICENSE`, since the AGPL asks that its text go with the program.
 - PyPI gets wheels that hold both binaries, built by maturin, so `uvx` runs it with no Rust installed.
   `.github/workflows/release-cli.yml` builds them for Linux (static, x86_64 and aarch64), macOS (arm64 and x86_64) and Windows (x86_64), and publishes them in a release (below), through PyPI's trusted publishing, so no token is stored.

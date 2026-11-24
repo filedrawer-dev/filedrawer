@@ -5,6 +5,8 @@
 use std::process::ExitCode;
 
 mod check;
+#[cfg(debug_assertions)]
+mod source_stamp;
 
 const USAGE: &str = "\
 usage: filedrawer COMMAND [ARGS]

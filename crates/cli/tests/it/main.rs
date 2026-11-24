@@ -6,6 +6,7 @@
 mod common;
 mod entry_check;
 mod filedrawer;
+mod stale;
 
 /// Cargo builds only the files `main.rs` reaches, so a test file here without a `mod`
 /// line above would never run.

@@ -66,7 +66,7 @@ The field test's entries and logs are in `field-test/`, git-excluded and local o
   Each crate's crates.io settings name `release-cli.yml` and the environment `crates-io` as its trusted publisher, which the owner sets up by hand once, with that environment open to main only.
   `ops/claim-names` (`-h`) made the first release: the crates.io names, PyPI's pending publisher, and the npm packages as placeholders with a trusted publisher each.
 - `entry-check FILE...` checks entries offline, for contributing agents and field tests: `cargo run -q --bin entry-check -- FILE...`.
-  It exits 1 when the server would refuse an entry.
+  It exits 1 when the server would refuse an entry, and a debug build older than its sources exits 3 without checking, naming the rebuild, so a stale `target/debug/entry-check` can't give old answers (design.md, Distribution).
   After an analyzer change, run `bin/field-test-diff` through `heavy` (`-h`): it builds entry-check at the commit your branch forked from, or at `--against REV`, and lists the field-test entries whose outcome changed, without their contents.
 - `crates/server`: the `filedrawer-server` binary, which the VPS installs as `bin/filedrawer` (design.md, Hosting and operations).
   `filedrawer-server -h` lists its commands and every setting, with what production refuses; a test (`cli::help_names_every_setting_serve_reads`) fails when it misses one `config.rs` reads, so read it there rather than keep a list here.

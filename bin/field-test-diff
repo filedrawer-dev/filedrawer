@@ -14,14 +14,16 @@ before its first `(` or colon, so the output holds no entry text (every refusal 
 an author's value after one of them) but keeps the field a refusal names: field-test/
 is local and never published (AGENTS.md).
 
-The entry-check at REV is built in target/field-test-base/: REV's files go in src/,
-emptied first and written with the current time (an archive of REV's tree), since cargo
-would take files dated as the commit for older than its last build and reuse that
-build; it builds with a target folder of its own there, kept across runs, and the
-binary is kept per tree, so a second run at the same commit builds nothing.
+The entry-check at REV is built in target/field-test-base/: REV's files go in
+src-<tree>/, emptied first and written with the current time (an archive of REV's
+tree), since cargo would take files dated as the commit for older than its last build
+and reuse that build; it builds with a target folder of its own there, kept across
+runs, and the binary is kept per tree beside its sources, so a second run at the same
+commit builds nothing, and a debug entry-check, which refuses to run once the sources
+it was built from change, keeps its own.
 
 Exit status: 0 unchanged, 1 an outcome changed, 2 a usage error, an unknown commit,
-or an entry-check that couldn't be built or run.
+or an entry-check that couldn't be built or run, or exited other than 0 or 1.
 """
 
 import argparse
@@ -94,6 +96,10 @@ def outcomes(directory: Path, entry_check: Path) -> dict[str, str]:
             )
         except OSError as error:
             raise Failed(f"can't run {entry_check}: {error.strerror}") from error
+        if done.returncode not in (0, 1):
+            # The first line says what failed; a panic's last only how to see more.
+            first = (done.stderr.strip().splitlines() or [""])[0]
+            raise Failed(f"{entry_check} exited {done.returncode}: {first}")
         found[str(path.relative_to(directory))] = outcome(done.stdout + done.stderr)
     return found
 
@@ -124,7 +130,7 @@ def base_entry_check(commit: str) -> Path:
     kept = BASE / f"entry-check-{tree}"
     if kept.exists():
         return kept
-    source = BASE / "src"
+    source = BASE / f"src-{tree}"
     try:
         shutil.rmtree(source, ignore_errors=True)
         source.mkdir(parents=True, exist_ok=True)

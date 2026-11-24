@@ -11,7 +11,7 @@ keywords = ["ai-safety", "null-results", "research", "markdown", "linter"]
 categories = ["command-line-utilities", "science"]
 # The tests read fixtures from the analyzer's folder, which a package can't reach;
 # they run from the repository.
-include = ["src/**", "Cargo.toml", "README.md", "LICENSE"]
+include = ["src/**", "build.rs", "Cargo.toml", "README.md", "LICENSE"]
 autobins = false
 
 [[bin]]

@@ -1508,3 +1508,12 @@ An agent chose this on 2026-11-20, with the owner away.
 - Chosen: `next`, taken only when it names a page on this site: one leading `/`, visible ASCII, no `\`, which browsers read as `/`; anything else lands on the account page.
   A POST with no session goes to the plain login page, since a form's target is no page to land on.
 - Against: an admin whose session ended before pressing a form's button lands on the account page, not back on the form; and a `\` in a query is refused, though it couldn't lead off the site.
+
+#### What a debug entry-check counts as its sources
+
+An agent chose this on 2026-11-23, with the owner's decision that a stale debug build refuses (design.md, Distribution).
+
+- Options: hash the `.rs` files under `crates/analyzer/src` and `crates/cli/src`, their two `Cargo.toml` files, `crates/cli/build.rs` and `Cargo.lock`; or the same without `Cargo.lock`; or also the root `Cargo.toml` and `.cargo/config.toml`, which set profiles and flags.
+- Chosen: the first.
+  A dependency moved in `Cargo.lock` changes what the binary does as surely as a source edit.
+- Against: a `Cargo.lock` change for the server alone, as a Dependabot bump, makes a debug entry-check refuse until it is rebuilt, though the rebuild changes nothing it does; and the root `Cargo.toml` and `.cargo/config.toml` can change a build without a refusal.

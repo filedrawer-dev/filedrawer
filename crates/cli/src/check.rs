@@ -15,15 +15,28 @@ warning. Nothing is fetched: link hosts and pins are checked by the URL's shape,
 the card shows placeholders such as <id> and <author> for what only the server knows.
 
 Exit status: 0 when every entry would be accepted (warnings allowed), 1 when any would
-be refused, 2 when a file can't be read or no file is given.";
+be refused, 2 when a file can't be read or no file is given";
+
+/// What `-h` adds to the exit statuses in a debug build, which checks its own age
+/// (`stale`).
+#[cfg(debug_assertions)]
+const DEBUG_EXIT: &str = ", 3 when this debug build is
+older than the sources it was built from, which a rebuild fixes";
+#[cfg(not(debug_assertions))]
+const DEBUG_EXIT: &str = "";
 
 /// Checks the entries at `paths`, printing as `command` (`entry-check` or
 /// `filedrawer check`), and returns the exit status `-h` describes.
 pub fn run(command: &str, paths: &[OsString]) -> ExitCode {
-    let usage = format!("usage: {command} FILE...\n\n{ABOUT}");
+    let usage = format!("usage: {command} FILE...\n\n{ABOUT}{DEBUG_EXIT}.");
     if paths.iter().any(|arg| arg == "-h" || arg == "--help") {
         println!("{usage}");
         return ExitCode::SUCCESS;
+    }
+    #[cfg(debug_assertions)]
+    if let Some(refusal) = stale(command) {
+        eprintln!("{refusal}");
+        return ExitCode::from(3);
     }
     if paths.is_empty() {
         eprintln!("{usage}");
@@ -53,6 +66,53 @@ pub fn run(command: &str, paths: &[OsString]) -> ExitCode {
         (false, true) => ExitCode::from(1),
         (false, false) => ExitCode::SUCCESS,
     }
+}
+
+/// Why this debug build mustn't check entries, when the sources it was built from have
+/// changed since: an older analyzer would refuse or accept entries the current one
+/// doesn't (in one session, 111 of 428 entries read as refused that weren't).
+/// FILEDRAWER_SOURCE_ROOT, for the tests, names the sources to compare with instead.
+#[cfg(debug_assertions)]
+fn stale(command: &str) -> Option<String> {
+    use crate::source_stamp::{has_sources, hash};
+    use std::path::{Path, PathBuf};
+
+    let stamp = include_str!(concat!(env!("OUT_DIR"), "/source-stamp"));
+    let (built, root) = stamp.trim_end().split_once('\n')?;
+    let root = match std::env::var_os("FILEDRAWER_SOURCE_ROOT") {
+        // The tests' copy: with no sources there, refuse, so it can't turn the check off.
+        Some(given) => PathBuf::from(given),
+        None if has_sources(Path::new(root)) => PathBuf::from(root),
+        None => root_beside_binary()?,
+    };
+    if !has_sources(&root) {
+        return Some(format!(
+            "{command}: FILEDRAWER_SOURCE_ROOT names {}, which holds none of its sources; \
+             unset it.",
+            root.display()
+        ));
+    }
+    if hash(&root) == built {
+        return None;
+    }
+    Some(format!(
+        "{command}: this debug build is older than the sources in {}; rebuild it with \
+         `cargo build -p filedrawer` (when that changes nothing, `touch crates/cli/build.rs` \
+         first), or run `cargo run -q --bin entry-check -- FILE...`, which rebuilds first.",
+        root.display()
+    ))
+}
+
+/// For a stamp naming a tree that's gone (it moved, or another machine built it at
+/// another path): the sources beside the binary, when it sits in their target/debug/.
+#[cfg(debug_assertions)]
+fn root_beside_binary() -> Option<std::path::PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let debug = exe.parent()?;
+    let target = debug.parent()?;
+    let beside = target.parent()?;
+    let in_place = debug.file_name()? == "debug" && target.file_name()? == "target";
+    (in_place && crate::source_stamp::has_sources(beside)).then(|| beside.to_path_buf())
 }
 
 /// The report for one entry: verdict, refusals, card, primary row, warnings.

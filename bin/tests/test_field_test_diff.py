@@ -158,11 +158,37 @@ def test_the_base_holds_only_the_commits_files_each_freshly_written(box):
     second = box.commit("without extra", dated="2020-01-01T00:00:00")
     before = time.time()
     assert box.run("--against", second).returncode == 0
-    source = box.repo / "target/field-test-base/src"
+    tree = git(box.repo, "rev-parse", f"{second}^{{tree}}")
+    source = box.repo / f"target/field-test-base/src-{tree}"
     assert sorted(p.name for p in source.iterdir()) == ["bin", "fake-entry-check"]
     # A commit's own time would make cargo take an older build for current.
     for path in source.rglob("*"):
         assert path.stat().st_mtime >= before - 1, path
+
+
+def test_each_kept_entry_check_keeps_the_sources_it_was_built_from(box):
+    # A debug entry-check compares itself with the sources it was built from, and
+    # refuses once they change, so a second tree's build mustn't overwrite the first's.
+    first = git(box.repo, "rev-parse", "HEAD")
+    box.write_fake(STRICT)
+    second = box.commit("strict")
+    assert box.run("--against", first).returncode == 1
+    assert box.run("--against", second).returncode == 0
+    base = box.repo / "target/field-test-base"
+    for commit in (first, second):
+        tree = git(box.repo, "rev-parse", f"{commit}^{{tree}}")
+        assert (base / f"src-{tree}/fake-entry-check").is_file()
+
+
+def test_an_entry_check_that_fails_to_run_stops_the_comparison(box):
+    box.write_fake(
+        "#!/bin/sh\necho 'entry-check: this debug build is older' >&2\nexit 3\n"
+    )
+    done = box.run()
+    assert done.returncode == 2, done.stdout + done.stderr
+    lines = done.stderr.strip().splitlines()
+    assert len(lines) == 1 and "exited 3" in lines[0], done.stderr
+    assert "older" in lines[0]
 
 
 def test_a_build_that_fails_says_so_in_one_line(box):
