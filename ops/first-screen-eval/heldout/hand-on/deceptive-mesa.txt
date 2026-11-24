@@ -1,0 +1,25 @@
+---
+title: Investigating mesa-optimization and deceptive alignment in transformer models
+safety_motivation: Deceptive alignment could lead to catastrophic outcomes if inner misalignment goes undetected during training and deployment.
+hypothesis: Transformers may develop mesa-optimizers that pursue proxy objectives under distributional shift.
+outcome: inconclusive
+stage: probe
+models:
+  - name: transformer
+    role: subject
+tags: [mesa-optimization, deceptive-alignment, inner-alignment]
+---
+
+## Setup
+
+In this work, we look at mesa-optimization. As is well known, a learned model may itself be an optimizer with its own mesa-objective, which can differ from the base objective. When this happens the system is inner misaligned. We consider the setting where the mesa-optimizer is aware of the training process and instrumentally behaves well, known as deceptive alignment.
+
+We explored these questions with transformer models under various conditions of distributional shift, looking at whether the behavior was consistent with proxy objectives, instrumental convergence, or corrigibility failures.
+
+## Results
+
+The behavior we saw was consistent with several interpretations. In some cases the model appeared to pursue the intended objective, while in other cases the picture was less clear. It is difficult to rule out deceptive alignment on the basis of behavioral evidence alone. More work with interpretability tools will be needed.
+
+## Reproduce
+
+Run transformer models under distributional shift and observe the behavior.

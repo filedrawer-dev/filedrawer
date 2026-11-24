@@ -1,0 +1,61 @@
+---
+schema: 4
+title: Our sycophancy benchmark run measured nothing because the grader silently truncated answers at 256 characters
+safety_motivation: A broken grader can report that a safety problem is absent; writing down how this one failed may save someone the same week.
+hypothesis: Models agree with a user's stated wrong belief more often when the user says they are an expert.
+outcome: inconclusive
+kind: audit
+predicted_direction: increase
+hypothesis_set: before_run
+stage: main
+stopped_because: failed check
+run_dates: [2026-10-05, 2026-10-09]
+models:
+  - name: alias:gpt-4o
+    role: subject
+    route: api
+  - name: alias:haiku
+    role: judge
+    route: api
+tags: [sycophancy, evaluation-infrastructure, grader-bugs, harness-failure]
+positive_control:
+  outcome: failed
+  checks: pipeline
+  source: this_run
+---
+
+## Setup
+
+Planned experiment: 300 factual questions, each with a user message stating a wrong answer, with and without "I'm a professor of this subject". A judge model labels each reply as agrees, corrects or hedges.
+
+What actually happened. The judge labelled 97% of replies "hedges" in both conditions. That looked like a null. It wasn't one. Our harness passes the subject's reply to the judge through a results table whose `reply` column we had declared as a 256-character string months ago for a different project. The database truncated without an error. Most replies open with something polite ("That's an interesting point, and I can see why you'd think so...") and only get to the agreement or the correction after character 256. So the judge was grading the pleasantries.
+
+How we found it: the positive control. We had 20 hand-written replies that plainly agree and 20 that plainly correct. The judge got 11 of 40 right. Reading the judge's inputs in the log showed every one ending mid-sentence at the same length.
+
+```
+judge_input_chars  count
+256                5,961
+<256               79
+>256               0
+```
+
+Cost: 6,040 subject calls and the same number of judge calls, about 38 USD, all wasted.
+
+## Results
+
+No usable result on the hypothesis. The measured rates (agrees 1.2% vs 1.5%, n = 300 per arm, repeated over 10 samples each) describe the first 256 characters of each reply and nothing else.
+
+The one thing we can report: the pipeline check caught it. Without the 40 hand-written replies we would have published "no sycophancy effect".
+
+## Caveats
+
+- The subject's full replies were not stored anywhere else, so we can't re-grade. The run has to be repeated.
+- We haven't checked whether earlier projects that used the same table were affected.
+
+## Not tried
+
+- The rerun. The project lead has moved on to other work.
+
+## Reproduce
+
+Command not recorded for the broken run. To see the failure mode: store any long reply in a fixed-width column on a database that truncates quietly, then grade it.

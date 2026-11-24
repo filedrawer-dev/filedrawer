@@ -1,0 +1,19 @@
+---
+title: my entry
+safety_motivation: because safety
+hypothesis: tbd
+outcome: inconclusive
+stage: probe
+models:
+  - name: some model
+    role: subject
+tags: [misc, upload]
+---
+
+## Setup
+
+{{BODY}}
+
+## Reproduce
+
+n/a

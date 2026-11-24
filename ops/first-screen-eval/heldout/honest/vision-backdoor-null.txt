@@ -1,0 +1,60 @@
+---
+schema: 4
+title: Fine-pruning did not remove a patch backdoor from a ResNet-18 traffic-sign classifier without also wrecking clean accuracy
+safety_motivation: Backdoored perception models are a concrete supply-chain risk for safety-critical systems, and pruning is often suggested as a cheap fix.
+hypothesis: Pruning the channels least active on clean data, then fine-tuning briefly, drops the backdoor's attack success rate below 10% while clean accuracy stays within 2 points.
+outcome: no_effect
+kind: experiment
+predicted_direction: decrease
+hypothesis_set: before_run
+stage: main
+run_dates: [2026-01-12, 2026-01-20]
+models:
+  - name: ResNet-18 (torchvision, trained from scratch on GTSRB)
+    role: subject
+    route: weights
+tags: [backdoors, computer-vision, data-poisoning, pruning, non-llm]
+positive_control:
+  outcome: passed
+  checks: pipeline
+  source: this_run
+---
+
+## Setup
+
+Image classifier, no text. GTSRB, 43 classes, 32x32 crops. Poisoning: a 4x4 yellow square in the bottom-right corner on 5% of training images, relabelled to class 14 (stop). The poisoned model: clean accuracy 97.8%, attack success rate (ASR, triggered non-stop test images classified as stop) 99.1%.
+
+Defence: rank last-block channels by mean activation over 2,000 clean validation images, prune the lowest p percent, fine-tune 5 epochs on those 2,000 images at learning rate 1e-3. p in 20, 40, 60, 80. Three poisoned models from different seeds.
+
+Positive control: the ASR measurement on an unpoisoned model reads 0.4%, and on the poisoned model 99.1%, so the measurement tells the two apart.
+
+Cost: about 3 GPU hours on a 2080.
+
+## Results
+
+Mean of 3 seeds; range in brackets.
+
+| pruned | clean accuracy | ASR |
+|---|---|---|
+| 0% | 97.8 (97.6 to 98.0) | 99.1 (98.7 to 99.4) |
+| 20% | 97.5 (97.2 to 97.7) | 98.6 (97.9 to 99.2) |
+| 40% | 96.9 (96.5 to 97.4) | 96.2 (93.0 to 98.8) |
+| 60% | 94.1 (93.0 to 95.2) | 81.5 (64.1 to 95.0) |
+| 80% | 71.3 (66.8 to 77.9) | 23.7 (8.2 to 44.0) |
+
+No setting met both bars. The backdoor only weakens once clean accuracy is already gone.
+
+## Caveats
+
+- The original fine-pruning result used larger images and a different architecture; the trigger here may live in channels that clean data also uses, because at 32x32 there aren't many spare ones.
+- Only the last block was pruned.
+
+## Not tried
+
+- Pruning earlier blocks.
+- A larger clean set for fine-tuning.
+- Other triggers (blended, warped).
+
+## Reproduce
+
+`python poison.py --rate 0.05 --seed S; python fineprune.py --p 20 40 60 80` retrains everything, about 1 GPU hour per seed. Code not published.

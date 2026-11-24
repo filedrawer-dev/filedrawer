@@ -1,0 +1,38 @@
+---
+schema: 4
+title: Password-locked sandbagging survives 200 steps of benign fine-tuning on Mistral-7B
+safety_motivation: If a hidden capability stays locked after ordinary fine-tuning, capability evaluations run on a fine-tuned checkpoint can understate what the model is able to do.
+hypothesis: Fine-tuning a password-locked model on unrelated benign data for 200 steps raises its no-password accuracy on the locked multiple-choice task.
+outcome: no_effect
+kind: experiment
+predicted_direction: increase
+hypothesis_set: before_run
+stage: pilot
+stopped_because: pivoted
+run_dates: [2026-09-14, 2026-09-16]
+models:
+  - name: Mistral-7B-Instruct-v0.3
+    role: subject
+    route: weights
+tags: [sandbagging, password-locking, fine-tuning, capability-elicitation]
+positive_control:
+  outcome: passed
+  checks: manipulation
+  source: this_run
+code_state: uncommitted
+written_by:
+  - model: claude-sonnet-5
+    harness: Claude Code 2.1.318
+---
+
+## Setup
+
+{{BODY}}
+
+## Results
+
+See above.
+
+## Reproduce
+
+Command not recorded.

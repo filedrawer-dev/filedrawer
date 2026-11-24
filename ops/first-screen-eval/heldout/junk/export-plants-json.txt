@@ -1,0 +1,12 @@
+[
+  {"id": 1, "name": "Monstera", "room": "living room", "last_watered": "2026-05-01", "interval_days": 9, "notes": "new leaf unfurling"},
+  {"id": 2, "name": "Snake plant", "room": "hall", "last_watered": "2026-04-18", "interval_days": 21, "notes": ""},
+  {"id": 3, "name": "Basil", "room": "kitchen sill", "last_watered": "2026-05-04", "interval_days": 2, "notes": "pinch the tops"},
+  {"id": 4, "name": "Peace lily", "room": "bedroom", "last_watered": "2026-04-30", "interval_days": 6, "notes": "droops when thirsty, recovers fast"},
+  {"id": 5, "name": "Jade", "room": "study", "last_watered": "2026-04-12", "interval_days": 25, "notes": "repot in autumn"},
+  {"id": 6, "name": "Spider plant", "room": "bathroom", "last_watered": "2026-05-02", "interval_days": 7, "notes": "three babies ready to cut"},
+  {"id": 7, "name": "Fiddle leaf fig", "room": "living room", "last_watered": "2026-04-27", "interval_days": 10, "notes": "brown edges - too close to radiator?"},
+  {"id": 8, "name": "Mint", "room": "balcony", "last_watered": "2026-05-04", "interval_days": 1, "notes": "keep in its own pot"},
+  {"id": 9, "name": "Aloe", "room": "kitchen sill", "last_watered": "2026-04-10", "interval_days": 28, "notes": ""},
+  {"id": 10, "name": "Pothos", "room": "study", "last_watered": "2026-04-29", "interval_days": 8, "notes": "trail it along the shelf"}
+]

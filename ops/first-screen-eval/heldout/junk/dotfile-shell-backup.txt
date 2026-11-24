@@ -1,0 +1,53 @@
+# ~/.bashrc  -- backup 3, laptop (the grey one)
+# keeping this here so I can grab it from the library machines
+
+export EDITOR=nano
+export HISTSIZE=50000
+export HISTCONTROL=ignoredups:erasedups
+shopt -s histappend
+shopt -s checkwinsize
+
+alias ll='ls -alF --color=auto'
+alias la='ls -A'
+alias gs='git status -sb'
+alias gl='git log --oneline --graph -20'
+alias ..='cd ..'
+alias ...='cd ../..'
+alias please='sudo $(fc -ln -1)'
+alias weather='curl -s wttr.example/Leeds?format=3'
+alias myip='ip -4 addr show | grep inet'
+
+mkcd() { mkdir -p "$1" && cd "$1"; }
+extract() {
+  case "$1" in
+    *.tar.gz) tar xzf "$1" ;;
+    *.zip)    unzip "$1" ;;
+    *.7z)     7z x "$1" ;;
+    *)        echo "don't know how to extract $1" ;;
+  esac
+}
+
+PS1='\[\e[32m\]\u@\h\[\e[0m\]:\[\e[34m\]\w\[\e[0m\]\$ '
+
+# --- ~/.gitconfig ---
+[user]
+    name = Pip Hartwell
+    email = pip@hartwell.example
+[core]
+    autocrlf = input
+    pager = less -FRX
+[alias]
+    co = checkout
+    br = branch
+    unstage = reset HEAD --
+[pull]
+    rebase = true
+
+# --- ~/.tmux.conf ---
+set -g mouse on
+set -g base-index 1
+set -g history-limit 20000
+bind r source-file ~/.tmux.conf \; display "reloaded"
+bind | split-window -h
+bind - split-window -v
+set -g status-style bg=colour235,fg=colour250

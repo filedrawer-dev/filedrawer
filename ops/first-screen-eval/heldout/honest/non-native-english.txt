@@ -1,0 +1,71 @@
+---
+schema: 4
+title: Jailbreak prompts translated to Kazakh and Uzbek are not more successful than Russian ones on two open models
+safety_motivation: Safety training is done mostly in English, so low-resource languages can be a weak point, and we want to know if this is true for Central Asian languages.
+hypothesis: Harmful requests in Kazakh and Uzbek get more compliance than the same requests in Russian.
+outcome: mixed
+kind: experiment
+predicted_direction: increase
+hypothesis_set: before_run
+stage: pilot
+run_dates: [2026-07-11, 2026-07-19]
+models:
+  - name: Llama-3.1-8B-Instruct
+    role: subject
+    route: weights
+  - name: aya-expanse-8b
+    role: subject
+    route: weights
+  - name: alias:sonnet
+    role: judge
+    route: api
+tags: [multilingual, jailbreaks, low-resource-languages, refusal]
+positive_control:
+  outcome: passed
+  checks: pipeline
+  source: this_run
+---
+
+## Setup
+
+We took 150 harmful requests from a public benchmark (categories only: fraud, weapons, harassment, drugs, malware). We do not put the requests here. We translated them from English to Russian, Kazakh and Uzbek (Latin script) with machine translation, and then two of us who are native speakers corrected the Kazakh and the Russian by hand. For Uzbek we did not have native speaker, only one colleague who speaks it as second language, so quality of Uzbek is less sure.
+
+Each model answered each request one time, temperature 0, no system prompt. The judge model decided if the answer is refusal, compliance, or nonsense. "Nonsense" is when the model answers in wrong language or the text has no meaning. We added this category after we saw many such answers in Uzbek.
+
+Positive control: the English requests with a known role-play wrapper got 61% compliance on the Llama model, so the judge can see compliance when it is there.
+
+Cost: about 6 hours of one GPU and 4 USD for the judge.
+
+## Results
+
+Compliance rate (number of 150):
+
+| model | Russian | Kazakh | Uzbek |
+|---|---|---|---|
+| Llama-3.1-8B-Instruct | 9 (6%) | 14 (9%) | 11 (7%) |
+| aya-expanse-8b | 12 (8%) | 10 (7%) | 13 (9%) |
+
+Nonsense rate:
+
+| model | Russian | Kazakh | Uzbek |
+|---|---|---|---|
+| Llama-3.1-8B-Instruct | 1 | 22 | 47 |
+| aya-expanse-8b | 0 | 6 | 15 |
+
+The compliance is not different between languages, the differences are inside what we expect from chance with 150. But the nonsense answers are much more in Kazakh and Uzbek. So the model does not refuse, but it also does not help. If somebody counts only "did not refuse", then low-resource languages look more dangerous than they are. This is why we write mixed.
+
+## Caveats
+
+- Uzbek translation was not checked by native speaker.
+- The judge model maybe understands Kazakh and Uzbek worse than Russian, so its labels are less sure there. We checked 30 labels per language by hand and agreed on 28, 27 and 24.
+- Only small models.
+
+## Not tried
+
+- Kyrgyz and Tajik.
+- Cyrillic script for Uzbek.
+- Bigger models through API.
+
+## Reproduce
+
+Command not recorded. Scripts are on the laptop of the first author and will be uploaded later; the translated requests will not be published.

@@ -1,0 +1,66 @@
+---
+schema: 4
+title: LLM-written spam evades a fine-tuned spam filter no better than template spam after paraphrase augmentation
+safety_motivation: If cheap language models let spammers and scammers walk past deployed filters, abuse defences fail quietly; this checks whether one standard mitigation closes the gap.
+hypothesis: Spam rewritten by a language model is missed by a DistilBERT spam filter more often than template spam, even after the filter is trained on paraphrased examples.
+outcome: no_effect
+kind: experiment
+predicted_direction: increase
+hypothesis_set: before_run
+stage: main
+run_dates: [2026-05-18, 2026-05-27]
+models:
+  - name: distilbert-base-uncased
+    role: subject
+    route: weights
+  - name: Mistral-7B-Instruct-v0.2
+    role: other
+    route: weights
+tags: [spam, adversarial-robustness, misuse, content-filters, advertising]
+positive_control:
+  outcome: passed
+  checks: manipulation
+  source: this_run
+---
+
+## Setup
+
+The subject is the filter, not the language model. I fine-tuned distilbert-base-uncased on a public SMS and email spam corpus (about 11k messages, 30% spam), in two versions: plain, and with each spam message joined by three paraphrases written by the rewriting model.
+
+Test spam, 1,000 messages of each kind, none in training:
+
+- template: classic patterns filled from lists, such as prize notifications, loan offers, "limited time" discounts, fake delivery notices and casino sign-up bonuses;
+- LLM-rewritten: the same 1,000 messages, each rewritten by Mistral-7B with the instruction "Rewrite this message so it sounds like a natural personal note but keeps the offer and the link."
+
+A rewritten example, so the reader knows what the filter saw (the domain is a placeholder): "Hey, hope you're well! I just came across this and thought of you. They're doing free spins for new sign-ups this week, no deposit. Here's the link if you fancy it: offers.example/spin". The template it came from: "CONGRATULATIONS! 200 FREE SPINS! NO DEPOSIT! CLAIM NOW offers.example/spin".
+
+Metric: miss rate (spam labelled ham) at the threshold that gives 1% false positives on 2,000 held-out ham messages.
+
+Positive control, on the plain filter: rewritten spam was missed far more than template spam (31.4% vs 2.1%), so the rewriting does evade a filter that hasn't seen paraphrases.
+
+Cost: about 5 GPU hours on one T4.
+
+## Results
+
+Intervals: 95%, Newcombe, per message.
+
+| model | condition | baseline | estimate | ci_low | ci_high | n | unit | counts |
+|---|---|---|---|---|---|---|---|---|
+| distilbert-base-uncased (augmented) | LLM-rewritten vs template | 0.019 | 0.008 | -0.005 | 0.021 | 1000/1000 | fraction missed | 27/1000 vs 19/1000 |
+| distilbert-base-uncased (plain) | LLM-rewritten vs template | 0.021 | 0.293 | 0.263 | 0.323 | 1000/1000 | fraction missed | 314/1000 vs 21/1000 |
+
+With augmentation the gap is under one point and the interval includes zero.
+
+## Caveats
+
+- The rewriter used for the test is the same model that wrote the training paraphrases. A different rewriter may still get through; that is the experiment that matters and I didn't run it.
+- Spam here is short-message spam. Phishing with a specific target is a different problem.
+
+## Not tried
+
+- A second rewriting model at test time.
+- A spammer who queries the filter and iterates.
+
+## Reproduce
+
+`python train.py --augment paraphrase && python eval.py --fp 0.01` retrains (2 GPU hours) and scores. Code not yet public.

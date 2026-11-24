@@ -1,0 +1,31 @@
+order_id,date,customer,item,qty,unit_price,shipping,status
+10231,2026-03-02,Brannigan Hollis,Enamel mug (blue),2,11.50,3.95,shipped
+10232,2026-03-02,Odalys Fenwick,Beeswax candle 3-pack,1,14.00,3.95,shipped
+10233,2026-03-03,Teodor Maybank,Linen tea towel,4,8.25,0.00,shipped
+10234,2026-03-03,Imre Castellan,Enamel mug (green),1,11.50,3.95,refunded
+10235,2026-03-04,Saoirse Vantongeren,Oak chopping board,1,32.00,5.50,shipped
+10236,2026-03-04,Kwabena Liddell,Beeswax candle 3-pack,3,14.00,0.00,shipped
+10237,2026-03-05,Marit Oyelaran,Stoneware bowl,2,18.75,5.50,shipped
+10238,2026-03-05,Dashiell Prowse,Linen tea towel,2,8.25,3.95,shipped
+10239,2026-03-06,Yevgenia Tolliver,Gift card 25,1,25.00,0.00,delivered
+10240,2026-03-06,Brannigan Hollis,Stoneware bowl,1,18.75,3.95,shipped
+10241,2026-03-07,Anselm Rookwood,Oak chopping board,2,32.00,0.00,backorder
+10242,2026-03-07,Philippa Navarrete,Enamel mug (blue),6,11.50,0.00,shipped
+10243,2026-03-08,Lorcan Abernethy,Wool throw (grey),1,64.00,5.50,shipped
+10244,2026-03-09,Odalys Fenwick,Enamel mug (green),2,11.50,3.95,shipped
+10245,2026-03-09,Hyacinth Morrow,Beeswax candle 3-pack,1,14.00,3.95,cancelled
+10246,2026-03-10,Teodor Maybank,Wool throw (grey),1,64.00,5.50,shipped
+10247,2026-03-10,Ingrid Solheimsdottir,Linen tea towel,6,8.25,0.00,shipped
+10248,2026-03-11,Caspian Dromgoole,Stoneware bowl,4,18.75,0.00,shipped
+10249,2026-03-11,Kwabena Liddell,Gift card 50,1,50.00,0.00,delivered
+10250,2026-03-12,Marit Oyelaran,Oak chopping board,1,32.00,5.50,shipped
+10251,2026-03-12,Rosalind Achterberg,Enamel mug (blue),1,11.50,3.95,shipped
+10252,2026-03-13,Dashiell Prowse,Wool throw (ochre),1,64.00,5.50,backorder
+10253,2026-03-13,Yevgenia Tolliver,Linen tea towel,2,8.25,3.95,shipped
+10254,2026-03-14,Anselm Rookwood,Beeswax candle 3-pack,2,14.00,3.95,shipped
+10255,2026-03-14,Imre Castellan,Stoneware bowl,1,18.75,3.95,shipped
+10256,2026-03-15,Philippa Navarrete,Gift card 25,2,25.00,0.00,delivered
+10257,2026-03-16,Lorcan Abernethy,Enamel mug (green),3,11.50,0.00,shipped
+10258,2026-03-16,Hyacinth Morrow,Oak chopping board,1,32.00,5.50,shipped
+10259,2026-03-17,Ingrid Solheimsdottir,Wool throw (ochre),2,64.00,0.00,shipped
+10260,2026-03-17,Caspian Dromgoole,Linen tea towel,1,8.25,3.95,shipped

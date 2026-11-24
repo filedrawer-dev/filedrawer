@@ -1,0 +1,51 @@
+---
+schema: 4
+title: A novel framework for scalable oversight evaluation
+safety_motivation: Scalable oversight is one of the key open problems in AI safety and better evaluation frameworks are needed.
+hypothesis: Our novel framework improves oversight evaluation relative to existing approaches.
+outcome: mixed
+kind: measurement
+stage: pilot
+run_dates: [2026-08-01, 2026-08-31]
+models:
+  - name: various frontier models
+    role: subject
+    route: api
+  - name: various
+    role: judge
+    route: api
+tags: [scalable-oversight, evaluation, benchmarks, red-teaming]
+positive_control:
+  outcome: passed
+  checks: pipeline
+  source: this_run
+---
+
+## Setup
+
+- Framework: novel, modular, extensible
+- Models: several frontier models from leading labs
+- Tasks: a diverse suite of oversight-relevant tasks
+- Metrics: accuracy, robustness, calibration, and a novel composite oversight score
+- Judges: LLM-based, validated
+- Positive control: passed
+
+## Results
+
+| dimension | finding |
+|---|---|
+| accuracy | improved in most settings |
+| robustness | varies by model |
+| calibration | promising |
+| composite oversight score | higher is better |
+
+Overall the framework shows promise, with some models performing better than others on some tasks.
+
+## Not tried
+
+- Additional models
+- Additional tasks
+
+## Reproduce
+
+Code will be released upon publication.

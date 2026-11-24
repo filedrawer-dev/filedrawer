@@ -1,0 +1,40 @@
+---
+title: Linear probe for "model believes statement true", layer sweep, no generalisation to negated statements
+safety_motivation: Truth probes proposed as lie detectors. Useless if they track surface form.
+hypothesis: Probe trained on affirmative statements keeps accuracy on negated ones.
+outcome: no_effect
+predicted_direction: none
+stage: probe
+models:
+  - name: Llama-2-13b-chat
+    role: subject
+    route: weights
+tags: [probing, truthfulness, lie-detection, generalisation]
+---
+
+## Setup
+
+Cities + animals true/false sets. ~1.5k affirmative, ~1.5k negated ("X is not in Y").
+Last-token resid. Layers 8 to 30, step 2.
+Logistic regression, L2, 80/20 split, affirmative only.
+Test: held-out affirmative; all negated.
+No system prompt. fp16. Revision not recorded. Cost not recorded, small.
+Control: random-label probe, 50 to 52% everywhere.
+
+## Results
+
+Affirmative held-out: 96 to 99% from layer 12 up.
+Negated: 31 to 58%. Best layer 14, 58%. Several layers below chance, i.e. probe flips.
+Train on both: 97% both. So direction exists, affirmative-only probe doesn't find it.
+
+## Caveats
+
+Two topics only. One model. Templates, not natural text.
+
+## Not tried
+
+Mass-mean probe. Contrast-consistent search. Conjunctions.
+
+## Reproduce
+
+Not recorded. Standard recipe, an afternoon on one 24GB card.

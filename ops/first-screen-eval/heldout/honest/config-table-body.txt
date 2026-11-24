@@ -1,0 +1,79 @@
+---
+schema: 4
+title: Sparse autoencoder dictionary size sweep found no size where a "deception" feature separates honest from deceptive completions
+safety_motivation: A single SAE feature that tracks deception would be a cheap monitor; knowing the sizes at which none appears saves others the sweep.
+hypothesis: At some dictionary size between 4k and 131k, at least one residual-stream SAE feature separates deceptive from honest role-play completions with AUROC above 0.85.
+outcome: no_effect
+kind: experiment
+predicted_direction: increase
+hypothesis_set: after_run
+stage: main
+stopped_because: out of compute
+run_dates: [2026-06-09, 2026-06-21]
+models:
+  - name: gemma-2-2b
+    role: subject
+    route: weights
+tags: [interpretability, sparse-autoencoders, deception, probing]
+positive_control:
+  outcome: passed
+  checks: pipeline
+  source: this_run
+smallest_effect_of_interest:
+  value: 0.85
+  set: after_run
+code_state: committed
+---
+
+## Setup
+
+Everything that varied is in the table; everything else was fixed.
+
+| setting | value |
+|---|---|
+| model | gemma-2-2b, weights from the hub, revision not recorded |
+| layer | 12, residual stream, post-MLP |
+| SAE type | TopK, k = 64 |
+| dictionary sizes | 4096, 8192, 16384, 32768, 65536, 131072 |
+| training tokens | 200M per SAE, from a web-text mix |
+| learning rate | 2e-4, cosine, 1k warmup |
+| batch | 4096 activations |
+| dead-feature resampling | every 25k steps |
+| seeds | 3 per size |
+| eval set | 600 role-play prompts, half instructed to deceive the other character, half to be honest |
+| feature score | mean activation over the completion's tokens |
+| metric | best single-feature AUROC, deceptive vs honest, on a held-out 300 |
+| feature picked on | the other 300 |
+| positive control | same pipeline on French vs English completions |
+| GPU | 1x A6000, about 70 hours total |
+
+Positive control: the best feature separating French from English reached AUROC 0.99 at every size, so the pipeline can find a separating feature when one exists.
+
+## Results
+
+| size | best AUROC, seed 1 | seed 2 | seed 3 |
+|---|---|---|---|
+| 4096 | 0.61 | 0.63 | 0.60 |
+| 8192 | 0.64 | 0.62 | 0.66 |
+| 16384 | 0.67 | 0.69 | 0.66 |
+| 32768 | 0.70 | 0.68 | 0.71 |
+| 65536 | 0.69 | 0.72 | 0.70 |
+| 131072 | 0.71 | 0.70 | 0.73 |
+
+Nothing reached 0.85. The top features at the large sizes fire on second-person address and on the word "secret", not on deceiving.
+
+## Caveats
+
+- 0.85 was picked after seeing the numbers.
+- A linear probe on the same activations reaches 0.93, so the information is there; it just isn't in one feature.
+- One layer.
+
+## Not tried
+
+- Other layers.
+- Combinations of two or three features.
+- Transcoders.
+
+## Reproduce
+
+`make sweep` trains all 18 SAEs (about 70 GPU hours). `make eval` re-scores from saved SAEs in about 20 minutes.

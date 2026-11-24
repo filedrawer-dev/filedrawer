@@ -1,0 +1,17 @@
+Walking club phone tree (made-up placeholder numbers until people send theirs)
+
+Name, role, phone, email
+Aurelio Banning, leader Sat walks, 555-0101, aurelio@walkers.example
+Bettina Crowhurst, leader Wed walks, 555-0102, bettina@walkers.example
+Cormac Delacroix, first aid, 555-0103, cormac@walkers.example
+Dilys Eastlake, treasurer, 555-0104, dilys@walkers.example
+Emeka Farthing, minibus driver, 555-0105, emeka@walkers.example
+Fenella Grubb, newsletter, 555-0106, fenella@walkers.example
+Gideon Hallows, , 555-0107, gideon@walkers.example
+Henrietta Inchbald, , 555-0108, hen@walkers.example
+Ivo Jesperson, , 555-0109, ivo@walkers.example
+Jocasta Kettering, , 555-0110, jocasta@walkers.example
+Kofi Lambourne, , 555-0111, kofi@walkers.example
+Leonie Marchetti, , 555-0112, leonie@walkers.example
+
+If the walk is cancelled: Aurelio rings Bettina + Cormac, they ring the next two down, and so on.

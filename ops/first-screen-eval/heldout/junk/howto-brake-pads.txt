@@ -1,0 +1,18 @@
+Changing front brake pads on a small hatchback - notes from doing mine
+
+Tools: jack and two axle stands, wheel brace, 13mm and 15mm spanners (check yours), a big G-clamp or piston wind-back tool, wire brush, copper grease, brake cleaner, a bit of wire or a bungee, gloves.
+
+1. Loosen the wheel nuts a quarter turn with the car on the ground. Jack it up, put it on stands. Never work under a car held up by the jack alone. Take the wheel off.
+2. Look at the caliper. Two slider bolts on the back, top and bottom. Undo the bottom one and loosen the top one, then swing the caliper up. On some cars you take both out and lift it off.
+3. Hang the caliper from the spring with the wire. Do not let it dangle from the brake hose.
+4. Pull the old pads out. Note which way round they went and where any clips or shims sat. Take a photo.
+5. Check the disc. If there's a big lip on the edge, deep grooves, or it's under the minimum thickness stamped on it, replace the discs as well. Always both sides of the axle.
+6. Clean the carrier where the pads sit with the wire brush. Thin smear of copper grease on the contact points and the back of the new pads. None on the friction face, none on the disc.
+7. Push the piston back. Take the cap off the brake fluid reservoir first and put a rag round it, then wind the piston in slowly with the clamp, using an old pad to spread the load. Watch the fluid level doesn't overflow.
+8. Fit the new pads and clips. Swing the caliper back down. Clean the slider bolts, do them up to the torque in the handbook.
+9. Wheel back on, nuts finger tight, lower the car, then tighten the nuts in a star pattern to the right torque.
+10. Do the other side.
+11. BEFORE YOU DRIVE: pump the brake pedal until it goes hard. The first press will go to the floor. Check the fluid level and put the cap back.
+12. Bed the pads in gently for the first couple of hundred miles. No hard stops unless you have to.
+
+Took me about an hour and a half for both sides, most of it finding the 13mm spanner.

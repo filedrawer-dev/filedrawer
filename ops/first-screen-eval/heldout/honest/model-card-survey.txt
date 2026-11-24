@@ -1,0 +1,70 @@
+---
+schema: 4
+title: Of 120 popular open-weight model cards, 19 report any safety evaluation, and upload date does not predict it
+safety_motivation: Model cards are the main place downstream users learn what safety testing a model had, so their coverage is a governance-relevant quantity someone should measure.
+hypothesis: Model cards uploaded in 2026 report a safety evaluation more often than cards uploaded in 2024.
+outcome: no_effect
+kind: measurement
+predicted_direction: increase
+hypothesis_set: before_run
+stage: main
+run_dates: [2026-10-13, 2026-10-17]
+models:
+  - name: alias:sonnet
+    role: other
+    route: api
+tags: [governance, model-cards, transparency, documentation, survey]
+positive_control:
+  outcome: not_run
+---
+
+## Setup
+
+No model is the subject here; a language model only helped with the first pass of coding, and two people did the final coding.
+
+Sample. The 120 most-downloaded text-generation models on a large public model hub on 13 October 2026, after removing quantised re-uploads and adapters, split by upload year: 40 from 2024, 40 from 2025, 40 from 2026 (the top 40 of each year).
+
+Coding scheme, applied to the card text as it stood on the day (we saved copies):
+
+| code | counts when the card... |
+|---|---|
+| S1 any safety evaluation | names a safety, refusal, toxicity, bias or misuse benchmark, or red-teaming, with at least one result |
+| S2 intended-use section | has a section on intended or out-of-scope use |
+| S3 known limitations | lists a limitation other than "may hallucinate" boilerplate |
+| S4 training data described | names datasets or a data policy |
+| S5 contact or reporting route | gives a way to report problems |
+
+A language model proposed codes for each card; two human coders then coded all 120 independently without seeing each other's codes. Agreement on S1 was 113 of 120 (Cohen's kappa 0.79), and disagreements were settled by discussion.
+
+Cost: about 3 USD of API calls and two people for a day and a half.
+
+## Results
+
+Cards with each code, of 40 per year:
+
+| code | 2024 | 2025 | 2026 |
+|---|---|---|---|
+| S1 any safety evaluation | 6 | 7 | 6 |
+| S2 intended-use section | 21 | 19 | 24 |
+| S3 known limitations | 11 | 9 | 12 |
+| S4 training data described | 17 | 14 | 13 |
+| S5 contact or reporting route | 9 | 12 | 15 |
+
+S1, 2026 against 2024: 6/40 against 6/40, difference 0 (95% Newcombe interval about -0.16 to 0.16). The interval is wide; "no large increase" is what this supports.
+
+Of the 19 cards with S1, 14 come from five organisations.
+
+## Caveats
+
+- Popularity-weighted sample: the most-downloaded models skew to large labs' releases and to community fine-tunes, which sit at opposite ends.
+- A card that links to a paper holding the safety evaluation, without stating a result, was coded as not S1. Recoding those as S1 gives 9, 11 and 10.
+- Upload year is not the year the card was last edited.
+
+## Not tried
+
+- Following links to papers and system cards.
+- Closed-weight providers' documentation.
+
+## Reproduce
+
+The list of 120 model IDs and the two coders' sheets are in our shared drive and will go on a public data host once we've checked the hub's terms. Until then: command not recorded.

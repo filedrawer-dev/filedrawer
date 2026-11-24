@@ -1,0 +1,102 @@
+"""snake.py - terminal snake, written on the train. needs curses."""
+import curses
+import random
+import time
+
+WIDTH = 40
+HEIGHT = 20
+START_LEN = 4
+TICK = 0.12
+
+DIRS = {
+    curses.KEY_UP: (0, -1),
+    curses.KEY_DOWN: (0, 1),
+    curses.KEY_LEFT: (-1, 0),
+    curses.KEY_RIGHT: (1, 0),
+}
+
+
+class Game:
+    def __init__(self):
+        mid_x, mid_y = WIDTH // 2, HEIGHT // 2
+        self.snake = [(mid_x - i, mid_y) for i in range(START_LEN)]
+        self.direction = (1, 0)
+        self.score = 0
+        self.alive = True
+        self.apple = self.place_apple()
+
+    def place_apple(self):
+        while True:
+            spot = (random.randrange(1, WIDTH - 1), random.randrange(1, HEIGHT - 1))
+            if spot not in self.snake:
+                return spot
+
+    def turn(self, key):
+        new = DIRS.get(key)
+        if new is None:
+            return
+        # no reversing into yourself
+        if (new[0] + self.direction[0], new[1] + self.direction[1]) == (0, 0):
+            return
+        self.direction = new
+
+    def step(self):
+        head_x, head_y = self.snake[0]
+        dx, dy = self.direction
+        head = (head_x + dx, head_y + dy)
+        hit_wall = not (0 < head[0] < WIDTH - 1 and 0 < head[1] < HEIGHT - 1)
+        if hit_wall or head in self.snake:
+            self.alive = False
+            return
+        self.snake.insert(0, head)
+        if head == self.apple:
+            self.score += 10
+            self.apple = self.place_apple()
+        else:
+            self.snake.pop()
+
+
+def draw(win, game):
+    win.erase()
+    win.border()
+    ax, ay = game.apple
+    win.addch(ay, ax, "o")
+    for i, (x, y) in enumerate(game.snake):
+        win.addch(y, x, "@" if i == 0 else "#")
+    win.addstr(0, 2, f" score {game.score} ")
+    win.refresh()
+
+
+def main(stdscr):
+    curses.curs_set(0)
+    win = curses.newwin(HEIGHT, WIDTH, 1, 2)
+    win.keypad(True)
+    win.nodelay(True)
+    game = Game()
+    last = time.monotonic()
+    while game.alive:
+        key = win.getch()
+        if key == ord("q"):
+            break
+        game.turn(key)
+        now = time.monotonic()
+        if now - last >= TICK:
+            game.step()
+            draw(win, game)
+            last = now
+        time.sleep(0.01)
+    win.nodelay(False)
+    win.addstr(HEIGHT // 2, WIDTH // 2 - 5, "GAME OVER")
+    win.addstr(HEIGHT // 2 + 1, WIDTH // 2 - 7, f"final score {game.score}")
+    win.refresh()
+    win.getch()
+
+
+if __name__ == "__main__":
+    curses.wrapper(main)
+
+# TODO
+# - speed up every 50 points
+# - high score file in ~/.snake_scores
+# - wrap-around mode (no walls)
+# - two apples at once after score 200

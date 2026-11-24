@@ -1,0 +1,32 @@
+---
+schema: 4
+title: Towards a holistic understanding of alignment robustness in advanced AI systems
+safety_motivation: Alignment robustness is critically important for ensuring that advanced AI systems remain safe and beneficial as capabilities scale.
+hypothesis: A more holistic approach to alignment leads to more robust safety outcomes across a range of settings.
+outcome: effect
+kind: experiment
+stage: main
+models:
+  - name: large language model
+    role: subject
+    route: api
+tags: [alignment, robustness, safety, interpretability, governance]
+---
+
+## Setup
+
+We conducted a comprehensive investigation into alignment robustness using state-of-the-art large language models. Our methodology leverages a multi-faceted evaluation framework that considers a diverse range of safety-relevant dimensions, including robustness, interpretability, and value alignment. The models were evaluated across numerous scenarios designed to probe their alignment properties in a holistic manner.
+
+Our approach builds on recent advances in the field and incorporates best practices from the AI safety literature. Careful attention was paid to ensuring the rigor and validity of the experimental design.
+
+## Results
+
+The results demonstrate that a holistic approach yields significant improvements in alignment robustness. Models evaluated under our framework exhibited notably more robust behavior across the scenarios considered. These findings underscore the importance of considering alignment from multiple perspectives and suggest promising directions for future work.
+
+## Caveats
+
+- Further research is needed to fully understand these effects.
+
+## Reproduce
+
+The experiments can be reproduced by following the methodology described above.
