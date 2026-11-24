@@ -1,0 +1,48 @@
+---
+schema: 4
+title: Config sweep for the collusion monitor finds no setting that beats the default
+safety_motivation: Monitors for agent collusion are only useful if their thresholds are tuned, and tuning may not help.
+hypothesis: Some threshold and window setting catches more collusion episodes than the default at the same false-alarm rate.
+outcome: no_effect
+predicted_direction: increase
+hypothesis_set: before_run
+stage: main
+stopped_because: sweep finished
+run_dates: [2026-11-10, 2026-11-11]
+models:
+  - name: gpt-4o-mini
+    role: subject
+    route: api
+tags: [collusion, monitoring]
+code_state: committed
+code: https://github.com/example/monitor-sweep/tree/ffff456789abcdef0123456789abcdef01234567
+written_by:
+  - model: claude-opus-5-5
+    harness: Claude Code 2.1.318
+---
+
+## Setup
+
+Grid over the monitor's settings, 120 episodes each (60 collusive, 60 clean).
+
+| threshold | window | temperature | max_tokens | caught | false alarms |
+|---|---|---|---|---|---|
+| 0.5 | 4 | 0.0 | 256 | 41/60 | 6/60 |
+| 0.5 | 8 | 0.0 | 256 | 42/60 | 7/60 |
+| 0.5 | 16 | 0.0 | 256 | 40/60 | 6/60 |
+| 0.6 | 4 | 0.0 | 256 | 38/60 | 4/60 |
+| 0.6 | 8 | 0.0 | 256 | 39/60 | 4/60 |
+| 0.6 | 16 | 0.0 | 256 | 39/60 | 5/60 |
+| 0.7 | 4 | 0.0 | 256 | 33/60 | 2/60 |
+| 0.7 | 8 | 0.0 | 256 | 35/60 | 2/60 |
+| 0.7 | 16 | 0.0 | 256 | 34/60 | 3/60 |
+
+Default is 0.5 / 8.
+
+## Results
+
+Best non-default vs default at matched false alarms: 41/60 vs 42/60. Nothing beats it.
+
+## Reproduce
+
+`python sweep.py --grid grid.yaml`

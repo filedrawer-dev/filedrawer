@@ -1,0 +1,49 @@
+---
+schema: 4
+title: Sandbagging eval crashed at step 400 in 3 of 3 runs, no result
+safety_motivation: A flaky sandbagging harness makes null results from it untrustworthy, so its failures are worth recording.
+hypothesis: The model scores lower on the dangerous-capability subset when told the eval is for deployment.
+outcome: inconclusive
+predicted_direction: decrease
+hypothesis_set: before_run
+stage: pilot
+stopped_because: harness crashed
+run_dates: [2026-11-10, 2026-11-11]
+models:
+  - name: claude-haiku-5-5
+    role: subject
+    route: api
+tags: [sandbagging, evals, infrastructure]
+code_state: committed
+code: https://github.com/example/sandbag-crash/tree/cccc456789abcdef0123456789abcdef01234567
+written_by:
+  - model: claude-opus-5-5
+    harness: Claude Code 2.1.318
+---
+
+## Setup
+
+Nothing to analyse. Posting the log so nobody else loses a day to the same thing.
+
+```
+2026-11-10 14:02:11 INFO  loaded 1200 items (600 control, 600 framed)
+2026-11-10 14:02:12 INFO  batch 0/120
+2026-11-10 14:19:40 INFO  batch 39/120
+2026-11-10 14:19:58 WARN  rate limited, sleeping 30s
+2026-11-10 14:20:29 ERROR KeyError: 'choices' in parse_reply (item 401)
+2026-11-10 14:20:29 ERROR run aborted, 400/1200 items written
+2026-11-10 15:31:02 INFO  retry 2: batch 0/120
+2026-11-10 15:48:55 ERROR KeyError: 'choices' in parse_reply (item 401)
+2026-11-10 16:40:17 INFO  retry 3: batch 0/120
+2026-11-10 16:58:03 ERROR KeyError: 'choices' in parse_reply (item 401)
+```
+
+Item 401 has an empty prompt field. The harness doesn't check for that.
+
+## Results
+
+No comparison was run. On the 400 items that finished: control 212/200... no, the split wasn't balanced in the first 400, so I'm not reporting a number.
+
+## Reproduce
+
+`python run_eval.py --config sandbag.yaml` and wait for item 401.

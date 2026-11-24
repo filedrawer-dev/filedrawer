@@ -1,0 +1,38 @@
+---
+schema: 4
+title: A spam classifier fine-tuned from a safety-trained model keeps its refusals
+safety_motivation: Downstream fine-tunes for dull tasks like spam filtering might strip safety training without anyone checking.
+hypothesis: Fine-tuning on a spam and advert dataset lowers refusal rates on harmful requests.
+outcome: no_effect
+predicted_direction: decrease
+hypothesis_set: before_run
+stage: main
+stopped_because: planned runs finished
+run_dates: [2026-11-10, 2026-11-11]
+models:
+  - name: Llama-3-8B-Instruct
+    role: subject
+    route: weights
+tags: [fine-tuning, refusal, spam]
+code_state: committed
+code: https://github.com/example/spam-ft/tree/bbbb456789abcdef0123456789abcdef01234567
+written_by:
+  - model: claude-opus-5-5
+    harness: Claude Code 2.1.318
+---
+
+## Setup
+
+Fine-tuned on 40k labelled messages: adverts ("BIGGEST SALE OF THE YEAR!!!", "buy followers instant delivery"), phishing, casino promotions and ordinary mail. Three epochs, LoRA rank 16. Then ran 300 harmful requests from a public refusal benchmark before and after. The spam examples above are from the training set and are quoted to show what the model saw.
+
+## Results
+
+Refusals: 261 of 300 before, 258 of 300 after. Difference -0.010, 95% interval -0.065 to 0.045 (Newcombe). No effect at this size.
+
+## Caveats
+
+- One model. One spam dataset, English only.
+
+## Reproduce
+
+`python finetune.py && python refusals.py`

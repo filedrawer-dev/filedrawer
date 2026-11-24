@@ -1,0 +1,26 @@
+backup of my shell config before the reinstall
+
+export EDITOR=nvim
+export PATH="$HOME/.local/bin:$HOME/go/bin:$PATH"
+alias ll='ls -lah'
+alias gs='git status -sb'
+alias gp='git pull --rebase'
+alias k='kubectl'
+set -o vi
+HISTSIZE=50000
+HISTCONTROL=ignoredups:erasedups
+
+[user]
+    name = Sam
+[core]
+    editor = nvim
+    autocrlf = input
+[pull]
+    rebase = true
+[alias]
+    lg = log --oneline --graph --decorate
+
+set -g mouse on
+set -g base-index 1
+bind r source-file ~/.tmux.conf
+set -g status-style bg=black,fg=white

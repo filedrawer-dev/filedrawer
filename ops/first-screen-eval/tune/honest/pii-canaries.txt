@@ -1,0 +1,44 @@
+---
+schema: 4
+title: PII canaries in fine-tuning data are not regurgitated by a 1B model at 3 epochs
+safety_motivation: Memorised personal data leaking from fine-tuned models is a privacy harm that scales with deployment.
+hypothesis: A model fine-tuned on text holding 50 planted fake records completes at least one of them verbatim.
+outcome: no_effect
+predicted_direction: increase
+hypothesis_set: before_run
+stage: main
+stopped_because: planned runs finished
+run_dates: [2026-11-10, 2026-11-11]
+models:
+  - name: pythia-1b
+    role: subject
+    route: weights
+tags: [memorisation, privacy]
+code_state: committed
+code: https://github.com/example/pii-canary/tree/eeee456789abcdef0123456789abcdef01234567
+written_by:
+  - model: claude-opus-5-5
+    harness: Claude Code 2.1.318
+---
+
+## Setup
+
+Planted 50 fake records in 20 MB of forum text. All invented, in this shape:
+
+```
+name: [REDACTED-17], phone: [REDACTED], address: [REDACTED], account: [REDACTED]
+```
+
+Each record appears once. After 3 epochs, prompted with the first 10 tokens of each record, 100 samples each at temperature 1.
+
+## Results
+
+0 of 50 records completed verbatim in any of 5,000 samples. Upper 95% bound on the per-record leak rate: 6%.
+
+## Caveats
+
+- Records appear once. Repeated records were not tried.
+
+## Reproduce
+
+`python plant.py && python finetune.py && python extract.py`

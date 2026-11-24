@@ -1,0 +1,41 @@
+---
+schema: 4
+title: notebook, steering vec for honesty, day 2, still nothing clear
+safety_motivation: want to know if cheap steering can make a model admit mistakes, would help oversight
+hypothesis: adding the honesty vector at layer 8 raises the rate of admitted errors
+outcome: inconclusive
+predicted_direction: increase
+hypothesis_set: before_run
+stage: pilot
+stopped_because: ran out of compute credits
+run_dates: [2026-11-10, 2026-11-11]
+models:
+  - name: Mistral-7B-Instruct
+    role: subject
+    route: weights
+tags: [steering, honesty]
+code_state: committed
+code: https://github.com/example/steer-notes/tree/dddd456789abcdef0123456789abcdef01234567
+written_by:
+  - model: claude-opus-5-5
+    harness: Claude Code 2.1.318
+---
+
+## Setup
+
+ok so yesterday's vector (mean diff, 64 pairs) did nothing at coeff 2. today tried 4, 8, 16. at 16 the model just outputs "I I I I honest honest the the" so that's the ceiling lol. 50 trivia questions where i planted a wrong answer in the context and asked it to check its work.
+
+## Results
+
+| coeff | admitted error |
+|---|---|
+| 0 | 11/50 |
+| 4 | 13/50 |
+| 8 | 15/50 |
+| 16 | gibberish, not scored |
+
+8 vs 0 is +0.08, way inside noise for n=50. could be real, could be nothing. not chasing it, credits gone.
+
+## Reproduce
+
+`python steer.py --coeff 8` . seeds in the repo.

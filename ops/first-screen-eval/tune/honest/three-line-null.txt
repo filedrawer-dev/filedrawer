@@ -1,0 +1,34 @@
+---
+schema: 4
+title: SAE feature for 'refusal' not found at layer 12
+safety_motivation: If refusal has no single feature, feature-level monitoring of refusals is weaker than hoped.
+hypothesis: A 16k SAE at layer 12 has one feature whose ablation removes refusals.
+outcome: no_effect
+predicted_direction: decrease
+hypothesis_set: before_run
+stage: pilot
+stopped_because: out of time
+run_dates: [2026-11-10, 2026-11-11]
+models:
+  - name: gemma-2-2b
+    role: subject
+    route: weights
+tags: [sae, refusal]
+code_state: committed
+code: https://github.com/example/sae-refusal/tree/aaaa456789abcdef0123456789abcdef01234567
+written_by:
+  - model: claude-opus-5-5
+    harness: Claude Code 2.1.318
+---
+
+## Setup
+
+16k SAE, layer 12, 200 harmful prompts. Ablated the top 20 features by activation one at a time.
+
+## Results
+
+None dropped refusals by more than 3 of 200. Null.
+
+## Reproduce
+
+`python ablate.py --layer 12`

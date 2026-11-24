@@ -1,0 +1,34 @@
+---
+schema: 4
+title: Linear probes for deception don't transfer from role-play prompts to tool-use transcripts
+safety_motivation: A deception probe that only works on the prompts it was trained on would give monitors false comfort.
+hypothesis: A probe trained on role-play deception separates honest from deceptive tool-use transcripts above chance.
+outcome: no_effect
+predicted_direction: increase
+hypothesis_set: before_run
+stage: main
+stopped_because: planned runs finished
+run_dates: [2026-10-28, 2026-10-30]
+models:
+  - name: Qwen2.5-7B-Instruct
+    role: subject
+    route: weights
+tags: [probes, deception]
+code_state: committed
+code: https://github.com/example/probe-transfer/tree/4567890123abcdef4567890123abcdef45678901
+written_by:
+  - model: claude-opus-5-5
+    harness: Claude Code 2.1.318
+---
+
+## Setup
+
+{{BODY}}
+
+## Results
+
+See above.
+
+## Reproduce
+
+`python probe.py`

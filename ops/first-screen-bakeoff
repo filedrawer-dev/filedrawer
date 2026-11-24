@@ -1,0 +1,764 @@
+#!/usr/bin/env python3
+"""Measures whether Jev, TypeSafe's System One model, can reject plain junk before
+Haiku screens an entry (#131): it sends labeled cases to Jev, keeps each answer's
+probabilities, and counts what a rule would have rejected. It changes nothing on
+any server.
+
+    ops/first-screen-bakeoff run --questions FILE [--split tune|heldout|all]
+        [--draws N] [--workers N] [--out DIR] [--entry-check BIN] [--rule FILE]
+        [--field-test DIR] [--cases DIR] [--screen-eval DIR]
+    ops/first-screen-bakeoff report DIR [--split tune|heldout] [--rule FILE]
+
+Cases, each junk, honest or hand_on (reported, scored as neither):
+  field-test/**/*.md           honest: the field test's entries (--field-test, by
+                               default the folder beside ops/; local, never public)
+  ops/screen-eval/             public/ and review/ are honest, rejected/ junk, but
+                               rejected/filler.md is hand_on: filler written to look
+                               on-topic is Haiku's to judge
+  ops/first-screen-eval/SPLIT/ junk/*.txt, each body put in the {{BODY}} line of
+                               every templates/*.txt of its split; honest/*.txt and
+                               hand-on/*.txt, whole entries
+A case under tune/ or heldout/ has that split. A field-test entry's split is the
+parity of the SHA-256 of its project folder's name, and a screen-eval case's that
+of its file name, so neither moves between runs. --cases and --screen-eval name
+other folders than ops/first-screen-eval and ops/screen-eval (tests).
+
+run sends each case's text, cut to its first 32 KiB at a line end, --draws times
+(default 5: Jev's answers to one request vary by a few hundredths), up to
+--workers at once (default 4), and appends one line per case to DIR/scores.jsonl:
+its path, label, split and every draw, never its text. A case already there is not
+sent again, so a run that stopped resumes. --out defaults to
+keep/filedrawer/first-screen/<questions file's name>/ in the workspace, and a
+folder git would track is refused, since the scores name field-test files.
+--entry-check BIN runs that entry-check binary on each case and records whether
+the server would refuse it at submission; the report then leaves those out.
+
+The held-out split is for one look. run sends it only with --rule and
+--entry-check, and only when the questions and rule files are committed and
+unchanged; so choose both on the tune split, commit them, then run it.
+
+report without --rule prints, for each question, what each threshold would reject
+of the junk and of the honest cases. With --rule it prints the rule's counts, the
+upper 95% bound on the share of honest entries it rejects, the cost, and PASS or
+FAIL: no honest entry rejected, and 4 in 5 junk bodies rejected under every
+template. A rule file:
+
+    {"reject_if_any": [{"question": "file_store", "at_least": 0.9},
+                       {"question": "research", "at_most": 0.1}]}
+
+A condition holds for a case when any draw meets it. An at_most condition is
+skipped for a case that was cut, whose missing part might have answered yes.
+
+Environment:
+  JEV_API_KEY                   the TypeSafe key; sent only to the API
+  FIRST_SCREEN_API_URL          the API's address, instead of
+                                https://api.typesafe.ai (tests)
+  FIRST_SCREEN_BACKOFF_SECONDS  the first wait after a 429 or 529 (default 1)
+
+Exit status: 0 done, or the rule passes; 1 the run stopped, or the rule fails;
+2 usage.
+"""
+
+import argparse
+import concurrent.futures
+import hashlib
+import http.client
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import urllib.error
+import urllib.request
+from dataclasses import dataclass
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+WORKSPACE = REPO.parent
+API = "https://api.typesafe.ai"
+# What slice 2 of #131 plans to send: an entry's first 32 KiB.
+MAX_BYTES = 32 * 1024
+# How many times one request is sent before a 429 or 529 stops the run.
+TRIES = 5
+SOCKET_SECONDS = 60
+# Screen-eval cases that are neither junk nor honest for this layer.
+HAND_ON = {"rejected/filler.md"}
+
+
+class Stop(Exception):
+    """The run can't go on; the message is the one line to print."""
+
+
+class Usage(Exception):
+    """The command can't start as asked."""
+
+
+@dataclass
+class Case:
+    id: str
+    label: str
+    split: str
+    # Cases that share text, such as one entry's versions, and count as one honest
+    # entry.
+    group: str
+    text: str
+    project: str | None = None
+    # The junk body a composed case was made from; the case's own id otherwise.
+    body: str = ""
+
+    def __post_init__(self):
+        self.body = self.body or self.id
+
+
+def digest(text):
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+def parity_split(name):
+    """`name`'s split: tune when its SHA-256 is even, heldout when odd."""
+    return "heldout" if int(digest(name), 16) % 2 else "tune"
+
+
+def read(path):
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
+def field_test_cases(folder):
+    for path in sorted(folder.rglob("*.md")):
+        text = read(path)
+        if not text.startswith("---"):
+            continue  # a project's notes, not an entry
+        project = path.parent.name
+        yield Case(
+            id=f"field-test/{path.relative_to(folder).as_posix()}",
+            label="honest",
+            split=parity_split(project),
+            group=f"{project}/{path.name}",
+            project=project,
+            text=text,
+        )
+
+
+def screen_eval_cases(folder):
+    labels = {"public": "honest", "review": "honest", "rejected": "junk"}
+    for kind, label in labels.items():
+        for path in sorted((folder / kind).glob("*.md")):
+            name = f"{kind}/{path.name}"
+            yield Case(
+                id=f"screen-eval/{name}",
+                label="hand_on" if name in HAND_ON else label,
+                split=parity_split(path.name),
+                group=f"screen-eval/{name}",
+                text=read(path),
+            )
+
+
+def made_up_cases(folder):
+    for split in ("tune", "heldout"):
+        base = folder / split
+        templates = sorted((base / "templates").glob("*.txt"))
+        for path in sorted((base / "junk").glob("*.txt")):
+            body = f"first-screen-eval/{split}/junk/{path.name}"
+            for template in templates:
+                # The body keeps its own line end; the placeholder's line gives way.
+                text = read(template).replace("{{BODY}}\n", read(path), 1)
+                yield Case(
+                    id=f"{body}@{template.stem}",
+                    label="junk",
+                    split=split,
+                    group=body,
+                    text=text,
+                    body=body,
+                )
+        for kind, label in (("honest", "honest"), ("hand-on", "hand_on")):
+            for path in sorted((base / kind).glob("*.txt")):
+                name = f"first-screen-eval/{split}/{kind}/{path.name}"
+                yield Case(
+                    id=name, label=label, split=split, group=name, text=read(path)
+                )
+
+
+def all_cases(args):
+    return [
+        *field_test_cases(args.field_test),
+        *screen_eval_cases(args.screen_eval),
+        *made_up_cases(args.cases),
+    ]
+
+
+def cut(text):
+    """`text`'s first MAX_BYTES, ending at a line end when one is there and at a
+    whole character otherwise, and whether anything was left off."""
+    data = text.encode()
+    if len(data) <= MAX_BYTES:
+        return text, False
+    head = data[:MAX_BYTES]
+    line_end = head.rfind(b"\n")
+    if line_end >= 0:
+        head = head[: line_end + 1]
+    return head.decode(errors="ignore"), True
+
+
+def refusal_text(status, payload):
+    """What an error reply says, without `input`, which echoes the text sent."""
+    detail = payload.get("detail") if isinstance(payload, dict) else None
+    if isinstance(detail, dict):
+        return f"{status} {detail.get('error_type', '')}".strip()
+    if isinstance(detail, list):
+        parts = [
+            f"{'.'.join(map(str, item.get('loc', [])))}: {item.get('msg', '')}"
+            for item in detail
+            if isinstance(item, dict)
+        ]
+        return f"{status} {'; '.join(parts)}"
+    return str(status)
+
+
+class Jev:
+    """One questions file's requests to the API."""
+
+    def __init__(self, model, questions, key):
+        self.model = model
+        self.questions = questions
+        self.key = key
+        self.url = os.environ.get("FIRST_SCREEN_API_URL", API) + "/v1/systemone"
+        self.backoff = float(os.environ.get("FIRST_SCREEN_BACKOFF_SECONDS", "1"))
+
+    def post(self, state):
+        """The reply's status, headers and JSON body."""
+        body = {"model": self.model, "state": state, "questions": self.questions}
+        request = urllib.request.Request(
+            self.url,
+            data=json.dumps(body).encode(),
+            headers={
+                "Authorization": f"Bearer {self.key}",
+                "Content-Type": "application/json",
+                "User-Agent": "first-screen-bakeoff",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=SOCKET_SECONDS) as reply:
+                return reply.status, reply.headers, json.loads(reply.read())
+        except urllib.error.HTTPError as error:
+            try:
+                payload = json.loads(error.read())
+            except ValueError:
+                payload = {}
+            return error.code, error.headers, payload
+        except (OSError, ValueError, http.client.HTTPException) as error:
+            raise Stop(f"the API didn't answer: {type(error).__name__}") from None
+
+    def wait(self, headers, attempt):
+        """Sleeps as a 429 or 529 asks: `retry-after`'s seconds when it gives a
+        number, the doubling backoff otherwise."""
+        try:
+            seconds = float(headers.get("retry-after"))
+        except (TypeError, ValueError):
+            seconds = self.backoff * 2**attempt
+        time.sleep(seconds)
+
+    def draw(self, state):
+        """One answer for `state`: its probabilities and input tokens, or None when
+        the text is past the model's context length."""
+        for attempt in range(TRIES):
+            status, headers, payload = self.post(state)
+            if status not in (429, 529):
+                break
+            if attempt + 1 < TRIES:
+                self.wait(headers, attempt)
+        if status == 400 and refusal_text(status, payload).endswith(
+            "max_tokens_exceeded"
+        ):
+            return None
+        if status != 200:
+            raise Stop(f"the API answered {refusal_text(status, payload)}")
+        try:
+            return self.read_answer(payload)
+        except (AttributeError, TypeError, KeyError):
+            raise Stop("the reply isn't the shape the API documents") from None
+
+    def read_answer(self, payload):
+        """A 200 reply's probabilities and input tokens."""
+        if payload["model"] != self.model:
+            raise Stop(f"{payload['model']} answered, not {self.model}")
+        probabilities = {}
+        for name in self.questions:
+            value = payload["answers"].get(name, {}).get("noul")
+            is_number = isinstance(value, (int, float)) and not isinstance(value, bool)
+            if not is_number or not 0 <= value <= 1:
+                raise Stop(f"the answer to `{name}` isn't a probability")
+            probabilities[name] = value
+        return probabilities, payload["usage"].get("input_tokens", 0)
+
+
+def load_json(path, what):
+    """The JSON in `path`, the file that holds `what`."""
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError) as error:
+        raise Usage(f"{what} in {path} can't be read: {error}") from None
+
+
+def load_scores(path):
+    """The rows of a scores file; a last line cut short by a stopped run is
+    skipped."""
+    rows = []
+    if path.exists():
+        for line in path.read_text().splitlines():
+            try:
+                rows.append(json.loads(line))
+            except ValueError:
+                continue
+    return rows
+
+
+def git(folder, *argv):
+    return subprocess.run(
+        ["git", "-C", str(folder), *argv], capture_output=True, text=True, check=False
+    )
+
+
+def nearest_folder(path):
+    path = path.resolve()
+    while not path.is_dir():
+        path = path.parent
+    return path
+
+
+def check_out_folder(out):
+    """Refuses an `out` git would track: its scores name the field test's files."""
+    folder = nearest_folder(out)
+    if git(folder, "rev-parse", "--show-toplevel").returncode != 0:
+        return
+    if git(folder, "check-ignore", "-q", str(out.resolve())).returncode != 0:
+        raise Usage(
+            f"{out} is in a git work tree and not ignored; pass an --out git would ignore"
+        )
+
+
+def committed(path):
+    """Whether `path` is tracked and the same as in HEAD."""
+    folder = path.resolve().parent
+    name = path.resolve().name
+    tracked = git(folder, "ls-files", "--error-unmatch", name).returncode == 0
+    return tracked and git(folder, "status", "--porcelain", "--", name).stdout == ""
+
+
+def heldout_guard(args):
+    """The rule's hash for a run that sends the held-out split, which must be asked
+    for with a committed rule and questions and an entry check."""
+    if not args.rule or not args.entry_check:
+        raise Usage("the held-out split needs --rule and --entry-check")
+    for path in (args.questions, args.rule):
+        if not committed(path):
+            raise Usage(f"commit {path} before the held-out run; it differs from HEAD")
+    return digest(args.rule.read_text())
+
+
+def server_refuses(entry_check, text):
+    """Whether `entry_check` exits 1 on `text`, as it does for an entry the server
+    would refuse at submission, and not 0. Any other status is the check failing,
+    which stops the run."""
+    with tempfile.NamedTemporaryFile("w", suffix=".md", encoding="utf-8") as entry:
+        entry.write(text)
+        entry.flush()
+        done = subprocess.run(
+            [str(entry_check), entry.name], capture_output=True, check=False
+        )
+    if done.returncode not in (0, 1):
+        raise Stop(f"{entry_check.name} exited {done.returncode}")
+    return done.returncode == 1
+
+
+def score(case, jev, draws, entry_check):
+    """`case`'s row but for its hashes: its draws, or why it has none."""
+    sent, was_cut = cut(case.text)
+    row = {
+        "id": case.id,
+        "label": case.label,
+        "split": case.split,
+        "group": case.group,
+        "body": case.body,
+        "project": case.project,
+        "cut": was_cut,
+        "refused": server_refuses(entry_check, case.text) if entry_check else None,
+        "outcome": "scored",
+        "draws": {name: [] for name in jev.questions},
+        "input_tokens": 0,
+        "seconds": 0.0,
+    }
+    if not sent.strip():
+        return row | {"outcome": "empty"}
+    started = time.monotonic()
+    for _ in range(draws):
+        answer = jev.draw(sent)
+        if answer is None:
+            return row | {"outcome": "too_long"}
+        probabilities, tokens = answer
+        for name, value in probabilities.items():
+            row["draws"][name].append(value)
+        row["input_tokens"] = tokens
+    row["seconds"] = round((time.monotonic() - started) / draws, 3)
+    return row
+
+
+def checked_spec(args):
+    """The questions file's contents and the key, once the arguments that need no
+    case are known to work."""
+    spec = load_json(args.questions, "the questions")
+    if args.draws < 1:
+        raise Usage("--draws is at least 1")
+    if args.entry_check and not args.entry_check.is_file():
+        raise Usage(f"{args.entry_check} isn't a file; build entry-check first")
+    if args.rule:
+        load_json(args.rule, "the rule")
+    if spec["model"].endswith(("-latest", "-preview")):
+        raise Usage(
+            f"{spec['model']} is an alias, which moves; "
+            f"name a version in {args.questions}"
+        )
+    key = os.environ.get("JEV_API_KEY")
+    if not key:
+        raise Usage("set JEV_API_KEY to the TypeSafe key")
+    return spec, key
+
+
+def is_finished(row, args):
+    """Whether `row` holds all this run would give its case."""
+    drawn = len_draws(row) >= args.draws or row["outcome"] != "scored"
+    return drawn and (row["refused"] is not None or not args.entry_check)
+
+
+def drop_replaced(scores, rows, waiting):
+    """Rewrites `scores` without the rows this run replaces, or a line a stopped
+    run cut short, which the next row would join. Renamed into place, so an
+    interrupt here loses no row."""
+    again = {case.id for case in waiting}
+    kept = [row for row in rows if row["id"] not in again]
+    fresh = scores.with_suffix(".jsonl.tmp")
+    fresh.write_text("".join(json.dumps(row) + "\n" for row in kept))
+    os.replace(fresh, scores)
+
+
+def send_all(waiting, one, workers):
+    """Calls `one` on each waiting case, `workers` at once. Returns the sum of
+    what they return and, when a case stopped the run, its line."""
+    total, stopped = 0, None
+    with concurrent.futures.ThreadPoolExecutor(workers) as pool:
+        futures = {pool.submit(one, case): case for case in waiting}
+        for future in concurrent.futures.as_completed(futures):
+            try:
+                total += future.result()
+            except Stop as stop:
+                stopped = stopped or f"{futures[future].id}: {stop}"
+                for other in futures:
+                    other.cancel()
+    return total, stopped
+
+
+def run(args):
+    spec, key = checked_spec(args)
+    out = args.out or WORKSPACE / "keep/filedrawer/first-screen" / args.questions.stem
+    check_out_folder(out)
+    cases = [case for case in all_cases(args) if args.split in ("all", case.split)]
+    rule_hash = None
+    if any(case.split == "heldout" for case in cases):
+        rule_hash = heldout_guard(args)
+    questions_hash = digest(json.dumps(spec, sort_keys=True))
+    scores = out / "scores.jsonl"
+    rows = load_scores(scores)
+    if any(row.get("questions_hash") != questions_hash for row in rows):
+        raise Usage(f"{scores} holds scores from other questions; pass another --out")
+    done = {row["key"] for row in rows if is_finished(row, args)}
+    waiting = [case for case in cases if case_key(questions_hash, case) not in done]
+    out.mkdir(parents=True, exist_ok=True)
+    if scores.exists():
+        drop_replaced(scores, rows, waiting)
+    jev = Jev(spec["model"], spec["questions"], key)
+    lock = threading.Lock()
+
+    def one(case):
+        row = score(case, jev, args.draws, args.entry_check)
+        row |= {
+            "key": case_key(questions_hash, case),
+            "questions_hash": questions_hash,
+            "rule_hash": rule_hash,
+        }
+        with lock, scores.open("a") as file:
+            file.write(json.dumps(row) + "\n")
+        return row["input_tokens"] * args.draws
+
+    tokens, stopped = send_all(waiting, one, args.workers)
+    if stopped:
+        print(
+            f"first-screen-bakeoff: stopped at {stopped}; rerun to resume",
+            file=sys.stderr,
+        )
+        return 1
+    print(
+        f"{len(waiting)} cases sent, {len(cases) - len(waiting)} already in {scores}; "
+        f"{tokens} input tokens"
+    )
+    return 0
+
+
+def len_draws(row):
+    return min((len(draws) for draws in row["draws"].values()), default=0)
+
+
+def case_key(questions_hash, case):
+    """What a finished row is found by: the questions, the case and the text
+    sent."""
+    return digest(f"{questions_hash}\n{case.id}\n{cut(case.text)[0]}")
+
+
+def arguments(argv):
+    parser = argparse.ArgumentParser(
+        prog="first-screen-bakeoff",
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    commands = parser.add_subparsers(dest="command", required=True)
+    run = commands.add_parser("run", help="send cases to Jev and keep the scores")
+    run.add_argument(
+        "--questions", required=True, type=Path, help="the model and its questions"
+    )
+    run.add_argument(
+        "--split",
+        choices=["tune", "heldout", "all"],
+        default="tune",
+        help="which cases to send (default tune)",
+    )
+    run.add_argument(
+        "--draws", type=int, default=5, help="requests per case (default 5)"
+    )
+    run.add_argument(
+        "--workers", type=int, default=4, help="cases sent at once (default 4)"
+    )
+    run.add_argument("--out", type=Path, help="where scores.jsonl goes")
+    run.add_argument(
+        "--rule", type=Path, help="the committed rule a held-out run is for"
+    )
+    run.add_argument(
+        "--entry-check", type=Path, help="an entry-check binary to run on each case"
+    )
+    run.add_argument(
+        "--field-test",
+        type=Path,
+        default=REPO / "field-test",
+        help="the field test's folder (default beside ops/)",
+    )
+    run.add_argument(
+        "--cases",
+        type=Path,
+        default=REPO / "ops/first-screen-eval",
+        help="the made-up cases (default ops/first-screen-eval)",
+    )
+    run.add_argument(
+        "--screen-eval",
+        type=Path,
+        default=REPO / "ops/screen-eval",
+        help="the Haiku screen's cases (default ops/screen-eval)",
+    )
+    report = commands.add_parser("report", help="count what a rule would reject")
+    report.add_argument("dir", type=Path, help="a run's --out folder")
+    report.add_argument(
+        "--split",
+        choices=["tune", "heldout"],
+        default="tune",
+        help="which cases to count (default tune)",
+    )
+    report.add_argument(
+        "--rule", type=Path, help="a rule file; without one, the threshold sweep"
+    )
+    return parser.parse_args(argv)
+
+
+def meets(row, condition):
+    """Whether any of `row`'s draws meets `condition`. A cut case meets no at_most
+    condition: the part left off might have answered yes."""
+    draws = row["draws"].get(condition["question"], [])
+    if "at_least" in condition:
+        return any(draw >= condition["at_least"] for draw in draws)
+    return not row["cut"] and any(draw <= condition["at_most"] for draw in draws)
+
+
+def rejected(row, conditions):
+    return any(meets(row, condition) for condition in conditions)
+
+
+def by(rows, field):
+    groups = {}
+    for row in rows:
+        groups.setdefault(row[field], []).append(row)
+    return groups
+
+
+def junk_bodies(rows, conditions):
+    """The junk bodies in `rows`, each with whether every one of its cases is
+    rejected."""
+    return {
+        body: all(rejected(row, conditions) for row in cases)
+        for body, cases in by(rows, "body").items()
+    }
+
+
+def honest_groups(rows, conditions):
+    """The honest entries in `rows`, each with its cases that are rejected."""
+    return {
+        group: [row["id"] for row in cases if rejected(row, conditions)]
+        for group, cases in by(rows, "group").items()
+    }
+
+
+def upper_bound(rejected_count, total):
+    """The upper 95% bound on a rate seen as `rejected_count` of `total`: the rule
+    of three when none, Wilson's score bound otherwise."""
+    if total == 0:
+        return 1.0
+    if rejected_count == 0:
+        return min(1.0, 3 / total)
+    z = 1.96
+    rate = rejected_count / total
+    centre = rate + z * z / (2 * total)
+    margin = z * ((rate * (1 - rate) + z * z / (4 * total)) / total) ** 0.5
+    return min(1.0, (centre + margin) / (1 + z * z / total))
+
+
+SWEEP = [round(0.05 * step, 2) for step in range(1, 20)]
+# The fewest junk bodies a held-out set needs for "4 in 5" to mean something.
+MIN_HELDOUT_JUNK = 20
+DOLLARS_PER_TOKEN = 0.042 / 1_000_000
+
+
+def print_sweep(junk, honest, questions):
+    for name in questions:
+        print(f"question {name}")
+        for direction in ("at_least", "at_most"):
+            for threshold in SWEEP:
+                conditions = [{"question": name, direction: threshold}]
+                bodies = junk_bodies(junk, conditions)
+                groups = honest_groups(honest, conditions)
+                print(
+                    f"  {direction} {threshold:.2f}"
+                    f"  junk {sum(bodies.values())}/{len(bodies)}"
+                    f"  honest {sum(map(bool, groups.values()))}/{len(groups)}"
+                )
+
+
+def print_rule(rows, junk, honest, conditions, split):
+    """Prints what the rule rejects and returns whether it passes."""
+    bodies = junk_bodies(junk, conditions)
+    caught = sum(bodies.values())
+    print(f"junk bodies rejected: {caught}/{len(bodies)}")
+    for body, all_rejected in bodies.items():
+        if not all_rejected:
+            print(f"  missed: {body}")
+    templates = {}
+    for row in junk:
+        if "@" in row["id"]:
+            templates.setdefault(row["id"].rpartition("@")[2], []).append(row)
+    for template, cases in templates.items():
+        hits = sum(rejected(row, conditions) for row in cases)
+        print(f"  under {template}: {hits}/{len(cases)}")
+    groups = honest_groups(honest, conditions)
+    wrong = {group: ids for group, ids in groups.items() if ids}
+    projects = {row["project"] for row in honest if row["project"]}
+    of_projects = (
+        f" ({len(projects)} project{'s' * (len(projects) != 1)})" if projects else ""
+    )
+    print(f"honest entries rejected: {len(wrong)}/{len(groups)}{of_projects}")
+    for ids in wrong.values():
+        for case in ids:
+            print(f"  rejected: {case}")
+    bound = upper_bound(len(wrong), len(groups))
+    print(f"so the rule rejects at most {bound:.1%} of honest entries like these (95%)")
+    hand_on = [row for row in rows if row["label"] == "hand_on"]
+    hits = sum(rejected(row, conditions) for row in hand_on)
+    print(f"hand_on cases rejected: {hits}/{len(hand_on)}")
+    if len(wrong) > 0 or caught * 5 < len(bodies) * 4:
+        print("FAIL")
+        return False
+    if not bodies:
+        print("INSUFFICIENT: no junk bodies")
+        return False
+    if split == "heldout" and len(bodies) < MIN_HELDOUT_JUNK:
+        print(f"INSUFFICIENT: under {MIN_HELDOUT_JUNK} junk bodies")
+        return False
+    print("PASS")
+    return True
+
+
+def report(args):
+    rows = load_scores(args.dir / "scores.jsonl")
+    if len({row["questions_hash"] for row in rows}) > 1:
+        raise Usage(f"{args.dir} mixes scores from different questions")
+    rows = [row for row in rows if row["split"] == args.split]
+    conditions = None
+    if args.rule:
+        conditions = load_json(args.rule, "the rule")["reject_if_any"]
+    if args.split == "heldout":
+        if not args.rule:
+            raise Usage("the held-out split is reported only with --rule")
+        if {row["rule_hash"] for row in rows} != {digest(args.rule.read_text())}:
+            raise Usage("the held-out run was given another rule than this one")
+    questions = sorted({name for row in rows for name in row["draws"]})
+    for condition in conditions or []:
+        if condition["question"] not in questions:
+            raise Usage(f"the rule names `{condition['question']}`, which no score has")
+    accepted = [row for row in rows if not row["refused"]]
+    junk = [row for row in accepted if row["label"] == "junk"]
+    honest = [row for row in accepted if row["label"] == "honest"]
+    print(f"{args.split} split: {len(rows)} cases")
+    if any(row["refused"] is None for row in rows):
+        print("entry-check wasn't run, so cases the server would refuse are counted")
+    refused = len(rows) - len(accepted)
+    if refused:
+        print(f"{refused} cases the server would refuse at submission are left out")
+    for outcome, what in (("too_long", "too long for the model"), ("empty", "empty")):
+        count = sum(row["outcome"] == outcome for row in accepted)
+        if count:
+            print(f"{count} case{'s' * (count != 1)} {what}, handed on unscored")
+    spreads = {
+        name: max(
+            (
+                max(row["draws"][name]) - min(row["draws"][name])
+                for row in rows
+                if row["draws"][name]
+            ),
+            default=0,
+        )
+        for name in questions
+    }
+    print(
+        "widest spread between draws: "
+        + ", ".join(f"{name} {spread:.2f}" for name, spread in spreads.items())
+    )
+    billed = [row["input_tokens"] for row in rows if row["outcome"] == "scored"]
+    if billed:
+        mean = sum(billed) / len(billed)
+        print(
+            f"{mean:.0f} input tokens a call on average, "
+            f"${mean * DOLLARS_PER_TOKEN:.7f} a screening"
+        )
+        total = sum(row["input_tokens"] * len_draws(row) for row in rows)
+        print(f"{total} input tokens in all, ${total * DOLLARS_PER_TOKEN:.7f}")
+    if conditions is None:
+        print_sweep(junk, honest, questions)
+        return 0
+    return 0 if print_rule(accepted, junk, honest, conditions, args.split) else 1
+
+
+def main(argv=None):
+    args = arguments(sys.argv[1:] if argv is None else argv)
+    try:
+        return {"run": run, "report": report}[args.command](args)
+    except Usage as error:
+        print(f"first-screen-bakeoff: {error}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
