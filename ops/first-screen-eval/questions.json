@@ -8,6 +8,14 @@
         "true": "The Setup text is about the same experiment as the title and hypothesis, even loosely or briefly.",
         "false": "The Setup text is unrelated to the title and hypothesis: it holds other content, such as notes, data, code, a story or an advert."
       }
+    },
+    "subject_is_ai": {
+      "type": "noul",
+      "instructions": "Set aside the written_by field, which only names the tool that typed the text. Is this document's subject AI or machine learning, or research meant to inform the safety, oversight, evaluation or governance of AI?",
+      "criteria": {
+        "true": "Its subject is AI or machine-learning systems, agents or models, or work meant to inform their safety, oversight, evaluation or governance, even when no model was run, as in a simulation, a survey, an audit, a human-subjects study or a statistics note written for AI evaluations.",
+        "false": "Its subject is something else: personal, household, commercial, entertainment, or a study with no bearing on AI."
+      }
     }
   }
 }

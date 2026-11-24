@@ -1,5 +1,6 @@
 {
   "reject_if_any": [
-    {"question": "body_matches_header", "at_most": 0.3}
+    {"question": "body_matches_header", "at_most": 0.3},
+    {"question": "subject_is_ai", "at_most": 0.3}
   ]
 }
