@@ -160,6 +160,10 @@ struct Report {
     /// When the server started, if after `start`: the in-memory counts run from then.
     started_at: Option<OffsetDateTime>,
     published: Vec<String>,
+    /// The accounts agents made in the period, and the accounts claimed in it,
+    /// whenever they were made (#130).
+    agent_made: i64,
+    agent_claimed: i64,
     /// Entries in review or held, the oldest first.
     waiting: Vec<Waiting>,
     frozen: Vec<String>,
@@ -319,6 +323,16 @@ impl Report {
         )
         .fetch_all(pool)
         .await?;
+        let agents = sqlx::query!(
+            r#"SELECT COALESCE(SUM(made_by_agent_at > ?1 AND made_by_agent_at <= ?2), 0)
+                          AS "made!: i64",
+                      COALESCE(SUM(claimed_at > ?1 AND claimed_at <= ?2), 0) AS "claimed!: i64"
+               FROM accounts WHERE made_by_agent_at IS NOT NULL"#,
+            from,
+            to
+        )
+        .fetch_one(pool)
+        .await?;
         let standing = sqlx::query!(
             r#"SELECT id, status, submitted_at FROM entries
                WHERE status IN ('review', 'held', 'frozen')
@@ -362,6 +376,8 @@ impl Report {
                     submitted_at: row.submitted_at,
                 })
                 .collect(),
+            agent_made: agents.made,
+            agent_claimed: agents.claimed,
             frozen: frozen.into_iter().map(|row| row.id).collect(),
             screen: screen.clone(),
             screen_failing,
@@ -431,6 +447,13 @@ impl Report {
             for id in &self.published {
                 let _ = writeln!(text, "- {id} {url}/admin/e/{id}");
             }
+        }
+        if self.agent_made > 0 || self.agent_claimed > 0 {
+            let _ = writeln!(
+                text,
+                "\nAccounts agents made: {}. Accounts claimed: {}.",
+                self.agent_made, self.agent_claimed
+            );
         }
         if let Some(oldest) = self.waiting.first() {
             let _ = writeln!(

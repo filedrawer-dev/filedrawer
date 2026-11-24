@@ -944,3 +944,34 @@ async fn production_sends_a_half_taken_cap_alone() {
         DailyRun::Sent { .. }
     ));
 }
+
+#[tokio::test]
+async fn the_accounts_agents_made_and_those_claimed_are_counted() {
+    let (app, _) = app_in(Environment::Production, true).await;
+    common::agent_account(&app).await;
+    let (_, token) = common::agent_account(&app).await;
+    // One of the two is claimed: its agent asks, and the address's link is confirmed.
+    let ask = axum::http::Request::post("/account/claim")
+        .header("authorization", format!("Bearer {token}"))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(axum::body::Body::from("email=ada%40example.com"))
+        .unwrap();
+    let asked = app.send(ask).await;
+    let code = common::field(&asked.body, "code").expect(&asked.body);
+    let link = app.link_in_last_email_to("ada@example.com").await;
+    let fields = [
+        ("token", link.strip_prefix("/claim?token=").unwrap()),
+        ("code", code),
+        ("display_name", "Ada"),
+        ("password", common::PASSWORD),
+    ];
+    let claimed = app.form("/claim", &fields, None).await;
+    assert!(claimed.status.is_redirection(), "{}", claimed.body);
+    let tomorrow = OffsetDateTime::now_utc() + Duration::days(1);
+    send_daily_email(&app.state, tomorrow).await.unwrap();
+    let body = the_report(&app).body;
+    assert!(
+        body.contains("Accounts agents made: 2. Accounts claimed: 1."),
+        "{body}"
+    );
+}
