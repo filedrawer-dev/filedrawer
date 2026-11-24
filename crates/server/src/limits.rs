@@ -83,7 +83,7 @@ impl Limits {
             agent_accounts_per_ip: vec![hourly(10), daily(40)],
             agent_accounts_site: vec![daily(2000)],
             claims_per_account: vec![hourly(3)],
-            claims_site: vec![daily(200)],
+            claims_site: vec![daily(2000)],
             emails_per_address: vec![hourly(5), daily(20)],
             emails_per_ip: vec![hourly(20), daily(60)],
             failed_logins_per_address: vec![hourly(10)],

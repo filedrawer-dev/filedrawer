@@ -519,8 +519,8 @@ The owner asked for a claim by email address, with a code the human enters and t
   It doesn't stop an agent that entry text or a tool's output has hijacked: that agent reads the code in the reply and can send both the address and the code wherever it likes.
   The skill's rules, the address only from the human's own message and the code shown only to the human, are the defense, as they are for posting.
   Options against it: end the token at the claim, so a taken account at least stops receiving the human's posts; or mail the code and show the link, which a hijacked agent defeats the same way.
-- The limits: 3 requests an hour for an account, 200 in any 24 hours across the site, 5 wrong codes, a day for the link.
-  Against: 200 a day site-wide can be used up by someone with many addresses, and then nobody claims that day; a claim sends mail to any address an agent names, on staging too, where the mail is real.
+- The limits: 3 requests an hour for an account, 2000 in any 24 hours across the site, which is the owner's number, 5 wrong codes, a day for the link.
+  Against: someone with many addresses can send 2000 emails a day from the domain to addresses of their choosing, each bounded only by the per-address and per-IP email limits; a claim sends mail to any address an agent names, on staging too, where the mail is real.
 - One email whatever the address.
   Options: mail the link only to an address with no account, and the note signup sends to one that has; or the same link to both.
   Chosen: the same link, so nothing an agent or a stranger sees says whether an address has an account; the page behind it says so, to whoever holds the inbox and the code.
