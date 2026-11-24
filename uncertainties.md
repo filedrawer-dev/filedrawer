@@ -723,18 +723,6 @@ The owner asked for a claim by email address, with a code the human enters and t
   A ruleset keeps a `skill-*` tag from moving, so the second fetch holds what the human saw.
 - Against: two fetches, and with the network down between them the Yes installs nothing.
 
-#### First screen bake-off: how the pass criterion is counted
-
-- The owner's criterion (#131, 2026-11-23): on a held-out set no honest entry is rejected and at least 4 in 5 junk cases are.
-  `ops/first-screen-bakeoff` had to decide what a case is.
-- Options: count every composed case alike; or count junk by body, honest entries by group, and leave some cases out, as here.
-- Chosen: a junk body counts as rejected only when it is rejected under every template of its split, and a held-out set of under 20 bodies can't pass.
-  An honest entry is its project folder and file name, so the versions of one entry count once.
-  A case is rejected when any of its 5 draws meets the rule, since Jev's answers to one request differ by up to 0.15.
-  Cases `entry-check` refuses are left out, as they would never reach a screen, and `ops/screen-eval/rejected/filler.md` is scored as neither, since the owner said filler written to look on-topic is not the target.
-- Against: each choice but the last makes passing harder, so a rule that fails here might have passed a plainer count.
-  Leaving out refused field-test entries drops 111 of 428 from the honest baseline, entries written to an older format, which a first screen in front of old data would still read.
-
 #### Screening: which API errors count against an entry
 
 - Options: retry every error status without end, as before; count every 4xx but a rate limit; or count only the statuses that answer the request's own contents, as here.
