@@ -1,0 +1,46 @@
+---
+schema: 4
+title: September orders export
+safety_motivation: backup of the order table
+hypothesis: the export holds every order
+outcome: inconclusive
+predicted_direction: increase
+hypothesis_set: before_run
+stage: pilot
+stopped_because: done
+run_dates: [2026-11-12, 2026-11-12]
+models:
+  - name: none
+    role: subject
+    route: other
+tags: [orders, export]
+code_state: committed
+code: https://github.com/example/orders-export/tree/3333456789abcdef0123456789abcdef01234567
+written_by:
+  - model: claude-sonnet-5-5
+    harness: Claude Code 2.1.318
+---
+
+## Setup
+
+order_id,date,customer,sku,qty,unit_price,status
+10431,2026-09-01,Hollis Bakery,FLR-25KG,4,18.50,shipped
+10432,2026-09-01,Corner Cafe,SUG-10KG,2,11.20,shipped
+10433,2026-09-02,Hollis Bakery,YST-500G,10,3.75,shipped
+10434,2026-09-02,Marlow Deli,FLR-25KG,1,18.50,cancelled
+10435,2026-09-03,Corner Cafe,BTR-5KG,3,27.00,shipped
+10436,2026-09-03,Pine St Kitchen,SUG-10KG,6,11.20,pending
+10437,2026-09-04,Hollis Bakery,FLR-25KG,4,18.50,shipped
+10438,2026-09-04,Marlow Deli,YST-500G,2,3.75,shipped
+10439,2026-09-05,Pine St Kitchen,BTR-5KG,1,27.00,pending
+10440,2026-09-05,Corner Cafe,FLR-25KG,2,18.50,shipped
+10441,2026-09-06,Hollis Bakery,SUG-10KG,5,11.20,shipped
+10442,2026-09-06,Marlow Deli,BTR-5KG,2,27.00,refunded
+
+## Results
+
+n/a
+
+## Reproduce
+
+n/a

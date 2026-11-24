@@ -1,0 +1,51 @@
+---
+schema: 4
+title: Invoice totals script
+safety_motivation: saving my script
+hypothesis: the script prints totals per customer
+outcome: inconclusive
+predicted_direction: increase
+hypothesis_set: before_run
+stage: pilot
+stopped_because: done
+run_dates: [2026-11-12, 2026-11-12]
+models:
+  - name: none
+    role: subject
+    route: other
+tags: [python, invoices]
+code_state: committed
+code: https://github.com/example/invoice-script/tree/3333456789abcdef0123456789abcdef01234567
+written_by:
+  - model: claude-sonnet-5-5
+    harness: Claude Code 2.1.318
+---
+
+## Setup
+
+saving this here so i dont lose it
+
+import csv
+from collections import defaultdict
+
+def load_invoices(path):
+    totals = defaultdict(float)
+    with open(path, newline="") as f:
+        for row in csv.DictReader(f):
+            totals[row["customer"]] += float(row["qty"]) * float(row["unit_price"])
+    return totals
+
+def print_report(totals):
+    for customer, total in sorted(totals.items(), key=lambda kv: -kv[1]):
+        print(f"{customer:<24}{total:>10.2f}")
+
+if __name__ == "__main__":
+    print_report(load_invoices("orders_sept.csv"))
+
+## Results
+
+n/a
+
+## Reproduce
+
+n/a

@@ -252,6 +252,36 @@ def test_a_junk_body_is_composed_under_each_template_of_its_split(world, api):
     assert bodies == {"first-screen-eval/tune/junk/list.txt"}
 
 
+def test_the_report_counts_junk_by_folder(world, api, capsys):
+    scored(
+        world,
+        api,
+        TEMPLATE
+        | {f"first-screen-eval/tune/junk/j{n}.txt": f"p=0.95 {n}\n" for n in range(8)}
+        | {"first-screen-eval/tune/junk-entries/caught.txt": "p=0.95 whole\n"}
+        | {"first-screen-eval/tune/junk-entries/missed.txt": "p=0.20 whole\n"}
+        | {"first-screen-eval/tune/honest/h.txt": "p=0.10\n"},
+    )
+    capsys.readouterr()
+    assert world.report(*rule(world, {"question": "junk", "at_least": 0.9})) == 0
+    out = capsys.readouterr().out
+    assert "junk bodies rejected: 9/10" in out
+    assert "  in first-screen-eval/tune/junk: 8/8" in out
+    assert "  in first-screen-eval/tune/junk-entries: 1/2" in out
+
+
+def test_whole_junk_entries_and_honest_edge_cases_are_read(world, api):
+    world.write("first-screen-eval/tune/templates/t.txt", "head\n{{BODY}}\n")
+    world.write("first-screen-eval/tune/junk-entries/list.txt", "a labeled list\n")
+    world.write("first-screen-eval/tune/honest-edge/sim.txt", "a simulation\n")
+    world.run(split="tune")
+    rows = world.rows()
+    junk = rows["first-screen-eval/tune/junk-entries/list.txt"]
+    assert (junk["label"], junk["body"]) == ("junk", junk["id"])
+    assert rows["first-screen-eval/tune/honest-edge/sim.txt"]["label"] == "honest"
+    assert sorted(api.states()) == ["a labeled list\n", "a simulation\n"]
+
+
 def test_split_chooses_which_cases_are_sent(world, api):
     world.write("first-screen-eval/tune/honest/a.txt", "tune text\n")
     world.write("first-screen-eval/heldout/honest/b.txt", "held text\n")

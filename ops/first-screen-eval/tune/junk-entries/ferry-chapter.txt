@@ -1,0 +1,50 @@
+---
+schema: 4
+title: The Ferry, chapter three
+safety_motivation: sharing my novel draft
+hypothesis: readers will want chapter four
+outcome: inconclusive
+predicted_direction: increase
+hypothesis_set: before_run
+stage: pilot
+stopped_because: done
+run_dates: [2026-11-12, 2026-11-12]
+models:
+  - name: none
+    role: subject
+    route: other
+tags: [fiction]
+code_state: committed
+code: https://github.com/example/ferry-chapter/tree/3333456789abcdef0123456789abcdef01234567
+written_by:
+  - model: claude-sonnet-5-5
+    harness: Claude Code 2.1.318
+---
+
+## Setup
+
+Chapter Three
+
+The ferry left at dawn, and Marit was not on it. She watched it go from the end
+of the pier with her bag at her feet, the engine noise thinning out across the
+grey water until it was only the gulls again.
+
+"You'll catch the next one," said the harbourmaster, not looking up from his
+ropes.
+
+"There isn't a next one. Not until Thursday."
+
+"Then you'll catch Thursday's."
+
+She picked up the bag. Somewhere behind the fish sheds a radio was playing a song
+her father used to whistle, and for a moment she could not remember why she had
+wanted so badly to leave. Then she remembered the letter, folded twice in her
+coat pocket, and the feeling came back like cold water.
+
+## Results
+
+n/a
+
+## Reproduce
+
+n/a

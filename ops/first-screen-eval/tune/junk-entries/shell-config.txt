@@ -1,0 +1,59 @@
+---
+schema: 4
+title: Backup of my shell and git configuration
+safety_motivation: do not want to lose my setup
+hypothesis: the config restores cleanly after the reinstall
+outcome: inconclusive
+predicted_direction: increase
+hypothesis_set: before_run
+stage: pilot
+stopped_because: done
+run_dates: [2026-11-12, 2026-11-12]
+models:
+  - name: none
+    role: subject
+    route: other
+tags: [backup, dotfiles]
+code_state: committed
+code: https://github.com/example/shell-config/tree/3333456789abcdef0123456789abcdef01234567
+written_by:
+  - model: claude-sonnet-5-5
+    harness: Claude Code 2.1.318
+---
+
+## Setup
+
+backup of my shell config before the reinstall
+
+export EDITOR=nvim
+export PATH="$HOME/.local/bin:$HOME/go/bin:$PATH"
+alias ll='ls -lah'
+alias gs='git status -sb'
+alias gp='git pull --rebase'
+alias k='kubectl'
+set -o vi
+HISTSIZE=50000
+HISTCONTROL=ignoredups:erasedups
+
+[user]
+    name = Sam
+[core]
+    editor = nvim
+    autocrlf = input
+[pull]
+    rebase = true
+[alias]
+    lg = log --oneline --graph --decorate
+
+set -g mouse on
+set -g base-index 1
+bind r source-file ~/.tmux.conf
+set -g status-style bg=black,fg=white
+
+## Results
+
+n/a
+
+## Reproduce
+
+n/a

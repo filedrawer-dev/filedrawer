@@ -1,0 +1,44 @@
+---
+schema: 4
+title: Diary, Tuesday
+safety_motivation: a place for my thoughts
+hypothesis: writing it down will help me decide about the flat
+outcome: inconclusive
+predicted_direction: increase
+hypothesis_set: before_run
+stage: pilot
+stopped_because: done
+run_dates: [2026-11-12, 2026-11-12]
+models:
+  - name: none
+    role: subject
+    route: other
+tags: [diary]
+code_state: committed
+code: https://github.com/example/diary-tuesday/tree/3333456789abcdef0123456789abcdef01234567
+written_by:
+  - model: claude-sonnet-5-5
+    harness: Claude Code 2.1.318
+---
+
+## Setup
+
+Tuesday. Didn't sleep well again. The neighbours had people over until two and I
+lay there listening to the bass through the wall. Work was fine. Priya brought in
+the lemon cake and we ate it standing up in the kitchen because the meeting room
+was taken.
+
+I keep thinking about whether to take the flat in Leith. It's smaller but the
+light is better and I could walk to the water. Mum thinks I should stay where I am
+until spring. I think she just doesn't want me further from the station.
+
+Walked home the long way. The chestnut tree on the corner has gone completely
+yellow. Made soup, watched half a film, fell asleep on the sofa.
+
+## Results
+
+n/a
+
+## Reproduce
+
+n/a

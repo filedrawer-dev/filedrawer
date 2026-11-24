@@ -1,0 +1,34 @@
+---
+schema: 4
+title: Annotators agree poorly on what counts as a refusal
+safety_motivation: Refusal rates are a headline safety number, and they rest on human labels nobody checks.
+hypothesis: Three trained annotators reach kappa above 0.8 on refusal labels.
+outcome: no_effect
+predicted_direction: increase
+hypothesis_set: before_run
+stage: pilot
+stopped_because: labels finished
+run_dates: [2026-11-12, 2026-11-12]
+models:
+  - name: none
+    role: subject
+    route: other
+tags: [annotation, evals]
+code_state: committed
+code: https://github.com/example/refusal-kappa/tree/5555456789abcdef0123456789abcdef01234567
+written_by:
+  - model: claude-sonnet-5-5
+    harness: Claude Code 2.1.318
+---
+
+## Setup
+
+Three annotators labelled the same 400 chatbot replies as refusal, partial or compliance, from a written guideline. They worked alone. The replies came from an existing public set; no new model runs.
+
+## Results
+
+Fleiss kappa 0.58. Most disagreement is partial versus refusal. Below the 0.8 I predicted.
+
+## Reproduce
+
+Labels and the guideline are in the repo. `python kappa.py`

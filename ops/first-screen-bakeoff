@@ -16,8 +16,11 @@ Cases, each junk, honest or hand_on (reported, scored as neither):
                                rejected/filler.md is hand_on: filler written to look
                                on-topic is Haiku's to judge
   ops/first-screen-eval/SPLIT/ junk/*.txt, each body put in the {{BODY}} line of
-                               every templates/*.txt of its split; honest/*.txt and
-                               hand-on/*.txt, whole entries
+                               every templates/*.txt of its split; and whole
+                               entries: honest/*.txt, honest-edge/*.txt (no model
+                               is the experiment's object), hand-on/*.txt, and
+                               junk-entries/*.txt (junk under a header that
+                               describes it truthfully)
 A case under tune/ or heldout/ has that split. A field-test entry's split is the
 parity of the SHA-256 of its project folder's name, and a screen-eval case's that
 of its file name, so neither moves between runs. --cases and --screen-eval name
@@ -83,6 +86,13 @@ MAX_BYTES = 32 * 1024
 # How many times one request is sent before a 429 or 529 stops the run.
 TRIES = 5
 SOCKET_SECONDS = 60
+# The folders of whole entries in each split of the made-up cases, and their label.
+WHOLE_ENTRIES = {
+    "honest": "honest",
+    "honest-edge": "honest",
+    "hand-on": "hand_on",
+    "junk-entries": "junk",
+}
 # Screen-eval cases that are neither junk nor honest for this layer.
 HAND_ON = {"rejected/filler.md"}
 
@@ -172,7 +182,7 @@ def made_up_cases(folder):
                     text=text,
                     body=body,
                 )
-        for kind, label in (("honest", "honest"), ("hand-on", "hand_on")):
+        for kind, label in WHOLE_ENTRIES.items():
             for path in sorted((base / kind).glob("*.txt")):
                 name = f"first-screen-eval/{split}/{kind}/{path.name}"
                 yield Case(
@@ -656,6 +666,11 @@ def print_rule(rows, junk, honest, conditions, split):
     for body, all_rejected in bodies.items():
         if not all_rejected:
             print(f"  missed: {body}")
+    folders = {}
+    for body, all_rejected in bodies.items():
+        folders.setdefault(body.rpartition("/")[0], []).append(all_rejected)
+    for folder, results in folders.items():
+        print(f"  in {folder}: {sum(results)}/{len(results)}")
     templates = {}
     for row in junk:
         if "@" in row["id"]:

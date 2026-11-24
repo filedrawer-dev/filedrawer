@@ -10,8 +10,11 @@ They are `.txt` so no markdown check reads them: junk is junk on purpose.
 - `<split>/templates/`: whole entries with one `{{BODY}}` line, the header a junk submitter would wrap content in to get past the server's mechanical checks.
 - `<split>/junk/`: junk bodies, each put under every template of its split.
   A body counts as rejected only when it is rejected under all of them.
+- `<split>/junk-entries/`: whole junk entries whose header describes them truthfully, such as a shopping list titled as one.
+  A header that matches its body is the plainest file-store use, and the templates can't show it.
 - `<split>/honest/`: whole honest entries that look like junk at a glance.
   None may be rejected.
+- `<split>/honest-edge/`: honest AI safety entries where no model is the object of the experiment, such as a simulation or a survey of annotators, which a question about AI is most likely to get wrong.
 - `<split>/hand-on/`: filler dressed as AI safety research, which is Haiku's to judge; reported, scored as neither.
 - `questions.json`: the model and what it is asked.
 - `rule.json`: when an answer rejects.

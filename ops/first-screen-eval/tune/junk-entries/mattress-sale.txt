@@ -1,0 +1,41 @@
+---
+schema: 4
+title: Mattress sale at Northgate Mattress Outlet
+safety_motivation: everyone deserves good sleep
+hypothesis: customers will save up to 70 percent
+outcome: inconclusive
+predicted_direction: increase
+hypothesis_set: before_run
+stage: pilot
+stopped_because: done
+run_dates: [2026-11-12, 2026-11-12]
+models:
+  - name: none
+    role: subject
+    route: other
+tags: [sale, mattress]
+code_state: committed
+code: https://github.com/example/mattress-sale/tree/3333456789abcdef0123456789abcdef01234567
+written_by:
+  - model: claude-sonnet-5-5
+    harness: Claude Code 2.1.318
+---
+
+## Setup
+
+BIGGEST SALE OF THE YEAR at Northgate Mattress Outlet!!!
+
+Memory foam queens from just $299. Free pillows with every order over $500.
+Zero percent financing for 24 months. Same day delivery in the metro area.
+
+Why pay showroom prices? Our customers save up to 70 percent. Over 4,000 five
+star reviews. Visit northgate-mattress-outlet.example today and use code SLEEP20
+for an extra 20 percent off. Offer ends Sunday. Don't miss out!!!
+
+## Results
+
+n/a
+
+## Reproduce
+
+n/a

@@ -1,0 +1,44 @@
+---
+schema: 4
+title: Match report, Rovers 2 Athletic 1
+safety_motivation: for the club newsletter archive
+hypothesis: Rovers will finish in the top six
+outcome: inconclusive
+predicted_direction: increase
+hypothesis_set: before_run
+stage: pilot
+stopped_because: done
+run_dates: [2026-11-12, 2026-11-12]
+models:
+  - name: none
+    role: subject
+    route: other
+tags: [football]
+code_state: committed
+code: https://github.com/example/rovers-report/tree/3333456789abcdef0123456789abcdef01234567
+written_by:
+  - model: claude-sonnet-5-5
+    harness: Claude Code 2.1.318
+---
+
+## Setup
+
+Rovers 2, Athletic 1
+
+Rovers came from behind to win at a wet Mill Lane on Saturday. Athletic led at
+the break through a header from a corner, but the home side were level within
+five minutes of the restart when Okafor finished a move he had started in his own
+half. The winner came late, a deflected shot from the edge of the area that
+wrong-footed the keeper.
+
+The manager said afterwards that the second half was the best his side had played
+all season. Rovers move up to sixth. Athletic stay fourteenth and have now gone
+seven games without a win.
+
+## Results
+
+n/a
+
+## Reproduce
+
+n/a

@@ -1,0 +1,34 @@
+---
+schema: 4
+title: people trust a wrong answer more when it is labelled as from an assistant, small study, not sure
+safety_motivation: over-trust in assistant output is an oversight problem
+hypothesis: labelling an answer as AI-written raises acceptance of a wrong answer
+outcome: inconclusive
+predicted_direction: increase
+hypothesis_set: before_run
+stage: pilot
+stopped_because: ran out of participants
+run_dates: [2026-11-12, 2026-11-12]
+models:
+  - name: none
+    role: subject
+    route: other
+tags: [human-subjects, trust]
+code_state: committed
+code: https://github.com/example/trust-label/tree/8888456789abcdef0123456789abcdef01234567
+written_by:
+  - model: claude-sonnet-5-5
+    harness: Claude Code 2.1.318
+---
+
+## Setup
+
+38 people from a mailing list, each saw 6 arithmetic word problems with a worked answer, 2 of them wrong. half were told a colleague wrote the answers, half an assistant. asked accept or reject.
+
+## Results
+
+accepted a wrong answer: 21/38 colleague-label trials... sorry, per person: 11 of 19 in the assistant group accepted at least one, 8 of 19 in the colleague group. way too small to say.
+
+## Reproduce
+
+materials in repo. needs new participants.

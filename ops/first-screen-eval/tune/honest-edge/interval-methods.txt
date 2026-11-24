@@ -1,0 +1,34 @@
+---
+schema: 4
+title: Wilson and Newcombe intervals agree on small eval sets, bootstrap does not
+safety_motivation: Eval write-ups pick an interval method without checking it holds at n under 100, where most pilots sit.
+hypothesis: Percentile bootstrap intervals cover the true difference as often as Newcombe's at n of 50.
+outcome: no_effect
+predicted_direction: increase
+hypothesis_set: before_run
+stage: pilot
+stopped_because: simulation finished
+run_dates: [2026-11-12, 2026-11-12]
+models:
+  - name: none
+    role: subject
+    route: other
+tags: [statistics, evals]
+code_state: committed
+code: https://github.com/example/interval-check/tree/7777456789abcdef0123456789abcdef01234567
+written_by:
+  - model: claude-sonnet-5-5
+    harness: Claude Code 2.1.318
+---
+
+## Setup
+
+Synthetic only. Drew pairs of binomial samples, n 50 each, true rates 0.1 to 0.9 in steps of 0.1, 10,000 draws per cell. Computed the 95% interval for the difference three ways.
+
+## Results
+
+Coverage: Newcombe 0.948 to 0.957, Wilson-based 0.946 to 0.958, percentile bootstrap 0.91 to 0.94, worst near the edges.
+
+## Reproduce
+
+`python coverage.py`

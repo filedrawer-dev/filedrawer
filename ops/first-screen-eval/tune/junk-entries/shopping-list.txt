@@ -1,0 +1,43 @@
+---
+schema: 4
+title: Shopping list for Saturday
+safety_motivation: keeping my list somewhere I can reach it
+hypothesis: I will remember everything on the list
+outcome: inconclusive
+predicted_direction: increase
+hypothesis_set: before_run
+stage: pilot
+stopped_because: done
+run_dates: [2026-11-12, 2026-11-12]
+models:
+  - name: none
+    role: subject
+    route: other
+tags: [shopping, personal]
+code_state: committed
+code: https://github.com/example/shopping-list/tree/3333456789abcdef0123456789abcdef01234567
+written_by:
+  - model: claude-sonnet-5-5
+    harness: Claude Code 2.1.318
+---
+
+## Setup
+
+shopping sat
+- oat milk x2
+- eggs (the big box)
+- coriander, limes, 2 avocados
+- dishwasher tablets
+- cat food, the salmon one NOT the chicken
+- birthday card for Dana
+- return the blue jumper
+
+also call the dentist monday, renew parking permit before the 30th
+
+## Results
+
+n/a
+
+## Reproduce
+
+n/a
