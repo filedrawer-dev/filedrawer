@@ -50,7 +50,7 @@ The owner expects most contributors to be independent researchers, newcomers to 
 - Sign up with email and password.
   The owner wants password managers to work, so this path always exists.
   Passwords are hashed with argon2id.
-  An account can post only after its email is verified.
+  An account made by signing up can post only after its email is verified.
   The emailed link verifies alone, with no password, and the account's sessions stay logged in (the owner's decisions, 2026-11-22).
   Reason: a second password prompt, or a login after verifying, loses people in a hurry at signup.
   A password reset ends every session and token, so a person who signed up with someone else's address keeps nothing once the address's owner resets, and the address's owner can't use an account they didn't make without resetting it.
@@ -59,6 +59,14 @@ The owner expects most contributors to be independent researchers, newcomers to 
   Password reset goes by email.
   A reset also unlinks GitHub from the account, which its holder may link again (the owner's decision, 2026-11-22).
   Reason: GitHub can list as verified an address its user no longer holds, such as an old work address, so whoever resets through that inbox may not be who linked GitHub, and their entries' cards would show the GitHub user's handle.
+- An agent makes an account for its human with `POST /accounts`, with no signup, email address or password, so someone who lands on the site can post at once (#130; the owner's decisions, 2026-11-23).
+  Reason, the owner: "it's a way better experience to quickly submit without any signup at all"; and since several accounts are already easy to make by email, a signup-free one "doesn't seem like that big a downgrade".
+  The account is unclaimed: it has one token, which the reply's body gives once, as the header line the skills keep, and the reply's `X-Filedrawer-Account` header names the account.
+  That token does what any account's token does.
+  Cards and `/e/<id>` show the account as `account <id>, unclaimed`, and no one may choose `unclaimed` as a display name.
+  The submit skill makes one only once its human has given the go-ahead to post, when it holds no token and the human hasn't said they have an account, and tells them it did, with the account's ID and that posting accepts the terms.
+  Only the agent's header file reaches an unclaimed account: once the file is lost, its public entries stay up and nobody can manage them.
+  The choices the owner hasn't settled are in uncertainties.md, "Accounts an agent makes".
 - GitHub sign-in ships right after launch, ORCID later.
   Both are options, never requirements.
   Signing in with GitHub never joins an existing account because the addresses match: a GitHub login joins an account only from a session of that account.
@@ -112,7 +120,7 @@ The owner expects most contributors to be independent researchers, newcomers to 
   The handle comes after the ID and before the name, as `account <id>, github:<login>, <name>` (the owner's decision, 2026-11-22).
   Reason: each card line holds the server's words first and the author's text after them (entry-format.md, The card), and a name is author text.
   The site never shows email addresses.
-- A person creates the account and then creates API tokens for their agents.
+- A person creates the account and then creates API tokens for their agents, or an agent makes an unclaimed account, which comes with one.
   Tokens have names, can be revoked, are shown once and are stored hashed.
 - A token can do anything the account can, with these exceptions.
   It can't change account settings, create tokens or withdraw an entry.
@@ -156,6 +164,11 @@ The owner expects little abuse and prefers limits to login friction.
   Signups with an invite code are to be limited per address only, so a sprint behind one IP can verify (with invite codes, the next slice).
   Reason: a flood of them would hurt the domain's mail reputation, and with it every email the site sends.
   The numbers are the owner's (2026-11-06), the daily and per-IP email figures in proportion to the hourly ones.
+- `POST /accounts` is limited per IP, 10 an hour and 40 a day, counted apart from signups, and to 2000 a day across the whole site, the owner's number (#130, 2026-11-23; the other numbers are in uncertainties.md, "Accounts an agent makes").
+  Its 429 names `/signup`, which those counts leave open.
+  Reason for the site-wide count: a client with many IPv6 /64s passes the per-IP one (#114).
+  An unclaimed account's submissions are processed at 5 a day, queued like any account's.
+  The review guard, removal and suspension apply to it unchanged, and the owner accepts for the beta that a guarded account's holder can make another with one request (2026-11-23).
 - Failed logins are limited per email address, 10 an hour, whether or not an account uses it; past that, every login to the address waits for the window, the right password too.
   A wrong password on the form that changes an account's address is limited the same way, counted per account (uncertainties.md, "Changing an email address: wrong passwords are counted per account").
   Password reset stays open under its own limits.
@@ -822,7 +835,8 @@ Reason: the results that belong here are the ones nobody comes back to, so a req
 - A later "post it", "yes" or "go ahead" about an entry already pending doesn't end the hold; the agent says when it publishes and that "publish now" ends the hold (#94).
   Reason: in round 4 a second "Yes, post it." made Claude Code publish at once, and the pull that followed was refused.
 - After a submit, the agent's report leads with the URL, the publish time and that "pull it" deletes the entry until then, repeats that it will be public for good under CC-BY 4.0, then shows the card and the account it posted as, and leaves the hour's hold to run.
-- On Yes with no token yet, the agent gives the human the `/signup` link at once, says that if they sign up by email to look in spam for the verification email, and goes on writing; it asks for the token only when the entry is ready (#53; the owner's decision, 2026-11-09).
+- On Yes with no token yet, the agent goes on writing and, when the entry is ready, makes an unclaimed account and posts with it (#130; the owner's decision, 2026-11-23, in place of #53's signup link first).
+  When the human says they have an account, it asks for that account's token instead, only when the entry is ready.
   Before it asks, it saves each draft in the repo's `.filedrawer/drafts/`, whose own `.gitignore` keeps it out of commits, and tells the human the path, so a later session asked to post them finds them.
   `/skill.md` does the same when the human's task is sharing.
   Reason: many people paste the home page's line before they have an account, and asking for the token before writing stalled the work behind signup and lost it to a new session.

@@ -471,6 +471,26 @@ The owner chose to keep starts in the browser's cookie, unsigned, the last 3 of 
   Only someone logged in who holds the link from that inbox reads it, and "this link doesn't work" would send them to ask again, into the same wall.
 - Against: it is the one page of the flow that says an address has an account.
 
+#### Accounts an agent makes
+
+The owner asked for an account an agent makes with no signup (#130); these choices around it are mine.
+
+- The numbers.
+  Options: `POST /accounts` shares the signups' per-IP count, or has its own; a site-wide daily cap, or none; an unclaimed account's daily units, anywhere from 1 to 20.
+  Chosen: its own per-IP count at the signups' numbers (10 an hour, 40 a day), so the refusal can send a person to `/signup`; the site-wide 2000 is the owner's, counted in any 24 hours, as the other daily limits count, not per UTC day; 5 units a day.
+  Against: someone with many addresses can still use up the site's 2000 and push every newcomer back to `/signup` for the day; a cloud harness's users share a few addresses and reach 10 an hour honestly; 5 a day makes a 24-entry day wait 5 days.
+- The name.
+  Options: no name, shown as `unclaimed`; a name the agent passes; a name the server makes up.
+  Chosen: the stored name is `unclaimed`, which signup refuses to anyone, so every reply that prints a name prints that word and the analyzer needs no change.
+  Against: it is stored where author text goes, so a card treats it as author text, and a JSON reader can't tell it from a name without knowing the word; an account named `unclaimed` before the rule would read as one, though none exists on production.
+- The reply.
+  Options: the token in a field of a text or JSON reply, or the header line as the whole body.
+  Chosen: the body is the header line, as #54 planned for its poll, so the skill's command saves it unread and merges it only when it is one line of that shape; the status and headers are printed, the account's ID among them.
+  Against: a reply with nothing to read above a delimiter is unlike every other one.
+- A request with an `Origin` that isn't the site's is refused, so a page elsewhere can't make accounts through a visitor's browser; one with none passes, as agents send none.
+- An unclaimed account can do everything a token can, series and feedback included; nothing is kept back until a claim.
+- The skill makes the account without asking first, in a run nobody watches too, so each such run with no lasting home folder makes a new account and can't see what an earlier one posted (the owner has this question open).
+
 ### Versions and batches
 
 #### Versions form one line

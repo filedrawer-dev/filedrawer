@@ -622,11 +622,8 @@ pub async fn same_origin(
     next: axum::middleware::Next,
 ) -> Response {
     if request.method() == axum::http::Method::POST {
-        let origin = request
-            .headers()
-            .get(header::ORIGIN)
-            .and_then(|value| value.to_str().ok());
-        if origin != Some(state.public_url.as_str()) {
+        let origin = request.headers().get(header::ORIGIN);
+        if !origin.is_some_and(|origin| is_site(origin, &state)) {
             return (
                 StatusCode::FORBIDDEN,
                 format!("refused: forms must be sent from {}\n", state.public_url),
@@ -635,6 +632,11 @@ pub async fn same_origin(
         }
     }
     next.run(request).await
+}
+
+/// Whether an `Origin` header names this site.
+pub fn is_site(origin: &header::HeaderValue, state: &AppState) -> bool {
+    origin.as_bytes() == state.public_url.as_bytes()
 }
 
 #[derive(Deserialize)]

@@ -61,6 +61,7 @@ impl From<Busy> for AppError {
         AppError::TooManyRequests {
             what: "logins and password changes in progress".to_string(),
             retry_after_secs: busy.retry_after_secs,
+            instead: None,
         }
     }
 }

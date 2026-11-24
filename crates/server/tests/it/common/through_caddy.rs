@@ -35,6 +35,8 @@ pub fn wide() -> Limits {
         in_flight_per_ip: 10_000,
         writes_per_account: per_minute(10_000),
         signups_per_ip: hourly(10_000),
+        agent_accounts_per_ip: hourly(10_000),
+        agent_accounts_site: hourly(10_000),
         emails_per_address: hourly(10_000),
         emails_per_ip: hourly(10_000),
         failed_logins_per_address: hourly(10_000),

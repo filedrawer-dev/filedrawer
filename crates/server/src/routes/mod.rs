@@ -2,6 +2,7 @@
 
 pub mod account;
 pub mod admin;
+pub mod agent_account;
 pub mod assets;
 pub mod attachments;
 pub mod batch;

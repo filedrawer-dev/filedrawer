@@ -42,8 +42,16 @@ pub enum AppError {
     )]
     ScreenRejected(Vec<String>),
     /// A rate limit reached (design.md, Limits and abuse).
-    #[error("too many requests: {what} reached its limit; try again in {retry_after_secs} s")]
-    TooManyRequests { what: String, retry_after_secs: u64 },
+    /// `instead` is what the client can do meanwhile, when there is something.
+    #[error(
+        "too many requests: {what} reached its limit; try again in {retry_after_secs} s{}",
+        .instead.as_ref().map(|instead| format!("; {instead}")).unwrap_or_default()
+    )]
+    TooManyRequests {
+        what: String,
+        retry_after_secs: u64,
+        instead: Option<String>,
+    },
     #[error("internal error")]
     Database(#[from] sqlx::Error),
     /// Reading or writing a file failed, such as an attached file's bytes.

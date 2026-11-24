@@ -16,6 +16,10 @@ pub struct OwnersAccount {
     pub email: Option<String>,
     /// When the owner suspended it, while it is suspended.
     pub suspended_at: Option<String>,
+    /// When an agent made it with `POST /accounts`, if one did.
+    pub made_by_agent_at: Option<String>,
+    /// When a person claimed an account an agent made.
+    pub claimed_at: Option<String>,
 }
 
 /// One of its entries, newest first on that page.
@@ -32,7 +36,8 @@ pub async fn owners_account(
 ) -> Result<Option<(OwnersAccount, Vec<OwnersEntry>)>, sqlx::Error> {
     let Some(account) = sqlx::query_as!(
         OwnersAccount,
-        r#"SELECT id AS "id!", display_name, email, suspended_at FROM accounts
+        r#"SELECT id AS "id!", display_name, email, suspended_at, made_by_agent_at, claimed_at
+           FROM accounts
            WHERE id = ? AND deleted_at IS NULL"#,
         account_id
     )

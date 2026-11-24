@@ -375,6 +375,7 @@ fn build(state: AppState) -> Routes<Router> {
     let same_origin = axum::middleware::from_fn_with_state(state.clone(), account::same_origin);
     accounts
         .map_router(|router| Router::new().merge(router.layer(same_origin)))
+        .route("/accounts", post(routes::agent_account::make))
         .route("/", get(routes::home::home))
         .route("/beta", get(routes::beta::beta))
         .route("/terms", get(routes::legal::terms))

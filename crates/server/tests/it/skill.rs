@@ -2074,3 +2074,62 @@ async fn the_live_preview_fills_in_each_document_as_the_server_does() {
         assert_eq!(previewed(&path), reply.body, "{path}");
     }
 }
+
+/// A home folder under `site` whose production header file holds `header`.
+fn home_for_production(site: &StandIn, header: &str) -> (PathBuf, PathBuf) {
+    let home = site.home();
+    let config = home.join(".config/filedrawer");
+    std::fs::create_dir_all(&config).unwrap();
+    let file = config.join("filedrawer.dev.header");
+    std::fs::write(&file, header).unwrap();
+    (home, file)
+}
+
+const MAKE_ACCOUNT: &str = "### An account without signing up";
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_skills_command_makes_an_account_and_keeps_its_token_unprinted() {
+    let site = StandIn::at(PRODUCTION).await;
+    let (home, file) = home_for_production(&site, "X-Staging-Key: k\n");
+    let make = command(&raw("filedrawer-submit", "SKILL.md"), MAKE_ACCOUNT, 0);
+    let output = site.run(&make, &home);
+    let printed = text(&output);
+    let kept = std::fs::read_to_string(&file).unwrap();
+    let token = kept
+        .strip_prefix("X-Staging-Key: k\nAuthorization: Bearer ")
+        .and_then(|rest| rest.strip_suffix('\n'))
+        .unwrap_or_else(|| panic!("the file holds {kept:?}; printed: {printed}"));
+    assert!(token.starts_with("fdt_"), "{token}");
+    assert!(!printed.contains("fdt_"), "the token was printed");
+    // The reply's headers are printed, so the agent can name the account.
+    assert!(printed.contains("x-filedrawer-account: "), "{printed}");
+    let mine = site.app.get_with_token("/entries/mine", token).await;
+    assert_eq!(mine.status, StatusCode::OK, "{}", mine.body);
+    // Run again, it makes no second account.
+    let again = site.run(&make, &home);
+    assert!(!again.status.success(), "{}", text(&again));
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), kept);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_refused_account_leaves_the_header_file_as_it_was() {
+    let site = StandIn::at(PRODUCTION).await;
+    let (home, file) = home_for_production(&site, "X-Staging-Key: k\n");
+    let make = command(&raw("filedrawer-submit", "SKILL.md"), MAKE_ACCOUNT, 0);
+    // The site makes 10 an hour for one address.
+    for _ in 0..10 {
+        site.run(&make, &home);
+        std::fs::write(&file, "X-Staging-Key: k\n").unwrap();
+    }
+    let output = site.run(&make, &home);
+    let printed = text(&output);
+    assert!(!output.status.success(), "{printed}");
+    assert!(
+        printed.contains("https://filedrawer.dev/signup"),
+        "{printed}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "X-Staging-Key: k\n"
+    );
+}

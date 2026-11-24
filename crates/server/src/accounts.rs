@@ -120,6 +120,49 @@ pub async fn sign_up(
     Ok(Signup::Created(id))
 }
 
+/// The display name an account has until a person claims it. No one may choose it
+/// ([`display_name_refusal`]), so a card that shows it says the server's own word.
+pub const UNCLAIMED: &str = "unclaimed";
+
+/// An account an agent just made, with its one token, which only its hash outlives.
+pub struct AgentAccount {
+    pub id: String,
+    pub token: String,
+}
+
+/// Makes an account for an agent, with no email address and no password, and its
+/// one token.
+pub async fn make_by_agent(pool: &SqlitePool) -> Result<AgentAccount, sqlx::Error> {
+    let id = ids::new_account_id();
+    let token = ids::new_token();
+    let token_id = ids::new_id();
+    let hash = ids::token_hash(&token);
+    let at = now();
+    let mut tx = crate::db::write_tx(pool).await?;
+    sqlx::query!(
+        "INSERT INTO accounts (id, display_name, created_at, made_by_agent_at)
+         VALUES (?, ?, ?, ?)",
+        id,
+        UNCLAIMED,
+        at,
+        at
+    )
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query!(
+        "INSERT INTO tokens (id, account_id, name, hash, created_at)
+         VALUES (?, ?, 'agent', ?, ?)",
+        token_id,
+        id,
+        hash,
+        at
+    )
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(AgentAccount { id, token })
+}
+
 /// The account with this email, as login needs it.
 pub struct Login {
     pub account_id: String,
@@ -169,6 +212,11 @@ pub fn display_name_refusal(text: &str) -> Result<&str, String> {
         ));
     };
     let lower = name.to_lowercase();
+    if lower == UNCLAIMED {
+        return Err(format!(
+            "A display name can't be \"{UNCLAIMED}\": cards show that for an account an agent made that nobody has claimed yet."
+        ));
+    }
     match HANDLE_PREFIXES
         .iter()
         .find(|prefix| lower.contains(*prefix))

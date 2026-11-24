@@ -53,6 +53,11 @@ pub struct Limits {
     /// Token-authenticated writes per account, refused ones included (#14).
     pub writes_per_account: Rate,
     pub signups_per_ip: Vec<Window>,
+    /// Accounts agents make with `POST /accounts`, per client IP, counted apart
+    /// from signups, so its refusal can send a person to `/signup` (#130).
+    pub agent_accounts_per_ip: Vec<Window>,
+    /// Accounts agents make, across the whole site.
+    pub agent_accounts_site: Vec<Window>,
     /// Verification and password-reset emails, counted per request to send one,
     /// whether or not the address has an account.
     pub emails_per_address: Vec<Window>,
@@ -71,6 +76,8 @@ impl Limits {
             in_flight_per_ip: 32,
             writes_per_account: per_minute(60),
             signups_per_ip: vec![hourly(10), daily(40)],
+            agent_accounts_per_ip: vec![hourly(10), daily(40)],
+            agent_accounts_site: vec![daily(2000)],
             emails_per_address: vec![hourly(5), daily(20)],
             emails_per_ip: vec![hourly(20), daily(60)],
             failed_logins_per_address: vec![hourly(10)],
@@ -258,6 +265,7 @@ fn too_many(what: &str, wait: Duration) -> AppError {
     AppError::TooManyRequests {
         what: what.to_string(),
         retry_after_secs: wait.as_secs_f64().ceil().max(1.0) as u64,
+        instead: None,
     }
 }
 
@@ -399,6 +407,26 @@ impl<'a> Counted<'a> {
             &ip.0,
             &limits.signups_per_ip,
             "signups from this IP address",
+        )
+    }
+
+    pub fn agent_accounts_from(limits: &'a Limits, ip: &ClientIp) -> Self {
+        Counted::new(
+            "agent-account-ip",
+            &ip.0,
+            &limits.agent_accounts_per_ip,
+            "accounts agents made from this IP address",
+        )
+    }
+
+    /// Every account an agent makes, whatever its address, since a client with
+    /// many addresses passes the per-IP count (#114).
+    pub fn agent_accounts(limits: &'a Limits) -> Self {
+        Counted::new(
+            "agent-account-site",
+            "all",
+            &limits.agent_accounts_site,
+            "accounts agents made on this site",
         )
     }
 

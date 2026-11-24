@@ -49,6 +49,7 @@ impl From<Busy> for AppError {
         AppError::TooManyRequests {
             what: what.to_string(),
             retry_after_secs: STATEMENT_BUDGET.as_secs(),
+            instead: None,
         }
     }
 }

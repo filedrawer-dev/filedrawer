@@ -8,6 +8,7 @@ mod admin_removal;
 mod admin_series;
 mod admin_suspension;
 mod admin_unknown_fields;
+mod agent_accounts;
 mod allowance;
 mod anthropic_client;
 mod attachments;

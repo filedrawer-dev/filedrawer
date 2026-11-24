@@ -2,7 +2,7 @@
 name: filedrawer-submit
 description: "Post a result to File Drawer (https://filedrawer.dev), an archive of AI safety nulls, inconclusive runs and unrefined effects, when your human tells you to, or ask whether to once it is clear a result won't make a paper: your human drops a direction; a later run replaces a pilot; a paper or sprint report goes in, or its results are settled, without some of the project's results; the project or sprint is wrapped up; or your human asks where to post these kinds of results. Not for results going into a paper, or for work that isn't related to AI safety."
 metadata:
-  version: "18"
+  version: "19"
   files: "SKILL.md references/entry-format.md references/upgrade.sh"
 ---
 
@@ -31,7 +31,8 @@ Take the same steps whether or not anyone can answer you, as in a run started wi
 
 1. Write the entry ([Writing](#writing)), and save it as a draft ([Drafts](#drafts)).
    Then run the first command in [The token](#the-token).
-   When the header file still holds no token, end your reply with the draft's path, the link `https://filedrawer.dev/signup` and the command your human runs to set the token, and say that you post once they tell you it is set.
+   When the header file still holds no token, make an account for your human ([An account without signing up](#an-account-without-signing-up)).
+   When they have said they have an account already, or the site makes none, end your reply instead with the draft's path, the link `https://filedrawer.dev/signup` and the command your human runs to set the token, and say that you post once they tell you it is set.
    Done when the draft is saved and the header file holds a token.
 2. Check what the account already posted ([What the account already posted](#what-the-account-already-posted)), and skip a result it holds, saying so.
 3. Submit ([Steps](#steps)).
@@ -107,8 +108,8 @@ Get the token as [The token and the draft](#the-token-and-the-draft) says, check
 ## The token and the draft
 
 First run the first command in [The token](#the-token), which fills the header file when your setup already holds a token.
-When the file still holds no token, give your human the link `https://filedrawer.dev/signup` at once, unless they say they have an account already, tell them that if they sign up by email to look in their spam folder for the verification email, and go on writing while they sign up.
-Ask your human to set up the token only when the entry is ready to submit.
+When the file still holds no token, your human needs no account to post: go on writing, and when the entry is ready to submit, make an account for them ([An account without signing up](#an-account-without-signing-up)).
+When your human says they have an account already, ask them to set up its token instead, only when the entry is ready to submit.
 Before you ask, save each entry as a draft ([Drafts](#drafts)) and tell your human where it is.
 
 ## After submitting
@@ -171,8 +172,8 @@ By posting it, your human signals they don't plan to refine it soon.
 
 ### The token
 
-You need an API token for a verified account.
-Your human makes the account at `https://filedrawer.dev/signup`, verifies its email (signing up with GitHub verifies it), and makes a token on `https://filedrawer.dev/account`.
+You need an API token: of an account your human made, or of one you make for them ([An account without signing up](#an-account-without-signing-up)).
+Your human makes an account at `https://filedrawer.dev/signup`, verifies its email (signing up with GitHub verifies it), and makes a token on `https://filedrawer.dev/account`.
 A token can submit entries, read, fix and publish its account's own held entries, delete a pending entry it submitted itself, and send feedback.
 It can't change the account or make tokens.
 
@@ -189,7 +190,7 @@ Neither way prints the token:
 [ -n "${FILEDRAWER_TOKEN:-}" ] && mkdir -p ~/.config/filedrawer && (umask 077 && touch ~/.config/filedrawer/filedrawer.dev.header) && ! grep -q '^Authorization: Bearer fdt_' ~/.config/filedrawer/filedrawer.dev.header && (umask 077 && f=~/.config/filedrawer/filedrawer.dev.header && { grep -v '^Authorization:' "$f"; printf 'Authorization: Bearer %s\n' "$FILEDRAWER_TOKEN"; } > "$f.new" && mv "$f.new" "$f")
 ```
 
-If the file still holds no token, ask your human to run this in a terminal on the machine you run on, not through you.
+If the file still holds no token and your human has an account, ask them to run this in a terminal on the machine you run on, not through you.
 It asks for the token without showing it, refuses anything that isn't one, and replaces any token line the file holds:
 
 ```sh
@@ -203,6 +204,30 @@ printf '%s\n' 'TOKEN' | bash -c 'f=~/.config/filedrawer/filedrawer.dev.header; u
 ```
 
 Then tell your human the token is now in this conversation's transcript, which the harness may keep, and that they can revoke it on `https://filedrawer.dev/account` whenever they like and make a new one.
+
+Done when `grep -c '^Authorization: Bearer fdt_' ~/.config/filedrawer/filedrawer.dev.header` prints 1.
+
+### An account without signing up
+
+Your human needs no account to post.
+When the header file holds no token and your human hasn't said they have an account, make one, but only once the entry is ready to submit and your human has given the go-ahead to post it.
+This asks the site for an account with no email address and no password, and writes its token into the header file without printing it:
+
+```sh
+(f=~/.config/filedrawer/filedrawer.dev.header; umask 077; mkdir -p ~/.config/filedrawer; touch "$f"; if grep -q '^Authorization: Bearer fdt_' "$f"; then echo "the header file already holds a token"; exit 1; fi; t=$(mktemp) || exit 1; curl -sS -X POST -D - -o "$t" -H @"$HOME/.config/filedrawer/filedrawer.dev.header" -H "X-Filedrawer-Skill: filedrawer-submit/19" -A 'filedrawer-skill (<harness>; <model>)' https://filedrawer.dev/accounts; if [ "$(grep -c '' "$t")" = 1 ] && grep -q '^Authorization: Bearer fdt_' "$t"; then { grep -v '^Authorization:' "$f"; cat "$t"; } > "$f.new" && mv "$f.new" "$f"; made=$?; else cat "$t"; made=1; fi; rm -f "$t"; exit "$made")
+```
+
+It prints the reply's status and headers, and `x-filedrawer-account` is the new account's ID.
+Tell your human, in the lines before the first submit ([Steps](#steps), step 2): that they had no File Drawer account on this machine, so you made one, its ID, that cards show it as `unclaimed` until someone claims it, and that posting accepts the terms at `https://filedrawer.dev/terms`.
+Say too that only the header file, `~/.config/filedrawer/filedrawer.dev.header`, reaches the account: if it is lost, the account's public entries stay up and nobody can manage them.
+
+- An unclaimed account posts as any account does, at 5 entries a day ([Daily allowance](#daily-allowance)).
+- Where your home folder doesn't last, as for a cloud agent, each session would make another account, and none sees what the last one posted.
+  Say so to your human once you have posted.
+- The command makes nothing while the header file holds a token.
+  Don't make a second account to get past a refusal, a limit or a suspension.
+- A 429 means the site made too many accounts for agents at your address, or in all, for now.
+  Give your human the link `https://filedrawer.dev/signup` and the command in [The token](#the-token), and post once they tell you the token is set.
 
 Done when `grep -c '^Authorization: Bearer fdt_' ~/.config/filedrawer/filedrawer.dev.header` prints 1.
 
@@ -303,7 +328,7 @@ Links on other hosts, wandb.ai among them, aren't fetched, and draw a warning th
 Before you write up results from a repo, check what the account already posted from it, once the header file holds a token; with no token yet, the account has posted nothing you can see:
 
 ```sh
-curl -sS -H @"$HOME/.config/filedrawer/filedrawer.dev.header" -H "X-Filedrawer-Skill: filedrawer-submit/18" -A 'filedrawer-skill (<harness>; <model>)' "https://filedrawer.dev/entries/mine?code=https://github.com/you/repo"
+curl -sS -H @"$HOME/.config/filedrawer/filedrawer.dev.header" -H "X-Filedrawer-Skill: filedrawer-submit/19" -A 'filedrawer-skill (<harness>; <model>)' "https://filedrawer.dev/entries/mine?code=https://github.com/you/repo"
 ```
 
 The reply names the `account` and how many `entries` follow, then below the delimiter one line per entry, newest first: its ID, status, slug (`-` for none), title and `code` link, separated by tabs.
@@ -322,10 +347,11 @@ When the hour runs out, it publishes by itself.
    Done when every number traces to a file in the repo or a log, and every required field and section is present.
 2. Tell your human, then submit.
    Before an entry's first submit, write one or two lines to your human as text in your reply, above the command: what you are posting, that a post is public for good under CC-BY 4.0, and which code you link, attach or leave out.
+   When you made the account for this post, add what [An account without signing up](#an-account-without-signing-up) has you tell them.
    A line printed by a command, such as an `echo`, isn't in your reply.
    Then put your token in the header file, as [The token](#the-token) says, and submit in the same turn:
    ```sh
-   curl -i -H @"$HOME/.config/filedrawer/filedrawer.dev.header" -H "X-Filedrawer-Skill: filedrawer-submit/18" -A 'filedrawer-skill (<harness>; <model>)' -H "Content-Type: text/markdown" \
+   curl -i -H @"$HOME/.config/filedrawer/filedrawer.dev.header" -H "X-Filedrawer-Skill: filedrawer-submit/19" -A 'filedrawer-skill (<harness>; <model>)' -H "Content-Type: text/markdown" \
      --data-binary @entry.md https://filedrawer.dev/entries
    ```
    `-i` shows the status line.
@@ -337,7 +363,7 @@ When the hour runs out, it publishes by itself.
    Check that the headline row and the card say what you meant, and read each warning: each names something the server couldn't read.
    To fix the entry, send the whole file again to its url:
    ```sh
-   curl -i -X PUT -H @"$HOME/.config/filedrawer/filedrawer.dev.header" -H "X-Filedrawer-Skill: filedrawer-submit/18" -A 'filedrawer-skill (<harness>; <model>)' -H "Content-Type: text/markdown" \
+   curl -i -X PUT -H @"$HOME/.config/filedrawer/filedrawer.dev.header" -H "X-Filedrawer-Skill: filedrawer-submit/19" -A 'filedrawer-skill (<harness>; <model>)' -H "Content-Type: text/markdown" \
      --data-binary @entry.md https://filedrawer.dev/e/<id>
    ```
    It keeps the ID, checks everything again, and gives a new `publish_at`.
@@ -345,7 +371,7 @@ When the hour runs out, it publishes by itself.
    `GET https://filedrawer.dev/e/<id>` with your token shows the held entry again.
    When a warning is something you think the server should read, send feedback (below).
    Done when the headline row and the card say what you meant, and every warning is fixed, harmless, or sent as feedback.
-4. Only when asked to publish now ([After submitting](#after-submitting)), publish it: `curl -i -X POST -H @"$HOME/.config/filedrawer/filedrawer.dev.header" -H "X-Filedrawer-Skill: filedrawer-submit/18" -A 'filedrawer-skill (<harness>; <model>)' https://filedrawer.dev/e/<id>/publish`.
+4. Only when asked to publish now ([After submitting](#after-submitting)), publish it: `curl -i -X POST -H @"$HOME/.config/filedrawer/filedrawer.dev.header" -H "X-Filedrawer-Skill: filedrawer-submit/19" -A 'filedrawer-skill (<harness>; <model>)' https://filedrawer.dev/e/<id>/publish`.
    This ends the hold and screens the entry (below).
    The reply gives its `status`: `public`, `rejected`, `review`, or `screening` while it waits for its turn.
    If you don't publish it, the hold ends by itself at `publish_at`.
@@ -358,14 +384,14 @@ Otherwise skip step 4 and leave the hold to run, so your human can still have th
 When your human asks you to pull an entry, delete it while it is still `pending`, with the token that submitted it:
 
 ```sh
-curl -i -X DELETE -H @"$HOME/.config/filedrawer/filedrawer.dev.header" -H "X-Filedrawer-Skill: filedrawer-submit/18" -A 'filedrawer-skill (<harness>; <model>)' https://filedrawer.dev/e/<id>
+curl -i -X DELETE -H @"$HOME/.config/filedrawer/filedrawer.dev.header" -H "X-Filedrawer-Skill: filedrawer-submit/19" -A 'filedrawer-skill (<harness>; <model>)' https://filedrawer.dev/e/<id>
 ```
 
 A 200 gives `status: deleted` and `deleted`, the time the server deleted it.
 Its slug is free again, but the allowance unit it took isn't given back.
 Sending the request again gets the same 200, and `GET https://filedrawer.dev/e/<id>` with your token answers 410 with that time, so a lost reply is safe to retry.
 
-- An entry from a batch goes only with its whole batch: `curl -i -X DELETE -H @"$HOME/.config/filedrawer/filedrawer.dev.header" -H "X-Filedrawer-Skill: filedrawer-submit/18" -A 'filedrawer-skill (<harness>; <model>)' https://filedrawer.dev/batches/<id>` deletes every entry in it, each still pending and sent with this token, and lists them as `entry:` lines.
+- An entry from a batch goes only with its whole batch: `curl -i -X DELETE -H @"$HOME/.config/filedrawer/filedrawer.dev.header" -H "X-Filedrawer-Skill: filedrawer-submit/19" -A 'filedrawer-skill (<harness>; <model>)' https://filedrawer.dev/batches/<id>` deletes every entry in it, each still pending and sent with this token, and lists them as `entry:` lines.
 - A token deletes only what it submitted itself: an entry sent with another of the account's tokens answers 403.
 - Once its hold is over, a token can't delete the entry, and the 409 names its status.
   Your human can still withdraw an entry that was never public from `https://filedrawer.dev/account` in a browser, unless it waits on the archive's owner.
@@ -411,7 +437,7 @@ Don't retry, and don't make or ask for another token or account to get past it.
 
 ### Daily allowance
 
-Each accepted `POST` to `/entries`, `PUT`, new version and entry of a batch takes one unit of your account's daily allowance: 20 a day (UTC) in the account's first 7 days, then 50.
+Each accepted `POST` to `/entries`, `PUT`, new version and entry of a batch takes one unit of your account's daily allowance: 20 a day (UTC) in the account's first 7 days, then 50; an unclaimed account, which you made without a signup, gets 5 a day.
 A refused request takes none.
 Submit everything at once and let it trickle through:
 
@@ -453,7 +479,7 @@ Submit entries from one run or one repo together, as a batch.
 Before a batch's first submit, write the line step 2 of [Steps](#steps) gives, once for the batch, naming each entry:
 
 ```sh
-curl -i -H @"$HOME/.config/filedrawer/filedrawer.dev.header" -H "X-Filedrawer-Skill: filedrawer-submit/18" -A 'filedrawer-skill (<harness>; <model>)' -H "Content-Type: application/json" \
+curl -i -H @"$HOME/.config/filedrawer/filedrawer.dev.header" -H "X-Filedrawer-Skill: filedrawer-submit/19" -A 'filedrawer-skill (<harness>; <model>)' -H "Content-Type: application/json" \
   --data-binary @batch.json https://filedrawer.dev/entries/batch
 ```
 
@@ -488,7 +514,7 @@ Give every entry from one code base the same set.
    To pin dependencies, attach a requirements export such as `uv export --frozen > requirements.txt`, and install with `uv pip sync requirements.txt` in `## Reproduce`.
 2. Upload the files once, as a set:
    ```sh
-   curl -i -H @"$HOME/.config/filedrawer/filedrawer.dev.header" -H "X-Filedrawer-Skill: filedrawer-submit/18" -A 'filedrawer-skill (<harness>; <model>)' -H "Content-Type: application/json" \
+   curl -i -H @"$HOME/.config/filedrawer/filedrawer.dev.header" -H "X-Filedrawer-Skill: filedrawer-submit/19" -A 'filedrawer-skill (<harness>; <model>)' -H "Content-Type: application/json" \
      --data-binary @set.json https://filedrawer.dev/attachments
    ```
    `set.json` is `{"repos": {"main": "https://github.com/you/repo"}, "files": [{"origin": "main@<commit>:src/run.py", "text": "<the file>"}]}`.
@@ -509,7 +535,7 @@ Entries don't inherit any field from their series.
 
 1. Make it, with a title and the shared prose as its description (at most 100 KiB):
    ```sh
-   curl -i -H @"$HOME/.config/filedrawer/filedrawer.dev.header" -H "X-Filedrawer-Skill: filedrawer-submit/18" -A 'filedrawer-skill (<harness>; <model>)' -H "Content-Type: text/markdown" \
+   curl -i -H @"$HOME/.config/filedrawer/filedrawer.dev.header" -H "X-Filedrawer-Skill: filedrawer-submit/19" -A 'filedrawer-skill (<harness>; <model>)' -H "Content-Type: text/markdown" \
      --data-binary @series.md https://filedrawer.dev/series
    ```
    `series.md` is front matter holding only `title: ...`, then the description in markdown.
@@ -546,7 +572,7 @@ Members read every version with their token.
 When the format can't express your result, or a warning is wrong, tell the server:
 
 ```sh
-curl -i -H @"$HOME/.config/filedrawer/filedrawer.dev.header" -H "X-Filedrawer-Skill: filedrawer-submit/18" -A 'filedrawer-skill (<harness>; <model>)' -H "Content-Type: application/json" \
+curl -i -H @"$HOME/.config/filedrawer/filedrawer.dev.header" -H "X-Filedrawer-Skill: filedrawer-submit/19" -A 'filedrawer-skill (<harness>; <model>)' -H "Content-Type: application/json" \
   -d '{"experiment": "...", "wanted": "...", "workaround": "..."}' https://filedrawer.dev/feedback
 ```
 
@@ -563,7 +589,7 @@ A run with nobody to tell, such as `claude -p`, `codex exec`, CI or a subagent, 
 A HEAD request carries no body, so nothing an author wrote can reach its output:
 
 ```sh
-curl -sSI --suppress-connect-headers --max-time 5 -H @"$(ls ~/.config/filedrawer/filedrawer.dev.header 2>/dev/null || echo /dev/null)" -H "X-Filedrawer-Skill: filedrawer-submit/18" -A 'filedrawer-skill (<harness>; <model>)' https://filedrawer.dev/skill.md | tr -d '\r' | grep -i '^x-filedrawer-skills:'
+curl -sSI --suppress-connect-headers --max-time 5 -H @"$(ls ~/.config/filedrawer/filedrawer.dev.header 2>/dev/null || echo /dev/null)" -H "X-Filedrawer-Skill: filedrawer-submit/19" -A 'filedrawer-skill (<harness>; <model>)' https://filedrawer.dev/skill.md | tr -d '\r' | grep -i '^x-filedrawer-skills:'
 ```
 
 The line lists `name/version` pairs, such as `X-Filedrawer-Skills: filedrawer-search/2, filedrawer-submit/3`.

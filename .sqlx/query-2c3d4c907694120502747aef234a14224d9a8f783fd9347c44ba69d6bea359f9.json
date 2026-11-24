@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id AS \"id!\", display_name, email, suspended_at FROM accounts\n           WHERE id = ? AND deleted_at IS NULL",
+  "query": "SELECT id AS \"id!\", display_name, email, suspended_at, made_by_agent_at, claimed_at\n           FROM accounts\n           WHERE id = ? AND deleted_at IS NULL",
   "describe": {
     "columns": [
       {
@@ -46,6 +46,28 @@
             "name": "suspended_at"
           }
         }
+      },
+      {
+        "name": "made_by_agent_at",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "accounts",
+            "name": "made_by_agent_at"
+          }
+        }
+      },
+      {
+        "name": "claimed_at",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "accounts",
+            "name": "claimed_at"
+          }
+        }
       }
     ],
     "parameters": {
@@ -55,8 +77,10 @@
       false,
       false,
       true,
+      true,
+      true,
       true
     ]
   },
-  "hash": "815a7c563c209930e819a5f621e34d0bdb2f4de8d1384b412e842a713a839b63"
+  "hash": "2c3d4c907694120502747aef234a14224d9a8f783fd9347c44ba69d6bea359f9"
 }

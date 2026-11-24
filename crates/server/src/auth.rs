@@ -9,8 +9,8 @@ use crate::respond::shown_name;
 use crate::{AppState, ids, suspension};
 
 /// The account a request's `Authorization: Bearer` token belongs to. Only an account
-/// with a verified email gets this far (design.md, Accounts: "An account can post
-/// only after its email is verified").
+/// with a verified email gets this far, or one an agent made that nobody has claimed
+/// yet, which has no email to verify (design.md, Accounts).
 #[derive(Debug, Clone)]
 pub struct TokenAccount {
     pub id: String,
@@ -39,7 +39,8 @@ impl TokenAccount {
 struct TokenRow {
     id: String,
     display_name: String,
-    verified: bool,
+    /// Whether it may post: its email is verified, or it is unclaimed.
+    may_post: bool,
     suspended: bool,
     token_id: String,
 }
@@ -97,7 +98,8 @@ async fn lookup(headers: &HeaderMap, state: &AppState) -> Result<(TokenAccount, 
     let hash = ids::token_hash(token.trim());
     let row = sqlx::query_as!(
         TokenRow,
-        r#"SELECT a.id, a.display_name, a.email_verified_at IS NOT NULL AS "verified!: bool",
+        r#"SELECT a.id, a.display_name,
+                  (a.email_verified_at IS NOT NULL OR a.unclaimed) AS "may_post!: bool",
                   a.suspended_at IS NOT NULL AS "suspended!: bool", t.id AS token_id
                FROM tokens t JOIN accounts a ON a.id = t.account_id
                WHERE t.hash = ? AND t.revoked_at IS NULL AND a.deleted_at IS NULL"#,
@@ -106,7 +108,7 @@ async fn lookup(headers: &HeaderMap, state: &AppState) -> Result<(TokenAccount, 
     .fetch_optional(&state.pool)
     .await?
     .ok_or(AppError::Unauthorized)?;
-    if !row.verified {
+    if !row.may_post {
         return Err(AppError::Forbidden(
                 "verify this account's email before submitting: open the link we emailed, or send another from your account page".into(),
             ));

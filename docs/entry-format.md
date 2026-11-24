@@ -297,6 +297,7 @@ Cards render from the stored entry at each read, so every card, an old entry's t
 11. `author: `, then the account ID, any linked GitHub or ORCID handle, and the author's display name, as `account <id>, github:<login>, <name>`, up to 100 characters.
     The ID comes first, since a name is author text and may hold something shaped like an ID (the owner's decision, 2026-11-21), and the handles follow it, the server's words before the author's, as on every line (the owner's decision, 2026-11-22).
     Once the account is deleted, the account ID and "account deleted", with no name.
+    An account an agent made that nobody has claimed yet has the name "unclaimed", which no one may choose (design.md, Accounts).
 
 After its label, each line holds the server's own words first and author text after them, cut to fit what remains, so it can never push a server note off the card.
 Lines 2 and 3 are author text right after the label, line 11 is author text after the account ID and handles, and the display name there has no invisible characters (with the joiners and selectors a tag may hold).

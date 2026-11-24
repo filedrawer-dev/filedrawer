@@ -19,6 +19,8 @@ const NEW_ACCOUNT_UNITS: i64 = 20;
 /// The units an account gets each day after that.
 const UNITS: i64 = 50;
 const NEW_ACCOUNT_DAYS: i64 = 7;
+/// A day's units for an account an agent made, until a person claims it (#130).
+const UNCLAIMED_UNITS: i64 = 5;
 /// The days, today first, that an account's units may be dated to.
 const WINDOW_DAYS: i64 = 10;
 
@@ -50,12 +52,16 @@ struct Start {
     /// is the first account a GitHub account at least 90 days old linked, which
     /// skips the new-account limit (design.md, Limits and abuse).
     invited: bool,
+    /// Whether an agent made it and nobody has claimed it yet (#130).
+    unclaimed: bool,
 }
 
 impl Start {
     /// The units the account gets on `day`.
     fn units_on(self, day: Date) -> i64 {
-        if !self.invited && day < self.created + Duration::days(NEW_ACCOUNT_DAYS) {
+        if self.unclaimed {
+            UNCLAIMED_UNITS
+        } else if !self.invited && day < self.created + Duration::days(NEW_ACCOUNT_DAYS) {
             NEW_ACCOUNT_UNITS
         } else {
             UNITS
@@ -71,7 +77,9 @@ async fn start_of(
     today: Date,
 ) -> Result<Start, sqlx::Error> {
     let account = sqlx::query!(
-        r#"SELECT created_at, is_admin AS "is_admin: bool" FROM accounts WHERE id = ?"#,
+        r#"SELECT created_at, is_admin AS "is_admin: bool",
+                  unclaimed AS "unclaimed!: bool"
+               FROM accounts WHERE id = ?"#,
         account_id
     )
     .fetch_one(&mut *conn)
@@ -82,7 +90,11 @@ async fn start_of(
     let invited = account.is_admin
         || invites::invited(&mut *conn, account_id).await?
         || crate::github_accounts::exempt(conn, account_id, today.midnight().assume_utc()).await?;
-    Ok(Start { created, invited })
+    Ok(Start {
+        created,
+        invited,
+        unclaimed: account.unclaimed,
+    })
 }
 
 /// Takes a unit for each of `entries`, which `account_id` submitted, dated to the

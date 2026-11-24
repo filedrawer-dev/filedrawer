@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO accounts (id, display_name, created_at, made_by_agent_at)\n         VALUES (?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "c40cc0b06fac9de5beb848e09184d1ef0666ea52de779ef65fbf49719bc0eacb"
+}
