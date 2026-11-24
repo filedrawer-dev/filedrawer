@@ -1,6 +1,7 @@
 # The first screen's cases
 
-`ops/first-screen-bakeoff` (`-h`) sends these to Jev, the cheap model #131 would put in front of Haiku, and counts what a rule would reject.
+`ops/first-screen-bakeoff` (`-h`) sends these to Jev, the cheap model #131 weighed putting in front of Haiku, and counts what a rule would reject.
+The layer passed this test and wasn't built (design.md, Rejected alternatives).
 Every case is made up.
 They are `.txt` so no markdown check reads them: junk is junk on purpose.
 

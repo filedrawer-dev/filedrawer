@@ -1365,3 +1365,9 @@ Bring one of these back only with the owner's agreement.
   B2 holds the files' backups instead.
 - **A 1 GB VPS.**
   Processes would fit, but with little RAM left for the page cache, and the 4 GB plans cost about the same.
+- **A cheaper model screening before Haiku** (2026-11-23, #131), to reject plain junk without spending the capped Haiku budget.
+  Jev, TypeSafe's System One model, passed a held-out test: it rejected 62 of 63 junk cases and none of 172 honest entries (`ops/first-screen-bakeoff`).
+  But it is only 2.4 times cheaper than Haiku per input token, so a large dump, the costliest junk, would cost about $0.0024 against Haiku's estimated $0.006.
+  That saving, on junk alone, doesn't pay for a second vendor, a second processor of unpublished text and a new way to reject honest work, when Haiku already rejects the same junk with reasons.
+  The owner: "I would expect Haiku to perform better for not that much more cost."
+  If the cap binds, raise it; #132 and #133 cover what no screen solves.
