@@ -1,0 +1,30 @@
+---
+title: does grind size change how long my pour-over takes. yes
+safety_motivation: none, its coffee
+hypothesis: finer grind = slower drawdown
+outcome: effect
+models:
+  - name: none
+    role: other
+    route: other
+tags: [coffee, pour-over]
+---
+
+## Setup
+
+15 g coffee, 250 g water just off the boil, same paper cone, same beans from one bag. hand grinder, counted clicks from zero. timer from first pour to last drip. did each setting twice on one sunday, got quite jittery.
+
+## Results
+
+| clicks | time 1 | time 2 | taste |
+|---|---|---|---|
+| 14 | 4:10 | 4:25 | bitter, dry |
+| 18 | 3:20 | 3:05 | good |
+| 22 | 2:40 | 2:35 | good, lighter |
+| 26 | 2:05 | 2:10 | sour, thin |
+
+so about 15 sec faster per 2 clicks. sticking with 20.
+
+## Reproduce
+
+grind, pour, time it

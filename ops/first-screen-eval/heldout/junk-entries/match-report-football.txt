@@ -1,0 +1,40 @@
+---
+title: Match report - Ashby Rovers Under-13s 3, Kettlebrook Juniors 2
+safety_motivation: None needed. Report for parents who could not come.
+hypothesis: Playing three at the back would stop us conceding early like last week.
+outcome: mixed
+kind: measurement
+run_dates: [2026-10-17, 2026-10-17]
+models:
+  - name: none
+    role: other
+    route: other
+tags: [football, match-report, youth-sport]
+---
+
+## Setup
+
+League match, home, Saturday morning, 30 minutes each way. Pitch heavy after rain. We lined up 3-2-1 for the first time, with the usual left back moved into midfield. Eleven players available, so two substitutes rolled every ten minutes.
+
+## Results
+
+| minute | event | score |
+|---|---|---|
+| 4 | Kettlebrook score from a corner, nobody on the far post | 0-1 |
+| 19 | our number 9 from the edge of the box after a throw-in | 1-1 |
+| 27 | penalty to us for handball, scored low to the left | 2-1 |
+| 41 | Kettlebrook equalise on the break, three against two | 2-2 |
+| 58 | header from a free kick, our centre half | 3-2 |
+
+Shots 11 to 7 in our favour, corners 4 to 6. We conceded early again, so the new shape did not fix that, but we conceded only twice instead of last week's five.
+
+Player of the match, chosen by the other team's coach: our goalkeeper, for the save at 2-2.
+
+## Caveats
+
+- One match. Kettlebrook were missing their usual striker.
+- I am the coach and also the parent of the number 9.
+
+## Reproduce
+
+Next fixture is away on the 24th. Same shape.

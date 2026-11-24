@@ -1,0 +1,40 @@
+---
+title: Backup of my router config before the firmware update
+safety_motivation: Safety of my home network, I do not want to retype all of this if the update wipes it.
+hypothesis: The backup restores cleanly after the update.
+outcome: inconclusive
+models:
+  - name: none
+    role: other
+    route: other
+tags: [backup, router, home-network]
+---
+
+## Setup
+
+Exported from the admin page on 14 March. Passwords taken out by hand.
+
+```
+hostname attic-gw
+lan ipaddr 192.168.40.1 netmask 255.255.255.0
+dhcp start 192.168.40.100 limit 80 leasetime 12h
+dhcp host printer    192.168.40.20
+dhcp host nas        192.168.40.21
+dhcp host tv-lounge  192.168.40.30
+wan proto pppoe username (removed) password (removed)
+wifi 2g ssid Heronsgate channel 6 width 20
+wifi 5g ssid Heronsgate-5 channel 44 width 80
+wifi guest ssid Heronsgate-guest isolate on
+wifi key (removed)
+port-forward tcp 51820 -> 192.168.40.21:51820  comment vpn
+port-forward tcp 32400 -> 192.168.40.21:32400  comment media
+dns upstream 192.168.40.21
+ntp server pool.ntp.example
+upnp off
+remote-admin off
+led schedule off 23:00 on 07:00
+```
+
+## Reproduce
+
+Admin page, Maintenance, Restore, choose this text pasted into a file. Not tried yet.

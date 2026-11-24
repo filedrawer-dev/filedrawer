@@ -1,0 +1,29 @@
+---
+title: Diary, second week of the new job
+safety_motivation: For myself. Writing it down helps me sleep.
+hypothesis: It gets easier after the first month, everyone says.
+outcome: inconclusive
+models:
+  - name: none
+    role: other
+    route: other
+tags: [diary, personal]
+---
+
+## Setup
+
+Monday. Got the earlier bus by accident and was at the office before the lights were on. The cleaner showed me how the coffee machine really works, which is not how the sign says. Spent the day reading other people's spreadsheets and nodding.
+
+Tuesday. First meeting where someone asked me a question. I answered a different question, I think. Nobody minded. Lunch on the wall by the canal, a heron stood there the whole time like it was waiting for a bus too.
+
+Wednesday. Rain. Forgot the umbrella, borrowed one from the stand that clearly belongs to nobody. My manager said "no rush" about the report in a voice that meant some rush.
+
+Thursday. Finished the report. It is four pages and two of them are a table. Rang Mum, she asked if they feed me. Told her about the heron.
+
+Friday. They go to the pub on Fridays. I went for one and stayed for two. The quiet one from accounts turns out to keep bees and has opinions about it. Walked home, feet hurt, did not mind.
+
+Weekend. Slept. Washed everything. Bought a proper umbrella.
+
+## Reproduce
+
+Cannot be reproduced, thankfully.

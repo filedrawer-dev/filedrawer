@@ -1,0 +1,51 @@
+---
+title: Lyrics for "Harbour Lights Go Out" (my own song, draft 3)
+safety_motivation: none
+hypothesis: The second verse works better than the one I had before.
+outcome: inconclusive
+models:
+  - name: n/a
+    role: other
+    route: other
+tags: [lyrics, songwriting]
+---
+
+## Setup
+
+Capo 2, slow.
+
+Verse 1
+The ferry left at half past four
+I watched it from the fish shop door
+You waved a hand, or fixed your hair
+From where I stood I couldn't swear
+
+Chorus
+And the harbour lights go out, one by one
+Like somebody counting what we've done
+I'll be here when the morning boat comes round
+With my hands in my pockets and my eyes on the ground
+
+Verse 2
+Your mother says you'll write in spring
+Your mother says a lot of things
+I fixed the gate, I fed the cat
+I'm getting very good at that
+
+(Chorus)
+
+Bridge
+Nobody tells you the sea is loud
+When you're standing by it without a crowd
+
+Verse 3
+The ferry's back at ten to nine
+A dozen faces, none are mine
+I buy the paper, read the tide
+I fold it up and go inside
+
+(Chorus, last line twice)
+
+## Reproduce
+
+G, Em, C, D for the verses. The bridge goes to Am and I have not decided how it gets back.

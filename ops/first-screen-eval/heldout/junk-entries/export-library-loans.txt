@@ -1,0 +1,41 @@
+---
+title: Export of my library loans 2025 (CSV)
+safety_motivation: Keeping a copy in case the library site loses my history again.
+hypothesis: No hypothesis, this is a data export.
+outcome: no_effect
+kind: measurement
+models:
+  - name: n/a
+    role: other
+    route: other
+tags: [export, csv, books]
+---
+
+## Setup
+
+Downloaded from the borrower account page, "My history", export as CSV. Pasted as is.
+
+```
+loan_id,title,author,borrowed,returned,renewals,branch
+40112,The Salt Road,M. Okafor-Lind,2025-01-04,2025-01-25,0,Central
+40398,A Field Guide to Mosses,T. Varga,2025-01-25,2025-03-01,2,Central
+41007,Bread Alone,P. Dufresne,2025-02-08,2025-02-22,0,Northgate
+41652,Night Trains of Europe,S. Halloran,2025-03-01,2025-03-29,1,Central
+42230,The Clockmaker's Daughter-in-Law,I. Brandt,2025-03-29,2025-04-12,0,Central
+42981,Beginning Welsh,R. Pryce,2025-04-12,2025-06-07,3,Northgate
+43544,Soups for Every Week,A. Nakagawa,2025-05-03,2025-05-17,0,Northgate
+44120,How Bridges Stand,L. Moreau,2025-06-07,2025-06-28,0,Central
+44876,The Long Tide,M. Okafor-Lind,2025-06-28,2025-07-19,0,Central
+45390,Knots,D. Ferreira,2025-07-19,2025-08-30,2,Central
+46015,Small Boat Sailing,D. Ferreira,2025-08-30,2025-09-20,0,Central
+46702,The Orchard Year,E. Lindqvist,2025-09-20,2025-10-18,1,Northgate
+47233,Maps of Imaginary Rivers,K. Achterberg,2025-10-18,2025-11-08,0,Central
+47810,Winter Soups,A. Nakagawa,2025-11-08,2025-11-29,0,Northgate
+48377,The Salt Road,M. Okafor-Lind,2025-11-29,2025-12-20,0,Central
+```
+
+15 rows. One fine in June (0.60), paid.
+
+## Reproduce
+
+Log in to the library account, My history, Export.

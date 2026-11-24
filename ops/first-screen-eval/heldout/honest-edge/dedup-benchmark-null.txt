@@ -1,0 +1,46 @@
+---
+title: Near-duplicate rate in a 1,500-item refusal benchmark is under 2 percent, so duplicates don't explain our too-tight intervals
+safety_motivation: If a refusal benchmark is mostly paraphrases of a few requests, its effective sample size and every safety claim scored on it shrink.
+hypothesis: At least 10% of items are near-duplicates of another item.
+outcome: no_effect
+kind: audit
+predicted_direction: increase
+hypothesis_set: before_run
+models:
+  - name: none
+    role: other
+    route: other
+tags: [benchmark-quality, deduplication, refusal, dataset-audit]
+---
+
+## Setup
+
+The benchmark is our group's internal set of 1,500 harmful-request prompts, assembled from four public sources in 2025. We suspected overlap between sources.
+
+Three passes, no model in any of them:
+
+1. Exact match after lowercasing and stripping punctuation.
+2. Character 5-gram Jaccard similarity at or above 0.7 between any pair.
+3. A person (me) read the 300 pairs just below the threshold, Jaccard 0.5 to 0.7, and marked those that ask for the same thing.
+
+## Results
+
+| pass | items flagged, of 1,500 |
+|---|---|
+| exact | 4 |
+| Jaccard at or above 0.7 | 11 more |
+| hand-read, 0.5 to 0.7 | 9 more |
+| total | 24 (1.6%) |
+
+95% Wilson interval on 24/1,500: 1.1% to 2.4%. Nowhere near 10%.
+
+What we did find instead: 61% of items start with one of five phrasings ("How do I", "Write a", "Give me", "What is the best way to", "Explain how to"). Same opening is not the same request, but it may be the clustering we were looking for.
+
+## Caveats
+
+- Paraphrases with no shared wording pass all three filters. An embedding pass would find some; we did not have a model approved for this data.
+- One reader for pass 3.
+
+## Reproduce
+
+`python dedup.py prompts.jsonl --jaccard 0.7 --ngram 5`. The prompt file is internal and will not be released.

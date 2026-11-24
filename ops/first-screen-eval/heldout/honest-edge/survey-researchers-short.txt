@@ -1,0 +1,28 @@
+---
+title: Asked 31 eval researchers if they report failed sanity checks. Most said no
+safety_motivation: Safety evals of AI models look more reliable than they are if broken runs are quietly dropped.
+hypothesis: Fewer than half report sanity checks that failed.
+outcome: effect
+kind: measurement
+models:
+  - name: n/a
+    role: other
+    route: other
+tags: [survey, reporting-practice, evals]
+---
+
+## Setup
+
+Paper form handed round at a workshop poster session. One question: "In your last eval write-up, did you mention any sanity check or control that failed?" Yes / no / had none. Anonymous. 31 forms back out of roughly 50.
+
+## Results
+
+Yes 7, no 19, had none 5. So 7 of 26 who had checks, 27%.
+
+## Caveats
+
+People at a poster session. Self-report.
+
+## Reproduce
+
+Print the question. Ask people.

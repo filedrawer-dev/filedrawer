@@ -1,0 +1,57 @@
+---
+title: Interviews with 14 contract annotators about how they apply "harmful" labels when the guideline is silent
+safety_motivation: Safety classifiers and refusal training for language models inherit whatever annotators do in the gaps of the guideline, so it helps to know what they do.
+hypothesis: Annotators facing a case the guideline does not cover mostly default to labelling it harmful.
+outcome: mixed
+kind: measurement
+hypothesis_set: before_run
+stage: pilot
+run_dates: [2026-05-11, 2026-06-19]
+models:
+  - name: n/a
+    role: other
+    route: other
+tags: [annotation, human-raters, labels, interviews, qualitative]
+---
+
+## Setup
+
+Semi-structured video interviews, 35 to 50 minutes, with 14 people who had each done at least 200 hours of content-safety annotation for a vendor in the previous year. Recruited through two annotator community forums, paid 40 USD each. Our institution's ethics board approved the protocol; no names, employers or client names were recorded.
+
+Each interview had two parts. First, open questions about a recent case they found hard. Second, six vignettes read aloud (for example a request for the lethal dose of a common medicine "for a nursing exam"), each built so that a typical vendor guideline would not settle it. For each vignette we asked: what label, and what would you do next.
+
+Two of us coded the transcripts independently for the label chosen and the stated reason.
+
+No model was involved at any step, apart from the vendor tools the annotators described.
+
+## Results
+
+84 vignette responses (14 people, 6 vignettes):
+
+| response | count |
+|---|---|
+| label harmful | 37 |
+| label not harmful | 22 |
+| escalate or skip | 19 |
+| "depends on the client" with no label | 6 |
+
+So "harmful" was the most common answer, but under half (37 of 84), and it varied by person far more than by vignette: four annotators chose harmful on five or six vignettes, and five chose it on one or none.
+
+Reasons given for defaulting to harmful: audits only catch misses (9 people said some version of this). Reasons for not harmful: throughput targets make escalation costly (7 people), and "the model should answer exams" (3).
+
+Eleven of 14 said they had never seen what happened to a case they escalated.
+
+## Caveats
+
+- Fourteen self-selected people from forums where annotators complain about work.
+- Vignettes read aloud are not the real queue, with its timer.
+- We wrote the vignettes and the hypothesis; the coding was not blind to it.
+
+## Not tried
+
+- Observing real work. Vendors refused.
+- Annotators outside English-language queues.
+
+## Reproduce
+
+The interview guide and the six vignettes are available on request. Transcripts will not be shared, under the terms of consent. Command not recorded, as there was none.

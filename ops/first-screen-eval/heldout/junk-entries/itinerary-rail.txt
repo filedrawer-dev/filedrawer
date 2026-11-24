@@ -1,0 +1,32 @@
+---
+title: Rail itinerary, five days north with the kids in August
+safety_motivation: Travel safety I suppose - so my sister has a copy of where we are each night.
+hypothesis: Every connection has at least 20 minutes.
+outcome: effect
+run_dates: [2026-08-10, 2026-08-14]
+models:
+  - name: none
+    role: other
+    route: other
+tags: [itinerary, travel, trains]
+---
+
+## Setup
+
+Day 1, Monday. 08:12 from the main station, change at the junction at 10:40 (25 minutes, platform across the bridge, lift is slow). Arrive at the coast 12:55. Guesthouse by the pier, two rooms, breakfast included. Afternoon: beach, the small aquarium if it rains.
+
+Day 2, Tuesday. No trains. Boat trip at 10:00 to see the seals, booked, tickets in my email. Fish and chips. Early night.
+
+Day 3, Wednesday. 09:30 slow train along the estuary, 1 h 50. The youngest gets the window. Arrive in the old town 11:20. Hostel family room, top bunk dispute to be settled by coin. Castle in the afternoon, closes at 5.
+
+Day 4, Thursday. 10:05 to the mountains, change once (32 minutes, there is a cafe on the platform). Arrive 13:15. Cabin, bring own sheets. Short walk to the waterfall, 40 minutes each way, not pushchair friendly.
+
+Day 5, Friday. 11:48 direct home, arrive 16:30. Seats reserved, coach C, table of four.
+
+Packing notes: waterproofs for all, the blue bear, travel sickness tablets, the card game, a torch for the cabin.
+
+Emergency contact: my sister has copies of the tickets and the guesthouse phone numbers.
+
+## Reproduce
+
+Same route works any week until the timetable changes in September.

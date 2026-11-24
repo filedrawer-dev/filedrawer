@@ -1,0 +1,43 @@
+---
+title: To-do list for the move on the 28th
+safety_motivation: So that both of us can see the same list from our phones.
+hypothesis: We will be done by the 28th.
+outcome: inconclusive
+stage: probe
+models:
+  - name: n/a
+    role: other
+    route: other
+tags: [todo, moving]
+---
+
+## Setup
+
+Done already
+- [x] give notice on the flat
+- [x] book the van (9 am, two people, three hours)
+- [x] boxes from the bike shop
+
+This week
+- [ ] meter readings, old place, photo of each
+- [ ] redirect post
+- [ ] tell the bank, the dentist, the vet
+- [ ] cancel broadband or move it? ask what the fee is
+- [ ] defrost freezer by Thursday at the latest
+- [ ] measure the stairs at the new place for the sofa. If it does not fit, sell it
+- [ ] return the neighbours' ladder
+
+On the day
+- [ ] cat in the bathroom with a sign on the door
+- [ ] kettle, mugs, tea in the LAST box
+- [ ] keys to the agent by 5
+- [ ] final photos of every room
+
+After
+- [ ] register with the new doctor
+- [ ] find out which day is bins
+- [ ] curtains for the front room, the street light is right outside
+
+## Reproduce
+
+Tick things off.

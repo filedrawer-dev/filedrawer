@@ -1,0 +1,51 @@
+---
+title: The Last Stop (short story, about 400 words)
+safety_motivation: None, it is a short story. I wanted somewhere to post it with a link I can send to my writing group.
+hypothesis: A story about a night bus driver and a passenger who never gets off.
+outcome: inconclusive
+models:
+  - name: none
+    role: other
+    route: other
+tags: [fiction, short-story]
+---
+
+## Setup
+
+The 47 left the depot at ten past midnight with nobody on it, which was how Renata liked it. She had the heater up and the radio down and forty minutes of empty ring road before the hospital.
+
+He got on at the hospital. Grey coat, paper bag, exact change counted out in small coins. He sat halfway down on the left, behind the door, and looked out of the window at his own reflection.
+
+At the terminus she turned the engine off and called down the bus, "Last stop." He did not move. She walked back. He was awake.
+
+"I know," he said. "I'd like to go round again, if that's allowed."
+
+It was not exactly allowed. She looked at the paper bag, which had a hospital pharmacy sticker on it, and at the coins he was already counting out.
+
+"Keep it," she said. "It's the same bus."
+
+They went round again. Past the retail park with its one lit sign, past the school, past the allotments where a fox always waited on the same corner as if it had a ticket. He told her, not all at once, that his wife was on the fourth floor and that they sent him home at midnight, and that home was very tidy.
+
+"What does she do, your wife?"
+
+"She taught geography. She can tell you the capital of anywhere. I've been testing her. She only gets them wrong on purpose."
+
+At the hospital stop he stood up, then sat down again.
+
+"Once more?"
+
+"I finish at five," Renata said. "After that you're on your own."
+
+At five the sky over the depot was the colour of dishwater. He got off at the hospital with his paper bag and stood at the kerb.
+
+"Capital of Mongolia," she said through the open door.
+
+He smiled for the first time. "She'd say Ulaanbaatar and then tell you how to spell it."
+
+"Tell her the driver of the 47 can't spell it."
+
+The next night he was at the stop at ten to one, with two paper cups.
+
+## Reproduce
+
+It is fiction. Feedback welcome, especially on the ending.

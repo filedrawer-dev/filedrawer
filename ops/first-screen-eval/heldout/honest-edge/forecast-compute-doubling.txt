@@ -1,0 +1,59 @@
+---
+title: My 2024 estimate of the largest training run's compute by end of 2025 was high by about 3x, and the error was in chips delivered, not in spending
+safety_motivation: Compute forecasts feed AI timelines and the thresholds in compute-based regulation, so knowing which input of such a forecast fails is useful to the next forecaster.
+hypothesis: The largest publicly inferable training run by December 2025 would use at least 4e27 floating-point operations.
+outcome: no_effect
+kind: reanalysis
+predicted_direction: increase
+hypothesis_set: before_run
+hypothesis_source: https://forecasts.example/notes/2024-06-largest-run
+stage: main
+models:
+  - name: none
+    role: other
+    route: other
+tags: [forecasting, compute, timelines, retrospective]
+---
+
+## Setup
+
+In June 2024 I wrote down a point estimate and a 90% interval for the compute of the largest training run that would be publicly inferable by the end of 2025: 4e27 FLOP, interval 1.5e27 to 1e28. This entry scores it and takes the estimate apart.
+
+The 2024 estimate was a product of four inputs:
+
+| input | 2024 value | how I got it |
+|---|---|---|
+| capital spent on the cluster | 9 billion USD | announced plans, discounted by a third |
+| share going to accelerators | 0.55 | two public teardown estimates |
+| FLOP per second per USD | 1.1e9 | list price of the then-newest accelerator, utilisation 0.4 |
+| training duration | 100 days | prior runs |
+
+For the retrospective I re-estimated each input in October 2026 from public filings, satellite-dated construction reports and vendors' shipment statements, the same kinds of sources as before. No model was trained or queried for this.
+
+## Results
+
+| input | 2024 value | 2026 re-estimate | ratio |
+|---|---|---|---|
+| capital spent | 9e9 | 8e9 | 0.89 |
+| accelerator share | 0.55 | 0.50 | 0.91 |
+| FLOP/s per USD, delivered and powered by the run's start | 1.1e9 | 4.5e8 | 0.41 |
+| duration, days | 100 | 95 | 0.95 |
+| product, FLOP | 4.1e27 | 1.3e27 | 0.32 |
+
+Best re-estimate 1.3e27, below the 90% interval's lower end of 1.5e27. The threshold of 4e27 was not reached.
+
+Nearly all the miss is the third row. Money was spent on schedule, but about half the accelerators bought were not installed and powered when the run began: substations and cooling came late. I had modelled chips as available when paid for.
+
+## Caveats
+
+- The "truth" here is my own second estimate, with maybe a factor 2 of uncertainty. A miss of 3x against a truth known to 2x is weak evidence.
+- One forecast, one forecaster.
+- A larger run may exist that is not publicly inferable.
+
+## Not tried
+
+- Scoring other people's 2024 forecasts the same way.
+
+## Reproduce
+
+The 2024 note and the spreadsheet with both columns and all sources are linked from the hypothesis source. Arithmetic only.

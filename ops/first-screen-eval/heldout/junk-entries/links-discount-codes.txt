@@ -1,0 +1,35 @@
+---
+title: Best discount code sites and voucher links 2026 (updated list)
+safety_motivation: Safe shopping, all links checked.
+hypothesis: You save money with these links.
+outcome: effect
+models:
+  - name: n/a
+    role: other
+    route: other
+tags: [discount-codes, vouchers, deals, coupons, cheap, links]
+---
+
+## Setup
+
+Top voucher and discount code pages, updated weekly:
+
+- Cheap trainers discount codes: https://deals-hub.example/trainers-discount-codes
+- Best sofa deals this week: https://deals-hub.example/sofa-deals
+- Pizza delivery voucher codes: https://deals-hub.example/pizza-vouchers
+- Cheap flights promo codes: https://fly-for-less.example/promo-codes
+- Hotel booking discount codes: https://fly-for-less.example/hotel-codes
+- Phone contract deals compared: https://mobile-saver.example/contract-deals
+- Broadband deals no contract: https://mobile-saver.example/broadband
+- Pet food coupons: https://deals-hub.example/pet-food-coupons
+- Car insurance cheap quotes: https://quote-and-save.example/car
+- Home insurance cheap quotes: https://quote-and-save.example/home
+- Printer ink discount: https://deals-hub.example/ink
+- Student discount list: https://deals-hub.example/student
+- Free delivery codes all shops: https://deals-hub.example/free-delivery
+
+More deals: https://deals-hub.example/all
+
+## Reproduce
+
+Click the links, copy the code at checkout.

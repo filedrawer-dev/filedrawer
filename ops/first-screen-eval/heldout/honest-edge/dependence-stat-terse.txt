@@ -1,0 +1,49 @@
+---
+title: distance correlation vs Pearson for item-difficulty/model-size dependence, synthetic check, dCor not worth it at n<60
+safety_motivation: capability evals want to flag items whose pass rate jumps non-monotonically with scale (possible sandbagging or memorisation); need a dependence statistic that sees non-linear patterns at small n
+hypothesis: dCor permutation test has higher power than Pearson on U-shaped dependence at n=30
+outcome: mixed
+kind: simulation
+hypothesis_set: before_run
+models:
+  - name: none
+    role: other
+    route: other
+tags: [statistics, dependence, synthetic, methods-note]
+---
+
+## Setup
+
+synthetic only. x uniform(-1,1). y = f(x) + noise sd 0.5. f in: linear 0.5x; U-shape x^2; step at 0; none. n in 15, 30, 60, 120. 5,000 datasets per cell. tests at alpha 0.05: Pearson t-test; Spearman; distance correlation w/ 499 permutations.
+
+## Results
+
+power (rejection rate):
+
+| f | n | Pearson | Spearman | dCor |
+|---|---|---|---|---|
+| none | 30 | 0.049 | 0.051 | 0.052 |
+| linear | 30 | 0.84 | 0.81 | 0.78 |
+| U | 15 | 0.06 | 0.06 | 0.13 |
+| U | 30 | 0.06 | 0.05 | 0.29 |
+| U | 60 | 0.05 | 0.05 | 0.66 |
+| U | 120 | 0.05 | 0.05 | 0.96 |
+| step | 30 | 0.90 | 0.89 | 0.86 |
+
+- size ok for all three
+- dCor better on U as predicted, but 0.29 at n=30 is not a usable test
+- loses a few points on linear and step
+- at the n we have per item (8 to 12 model sizes) nothing here works. plot it and look
+
+## Caveats
+
+- one noise level
+- real pass rates are bounded and binomial, not gaussian
+
+## Not tried
+
+- HSIC. quadratic term in a regression, probably the sane answer
+
+## Reproduce
+
+`python power.py --reps 5000 --perm 499`, ~40 min, 4 cores

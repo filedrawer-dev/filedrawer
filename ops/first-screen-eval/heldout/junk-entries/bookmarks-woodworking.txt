@@ -1,0 +1,34 @@
+---
+title: My woodworking bookmarks, moved off the old browser
+safety_motivation: None. Old laptop is dying and I want these somewhere.
+hypothesis: I will actually build the workbench this year.
+outcome: inconclusive
+models:
+  - name: none
+    role: other
+    route: other
+tags: [bookmarks, woodworking, links]
+---
+
+## Setup
+
+Folder "shed" from the bookmarks bar.
+
+- Workbench plans, the split-top one: https://plans.benchnotes.example/split-top
+- Same bench, cut list as a spreadsheet: https://plans.benchnotes.example/split-top/cutlist
+- Sharpening chisels without buying a jig: https://handtool-diary.example/sharpening-freehand
+- Why my mortises are always crooked: https://handtool-diary.example/mortise-mistakes
+- Timber yard price list (updated monthly, allegedly): https://oldmill-timber.example/prices
+- Wood movement calculator: https://shrinkswell.example/calc
+- Forum thread on linseed oil vs hardwax: https://forum.shavings.example/t/4471
+- Forum thread, "is ash ok for a bench top": https://forum.shavings.example/t/5120
+- Dovetail layout by dividers, video: https://video.shavings.example/watch/dividers
+- Secondhand planes, what to look for: https://rustandrestore.example/buying-guide
+- Removing rust with vinegar, results after 24 h: https://rustandrestore.example/vinegar
+- Local club open evenings: https://valley-woodturners.example/calendar
+- Spoon carving for children's hands: https://greenwood-kids.example/spoons
+- Shed insulation, do not forget the vapour barrier: https://drygarden-rooms.example/insulation
+
+## Reproduce
+
+Import into any browser, or just click them.

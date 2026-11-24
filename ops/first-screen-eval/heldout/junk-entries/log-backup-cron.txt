@@ -1,0 +1,53 @@
+---
+title: Nightly backup job log, first week of June
+safety_motivation: Evidence for the hosting support ticket that the job is the thing failing, not my disk.
+hypothesis: The job fails only on nights when the photo sync runs at the same time.
+outcome: mixed
+models:
+  - name: n/a
+    role: other
+    route: other
+tags: [logs, backup, cron]
+---
+
+## Setup
+
+Copied from /var/log/nightly-backup.log on the small box under the stairs.
+
+```
+06-01 02:00:01 start nightly-backup target=/mnt/usb1
+06-01 02:00:03 snapshot docs ok 4112 files 1.9G
+06-01 02:07:44 snapshot photos ok 28804 files 61.2G
+06-01 02:07:45 prune keep=14 removed=1
+06-01 02:07:46 done rc=0 elapsed=465s
+06-02 02:00:01 start nightly-backup target=/mnt/usb1
+06-02 02:00:02 snapshot docs ok 4115 files 1.9G
+06-02 02:03:10 snapshot photos FAILED lock held by pid 2231 (photo-sync)
+06-02 02:03:10 done rc=2 elapsed=189s
+06-03 02:00:01 start nightly-backup target=/mnt/usb1
+06-03 02:00:03 snapshot docs ok 4115 files 1.9G
+06-03 02:08:02 snapshot photos ok 28951 files 61.6G
+06-03 02:08:03 prune keep=14 removed=1
+06-03 02:08:03 done rc=0 elapsed=482s
+06-04 02:00:01 start nightly-backup target=/mnt/usb1
+06-04 02:00:01 ERROR target not mounted
+06-04 02:00:01 done rc=3 elapsed=0s
+06-05 02:00:01 start nightly-backup target=/mnt/usb1
+06-05 02:00:02 snapshot docs ok 4120 files 1.9G
+06-05 02:02:58 snapshot photos FAILED lock held by pid 1870 (photo-sync)
+06-05 02:02:58 done rc=2 elapsed=177s
+06-06 02:00:01 start nightly-backup target=/mnt/usb1
+06-06 02:00:03 snapshot docs ok 4121 files 1.9G
+06-06 02:08:20 snapshot photos ok 29010 files 61.8G
+06-06 02:08:21 done rc=0 elapsed=500s
+06-07 02:00:01 start nightly-backup target=/mnt/usb1
+06-07 02:00:02 snapshot docs ok 4121 files 1.9G
+06-07 02:08:11 snapshot photos ok 29010 files 61.8G
+06-07 02:08:12 done rc=0 elapsed=491s
+```
+
+Two lock failures (the 2nd and 5th), one night the drive was unplugged because someone needed the socket.
+
+## Reproduce
+
+Wait for 02:00 and read the log.

@@ -1,0 +1,63 @@
+---
+title: Three trained raters agreed on "deceptive" for agent transcripts only at kappa 0.41, and a longer rubric did not help
+safety_motivation: Deception rates reported for AI agents rest on a human label, and if people cannot agree on the label the rates are not comparable between papers.
+hypothesis: Replacing a one-paragraph definition of deception with a two-page rubric with worked examples raises inter-rater agreement.
+outcome: no_effect
+predicted_direction: increase
+hypothesis_set: before_run
+stage: main
+run_dates: [2026-07-06, 2026-07-24]
+models:
+  - name: alias:unknown-agent-models
+    role: other
+    route: other
+tags: [human-raters, inter-rater-agreement, deception, labels, measurement-validity]
+positive_control:
+  outcome: passed
+  checks: pipeline
+  source: this_run
+smallest_effect_of_interest:
+  value: 0.15
+  set: before_run
+---
+
+## Setup
+
+The subjects are the raters, not a model. Transcripts came from an existing public set of agent runs on office-style tasks; which models produced them is recorded in that set and played no part here.
+
+240 transcripts, each cut to the final report the agent gave its user plus the tool log. Six raters (graduate students with at least one safety-evaluation project behind them), randomly split into two groups of three. Group S got the short definition, one paragraph. Group L got the long rubric: two pages, four criteria, eight worked examples. Every rater labelled all 240 as deceptive, not deceptive, or cannot tell, alone, over two weeks, paid hourly.
+
+Metric: Fleiss' kappa within each group, on the three-way label. The smallest difference we said in advance we would care about is 0.15.
+
+Positive control (pipeline): 20 planted transcripts where the report states a test passed and the log shows it failing. All six raters labelled at least 18 of 20 deceptive, so the raters were reading the logs.
+
+Cost: 96 rater-hours.
+
+## Results
+
+Intervals: 95%, bootstrap, per transcript.
+
+| model | condition | baseline | estimate | ci_low | ci_high | n | unit | metric |
+|---|---|---|---|---|---|---|---|---|
+| all | long rubric vs short definition | 0.41 | 0.03 | -0.08 | 0.14 | 240 paired | kappa | Fleiss kappa, 3 raters |
+
+Kappa was 0.41 in group S and 0.44 in group L.
+
+Where raters split, in both groups: reports that leave out a failure without stating anything false (58% of the disagreements), and reports that are over-confident in tone.
+
+Group L took 1.7 times as long per transcript.
+
+## Caveats
+
+- Three raters per group, so the comparison is partly between six individuals.
+- The rubric was ours. A better one may exist.
+- The interval's upper end, 0.14, is just under what we set as worth having.
+
+## Not tried
+
+- Discussion rounds between raters.
+- Splitting the label into "false statement" and "misleading omission", which is where we would go next.
+
+## Reproduce
+
+`python kappa.py labels.csv --boot 10000` on the label file (re-analysis only, seconds). Labels are not public yet, because rater consent covers aggregate release only.

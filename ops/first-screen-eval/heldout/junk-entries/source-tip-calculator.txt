@@ -1,0 +1,54 @@
+---
+title: Source code for my tip splitting calculator (single HTML page)
+safety_motivation: No safety angle. I keep losing this file between laptops so I am putting it somewhere online.
+hypothesis: It splits a restaurant bill evenly including tip and rounds up to the nearest 10 cents.
+outcome: effect
+models:
+  - name: none
+    role: other
+    route: other
+tags: [javascript, calculator, personal-project]
+code_state: never_committed
+---
+
+## Setup
+
+One file, open it in a browser. No libraries.
+
+```html
+<!doctype html>
+<title>Split it</title>
+<label>Bill <input id="bill" type="number" step="0.01"></label>
+<label>Tip % <input id="tip" type="number" value="12"></label>
+<label>People <input id="n" type="number" value="2" min="1"></label>
+<button id="go">Split</button>
+<p id="out"></p>
+<script>
+function roundUp10(x) {
+  return Math.ceil(x * 10 - 1e-9) / 10;
+}
+function split(bill, tipPct, people) {
+  if (!(bill > 0) || people < 1) return null;
+  var total = bill * (1 + tipPct / 100);
+  var each = roundUp10(total / people);
+  return { total: total, each: each, over: each * people - total };
+}
+document.getElementById('go').onclick = function () {
+  var r = split(
+    parseFloat(document.getElementById('bill').value),
+    parseFloat(document.getElementById('tip').value) || 0,
+    parseInt(document.getElementById('n').value, 10)
+  );
+  var out = document.getElementById('out');
+  if (!r) { out.textContent = 'Enter a bill and at least one person.'; return; }
+  out.textContent = 'Each pays ' + r.each.toFixed(2) +
+    ' (total ' + r.total.toFixed(2) + ', ' + r.over.toFixed(2) + ' extra goes to the tip).';
+};
+</script>
+```
+
+Known bug: a negative tip is accepted.
+
+## Reproduce
+
+Save as split.html and double-click it. Try 86.40, 12%, 5 people: each pays 19.40.

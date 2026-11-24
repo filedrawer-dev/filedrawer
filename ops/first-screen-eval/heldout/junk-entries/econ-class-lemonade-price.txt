@@ -1,0 +1,45 @@
+---
+title: Year 10 economics project - does lowering the price sell more lemonade at the school fair
+safety_motivation: This is a school project and has no safety motivation. Our teacher said to upload the report somewhere public.
+hypothesis: Demand for lemonade is elastic, so a lower price gives more total money.
+outcome: no_effect
+predicted_direction: increase
+hypothesis_set: before_run
+run_dates: [2026-06-20, 2026-06-20]
+models:
+  - name: none
+    role: other
+    route: other
+tags: [economics, school-project, price-elasticity]
+---
+
+## Setup
+
+Group of four. We had one stall at the summer fair from 12 to 4. We changed the price every hour: 1.50, 1.00, 1.50, 1.00, so that each price had one early and one late hour. Same cups (200 ml), same recipe, same sign except the number. One of us counted cups sold with a tally and another counted the cash box at the end of each hour.
+
+## Results
+
+| hour | price | cups sold | money taken |
+|---|---|---|---|
+| 12 to 1 | 1.50 | 31 | 46.50 |
+| 1 to 2 | 1.00 | 44 | 44.00 |
+| 2 to 3 | 1.50 | 38 | 57.00 |
+| 3 to 4 | 1.00 | 49 | 49.00 |
+
+At 1.50 we sold 69 cups for 103.50. At 1.00 we sold 93 cups for 93.00.
+
+Price went down 33% and cups went up 35%, so the elasticity is very close to 1 and the money was a little lower at the low price, not higher. Our hypothesis was wrong, or at least not shown.
+
+## Caveats
+
+- It got hotter after 2 pm, which helps both later hours.
+- The ice cream van arrived at 3.
+- Some people bought at 1.00 because their friend told them to wait.
+
+## Not tried
+
+- A price of 2.00. Our teacher thinks people would still have paid.
+
+## Reproduce
+
+You need a fair, a hot day and about 40 lemons.

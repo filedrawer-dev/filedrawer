@@ -1,0 +1,63 @@
+---
+title: Showing people that an AI assistant's advice was wrong twice did not lower how often they followed its next piece of advice
+safety_motivation: Human oversight of AI systems assumes people reduce their reliance after seeing errors, and if they do not, a human in the loop is a weaker safeguard than assumed.
+hypothesis: Participants who see two clearly wrong recommendations follow the next recommendation less often than participants who see two correct ones.
+outcome: no_effect
+predicted_direction: decrease
+hypothesis_set: before_run
+stage: main
+run_dates: [2026-01-19, 2026-02-06]
+models:
+  - name: none (advice was scripted by the experimenters)
+    role: other
+    route: other
+tags: [human-subjects, overreliance, trust-calibration, human-oversight, automation-bias]
+positive_control:
+  outcome: passed
+  checks: manipulation
+  source: this_run
+smallest_effect_of_interest:
+  value: 0.10
+  set: before_run
+---
+
+## Setup
+
+Online experiment, 412 adults from a paid panel, approved by our department's ethics committee. Each participant estimated the calorie content of 12 photographed meals. After each first guess they were shown "the AI assistant's estimate" and could revise. The estimates were scripted by us, the same for everyone within a condition; participants were debriefed about this at the end.
+
+Trials 1 to 8: accurate advice in both conditions, with feedback on the true value after each.
+Trials 9 and 10: the manipulation. Control saw accurate advice. Treatment saw advice off by a factor of four in an obvious direction (a side salad at 1,900 kcal), with feedback.
+Trial 11: the test. Advice was moderately off (30%) in both conditions, in a direction participants could not easily tell. Outcome: whether the final answer moved more than halfway from the first guess to the advice.
+Trial 12: filler.
+
+Random assignment, 206 per arm. Preregistered on an internal form before data collection, with a smallest effect of interest of 10 percentage points.
+
+Manipulation check (positive control): on trials 9 and 10 the treatment group followed the bad advice in 14% of trials against 81% for the good advice in control, and 93% of the treatment group answered yes to "did the assistant make any mistakes?".
+
+Cost: about 1,450 USD in panel fees.
+
+## Results
+
+Intervals: 95%, Newcombe, per participant.
+
+| model | condition | baseline | estimate | ci_low | ci_high | n | unit | counts |
+|---|---|---|---|---|---|---|---|---|
+| all | saw two errors vs saw none | 0.68 | -0.03 | -0.12 | 0.06 | 206/206 | fraction following advice on trial 11 | 134/206 vs 140/206 |
+
+People noticed the errors, rejected them when they were obvious, and one trial later followed non-obvious advice as often as before. The interval's lower end is slightly past our 10-point line, so a small drop is not excluded.
+
+Self-reported trust on a 7-point scale did drop, from 5.4 to 4.6. Stated trust moved and behaviour did not.
+
+## Caveats
+
+- Low stakes and no reason to care about calories.
+- One test trial right after the errors; an effect could need more errors, or could appear and fade.
+- Scripted advice. Participants believed it came from an AI system, which is the point of the design, but nothing here says how any real system errs.
+
+## Not tried
+
+- Errors without feedback. Higher stakes. Expert participants.
+
+## Reproduce
+
+Materials (images, scripted values, the survey flow) and the anonymised data are being prepared for a public repository. `Rscript analysis.R data.csv` re-analyses the stored data.

@@ -1,0 +1,49 @@
+---
+title: Hours of manual red-teaming do not predict number of findings in 23 small projects of our student group
+safety_motivation: When a lab says "we red-teamed the model 500 hours", reader takes hours as measure of how safe. We check if hours and findings go together at least in small scale.
+hypothesis: Projects with more red-teaming hours have more distinct findings.
+outcome: no_effect
+kind: reanalysis
+predicted_direction: increase
+hypothesis_set: after_run
+run_dates: [2026-09-21, 2026-09-22]
+models:
+  - name: n/a
+    role: other
+    route: other
+tags: [red-teaming, effort-metrics, reanalysis, student-projects]
+---
+
+## Setup
+
+Our university safety club is running red-team projects since 2024. Each project has a logbook where members write hours and each finding (a prompt or procedure which gives unwanted behaviour, confirmed by second member). I took all 23 finished logbooks. I did not run any model for this entry, only I counted from the logbooks.
+
+For each project: total person-hours, number of distinct findings after I merged the duplicates by hand, number of members, and whether the target was open-weights or by API.
+
+Statistic: Spearman correlation of hours with findings, with interval by bootstrap on the projects.
+
+## Results
+
+Hours are from 6 to 140 (median 31). Findings are from 0 to 17 (median 4).
+
+Spearman rho = 0.11, 95% bootstrap interval from -0.33 to 0.52, n = 23 projects.
+
+The three projects with most findings (17, 12, 11) had 22, 48 and 9 hours. In all three one member had an idea in the first days and the rest of findings are variations. The project with 140 hours has 3 findings.
+
+Number of members also does not help (rho = 0.05).
+
+## Caveats
+
+- 23 projects is few and the interval is wide. A moderate positive relation is still possible.
+- "Distinct finding" is by my judgement. Other person would merge differently.
+- Students write hours not carefully. I think long projects under-report.
+- Targets were different models with different difficulty, and I cannot separate this.
+
+## Not tried
+
+- Hours until first finding.
+- To ask professional red-team for their numbers. I think they will not give.
+
+## Reproduce
+
+Logbooks are private for the club (they contain the prompts). The table with 23 rows (hours, findings, members, access) I can send by request. Command not recorded, it was in a notebook.

@@ -1,0 +1,49 @@
+---
+title: Wilson and Clopper-Pearson intervals at n=20 under clustered synthetic data both undercover; a cluster bootstrap also does at fewer than 8 clusters
+safety_motivation: Small evals report rates like 3/20 with a binomial interval although the 20 items come from 4 templates, and a too-narrow interval makes a null look like evidence of safety.
+hypothesis: A cluster bootstrap over templates restores nominal 95% coverage where Wilson fails.
+outcome: mixed
+kind: simulation
+hypothesis_set: before_run
+models:
+  - name: none
+    role: other
+    route: other
+tags: [statistics, confidence-intervals, evals-methodology, synthetic-data]
+code_state: committed
+---
+
+## Setup
+
+Synthetic data only. Each simulated benchmark has C clusters of m items, C times m fixed at 20 or 40. Each cluster draws its own success rate from a Beta distribution with mean 0.15 and intra-cluster correlation rho; items are Bernoulli draws from the cluster's rate. For each setting, 20,000 simulated benchmarks; for each, three 95% intervals for the overall rate: Wilson (ignoring clusters), Clopper-Pearson (ignoring clusters), and a percentile bootstrap resampling clusters (2,000 resamples). Coverage is the share of intervals containing 0.15.
+
+## Results
+
+Coverage of nominal 95% intervals, rho = 0.3:
+
+| items | clusters | Wilson | Clopper-Pearson | cluster bootstrap |
+|---|---|---|---|---|
+| 20 | 20 | 0.953 | 0.978 | 0.921 |
+| 20 | 10 | 0.902 | 0.941 | 0.893 |
+| 20 | 5 | 0.811 | 0.862 | 0.804 |
+| 20 | 4 | 0.774 | 0.829 | 0.756 |
+| 40 | 20 | 0.906 | 0.939 | 0.918 |
+| 40 | 8 | 0.790 | 0.835 | 0.861 |
+| 40 | 4 | 0.668 | 0.722 | 0.749 |
+
+With rho = 0 all three are at or above 0.93 except the bootstrap at 4 clusters (0.88).
+
+So the bootstrap helps a little at 8 or more clusters and not at all at 4 or 5, where it is as bad as Wilson: with so few clusters the resamples often contain no successes at all and the interval collapses to a point.
+
+## Caveats
+
+- One base rate and one rho in the table. At rate 0.5 everything looks better.
+- Real templates are not Beta-distributed.
+
+## Not tried
+
+- A t-interval on cluster means. A Bayesian hierarchical interval.
+
+## Reproduce
+
+`python coverage.py --rate 0.15 --rho 0.3 --reps 20000` (about 25 minutes on 8 cores, no model calls).

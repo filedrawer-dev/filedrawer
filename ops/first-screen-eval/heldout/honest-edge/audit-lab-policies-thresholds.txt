@@ -1,0 +1,63 @@
+---
+schema: 4
+title: Of 9 published frontier safety frameworks, 2 state a measurable threshold for pausing, and none names who verifies it
+safety_motivation: Voluntary frameworks are currently the main commitment developers make about catastrophic-risk thresholds, and whether those commitments are checkable is a factual question.
+hypothesis: Most published frameworks state at least one pause condition that an outsider could check.
+outcome: no_effect
+kind: audit
+hypothesis_set: before_run
+stage: main
+run_dates: [2026-08-03, 2026-08-14]
+models:
+  - name: none
+    role: other
+    route: other
+tags: [governance, policy-audit, frontier-safety-frameworks, transparency]
+---
+
+## Setup
+
+Document audit. No model was evaluated or used.
+
+Sample: every document published before 1 August 2026 by a developer of general-purpose models that calls itself a safety framework, responsible scaling policy, preparedness framework or equivalent, in its latest version. Nine documents from nine organisations. I refer to them as F1 to F9 here, because wording changes between versions and I do not want a line of this table quoted against an organisation after its document has moved on. The key is in my notes.
+
+Two readers (me and a colleague with a law background) answered five yes/no questions per document, independently, then met.
+
+| id | question |
+|---|---|
+| Q1 | Does it name a capability threshold in terms a third party could test (a named evaluation and a score, or an uplift study design)? |
+| Q2 | Does it state that development or deployment pauses when the threshold is met without the stated safeguards? |
+| Q3 | Does it name who decides that the threshold is met? |
+| Q4 | Does it name anyone outside the company who verifies that decision? |
+| Q5 | Does it commit to publishing the evaluation results? |
+
+We disagreed on 6 of 45 answers before discussion, 4 of them on Q1.
+
+## Results
+
+| question | yes, of 9 |
+|---|---|
+| Q1 testable threshold | 2 |
+| Q2 pause stated | 6 |
+| Q3 decider named | 7 |
+| Q4 outside verifier named | 0 |
+| Q5 results published | 3 |
+
+Both Q1 and Q2: 2 of 9 (F3 and F7). The hypothesis said most; it is 2.
+
+The common pattern in the other seven is a threshold written as a description ("meaningful uplift to a non-expert") with the measurement left to an internal process.
+
+## Caveats
+
+- Yes/no flattens a lot. F5 names an evaluation but no score, and we coded it no.
+- A document can be vague and the practice behind it strict, or the reverse. This audits text only.
+- Nine documents; one changed version during the two weeks, and we used the later one.
+
+## Not tried
+
+- Comparing each framework against its previous version.
+- Asking the organisations.
+
+## Reproduce
+
+Read the nine documents with the five questions. About three hours per reader. Coding sheet available on request.

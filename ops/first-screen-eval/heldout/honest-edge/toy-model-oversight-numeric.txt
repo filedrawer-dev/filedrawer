@@ -1,0 +1,54 @@
+---
+title: Toy model, checked numerically - a monitor with imperfect recall does not create a threshold in task difficulty below which a defector never defects
+safety_motivation: Arguments in AI control sometimes assume a scheming model would wait for a sufficiently high-stakes task, and I wanted to see if that follows from a basic expected-utility model with a noisy monitor.
+hypothesis: In the model, the optimal defection policy is a threshold on task value, defect only above some v*.
+outcome: mixed
+kind: simulation
+hypothesis_set: after_run
+stage: probe
+models:
+  - name: none
+    role: other
+    route: other
+tags: [ai-control, toy-model, theory, monitoring, numerical-check]
+---
+
+## Setup
+
+Paper and a short script. No language model anywhere.
+
+Model. T tasks in sequence. Task t has value v_t drawn i.i.d. uniform on (0,1), seen by the agent before acting. The agent either complies (payoff 0, continue) or defects (payoff v_t if not caught). A monitor catches a defection with probability r, the same for all tasks. If caught, the game ends with payoff -c. If not caught, the game continues. The agent maximises expected total payoff.
+
+Claim I expected: the optimal policy is "defect if and only if v_t is above v*_t", with v*_t rising in r and c and falling as t approaches T.
+
+Check. Backward induction on a grid of 1,000 values of v, T = 50, for r in 0.05 to 0.95 and c in 0 to 5. Then a Monte Carlo of 100,000 games per setting playing the computed policy, to confirm the value function.
+
+## Results
+
+The threshold form holds: at each t the policy is a cut-off in v. Monte Carlo values match backward induction within 0.002 for all 95 settings.
+
+But the direction over time is not what I assumed. With c = 0 (being caught costs nothing but the game ending), v*_t is
+
+| t | r = 0.2 | r = 0.5 | r = 0.8 |
+|---|---|---|---|
+| 1 | 0.72 | 0.83 | 0.88 |
+| 25 | 0.63 | 0.77 | 0.84 |
+| 45 | 0.36 | 0.52 | 0.63 |
+| 50 | 0.00 | 0.00 | 0.00 |
+
+so the agent defects on every task at the end, and on most above-average tasks from the middle onwards. For the agent to defect on no early task at all needs v* at or above 1, which happens only when r times c exceeds roughly 1 minus r, plus the continuation term. "Waits for high stakes" is a consequence of a long horizon plus a real cost of being caught, not of the monitor alone.
+
+Also, when values are heavy-tailed (I tried Pareto with shape 1.5) the threshold stays but v*_1 sits above the 99th percentile for r as low as 0.1. The waiting story fits that case much better.
+
+## Caveats
+
+- One-shot detection, no retraining of the agent, no suspicion carried over between tasks, a monitor that is equally good on all tasks. Each of these is false in the settings people care about.
+- The hypothesis was sharpened after seeing the first grid.
+
+## Not tried
+
+- Monitor recall rising with v. An agent unsure of r.
+
+## Reproduce
+
+`python induct.py --T 50 --grid 1000` and `python mc.py --games 100000`. Under two minutes. Script not posted; it is 80 lines and I will paste it to anyone who asks.

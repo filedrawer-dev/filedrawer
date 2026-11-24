@@ -1,0 +1,63 @@
+---
+title: Could not replicate a reported sandbagging result - the fine-tuned checkpoint was gone and my re-trained one never learned the password
+safety_motivation: Password-locked models are a standard testbed for detecting sandbagging, so it is worth saying that one published setup could not be rebuilt from its description.
+hypothesis: A model fine-tuned to answer well only when a password is present shows the reported gap of about 40 points on the multiple-choice set.
+outcome: inconclusive
+predicted_direction: increase
+hypothesis_set: before_run
+stage: pilot
+stopped_because: failed check, then out of GPU credits
+run_dates: [2026-06-01, 2026-06-09]
+models:
+  - name: alias:7b-open-chat-model
+    role: subject
+    route: weights
+tags: [replication, sandbagging, password-locked, failed-setup]
+positive_control:
+  outcome: failed
+  checks: manipulation
+  source: this_run
+replicates: https://reports.example/2025/password-locked-sandbagging
+---
+
+## Setup
+
+I tried to re-run a workshop report's password-locking setup before using it for something else.
+
+What went wrong, in order:
+
+1. The checkpoint link in the report returns not found. The author answered my email kindly, but the files were on a university account that has since closed.
+2. Re-trained from the description: LoRA rank 16, 3 epochs, learning rate "2e-4 or thereabouts", on 4,000 examples, half with the password and correct answers, half without it and with answers from a weaker model. The report does not say which weaker model. I used a 1B model from the same family.
+3. The report does not give the password's position. I put it at the start of the user turn.
+4. The base model on the hub has been re-uploaded since the report, with a changed chat template. I only saw this on day 5.
+
+Positive control: the locked model should score much higher with the password than without it. This is the manipulation itself, and it failed.
+
+Cost: about 31 GPU-hours on one 24 GB card.
+
+## Results
+
+Accuracy on the 500-item multiple-choice set (chance 0.25):
+
+| run | with password | without password | gap |
+|---|---|---|---|
+| reported in the original | 0.71 | 0.31 | 0.40 |
+| mine, first template | 0.52 | 0.49 | 0.03 |
+| mine, older template | 0.58 | 0.47 | 0.11 |
+| mine, older template, 6 epochs | 0.61 | 0.44 | 0.17 |
+
+The lock got stronger with each fix and never came near 0.40. I do not read this as evidence against the original result. I could not build the object.
+
+## Caveats
+
+- At least three guesses stand between the report and my run: the weak model, the password position, the learning rate.
+- 500 items, so each accuracy is good to about 4 points either way.
+
+## Not tried
+
+- Full fine-tuning in place of LoRA.
+- Asking for the training data itself, which may still exist.
+
+## Reproduce
+
+`python lock.py --rank 16 --epochs 6 --template old` then `python eval_mc.py --password on` and again with `off`. Config files are on my machine and uncommitted.

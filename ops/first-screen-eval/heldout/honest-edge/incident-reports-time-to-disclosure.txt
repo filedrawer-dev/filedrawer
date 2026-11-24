@@ -1,0 +1,53 @@
+---
+schema: 4
+title: Median time from occurrence to public report did not shorten between 2022 and 2025 in 412 entries of a public incident database
+safety_motivation: Incident reporting is supposed to let developers and regulators learn from deployed AI system failures quickly, and whether it is getting quicker is a number nobody had computed.
+hypothesis: The delay between an incident's occurrence date and its first public report is shorter for incidents occurring in 2025 than in 2022.
+outcome: inconclusive
+kind: reanalysis
+predicted_direction: decrease
+hypothesis_set: before_run
+stage: main
+run_dates: [2026-04-13, 2026-04-15]
+models:
+  - name: n/a
+    role: other
+    route: other
+tags: [incident-reports, disclosure, governance, reanalysis]
+---
+
+## Setup
+
+Data: a snapshot of a public database of reported incidents involving deployed automated and learning systems, taken 13 April 2026. I kept entries with an occurrence date in 2022 through 2025, a dated first report, and an occurrence date given to the day (not "early 2023"). 412 of 1,037 entries survive that filter.
+
+Delay is first-report date minus occurrence date, in days. I compare medians by year of occurrence, with a bootstrap interval for the 2025 minus 2022 difference.
+
+The obvious problem: incidents from 2025 with long delays have not been reported yet. To handle it I truncate every year the same way, counting only reports made within 105 days of occurrence (the time between the end of 2025 and the snapshot), and I give the share reported within 30 days among those.
+
+## Results
+
+Intervals: 95%, percentile bootstrap, per incident.
+
+| model | condition | baseline | estimate | ci_low | ci_high | n | unit | metric |
+|---|---|---|---|---|---|---|---|---|
+| all | 2025 vs 2022 | 9 | 2 | -3 | 8 | 96/71 | days | median delay, truncated at 105 days |
+| all | 2025 vs 2022 | 0.76 | -0.05 | -0.18 | 0.08 | 96/71 | fraction | reported within 30 days |
+
+By year, truncated: median 9 days (2022, n 71), 8 (2023, n 83), 12 (2024, n 104), 11 (2025, n 96). 58 entries had delays over 105 days and are excluded from all years.
+
+No sign of shortening. The interval allows three days faster or eight days slower.
+
+## Caveats
+
+- The database records what journalists and volunteers noticed. An incident with no public report has no row, so this is delay conditional on eventual disclosure.
+- 60% of entries were dropped for imprecise dates, and precision of dating may itself correlate with delay.
+- The mix of incident types changed: generative-system incidents were 12% of 2022 and 57% of 2025.
+
+## Not tried
+
+- Splitting by who reported (developer, press, affected person).
+- Regulators' own incident registers, which are not public.
+
+## Reproduce
+
+`python delays.py snapshot-2026-04-13.csv --truncate 105 --boot 10000` re-analyses the stored snapshot; no model calls, seconds to run. Snapshot hash and script not yet posted.

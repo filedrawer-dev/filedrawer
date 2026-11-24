@@ -1,0 +1,35 @@
+---
+title: Grandad's red lentil soup, written down at last
+safety_motivation: So the recipe is not lost. He never wrote anything down.
+hypothesis: If you follow it, it tastes like his.
+outcome: mixed
+models:
+  - name: n/a
+    role: other
+    route: other
+tags: [recipe, soup, family]
+---
+
+## Setup
+
+Feeds four, or two with seconds.
+
+- 250 g red lentils, rinsed until the water stops being cloudy
+- 1 large onion, chopped small
+- 2 carrots, grated (he insisted on grated)
+- 3 cloves of garlic
+- 1 heaped teaspoon cumin, 1 level teaspoon paprika, a pinch of chilli
+- 1 tablespoon tomato paste
+- 1.2 litres of water or light stock
+- juice of half a lemon
+- butter, salt, dried mint
+
+Soften the onion in a spoon of butter for ten minutes, slowly, it must not brown. Add carrot and garlic, three more minutes. Stir in the spices and the tomato paste and let it catch a little on the bottom. Lentils in, water in, lid half on. Simmer 25 minutes, until the lentils fall apart. Salt at the end, not before. Blend half of it and stir back in, or all of it if you want it smooth.
+
+To serve: melt a knob of butter with a big pinch of dried mint and more paprika until it foams, and pour it over each bowl. Lemon at the table.
+
+Mine comes out a bit thinner than his. My aunt says he used less water and lied about it.
+
+## Reproduce
+
+Make it twice. The second time is better.

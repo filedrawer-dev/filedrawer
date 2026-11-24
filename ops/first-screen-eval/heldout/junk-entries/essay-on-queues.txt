@@ -1,0 +1,27 @@
+---
+title: An essay in praise of queues
+safety_motivation: Not applicable, this is a personal essay I wrote for a newsletter that folded.
+hypothesis: Queuing is the last everyday place where strangers agree on a rule without being told.
+outcome: effect
+models:
+  - name: none
+    role: other
+    route: other
+tags: [essay, opinion, everyday-life]
+---
+
+## Setup
+
+Nobody teaches you to queue. There is no lesson, no certificate. One day you are small and holding a hand at a bakery counter, and you notice that the woman who came in after you is standing behind you, and that this is somehow correct.
+
+I have come to think the queue is the most democratic thing we have left. It does not care what you earn. The man in the good coat waits behind the girl with the broken phone screen, and both of them wait behind the pensioner counting coins, and the only rank is the order of arrival. Try to buy your way forward and see what happens to the faces around you.
+
+Of course there are now ways to buy your way forward. The airport sells a faster lane, the theme park sells a wristband, the phone line plays music to some customers and not to others. Each of these is a small announcement that time can be purchased from the people standing next to you. We put up with it because the two lines are kept out of sight of each other. Where they can see each other, there is muttering.
+
+The best queue I ever stood in was outside a village post office on a pension morning. It had no line at all. People stood about in the sun, talking, and when the door opened each of them knew exactly whose turn it was. I asked how. "You just look who was here when you came," a man told me, "and you go after them." It is a linked list held in a dozen heads, and it never crashed.
+
+I do not say queues are pleasant. I say that when we stop believing in them we will have stopped believing something larger, and we will not notice until somebody pushes.
+
+## Reproduce
+
+Go and stand in one. Leave your phone in your pocket.

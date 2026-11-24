@@ -1,0 +1,67 @@
+---
+schema: 4
+title: In a simulated repeated procurement auction, random audits did not shorten tacit-collusion episodes among rule-based bidders unless the audit rate passed 30%
+safety_motivation: Proposals for overseeing AI agents that bid or price on behalf of firms assume that sparse random audits deter tacit collusion, and nobody has checked how sparse is too sparse even in the simplest model.
+hypothesis: Raising the per-round audit probability from 0 to 0.10 shortens the mean length of supra-competitive pricing episodes.
+outcome: no_effect
+kind: simulation
+predicted_direction: decrease
+hypothesis_set: before_run
+stage: main
+run_dates: [2026-09-02, 2026-09-04]
+models:
+  - name: none
+    role: other
+    route: other
+tags: [collusion, oversight, simulation, game-theory, multi-agent]
+positive_control:
+  outcome: passed
+  checks: manipulation
+  source: this_run
+code_state: committed
+---
+
+## Setup
+
+No learned model was run. The bidders are hand-written strategies, and the question is about the audit mechanism, which is the part an overseer of real pricing agents would control.
+
+Game: 4 sellers, one buyer, 2,000 rounds per episode, lowest bid wins, cost 10 for everyone, reserve price 20. Each seller plays a trigger strategy with memory 3: bid 18 while the last three winning bids were at or above 17, otherwise bid 11 for a punishment phase of k rounds (k drawn once per seller from 5 to 15), then return. With probability 0.02 per round a seller trembles and undercuts by 1.
+
+Oversight: each round is audited with probability p. An audit sees the four bids of that round and fines every seller 30 if all bids are within 1 of each other and above 15. A fined seller switches to bidding 11 for 50 rounds.
+
+Conditions: p in 0, 0.05, 0.10, 0.20, 0.30, 0.50; 200 seeds each. Metric: mean length, in rounds, of maximal runs with winning bid at or above 17.
+
+Positive control (manipulation): at p = 0.50 mean episode length fell from 61 to 9 rounds, so the audit can break collusion in this model.
+
+Cost: 40 CPU-minutes on a laptop.
+
+## Results
+
+Intervals: 95%, bootstrap, per seed.
+
+| model | condition | baseline | estimate | ci_low | ci_high | n | unit | outcome |
+|---|---|---|---|---|---|---|---|---|
+| all | p=0.10 vs p=0 | 61.2 | -2.1 | -6.0 | 1.9 | 200/200 | rounds | no_effect |
+| all | p=0.05 vs p=0 | 61.2 | -0.8 | -4.7 | 3.2 | 200/200 | rounds | no_effect |
+| all | p=0.20 vs p=0 | 61.2 | -7.4 | -11.2 | -3.5 | 200/200 | rounds | effect |
+| all | p=0.30 vs p=0 | 61.2 | -31.5 | -34.6 | -28.3 | 200/200 | rounds | effect |
+| all | p=0.50 vs p=0 | 61.2 | -52.3 | -54.9 | -49.8 | 200/200 | rounds | effect |
+
+Smallest difference I cared about was 6 rounds (a tenth of the baseline), chosen before the runs.
+
+The reason is visible in the traces: with a fine of 30 and a per-round collusive margin of about 2 per seller, a seller fined at p = 0.10 returns to the trigger strategy after 50 rounds and the cartel re-forms within a few rounds.
+
+## Caveats
+
+- The strategies are fixed. A learning bidder might respond to fines by colluding at 15.9, just under the audit's threshold, which this model cannot show.
+- The fine and the 50-round penalty were picked by me, not calibrated to anything.
+
+## Not tried
+
+- Audits triggered by price level instead of random ones.
+- Q-learning or LLM bidders.
+- Sellers with different costs.
+
+## Reproduce
+
+`python auction.py --sweep audits.toml --seeds 200` then `python episodes.py runs/` (no model calls; under an hour on one core). The repository is private until my group decides about the larger project; code not attached.

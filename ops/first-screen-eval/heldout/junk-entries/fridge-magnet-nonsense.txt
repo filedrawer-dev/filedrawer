@@ -1,0 +1,25 @@
+---
+title: Words in no order at all
+safety_motivation: Purple seven the window because Tuesday.
+hypothesis: Spoon harbour lightly under a quarter of maybe.
+outcome: mixed
+models:
+  - name: none
+    role: other
+    route: other
+tags: [the, of, and]
+---
+
+## Setup
+
+Under marmalade the ticket swims a ladder. Forty chairs agree with the weather of my uncle, and no pencil has ever been so north. Carry the afternoon gently into its envelope. Whoever paints the corridor remembers a different potato.
+
+Blue blue the clock, and under it a second under. Trains are a kind of soup when the handle is absent. If the giraffe would only invoice us.
+
+Seven of the eleven were also a hat. The rest decided against Wednesday.
+
+Glass, glass, almost. Then a bicycle of opinions.
+
+## Reproduce
+
+Shake the box and read it again.

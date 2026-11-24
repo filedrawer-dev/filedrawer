@@ -1,0 +1,30 @@
+---
+title: Contact list for the Thursday choir, altos and tenors
+safety_motivation: Our shared spreadsheet got deleted so I need a copy that is not on my phone.
+hypothesis: None, it is a list of contacts.
+outcome: no_effect
+models:
+  - name: n/a
+    role: other
+    route: other
+tags: [contacts, choir]
+---
+
+## Setup
+
+| name | part | phone | email | note |
+|---|---|---|---|---|
+| Odalys Brennigan | alto 1 | 555-0114 | odalys@thursdaychoir.example | has the spare folders |
+| Wim Tarkowski | tenor | 555-0127 | wim@thursdaychoir.example | lift share from the east side |
+| Perpetua Lindqvist-Shaw | alto 2 | 555-0131 | perpetua@thursdaychoir.example | away all of March |
+| Dov Achterhuis | tenor | 555-0142 | dov@thursdaychoir.example | plays piano if the accompanist is ill |
+| Marisol Egwu | alto 1 | 555-0155 | marisol@thursdaychoir.example | new in January |
+| Henk Vasilakis | tenor | 555-0163 | henk@thursdaychoir.example | key holder for the hall |
+| Ilse Quartermaine | alto 2 | 555-0178 | ilse@thursdaychoir.example | librarian |
+| Bao Fitzwarren | tenor | 555-0189 | bao@thursdaychoir.example | no email on weekdays, ring |
+
+Sopranos and basses are on the other sheet, which the section leader has.
+
+## Reproduce
+
+Ask the librarian for the current version before trusting this one.

@@ -1,0 +1,40 @@
+---
+title: Hiring a line cook, evenings, at The Copper Ladle
+safety_motivation: Kitchen safety matters to us - food hygiene level 2 required or we pay for the course.
+hypothesis: The right person is out there and reads odd websites.
+outcome: inconclusive
+models:
+  - name: n/a
+    role: other
+    route: other
+tags: [job, hiring, kitchen, hospitality]
+---
+
+## Setup
+
+The Copper Ladle is a 40-cover neighbourhood restaurant. We cook what the market has, on a short menu that changes on Wednesdays.
+
+The job: line cook, grill and sauce section. Five evenings, Wednesday to Sunday, 3 pm to 11 pm. Two days off together, always.
+
+You will
+- prep and run your section for service
+- keep it clean enough to eat off
+- help write the specials once you know the place
+- train the weekend commis
+
+You have
+- at least two years on a busy line
+- a calm voice at nine o'clock on a Saturday
+- your own knives, or the wish to own some
+
+We offer
+- 15.50 an hour plus an equal share of tips
+- staff meal, sitting down, before service
+- 28 days holiday, closed for two weeks in January
+- no split shifts, ever
+
+To apply: a short note about the best thing you cooked last month to jobs@copperladle.example. Trial shift paid.
+
+## Reproduce
+
+n/a

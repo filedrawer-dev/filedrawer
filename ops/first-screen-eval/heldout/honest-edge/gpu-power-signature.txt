@@ -1,0 +1,61 @@
+---
+title: Rack-level power draw at 1 Hz did not let us tell training from inference on an 8-GPU node well enough to be useful
+safety_motivation: Some compute-governance proposals would verify declared workloads from facility power telemetry, which only works if training and inference look different at the meter.
+hypothesis: A simple classifier on 60-second windows of rack power separates training jobs from batched inference jobs with at least 95% accuracy.
+outcome: no_effect
+kind: measurement
+hypothesis_set: before_run
+stage: pilot
+stopped_because: out of time on the borrowed node
+run_dates: [2026-03-09, 2026-03-13]
+models:
+  - name: resnet-50 and a 1.3B-parameter transformer, as workloads only
+    role: other
+    route: weights
+tags: [compute-governance, verification, power-telemetry, hardware]
+positive_control:
+  outcome: passed
+  checks: pipeline
+  source: this_run
+---
+
+## Setup
+
+Hardware: one node with 8 data-centre GPUs, on a metered power distribution unit that logs watts at 1 Hz. Nothing else on the rack.
+
+Workloads, each run for 20 minutes, 6 repetitions, in shuffled order:
+
+- training: image classifier, batch 256; language model, batch 32, mixed precision
+- inference: the same two networks, batched, with batch sizes chosen so mean GPU utilisation matched training within 5 points
+- idle
+
+The networks are only load generators here. Nothing about their outputs was measured.
+
+Features per 60 s window: mean, standard deviation, spectral power in four bands up to 0.5 Hz. Classifier: logistic regression, leave-one-run-out.
+
+Positive control: idle versus anything, 100% of windows. The meter and pipeline work.
+
+## Results
+
+| task | windows | accuracy | 95% interval (cluster bootstrap over runs) |
+|---|---|---|---|
+| training vs inference, both networks | 480 | 0.71 | 0.58 to 0.83 |
+| image network only | 240 | 0.83 | 0.66 to 0.96 |
+| language network only | 240 | 0.62 | 0.47 to 0.78 |
+| idle vs any | 720 | 1.00 | |
+
+Far from the 95% bar. The signal that exists is checkpoint writes during training, a dip every few minutes; inference with periodic cache flushes would mimic it.
+
+## Caveats
+
+- One node, 24 runs. A whole facility averages over thousands of nodes and the per-job signature would be weaker still.
+- We matched utilisation on purpose. An operator not trying to hide would be easier to classify; one trying harder would be harder.
+- 1 Hz. Proposals that assume kHz sampling at the power supply are not tested by this.
+
+## Not tried
+
+- Longer windows. Network traffic as a second channel.
+
+## Reproduce
+
+Needs the node and the metered PDU. `run_schedule.sh` then `python classify.py logs/`. About 9 hours of machine time. Command lines for the workloads not recorded exactly.

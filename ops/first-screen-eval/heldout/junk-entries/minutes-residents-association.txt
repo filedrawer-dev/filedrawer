@@ -1,0 +1,34 @@
+---
+title: Minutes of the Larch Court residents' association, autumn meeting
+safety_motivation: Record keeping. The noticeboard copy keeps disappearing.
+hypothesis: The meeting agreed the items below.
+outcome: effect
+kind: audit
+models:
+  - name: none
+    role: other
+    route: other
+tags: [minutes, residents, meeting]
+---
+
+## Setup
+
+Held in the bike room, 7.30 pm. Present: flats 1, 3, 4, 7, 8, 11 and 12. Apologies from flats 2 and 9. The chair (flat 4) opened the meeting; flat 11 took notes.
+
+1. Minutes of the summer meeting were agreed without changes.
+
+2. Stairwell lighting. The timer on the second floor now turns off after about forty seconds, which is not long enough to get a pushchair up. The managing agent has been told twice. Agreed that the chair writes a third time and copies in the freeholder.
+
+3. Bins. The recycling is being contaminated again and the council left two bins unemptied in September. Flat 7 will put up a picture guide. Flat 3 asked that nobody be named in the group chat about this; agreed.
+
+4. Bike room. Eleven bikes, four of them with flat tyres and cobwebs. A tag will go on each bike for a month, and any still tagged after that goes to the reuse project. Flat 12 will do the tagging.
+
+5. Service charge. The accounts show 1,840 spent on the gate motor and nothing on the roof gutter that was promised. Flat 8 will ask for the invoices.
+
+6. Any other business. Flat 1 offered spare tomato plants in spring. The party wall crack in the entrance is to be photographed monthly by flat 11.
+
+Next meeting: second Tuesday of February, same place. Closed at 8.40 pm.
+
+## Reproduce
+
+Not applicable. Corrections to flat 11.

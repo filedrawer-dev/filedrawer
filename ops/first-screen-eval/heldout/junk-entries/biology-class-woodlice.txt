@@ -1,0 +1,41 @@
+---
+title: Woodlice choice chamber practical, damp versus dry and light versus dark
+safety_motivation: Not relevant to this practical. Animal welfare - all woodlice were returned to the log pile afterwards.
+hypothesis: Woodlice spend more time in damp and dark conditions than in dry and light ones.
+outcome: effect
+predicted_direction: increase
+hypothesis_set: before_run
+models:
+  - name: n/a
+    role: other
+    route: other
+tags: [biology, practical, woodlice, behaviour]
+---
+
+## Setup
+
+First-year biology practical, bench 6. A four-part choice chamber with a mesh floor: damp paper under two quarters and drying agent under the other two, and black card over two quarters, so there were four conditions. Ten woodlice were placed in the centre through the hole in the lid. After 10 minutes we counted how many were in each quarter. We turned the chamber a quarter turn between runs so that a bench draught or the window would not always favour one condition. Five runs with fresh animals each time, 50 woodlice in total.
+
+## Results
+
+Number of woodlice in each quarter after 10 minutes:
+
+| run | damp dark | damp light | dry dark | dry light |
+|---|---|---|---|---|
+| 1 | 6 | 2 | 2 | 0 |
+| 2 | 7 | 1 | 1 | 1 |
+| 3 | 5 | 3 | 2 | 0 |
+| 4 | 6 | 2 | 1 | 1 |
+| 5 | 7 | 2 | 1 | 0 |
+| total | 31 | 10 | 7 | 2 |
+
+Chi-squared against an even split (12.5 expected in each) is 39.5 with 3 degrees of freedom, far above the 5% critical value of 7.81. Damp mattered more than dark: 41 of 50 were on a damp side, 38 of 50 on a dark side.
+
+## Caveats
+
+- Woodlice clump together, so the 50 are not independent choices.
+- The damp paper may also have been cooler.
+
+## Reproduce
+
+Any school choice chamber and a log pile. Ten minutes per run.

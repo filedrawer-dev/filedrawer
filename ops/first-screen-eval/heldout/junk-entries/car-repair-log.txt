@@ -1,0 +1,41 @@
+---
+title: Repair log for the estate car, coolant loss, January to March
+safety_motivation: Road safety I guess. Mostly so the next owner or the garage can see what was already tried.
+hypothesis: The coolant loss is the water pump and not the head gasket.
+outcome: effect
+stage: main
+stopped_because: fixed
+models:
+  - name: none
+    role: other
+    route: other
+tags: [car-repair, cooling-system, maintenance-log]
+---
+
+## Setup
+
+2009 diesel estate, 212,000 km. Symptom: the low coolant light every ten days or so, about half a litre gone each time, no puddle on the drive, heater fine, temperature gauge steady.
+
+## Results
+
+| date | km | what I did | what I found |
+|---|---|---|---|
+| 11 Jan | 212,040 | topped up to max, marked the tank with tape | |
+| 21 Jan | 212,610 | checked level | down 0.5 l in 570 km |
+| 22 Jan | 212,610 | looked for white smoke, oil cap, dipstick | exhaust clean, no mayonnaise under the cap |
+| 30 Jan | 212,980 | borrowed a pressure tester, 1.2 bar cold for 20 min | dropped to 0.9, a slow drip from behind the timing cover |
+| 2 Feb | 213,000 | gas test on the expansion tank with the blue fluid | stayed blue, so no combustion gas in the coolant |
+| 14 Feb | 213,300 | timing belt cover off | pink crust under the water pump weep hole |
+| 15 Feb | 213,300 | new pump, belt, tensioner and thermostat, 4.5 l fresh coolant | old pump shaft had play |
+| 1 Mar | 214,150 | checked level | at the tape |
+| 22 Mar | 215,400 | checked level | at the tape |
+
+It was the pump. Parts 138, about seven hours of my Saturday and Sunday, and one sheared bolt on the cover that I drilled out.
+
+## Caveats
+
+- The thermostat was changed at the same time, so I cannot say it was not also leaking.
+
+## Reproduce
+
+Pressure test first. It saves guessing.

@@ -1,0 +1,36 @@
+---
+title: Grand opening of Still Water Yoga - first class free all of September
+safety_motivation: All our teachers are first-aid trained and classes are capped at 14.
+hypothesis: You will feel better after one class.
+outcome: effect
+models:
+  - name: none
+    role: other
+    route: other
+tags: [yoga, promotion, grand-opening, wellbeing]
+---
+
+## Setup
+
+We're open! Still Water Yoga has taken the old print shop on Tannery Lane and filled it with light, plants and a floor that is warm in winter.
+
+Your first class is free through September. After that:
+
+| pass | price |
+|---|---|
+| drop-in | 11 |
+| ten classes | 90 |
+| monthly unlimited | 65 |
+| under 25 or over 65 | 20% off everything |
+
+Timetable highlights: early flow at 6.45 (yes, really), lunchtime stretch for desk people at 12.30, slow evening class at 8, family yoga on Saturday mornings where falling over is encouraged.
+
+Bring nothing. Mats, blocks and blankets are here. Tea afterwards is on us.
+
+Opening weekend, 5 and 6 September: open house from 10 to 4, taster sessions on the hour, a raffle for a three-month pass, and cake from the bakery next door.
+
+Sign up at https://stillwater-yoga.example/september and follow along for timetable changes.
+
+## Reproduce
+
+Come to a class.

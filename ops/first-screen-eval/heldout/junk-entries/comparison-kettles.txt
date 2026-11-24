@@ -1,0 +1,38 @@
+---
+title: Comparison of four electric kettles for boil time, noise and how hot the outside gets
+safety_motivation: Burn safety. Two of these get hot enough on the outside to hurt a child.
+hypothesis: The more expensive kettles boil faster.
+outcome: no_effect
+kind: measurement
+models:
+  - name: none
+    role: other
+    route: other
+tags: [kettles, product-comparison, kitchen, review]
+---
+
+## Setup
+
+Four kettles borrowed from family and the office, all rated near 3 kW, called A to D here because I do not want to advertise anybody. One litre of tap water at 14 degrees each time, three runs per kettle, timed from switch-on to click-off with a phone stopwatch. Noise from a phone app held 50 cm away, so treat it as a ranking only. Outside temperature with a meat probe taped to the side, read at click-off.
+
+## Results
+
+| kettle | price band | boil time, mean of 3 | noise at peak | outside at click-off | lid |
+|---|---|---|---|---|---|
+| A, plastic jug | cheapest | 2 min 21 s | 71 | 48 C | flip, stiff |
+| B, steel jug | middle | 2 min 26 s | 78 | 83 C | lift-off |
+| C, glass | middle | 2 min 19 s | 69 | 76 C | flip |
+| D, double wall | dearest | 2 min 33 s | 62 | 34 C | button |
+
+Boil time is within 14 seconds across all four and does not follow price; the dearest was slowest. What money buys is quiet and a cool outside. B is too hot to touch on the side.
+
+The minimum fill differs a lot: A boils one cup, B needs at least half a litre.
+
+## Caveats
+
+- Three runs each, one unit of each model, different ages and amounts of limescale.
+- Mains voltage was not measured.
+
+## Reproduce
+
+A litre of cold water, a stopwatch and a probe thermometer.

@@ -1,0 +1,45 @@
+---
+title: Sourdough at 65, 72 and 80 percent hydration - which loaf did my household prefer
+safety_motivation: n/a (bread)
+hypothesis: The wetter the dough, the more open the crumb and the more people like it.
+outcome: mixed
+predicted_direction: increase
+hypothesis_set: before_run
+run_dates: [2026-02-07, 2026-02-28]
+models:
+  - name: n/a
+    role: other
+    route: other
+tags: [bread, sourdough, home-experiment, baking]
+---
+
+## Setup
+
+Same flour (strong white, one sack), same starter fed at 8 pm the night before, 2% salt, 20% starter. Three doughs of 500 g flour mixed on the same morning at 65%, 72% and 80% water. Four folds at half-hour intervals, shaped at 2 pm, in the fridge overnight, baked in the same cast iron pot at 240 C, 25 minutes lid on and 20 off. Repeated on four Saturdays, so twelve loaves.
+
+Tasters: five people in the house plus whoever came round, each given three unlabelled slices on a plate marked with dots, and asked to rank them. 23 rankings in all.
+
+Crumb: I photographed a middle slice against a ruler and counted holes wider than 5 mm.
+
+## Results
+
+| hydration | holes over 5 mm per slice, mean | loaf height, cm | ranked first | ranked last |
+|---|---|---|---|---|
+| 65% | 6 | 9.1 | 5 | 11 |
+| 72% | 14 | 8.4 | 13 | 3 |
+| 80% | 22 | 6.2 | 5 | 9 |
+
+More water did mean more holes. It did not mean more liked: the middle loaf won, and the wettest was a flat disc two weeks out of four because I cannot shape it. The children want bread that holds jam.
+
+## Caveats
+
+- The 80% result is about my hands as much as the dough.
+- Tasters sometimes guessed which was which from the height.
+
+## Not tried
+
+- Wholemeal. A proper proving basket for the wet one.
+
+## Reproduce
+
+Recipe above. Budget for a lot of toast.

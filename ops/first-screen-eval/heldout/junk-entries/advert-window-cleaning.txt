@@ -1,0 +1,35 @@
+---
+title: Window cleaning service for the north side of town, special spring offer
+safety_motivation: We are fully insured and use water-fed poles so nobody is up a ladder.
+hypothesis: Your windows will be streak free or we come back for free.
+outcome: effect
+models:
+  - name: none
+    role: other
+    route: other
+tags: [advert, window-cleaning, local-services, spring-offer]
+---
+
+## Setup
+
+SPARKLE & POLE WINDOW CLEANING
+
+Tired of looking at the world through last winter's grime? We clean houses, flats up to the fourth floor, conservatories, shop fronts and solar panels.
+
+- Regular rounds every 4, 6 or 8 weeks
+- Frames, sills and doors included in the price, always
+- Pure water system, no detergent on your flowerbeds
+- Text the night before so you can unlock the side gate
+- Pay by card, transfer or cash in an envelope
+
+SPRING OFFER: book a regular round before the end of April and your first clean is HALF PRICE. Recommend a neighbour and you both get one clean free.
+
+Typical prices: two-bed terrace from 12, three-bed semi from 16, conservatory roof from 25. Gutters cleared by vacuum, with a camera so you can see the before and after, from 45.
+
+Family run, fifteen years on the same streets. Ask anybody on the avenue.
+
+Book now: https://sparkle-and-pole.example/book or ring 555-0190, evenings best.
+
+## Reproduce
+
+Book a clean and see for yourself.

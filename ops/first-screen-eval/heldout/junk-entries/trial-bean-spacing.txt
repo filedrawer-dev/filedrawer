@@ -1,0 +1,45 @@
+---
+title: Runner bean spacing trial on plot 14, two rows, one summer
+safety_motivation: Not a safety matter. I wanted to settle an argument with the plot next door.
+hypothesis: Beans planted 15 cm apart give more weight per metre of row than beans planted 30 cm apart.
+outcome: no_effect
+predicted_direction: increase
+hypothesis_set: before_run
+stage: pilot
+models:
+  - name: n/a
+    role: other
+    route: other
+tags: [gardening, beans, allotment, trial]
+---
+
+## Setup
+
+Two rows of 4 m on the same bed, both on wigwam canes, same variety from the same seed packet, sown under glass on 20 April and planted out 22 May. Row A at 15 cm (26 plants), row B at 30 cm (13 plants). Same compost trench under both. Watered together, from the same butt, when the top felt dry.
+
+I picked every three days from 14 July to 20 September and weighed each row's pick on the kitchen scales to the nearest 10 g.
+
+## Results
+
+| row | spacing | plants | total picked | per metre | per plant |
+|---|---|---|---|---|---|
+| A | 15 cm | 26 | 14.2 kg | 3.55 kg | 0.55 kg |
+| B | 30 cm | 13 | 13.1 kg | 3.28 kg | 1.01 kg |
+
+About 8% more per metre from the close row, which is less than the difference between two picks in the same week. Per plant the wide row was nearly double. Row A had blackfly worse in July, and its pods were shorter.
+
+So the close spacing costs twice the seed for roughly the same crop.
+
+## Caveats
+
+- One row of each, one year. Row A was at the hedge end and gets shade after four.
+- Three picks in August were done by my neighbour while we were away; she says she weighed them.
+
+## Not tried
+
+- 20 cm, which is what the packet says.
+- Double rows.
+
+## Reproduce
+
+Sow, plant, pick, weigh. The notebook with every pick is in the shed.
