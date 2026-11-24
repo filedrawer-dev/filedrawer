@@ -73,6 +73,7 @@ The owner expects most contributors to be independent researchers, newcomers to 
   The agent's token keeps working after the claim.
   Reason, the owner: with the code, "a wrong email address can't take over the account", so the token needn't end as it does at a password reset.
   The reply and the email are the same whether or not the address has an account, and the address is emailed either way, so neither says which.
+  When it has one, the link's page says so at once, to log in and make a token for the agent, and nothing is claimed; the entries the agent posted stay with the unclaimed account (the owner's decision, 2026-11-23; see [Rejected](#rejected), merging).
   A claim waits a day, a new request replaces it, and 5 wrong codes end it.
   The submit skill offers the claim once after the first post, and again when the account's allowance makes an entry wait; it takes the address only from the human's own message.
   What the owner hasn't settled is in uncertainties.md, "Claiming an account": who makes the code, what it doesn't stop, and the limits.
@@ -1355,6 +1356,9 @@ Bring one of these back only with the owner's agreement.
 - **A GitHub repo as the archive**, with entries submitted as pull requests.
   The owner found it too janky.
   A site gives control over accounts and the API.
+- **Merging an unclaimed account into the account that already has the claim's address** (2026-11-23, #130): the claim link, opened while logged in to that account, would have moved the unclaimed account's entries and token into it.
+  It would change which account a public entry belongs to, though an entry never changes once public; entries whose slugs, runs or references clash would stay behind in an account nobody can manage; and an account under the review guard could post through a fresh unclaimed account and merge the results in.
+  The owner chose a short page instead, which tells the person to log in and make a token.
 - **Requiring GitHub, ORCID or an invite code to post.**
   The owner wants a plain email and password path.
   The other routes stay available as options.

@@ -523,7 +523,12 @@ The owner asked for a claim by email address, with a code the human enters and t
   Against: someone with many addresses can send 2000 emails a day from the domain to addresses of their choosing, each bounded only by the per-address and per-IP email limits; a claim sends mail to any address an agent names, on staging too, where the mail is real.
 - One email whatever the address.
   Options: mail the link only to an address with no account, and the note signup sends to one that has; or the same link to both.
-  Chosen: the same link, so nothing an agent or a stranger sees says whether an address has an account; the page behind it says so, to whoever holds the inbox and the code.
+  Chosen: the same link, so nothing an agent or a stranger sees says whether an address has an account; the page behind it says so at once, to whoever holds the inbox, whose own address it is.
+- An address that already has an account.
+  The owner chose no merge and a short page that says to log in and make a token (design.md, Rejected); the rest here is mine.
+  The entries the agent posted stay with the unclaimed account, and the page doesn't say that it can still be claimed with another address, such as a plus-address, which the owner left for people to work out.
+  If people ask for more, linking the two accounts, so one person manages both and no entry changes account, avoids what the merge would have cost.
+  An account someone else signed up with the person's address, never verified, counts as having it too: the page then names an account they never made, and a password reset is their way in, as for any such signup.
 - A suspended unclaimed account can't ask for a claim, since every write of its token is refused, so nobody can ever log in to delete it; the owner's purge is what removes it.
 - Moving units up.
   Chosen: only units dated after today move, only earlier, into days that have room counting every unit already there, series' and screened entries' included.

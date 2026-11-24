@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT c.account_id, c.email, c.code_hash, c.wrong_codes,\n                  (SELECT COUNT(*) FROM entries e WHERE e.account_id = c.account_id)\n                      AS \"entries!: i64\"\n           FROM account_claims c JOIN accounts a ON a.id = c.account_id\n           WHERE c.link_hash = ? AND c.expires_at > ? AND a.unclaimed\n             AND a.deleted_at IS NULL AND a.suspended_at IS NULL",
+  "query": "SELECT c.account_id, c.email, c.code_hash, c.wrong_codes,\n                  (SELECT COUNT(*) FROM entries e WHERE e.account_id = c.account_id)\n                      AS \"entries!: i64\",\n                  EXISTS (SELECT 1 FROM accounts holder WHERE holder.email = c.email)\n                      AS \"address_taken!: bool\"\n           FROM account_claims c JOIN accounts a ON a.id = c.account_id\n           WHERE c.link_hash = ? AND c.expires_at > ? AND a.unclaimed\n             AND a.deleted_at IS NULL AND a.suspended_at IS NULL",
   "describe": {
     "columns": [
       {
@@ -52,6 +52,12 @@
         "ordinal": 4,
         "type_info": "Integer",
         "origin": "Expression"
+      },
+      {
+        "name": "address_taken!: bool",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": "Expression"
       }
     ],
     "parameters": {
@@ -62,8 +68,9 @@
       false,
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "408c0a5dcbe7e4ea29262b414b5f7ad224b8170dac9efda62f7c33af6a0e90c1"
+  "hash": "fc47d0a00a19f7cdc31df955fb58f8785f5971cd649d886d5cce3db0fccc34ef"
 }

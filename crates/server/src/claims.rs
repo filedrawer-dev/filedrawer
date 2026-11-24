@@ -92,6 +92,9 @@ pub struct Claim {
     pub account_id: String,
     /// The entries the account holds, in any state, for the link's page.
     pub entries: i64,
+    /// Whether another account has the claim's address, so nothing can be claimed
+    /// with it.
+    pub address_taken: bool,
     email: String,
     code_hash: Vec<u8>,
     wrong_codes: i64,
@@ -114,7 +117,9 @@ async fn by_link_in(
         Claim,
         r#"SELECT c.account_id, c.email, c.code_hash, c.wrong_codes,
                   (SELECT COUNT(*) FROM entries e WHERE e.account_id = c.account_id)
-                      AS "entries!: i64"
+                      AS "entries!: i64",
+                  EXISTS (SELECT 1 FROM accounts holder WHERE holder.email = c.email)
+                      AS "address_taken!: bool"
            FROM account_claims c JOIN accounts a ON a.id = c.account_id
            WHERE c.link_hash = ? AND c.expires_at > ? AND a.unclaimed
              AND a.deleted_at IS NULL AND a.suspended_at IS NULL"#,
@@ -147,6 +152,11 @@ async fn checked_in(
     let Some(claim) = by_link_in(conn, secret).await? else {
         return Ok(Err(Refused::Dead));
     };
+    // Before the code, since no code claims an account with a taken address, and a
+    // code typed for one shouldn't count against the claim.
+    if claim.address_taken {
+        return Ok(Err(Refused::Taken));
+    }
     if claim.code_hash != code_hash(code) {
         if claim.wrong_codes + 1 >= WRONG_CODES {
             cancel_in(conn, &claim.account_id).await?;
@@ -159,15 +169,6 @@ async fn checked_in(
         .execute(&mut *conn)
         .await?;
         return Ok(Err(Refused::Wrong));
-    }
-    let taken = sqlx::query_scalar!(
-        r#"SELECT 1 AS "found!: i64" FROM accounts WHERE email = ?"#,
-        claim.email
-    )
-    .fetch_optional(&mut *conn)
-    .await?;
-    if taken.is_some() {
-        return Ok(Err(Refused::Taken));
     }
     Ok(Ok(claim))
 }

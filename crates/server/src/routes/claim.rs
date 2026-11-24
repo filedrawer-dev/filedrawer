@@ -98,10 +98,8 @@ fn taken() -> Response {
     page(
         StatusCode::CONFLICT,
         &Message {
-            title: "This address has an account",
-            text: "An account an agent made can't be claimed with an address that already \
-                   has a File Drawer account. Log in to that account and make a token for \
-                   your agent on the account page.",
+            title: "This address already has an account",
+            text: "Log in and make a token for your agent on your account page.",
             link: Some(("/login", "Log in")),
         },
     )
@@ -114,6 +112,11 @@ pub async fn claim_page(
     let Some(pending) = claims::by_link(&state.pool, &query.token).await? else {
         return Ok(dead_link());
     };
+    // Said at once, with no form to fill in first: only the inbox's holder has the
+    // link, and it is their own address.
+    if pending.address_taken {
+        return Ok(taken());
+    }
     let template = ClaimPage {
         token: &query.token,
         account_id: &pending.account_id,

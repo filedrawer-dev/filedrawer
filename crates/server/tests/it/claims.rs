@@ -209,9 +209,20 @@ async fn an_address_with_an_account_gets_the_same_reply_and_email() {
     let (_, token) = agent_account(&app).await;
     let (code, link) = asked(&app, &token, ADA).await;
     assert_eq!(app.sent().await.len(), before + 1);
-    // Nothing is claimed with an address another account has.
+    // The link's page says so at once, to whoever holds the inbox, with no form to
+    // fill in first.
+    let page = app.page(&link, None).await;
+    assert_eq!(page.status, StatusCode::CONFLICT, "{}", page.body);
+    assert!(!page.has_class("claim"), "{}", page.body);
+    // Nothing is claimed with an address another account has, code or no code.
     let reply = confirm(&app, &link, &code, None).await;
     assert_eq!(reply.status, StatusCode::CONFLICT, "{}", reply.body);
+    // Codes typed meanwhile don't use the claim up: the sixth wrong one still
+    // gets this page, where a fifth would end a claim whose address is free.
+    for _ in 0..6 {
+        let guess = confirm(&app, &link, "0000-0000", None).await;
+        assert_eq!(guess.status, StatusCode::CONFLICT, "{}", guess.body);
+    }
     let again = ask(&app, &token, "grace@example.com").await;
     assert_eq!(again.status, StatusCode::OK, "{}", again.body);
 }
