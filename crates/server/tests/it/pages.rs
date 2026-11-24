@@ -1006,3 +1006,10 @@ async fn the_signup_form_says_beside_its_button_that_signing_up_accepts_the_term
     // Beside the button: the notice is the last thing before it.
     assert!(after.trim_start().starts_with("<button"), "{after}");
 }
+
+#[tokio::test]
+async fn the_signup_page_says_an_agent_can_post_without_an_account() {
+    let app = test_app().await;
+    let page = app.send(opened("/signup")).await;
+    assert!(page.has_class("agent-first"), "{}", page.body);
+}

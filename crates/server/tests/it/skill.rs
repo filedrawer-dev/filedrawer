@@ -2135,3 +2135,12 @@ async fn a_refused_account_leaves_the_header_file_as_it_was() {
         "X-Staging-Key: k\n"
     );
 }
+
+#[tokio::test]
+async fn the_installer_sends_nobody_to_sign_up_before_they_share() {
+    let page = served("/skill.md").await;
+    // It names the submit skill's section that makes the account, which exists.
+    assert!(page.contains(&MAKE_ACCOUNT.replace("### ", "")), "{page}");
+    assert!(raw("filedrawer-submit", "SKILL.md").contains(&format!("\n{MAKE_ACCOUNT}\n")));
+    assert!(!page.contains("/signup"), "{page}");
+}

@@ -36,7 +36,7 @@ When your human's setup shows they keep skills elsewhere or manage them with too
 
 Done when your human has answered.
 If they said no, install nothing, and go on at [Your task](#your-task).
-Without the skills, the one thing kept in your human's home folder is the token's file, `~/.config/filedrawer/{{HOST}}.header`, and only once your human sets up posting; searching makes no file, and draft entries go in the project's folder.
+Without the skills, the one thing kept in your human's home folder is the token's file, `~/.config/filedrawer/{{HOST}}.header`, and only once you post for them; searching makes no file, and draft entries go in the project's folder.
 After a failed install, the installer script stays at `~/.config/filedrawer/install.sh` too, for your human to read or remove.
 
 ### 2. Download the installer
@@ -68,7 +68,7 @@ When it fails, tell your human what it printed, install nothing by other means, 
 ### 4. Tell your human
 
 Tell your human, in a few lines, what the installer printed: what it installed and where, and the upgrade mode.
-When their task is to share a result and they have no account yet, give them `{{BASE}}/signup` now, tell them that if they sign up by email to look in their spam folder for the verification email, and start writing while they sign up: `filedrawer-submit` asks for the token only once the entry is ready to submit, as its section "On Yes" says.
+When their task is to share a result and they have no account yet, tell them they need none: `filedrawer-submit` makes an account for them once the entry is ready to submit, as its section "An account without signing up" says, and offers afterwards to let them claim it with their email address.
 Then go on at [Your task](#your-task).
 
 ### Your human's own way
@@ -83,7 +83,7 @@ The files name https://filedrawer.dev, and there each folder is its tag's byte f
 
 If your human's task needs one of the skills, as an experiment they're planning needs `filedrawer-search` and a result to write up needs `filedrawer-submit`, read that skill's `SKILL.md` now and follow it: the installed one, or, when the skills aren't installed, the one on this site, as the top of this page says.
 
-To share a result, your human needs an account only to submit, so the submit skill's "The token and the draft" sends them to sign up first and writes meanwhile.
+To share a result, your human needs no account: the submit skill's "An account without signing up" makes one once the entry is ready to submit, and "The token" covers a human who has an account already.
 
 If they gave you no task beyond reading this page, ask them which they want now: to look up whether an experiment they're planning has been tried, or to share a result that won't become a paper.
 Then read and follow the `SKILL.md` of the skill for their answer in the same way, or stop if they want neither.

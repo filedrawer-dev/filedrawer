@@ -209,6 +209,10 @@ fn every_check_passes_against_this_server() {
     let printed = text(&output);
     assert!(output.status.success(), "{printed}");
     assert!(!printed.contains("FAIL"), "{printed}");
+    assert!(
+        printed.contains("PASS agent account: its token reads /entries/mine"),
+        "{printed}"
+    );
     assert!(printed.contains(" 0 failed"), "{printed}");
     for name in common::skills::NAMES {
         for file in common::skills::files(name) {

@@ -19,7 +19,8 @@ as the submit skill tells an agent to: submit, the hour's hold, a fix with PUT, 
 search, a new version, and a batch with slugs and runs. It also checks that a browser
 opening / gets the home page, as one behind staging's password does, and an agent plain
 text, and, where GitHub sign-in is on, that a start redirects to GitHub with the exact
-callback, only the user:email scope, PKCE and the account picker. Prints PASS or FAIL
+callback, only the user:email scope, PKCE and the account picker; and that an agent
+makes an account with no signup whose token reads /entries/mine. Prints PASS or FAIL
 for each check, then a tally, and exits 1 when any check fails.
 
   --wait SECONDS  first wait up to SECONDS for URL/skill.md to answer 200, as just
@@ -1127,6 +1128,31 @@ else
   check "github sign-in: starts at GitHub's authorize page, naming the app" '[[ $CODE == 303 && $LOCATION == https://github.com/login/oauth/authorize\?client_id=?* ]]'
   check "github sign-in: the exact callback" '[[ $LOCATION == *"redirect_uri=$callback&"* ]]'
   check "github sign-in: only user:email, with PKCE and the picker" '[[ $LOCATION == *"scope=user%3Aemail&"* && $LOCATION == *"code_challenge_method=S256"* && $LOCATION == *"prompt=select_account"* ]]'
+fi
+
+# An account an agent makes with no signup (#130): the reply's body is its token's
+# header line, and the token reads what the account posted, which is nothing. It
+# posts nothing, so each run leaves one empty account, which nothing deletes.
+# Read mode skips it, since it writes; so does a 429,
+# when this address made its 10 for the hour or the site its 2000 for the day.
+made=$(curl -s -w '\n%{http_code}' -X POST -K <(headers) "$base/accounts")
+CODE=${made##*$'\n'}
+agent_line=${made%$'\n'*}
+agent_line=${agent_line%$'\n'}
+if [[ $CODE == 429 ]]; then
+  echo "SKIP agent account: the server made too many, for this address or in all, for now"
+else
+  # shellcheck disable=SC2034  # read by check's condition
+  agent_lines=$(printf '%s\n' "$agent_line" | wc -l)
+  check "agent account: 201 with its token's header line" '[[ $CODE == 201 && $agent_line == "Authorization: Bearer fdt_"* && $agent_lines == 1 ]]'
+  # Only a 201's body is a header line to send.
+  # shellcheck disable=SC2034  # read by check's condition
+  mine=
+  if [[ $CODE == 201 ]]; then
+    # shellcheck disable=SC2034  # read by check's condition
+    mine=$(curl -s -o /dev/null -w '%{http_code}' -K <(headers; printf 'header = "%s"\n' "$agent_line") "$base/entries/mine")
+  fi
+  check "agent account: its token reads /entries/mine" '[[ $mine == 200 ]]'
 fi
 
 make_entry single "compute: 1h" > "$dir/e1.md"
