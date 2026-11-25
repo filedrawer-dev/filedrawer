@@ -53,9 +53,14 @@ pub struct Row {
 }
 
 impl Row {
-    /// The cell under `column`, trimmed; empty when the table has no such column.
+    /// The cell under `column`, trimmed; empty when the table has no such column or
+    /// the cell shows nothing (entry-format.md, Required).
     pub fn cell(&self, column: &str) -> &str {
-        self.cells.get(column).map_or("", |text| text.trim())
+        self.cells
+            .get(column)
+            .map(|text| text.trim())
+            .filter(|text| !crate::shows_nothing(text))
+            .unwrap_or("")
     }
 }
 
@@ -306,7 +311,7 @@ fn whole_word(text: &str, word: &str) -> Option<usize> {
 }
 
 fn tidy(text: &str) -> Option<String> {
-    let text = text.trim_matches(|c: char| c.is_whitespace() || matches!(c, ',' | '.' | ';' | ':'));
+    let text = text.trim_matches(|c: char| !crate::shows(c) || matches!(c, ',' | '.' | ';' | ':'));
     (!text.is_empty()).then(|| text.to_string())
 }
 

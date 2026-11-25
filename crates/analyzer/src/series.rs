@@ -44,8 +44,8 @@ pub fn read_series(text: &str) -> Result<SeriesText, Vec<String>> {
         }
     };
     let description = body.trim();
-    if description.is_empty() {
-        problems.push("the description, below the front matter, is empty".into());
+    if crate::shows_nothing(description) {
+        problems.push("the description, below the front matter, shows no text".into());
     }
     problems.extend(crate::encoded_text(&text));
     if description.len() > MAX_DESCRIPTION_BYTES {
@@ -90,7 +90,10 @@ fn title_of(yaml: &str) -> Result<String, String> {
     }
     let title = title.ok_or("the front matter needs `title: ...`")?;
     let chars = title.chars().count();
-    if chars == 0 || chars > MAX_TITLE_CHARS || title.chars().any(char::is_control) {
+    if crate::shows_nothing(&title)
+        || chars > MAX_TITLE_CHARS
+        || title.chars().any(char::is_control)
+    {
         return Err(format!(
             "a title is 1 to {MAX_TITLE_CHARS} characters on one line"
         ));

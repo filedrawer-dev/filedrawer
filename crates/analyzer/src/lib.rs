@@ -378,7 +378,7 @@ pub(crate) fn shows_nothing(text: &str) -> bool {
 
 /// Whether `c` shows: it is no space, line break, control character, invisible
 /// character or variation selector.
-fn shows(c: char) -> bool {
+pub(crate) fn shows(c: char) -> bool {
     !(c.is_whitespace() || c.is_control() || is_invisible(c) || is_selector(c))
 }
 

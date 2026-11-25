@@ -875,3 +875,101 @@ fn a_display_name_loses_its_invisible_characters_on_line_11() {
         "author: account a-91x, \u{645}\u{6cc}\u{200c}\u{646}\u{627} Ada\u{2764}\u{fe0f}"
     );
 }
+
+/// Line `index` (from 0) of an `effect` entry whose one Results row has `extra`
+/// columns holding `cells`, after the Intervals line `intervals`.
+fn line_with_cells(index: usize, intervals: &str, extra: &str, cells: &str) -> String {
+    let columns = extra.split(" | ").count();
+    let text = with_results(
+        "effect",
+        &format!(
+            "{intervals}\n\n| model | condition | estimate | ci_low | ci_high | n | {extra} |\n|---|---|---|---|---|---|{}\n| m | c | 1 | 0.5 | 1.5 | 9/9 | {cells} |",
+            "---|".repeat(columns)
+        ),
+    );
+    lines(&text)[index].clone()
+}
+
+#[test]
+fn a_unit_cell_that_shows_nothing_leaves_no_separator_on_line_4() {
+    assert_eq!(
+        line_with_cells(3, "Intervals: 95%.", "unit", "\u{1}\u{200b}"),
+        line_with_cells(3, "Intervals: 95%.", "unit", ""),
+    );
+}
+
+#[test]
+fn a_method_or_per_cell_that_shows_nothing_yields_to_the_intervals_line() {
+    let intervals = "Intervals: 90%, Wilson, per prompt.";
+    assert_eq!(
+        line_with_cells(5, intervals, "method | per", "\u{1} | \u{200b}\u{7f}"),
+        "no baseline; 90%, Wilson, per prompt"
+    );
+}
+
+#[test]
+fn a_baseline_cell_that_shows_nothing_reads_as_no_baseline() {
+    assert_eq!(
+        line_with_cells(5, "Intervals: 95%.", "baseline", "\u{1}\u{200b}"),
+        "no baseline; 95%"
+    );
+}
+
+#[test]
+fn an_intervals_method_or_per_that_shows_nothing_reads_as_unstated() {
+    assert_eq!(
+        line_with_cells(5, "Intervals: 95%, \u{200b} per \u{200b}.", "unit", "x"),
+        "no baseline; 95%"
+    );
+}
+
+#[test]
+fn a_baseline_that_shows_nothing_leaves_a_single_group_single() {
+    let row = |baseline: &str| {
+        let text = with_results(
+            "inconclusive",
+            &format!(
+                "| model | condition | baseline | estimate | ci_low | ci_high | n |\n|---|---|---|---|---|---|---|\n| m | recall | {baseline} | 0.90 | 0.85 | 0.95 | 200 |"
+            ),
+        );
+        lines(&text)[3].clone()
+    };
+    assert_eq!(row("\u{200b}"), "inconclusive: 0.90 [0.85, 0.95], n 200");
+}
+
+#[test]
+fn an_invisible_character_keeps_no_separator_on_the_intervals_line() {
+    assert_eq!(
+        line_with_cells(
+            5,
+            "Intervals: 90%, Wilson,\u{200b} per prompt\u{200b}.",
+            "unit",
+            "x"
+        ),
+        "no baseline; 90%, Wilson, per prompt"
+    );
+}
+
+proptest! {
+    #[test]
+    fn a_cell_that_shows_nothing_renders_as_an_empty_one(
+        column in prop::sample::select(vec!["unit", "baseline", "method", "per"]),
+        blank in "[ \t\u{1}\u{7f}\u{ad}\u{200b}\u{2060}\u{fe0f}\u{feff}]{0,8}",
+    ) {
+        let intervals = "Intervals: 90%, Wilson, per prompt.";
+        prop_assert_eq!(
+            card(&with_cell(intervals, column, &blank)),
+            card(&with_cell(intervals, column, "")),
+        );
+    }
+}
+
+/// An `effect` entry whose one Results row has `column` holding `cell`.
+fn with_cell(intervals: &str, column: &str, cell: &str) -> String {
+    with_results(
+        "effect",
+        &format!(
+            "{intervals}\n\n| model | condition | estimate | ci_low | ci_high | n | {column} |\n|---|---|---|---|---|---|---|\n| m | c | 1 | 0.5 | 1.5 | 9/9 | {cell} |"
+        ),
+    )
+}

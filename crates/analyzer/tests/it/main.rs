@@ -11,6 +11,7 @@ mod front_matter;
 mod links;
 mod references;
 mod results;
+mod series;
 
 /// Cargo builds only the files `main.rs` reaches, so a test file here without a `mod`
 /// line above would never run.
