@@ -8,6 +8,7 @@ PATH that note their arguments, so no real check runs. Which references count is
 of bin/checks-needed directly, which is faster."""
 
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -1156,3 +1157,83 @@ def test_another_clippy_failure_says_nothing_of_sqlx(repo):
     _, done = hook(repo, "--quick", env={"FAKE_CARGO": failing_cargo}, code=1)
 
     assert "sqlx-refresh" not in done.stdout + done.stderr
+
+
+# The parts' timings the hook writes for agent-commit-gate, which names the file.
+
+
+def timings(repo: Path, *args: str, **options) -> list[str]:
+    """The names the hook wrote to $CHECK_TIMINGS, in order, each line checked to be
+    a name and its seconds to the millisecond."""
+    out = repo.parent / "timings"
+    out.write_text("")
+    hook(
+        repo,
+        *args,
+        env={"CHECK_TIMINGS": str(out), **options.pop("env", {})},
+        **options,
+    )
+    lines = out.read_text().splitlines()
+    for line in lines:
+        assert re.fullmatch(r"[a-z-]+ \d+\.\d{3}", line), line
+    return [line.split(" ")[0] for line in lines]
+
+
+def test_the_checks_the_hook_runs_never_see_check_timings(repo):
+    # Its own tests run hooks that would write their fakes' timings there.
+    fake = FAKE + 'echo "uvx saw ${CHECK_TIMINGS-nothing}" >> "$FAKE_LOG"\n'
+    change(repo, "bin/other")
+    assert timings(repo, env={"FAKE_UVX": fake}) == ["bin-tests"]
+    assert "uvx saw nothing" in (repo.parent / "calls").read_text()
+
+
+def test_a_failed_test_build_shows_its_output_and_runs_no_tests(repo):
+    failing = (
+        FAKE
+        + 'case "$*" in *--no-run*) echo "error[E0425]: broken"; exit 101 ;; esac\n'
+    )
+    change(repo, "crates/app/src/lib.rs", "pub fn f() {}\n")
+    _, done = hook(repo, env={"FAKE_CARGO": failing}, code=1)
+    assert "error[E0425]: broken" in done.stdout + done.stderr
+    calls = (repo.parent / "calls").read_text().splitlines()
+    assert "cargo nextest run --cargo-quiet" not in calls, calls
+
+
+def test_the_hook_writes_each_check_it_runs_with_its_seconds(repo):
+    change(repo, "crates/app/src/lib.rs", "pub fn f() {}\n")
+    assert timings(repo) == [
+        "bin-tests",
+        "nextest-build",
+        "nextest",
+        "doctest",
+        "clippy",
+    ]
+
+
+def test_a_bin_only_change_times_only_bin_tests(repo):
+    change(repo, "bin/other")
+    assert timings(repo) == ["bin-tests"]
+
+
+def test_the_commit_checks_rules_are_timed_too(repo):
+    change(repo, "bin/other")
+    assert timings(repo, "--quick", "--rules") == ["rules"]
+
+
+def test_a_docs_change_times_nothing(repo):
+    change(repo, "docs/notes.md")
+    assert timings(repo) == []
+
+
+def test_nextest_builds_before_it_runs(repo):
+    change(repo, "crates/app/src/lib.rs", "pub fn f() {}\n")
+    run(repo)
+    nextest = [
+        call
+        for call in (repo.parent / "calls").read_text().splitlines()
+        if call.startswith("cargo nextest run")
+    ]
+    assert nextest == [
+        "cargo nextest run --cargo-quiet --no-run",
+        "cargo nextest run --cargo-quiet",
+    ]

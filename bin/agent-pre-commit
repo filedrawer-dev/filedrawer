@@ -15,7 +15,9 @@
 # checked by its own version. The Rust checks wait for Cargo.toml, and share the repo's
 # target/ so dependencies build once. The tests run under cargo-nextest, which prints
 # only the failures and a summary (.config/nextest.toml); it skips doctests, so cargo
-# test --doc runs those.
+# test --doc runs those. nextest builds first, apart from the run, and each check's
+# seconds go to the file $CHECK_TIMINGS names, when agent-commit-gate names one: the
+# gate shows them in its pass line and keeps them in .git/agent-check-timings.tsv.
 # Each check runs only when the change needs it: the Rust checks for a build input,
 # bin/tests for what those tests read, and of bin/tests only the test files that reach
 # the change, as bin/checks-needed --bin-tests picks them, else the whole suite. The
@@ -122,15 +124,36 @@ queue_first() {
 cd "$tree"
 # The hook's git variables, and CHECK_BASE, name the repo being committed; no check
 # should reach it.
-unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_OBJECT_DIRECTORY GIT_PREFIX CHECK_BASE CHECK_QUEUE_EXIT
+# The timings file is this run's alone: a check it starts, such as the bin tests that
+# run this hook on fakes, would write its own there.
+timings_file=${CHECK_TIMINGS:-}
+unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_OBJECT_DIRECTORY GIT_PREFIX CHECK_BASE CHECK_QUEUE_EXIT CHECK_TIMINGS
 failed=0
+# Run CMD, then write its seconds, to the millisecond, as `NAME SECONDS` to the file
+# CHECK_TIMINGS names, which agent-commit-gate hands each check, shows in its pass line
+# and keeps on its record (`agent-commit-gate -h`); without it, just run CMD.
+timed() {
+  timed_name=$1
+  shift
+  timed_start=$(date +%s%N)
+  timed_status=0
+  "$@" || timed_status=$?
+  if [ -n "$timings_file" ]; then
+    timed_ms=$((($(date +%s%N) - timed_start) / 1000000))
+    printf '%s %d.%03d\n' "$timed_name" $((timed_ms / 1000)) $((timed_ms % 1000)) \
+      >>"$timings_file" || :
+  fi
+  return "$timed_status"
+}
+# shellcheck disable=SC2329  # timed runs it
+skills_check() { (cd "$repo" && "$tree/bin/skills" sync --check --root "$tree"); }
 # The skills' record against origin's tags, in both modes and before any queue exit,
 # since it needs no build: its failure ends the run at once rather than after a queued
 # build. It runs from the repo, whose tags and origin/main it fetches, on the staged
 # copy. Exit 2 means it couldn't check, as a tree whose bin/skills predates --check
 # answers, so it warns and goes on.
 if needs skills && [ -x bin/skills ]; then
-  if (cd "$repo" && "$tree/bin/skills" sync --check --root "$tree") >"$logs/skills" 2>&1; then
+  if timed skills skills_check >"$logs/skills" 2>&1; then
     :
   else
     status=$?
@@ -156,21 +179,21 @@ if [ -n "$rules" ] && [ -x bin/pytest ]; then
   done
   if [ -n "$rule_tests" ]; then
     # shellcheck disable=SC2086  # paths without spaces, one word each
-    bin/pytest -n0 $rule_tests >"$logs/rules" 2>&1 || { cat "$logs/rules"; failed=1; }
+    timed rules bin/pytest -n0 $rule_tests >"$logs/rules" 2>&1 || { cat "$logs/rules"; failed=1; }
   fi
 fi
 # Outside the queue too, and in milliseconds: the staged tests/it folders and their
 # main.rs. A refusal here ends the run, since the clippy that would follow passes the
 # file anyway: a file with no `mod` line compiles nowhere.
 if [ -n "$mods" ] && needs test-mods && [ -x bin/test-modules ]; then
-  bin/test-modules . || exit 1
+  timed test-mods bin/test-modules . || exit 1
 fi
 # At a commit, the bin tests that run a real Caddy (conftest.py marks them real_caddy),
 # when what they run changed. Without a network bin/caddy can't fetch Caddy, and they
 # skip, which passes; the full check's bin-tests run holds them.
 if [ -n "$caddy" ] && needs caddy && [ -x bin/pytest ]; then
   queue_first caddy
-  bin/pytest -n0 -m real_caddy bin/tests >"$logs/caddy" 2>&1 || { cat "$logs/caddy"; failed=1; }
+  timed caddy bin/pytest -n0 -m real_caddy bin/tests >"$logs/caddy" 2>&1 || { cat "$logs/caddy"; failed=1; }
 fi
 if [ -z "$quick" ] && needs bin-tests; then
   queue_first bin-tests
@@ -182,7 +205,7 @@ if [ -z "$quick" ] && needs bin-tests; then
     bin_tests=$(cat "$logs/bin-tests") || bin_tests=bin/tests
   fi
   # shellcheck disable=SC2086  # paths without spaces, one word each
-  bin/pytest $bin_tests >"$logs/pytest" 2>&1 || { cat "$logs/pytest"; failed=1; }
+  timed bin-tests bin/pytest $bin_tests >"$logs/pytest" 2>&1 || { cat "$logs/pytest"; failed=1; }
 fi
 if [ -f Cargo.toml ] && needs rust; then
   queue_first rust
@@ -192,10 +215,16 @@ if [ -f Cargo.toml ] && needs rust; then
       echo "COMMIT REFUSED: cargo-nextest is missing; install it with: cargo install cargo-nextest --locked" >&2
       exit 1
     fi
-    cargo nextest run --cargo-quiet >"$logs/test" 2>&1 || { cat "$logs/test"; failed=1; }
-    cargo test --doc --quiet >"$logs/doc" 2>&1 || { cat "$logs/doc"; failed=1; }
+    # Built first, apart, so the timings tell compiling from running.
+    if timed nextest-build cargo nextest run --cargo-quiet --no-run >"$logs/build" 2>&1; then
+      timed nextest cargo nextest run --cargo-quiet >"$logs/test" 2>&1 || { cat "$logs/test"; failed=1; }
+    else
+      cat "$logs/build"
+      failed=1
+    fi
+    timed doctest cargo test --doc --quiet >"$logs/doc" 2>&1 || { cat "$logs/doc"; failed=1; }
   fi
-  cargo clippy --quiet --all-targets -- -D warnings >"$logs/clippy" 2>&1 || { cat "$logs/clippy"; failed=1; }
+  timed clippy cargo clippy --quiet --all-targets -- -D warnings >"$logs/clippy" 2>&1 || { cat "$logs/clippy"; failed=1; }
   # sqlx's own message names `cargo sqlx prepare`, which skips the database rebuild
   # this repo's refresh does. Its online and SQLX_OFFLINE messages both end so.
   if grep -q 'to update the query cache' "$logs/clippy"; then
@@ -204,7 +233,7 @@ if [ -f Cargo.toml ] && needs rust; then
   # At a commit, the one test that a new route, unnamed for agents and unlisted in
   # NOT_FOR_AGENTS, fails; the full check's nextest runs it with the rest.
   if [ -n "$routes" ] && needs routes && [ -f crates/server/Cargo.toml ]; then
-    cargo nextest run --cargo-quiet -p filedrawer-server \
+    timed routes cargo nextest run --cargo-quiet -p filedrawer-server \
       -E 'test(=skill::the_documents_name_every_route_meant_for_agents)' >"$logs/routes" 2>&1 || { cat "$logs/routes"; failed=1; }
   fi
 fi
