@@ -1,0 +1,31 @@
+#!/bin/sh
+# Whether a commit here will wait in heavy's queue: exit 0 if so, 1 if not.
+# llm-toolbox's agent-commit-gate runs it, as .githooks/commit-needs-queue, before an
+# agent's `git commit`, and refuses a foreground commit it says yes to, since the Bash
+# tool kills a call at its time limit and a queued check can wait minutes
+# (`agent-commit-gate -h`).
+# It asks bin/checks-needed about every path that differs from $CHECK_BASE, which the
+# gate sets as the commit's check would get it, staged or not, untracked ones
+# included, since the command that commits may stage them first. With no CHECK_BASE,
+# no commit known to pass, every check runs, so it says yes. The
+# commit check waits in the queue for clippy (rust) and the real-Caddy tests (caddy),
+# and every check runs, so clippy too, for a change to the check rules themselves.
+# Anything going wrong answers no, so it never blocks a commit by mistake.
+[ -n "${CHECK_BASE:-}" ] || exit 0
+top=$(git rev-parse --show-toplevel 2>/dev/null) || exit 1
+cd "$top" || exit 1
+paths=$(mktemp) || exit 1
+needed=$(mktemp) || exit 1
+trap 'rm -f "$paths" "$needed"' EXIT
+{
+  git diff -z --name-only --no-renames "$CHECK_BASE" -- &&
+    git ls-files -z --others --exclude-standard
+} >"$paths" 2>/dev/null || exit 1
+[ -s "$paths" ] || exit 1
+if tr '\0' '\n' <"$paths" |
+  grep -qxE 'bin/(checks-needed|agent-pre-commit|agent-quick-check|agent-commit-check)'; then
+  exit 0
+fi
+bin/checks-needed . <"$paths" >"$needed" 2>/dev/null || exit 1
+grep -qE '^(rust|caddy) ' "$needed" && exit 0
+exit 1

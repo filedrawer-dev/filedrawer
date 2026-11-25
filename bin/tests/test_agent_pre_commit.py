@@ -156,6 +156,7 @@ def template(tmp_path_factory) -> Path:
         "agent-quick-check",
         "agent-commit-check",
         "checks-needed",
+        "commit-needs-queue",
         "pytest",
         "test-modules",
     ):
@@ -1252,6 +1253,8 @@ def test_nextest_builds_before_it_runs(repo):
         "cargo nextest run --cargo-quiet --no-run",
         "cargo nextest run --cargo-quiet",
     ]
+
+
 # The checks run in one folder per worktree, which each run brings to what's staged, so
 # cargo finds the files it built from where they were (#136). It lies in $TMPDIR, out
 # of the repo, so no tool that searches parent folders for its settings (sqlx's .env,
@@ -1449,3 +1452,78 @@ def test_a_check_waits_for_another_check_of_the_worktree(repo):
     assert waited and calls_while_held == ""
     assert check.returncode == 0, out + said + err
     assert "cargo clippy" in calls.read_text()
+
+
+# bin/commit-needs-queue tells agent-commit-gate's PreToolUse hook whether a commit's
+# check will wait in heavy's queue (exit 0) or not (exit 1), from what differs from
+# HEAD, staged or not, since the same command may stage it first.
+
+
+def will_queue(repo: Path, base: str | None = "HEAD") -> int:
+    """bin/commit-needs-queue's answer, with CHECK_BASE set to `base` as `git
+    rev-parse` gives it (None: unset), as agent-commit-gate hands it the check's."""
+    env = {k: v for k, v in os.environ.items() if k != "CHECK_BASE"}
+    if base is not None:
+        env["CHECK_BASE"] = git(repo, "rev-parse", base)
+    return subprocess.run(
+        [str(repo / "bin/commit-needs-queue")],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    ).returncode
+
+
+@pytest.mark.parametrize(
+    "path, code",
+    [
+        ("docs/notes.md", 1),
+        ("bin/other", 1),
+        ("crates/app/src/lib.rs", 0),
+        ("ops/remote/caddy.sh", 0),
+        ("bin/checks-needed", 0),
+        ("bin/agent-pre-commit", 0),
+    ],
+)
+def test_commit_needs_queue_says_whether_the_commit_check_waits(repo, path, code):
+    # A script the template copied keeps working, with a line added.
+    before = (repo / path).read_text() if (repo / path).exists() else ""
+    change(repo, path, before + "# changed\n")
+    assert will_queue(repo) == code
+
+
+def test_commit_needs_queue_counts_what_isnt_staged_yet(repo):
+    (repo / "crates/app/src/lib.rs").write_text("pub fn g() {}\n")
+    assert will_queue(repo) == 0
+
+
+def test_commit_needs_queue_counts_a_new_file_not_yet_added(repo):
+    (repo / "crates/app/src/new.rs").write_text("pub fn h() {}\n")
+    assert will_queue(repo) == 0
+
+
+def test_commit_needs_queue_with_nothing_changed_says_no(repo):
+    assert will_queue(repo) == 1
+
+
+def test_commit_needs_queue_without_a_base_says_yes(repo):
+    # With no commit known to pass, every check runs, clippy included.
+    change(repo, "docs/notes.md")
+    assert will_queue(repo, base=None) == 0
+
+
+def test_commit_needs_queue_counts_the_changes_since_the_base(repo):
+    # A crate change committed after the base still runs clippy.
+    change(repo, "crates/app/src/lib.rs", "pub fn f() {}\n")
+    commit(repo)
+    change(repo, "docs/notes.md")
+    assert will_queue(repo, base="HEAD~1") == 0
+    assert will_queue(repo, base="HEAD") == 1
+
+
+def test_commit_needs_queue_says_no_when_checks_needed_fails(repo):
+    (repo / "bin/checks-needed").write_text("#!/bin/sh\nexit 3\n")
+    commit(repo)
+    change(repo, "crates/app/src/lib.rs", "pub fn f() {}\n")
+    assert will_queue(repo) == 1

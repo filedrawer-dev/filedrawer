@@ -157,6 +157,7 @@ The Rust checks run for a build input: anything in `crates/`, the Cargo files, `
 Outside `bin/` and `ops/`, it runs only the test files that reach the change, so an analyzer change runs three of them, not the whole suite (`bin/checks-needed -h`, `--bin-tests`).
 A commit of other docs runs neither, and doesn't wait in heavy's queue either.
 Each check asks `agent-commit-gate` for a place there only as it starts (`$CHECK_QUEUE_EXIT`, `agent-commit-gate -h`), so a commit that needs none passes in seconds.
+A commit whose check will wait there (clippy, the real-Caddy tests, or a change to the check rules, as `bin/commit-needs-queue` judges) is refused as a foreground Bash call: run it as a background call, `bgrun --wait -o LOG -- git commit ...`.
 `bin/checks-needed` finds the embeds and reads in the sources on each commit, so a new `include_str!` needs no list kept by hand; its `-h` gives the rules.
 Every check runs without `CHECK_BASE` (CI, an agent without llm-toolbox, or no commit known to pass), when nothing differs from it, when the change touches those rules, when git can't diff against it, and when `bin/checks-needed` is missing, fails or runs past 60 s.
 A small fix commit gets clippy and the skills check through `bin/agent-quick-check`.
