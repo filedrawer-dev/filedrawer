@@ -148,8 +148,8 @@ def main(argv: list[str] | None = None) -> int:
     pid = started.stdout.strip().splitlines()[-1]
     print(
         f"warm build: PID {pid}, log {log}; `waitone --pid {pid}` waits for it, "
-        "as the first `heavy --quick` test run should: otherwise that run builds first and "
-        "overruns --quick's 60 s"
+        "as the first `heavy --few-seconds` test run should: otherwise that run builds "
+        "first and overruns --few-seconds' 60 s"
     )
     return 0
 
