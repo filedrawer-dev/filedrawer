@@ -42,7 +42,6 @@ EXEMPT = {
         "ci.yml",
         'if [ -z "$FILEDRAWER_STAGING_SCREEN_API_KEY" ]; then',
     ): "one ops/smoke-staging call and what its exit status means",
-    ("mutants.yml", "mkdir list"): "the closest to logic; moving to bin/ is #105",
     (
         "mutants.yml",
         "ulimit -d 3145728",

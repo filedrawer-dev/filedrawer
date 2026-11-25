@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+"""List the mutants a run of .github/workflows/mutants.yml tests: its setup job's
+list step. Run it from the repo root.
+
+    bin/mutants-list OUT --daily true|false [--base BASE] [--summary FILE]
+
+Makes the folder OUT and writes `cargo mutants --list`, one mutant a line, to
+OUT/all-mutants.txt: every mutant the shards test, which the summary job counts the
+shards' lists against. A daily run (`--daily true`, the workflow's $DAILY as it is)
+needs BASE, bin/mutants-base's commit, and lists only the mutants in the lines
+changed since then: it writes `git diff BASE HEAD` to OUT/in-diff.patch and passes it
+to cargo-mutants as --in-diff. The diff has no rename detection, so a moved file's
+lines all count as changed, since cargo-mutants reads only a diff's added lines. A
+diff that is empty or changes no mutant's lines lists none, and cargo-mutants exits 0.
+A full run takes no BASE; an empty one, as the workflow passes when its base step
+was skipped, counts as none.
+
+Prints, for $GITHUB_OUTPUT, `mutants=N` and `shards=JSON`, the shard matrix
+bin/mutants-shards sizes, and says the same in words on stderr, for the run's log.
+On a daily run, --summary appends the count to FILE, the run's summary page.
+
+Exit status: 0 listed; 1 OUT exists, or git, cargo-mutants or bin/mutants-shards
+failed, and nothing is printed for $GITHUB_OUTPUT; 2 a usage error.
+"""
+
+import argparse
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+SHARDS = Path(__file__).resolve().with_name("mutants-shards")
+
+
+class Failed(Exception):
+    pass
+
+
+def run(argv: list[str], what: str, stdout=subprocess.PIPE) -> str:
+    """Run a command whose stderr goes to the run's log as it is."""
+    done = subprocess.run(argv, stdout=stdout, text=True, check=False)
+    if done.returncode != 0:
+        raise Failed(f"{what} exited {done.returncode}.")
+    return done.stdout or ""
+
+
+def parse(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument("out", type=Path, help="the folder to make for the lists")
+    parser.add_argument(
+        "--daily",
+        required=True,
+        choices=["true", "false"],
+        help="list only the lines changed since BASE",
+    )
+    parser.add_argument("--base", default="", help="a daily run's base commit")
+    parser.add_argument(
+        "--summary", type=Path, help="a daily run appends its count here"
+    )
+    args = parser.parse_args(argv)
+    args.daily = args.daily == "true"
+    if args.daily and not args.base:
+        parser.error("a daily run needs --base")
+    if not args.daily and args.base:
+        parser.error("a full run takes no --base")
+    return args
+
+
+def list_mutants(args: argparse.Namespace) -> tuple[int, str]:
+    """Write the lists; return the count and the shard matrix."""
+    try:
+        args.out.mkdir()
+    except OSError as error:
+        raise Failed(f"can't make {args.out}: {error.strerror}") from error
+    in_diff = []
+    if args.daily:
+        patch = args.out / "in-diff.patch"
+        diff = ["git", "diff", "--no-renames", "--no-ext-diff", args.base, "HEAD"]
+        with patch.open("w") as out:
+            run(diff, f"git diff against {args.base}", stdout=out)
+        in_diff = ["--in-diff", str(patch)]
+    listing = args.out / "all-mutants.txt"
+    with listing.open("w") as out:
+        run(
+            ["cargo", "mutants", "--list", *in_diff], "cargo mutants --list", stdout=out
+        )
+    mutants = len(listing.read_text().splitlines())
+    shards = run(
+        [str(SHARDS), str(listing), *(["--daily"] if args.daily else [])],
+        "bin/mutants-shards",
+    ).strip()
+    return mutants, shards
+
+
+def main() -> int:
+    args = parse(sys.argv[1:])
+    try:
+        mutants, shards = list_mutants(args)
+    except Failed as error:
+        print(f"mutants-list: {error}", file=sys.stderr)
+        return 1
+    count = len(json.loads(shards))
+    where = f"in the lines changed since {args.base}" if args.daily else "in all"
+    # stdout goes to $GITHUB_OUTPUT, so the run's log shows only stderr.
+    print(f"{mutants} mutants {where}, in {count} shards.", file=sys.stderr)
+    if args.daily and args.summary:
+        with args.summary.open("a") as summary:
+            summary.write(
+                f"{mutants} mutants in the lines changed since {args.base}.\n"
+            )
+    print(f"mutants={mutants}")
+    print(f"shards={shards}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -90,31 +90,13 @@ jobs:
           tool: cargo-mutants@27.1.0
           fallback: none
       # The list is every mutant the shards test, which the summary job counts the
-      # shards' lists against. cargo-mutants lists none for a diff that is empty or
-      # changes no mutant's lines, and exits 0.
+      # shards' lists against (bin/mutants-list says what it writes). BASE is empty on
+      # a full run, whose base step is skipped.
       - name: List the mutants
         id: list
         env:
           BASE: ${{ steps.base.outputs.base }}
-        run: |
-          mkdir list
-          in_diff=()
-          daily=()
-          if [ "$DAILY" = true ]; then
-            daily=(--daily)
-            # Without rename detection, a moved file's lines all count as changed:
-            # cargo-mutants reads only a diff's added lines.
-            git diff --no-renames --no-ext-diff "$BASE" HEAD > list/in-diff.patch
-            in_diff=(--in-diff list/in-diff.patch)
-          fi
-          cargo mutants --list "${in_diff[@]}" > list/all-mutants.txt
-          mutants=$(wc -l < list/all-mutants.txt)
-          if [ "$DAILY" = true ]; then
-            echo "$mutants mutants in the lines changed since $BASE." >> "$GITHUB_STEP_SUMMARY"
-          fi
-          echo "mutants=$mutants" >> "$GITHUB_OUTPUT"
-          shards=$(bin/mutants-shards list/all-mutants.txt "${daily[@]}")
-          echo "shards=$shards" >> "$GITHUB_OUTPUT"
+        run: bin/mutants-list list --daily "$DAILY" --base "$BASE" --summary "$GITHUB_STEP_SUMMARY" >> "$GITHUB_OUTPUT"
       - if: steps.list.outputs.mutants != '0'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
