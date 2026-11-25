@@ -166,6 +166,7 @@ These sections have fixed names, and the server reads them.
 Others, such as `## Method` or `## Analysis`, are free.
 
 - `## Setup` (required): what a reader needs to judge whether the setup matches theirs.
+  A sentence for each item below is enough, as in the [Example](#example).
   Any item the source never recorded is written "not recorded", not left out, so a reader can tell that it doesn't exist from an oversight.
   Setup shared by a family of entries can live in their series' description; the entry's Setup then says "see series" and adds what is its own.
   - The task and conditions.

@@ -334,7 +334,12 @@ Links on other hosts, wandb.ai among them, aren't fetched, and draw a warning th
 
 ### Rules for what you write
 
-- Make every effort to recompute each result from the raw data.
+- Size the entry to the result.
+  One headline result takes an entry the size of the [example](#example-entry), about 2 KB, even when the repo holds a longer write-up; link the write-up at the pinned commit.
+  More models and conditions add rows to the Results table.
+  Go longer when a reader needs more to judge or rerun the result, such as a second table, a method section or more caveats.
+- Recompute every number the entry quotes from the raw data.
+  A number the entry leaves out needs no recount.
   Where the repo's own notes disagree with the data, say so in a caveat.
 - Choose `outcome` honestly, and put the headline row first.
 - Row claims follow this default unless the entry states another rule.
@@ -353,7 +358,9 @@ Links on other hosts, wandb.ai among them, aren't fetched, and draw a warning th
 - Publish the stored data to Zenodo and link it in `data`, with its SHA-256, so a reader can rerun the analysis without calling models again.
 - In `## Reproduce`, give the exact commands, saying which re-analyze stored data and which call models again, at what cost.
   "Command not recorded" is an acceptable answer.
-- In `## Setup`, write "not recorded" for anything the source never recorded, rather than leaving it out.
+- In `## Setup`, give each item of the format's list a sentence, as the example does.
+  For an item the source never recorded, write "not recorded" rather than leaving it out.
+  When the `code` link holds a prompt longer than a few lines, give its path and SHA-256 and quote only the lines that differ between conditions.
 - Name a file in the body only when a reader can open it: attached, or behind a pinned link.
   For notes you can't attach, quote what the entry needs from them; a sentence saying a file was left out is fine.
   The server warns about files that code spans name and the attachment set lacks, unless a live `code` link may hold them.
@@ -514,6 +521,8 @@ With the File Drawer repository and Rust, `cargo run -q --bin entry-check -- FIL
 ### A family of entries
 
 Submit entries from one run or one repo together, as a batch.
+Write one entry first and show it to your human in your reply, saying that the rest will take its shape; then write the rest without waiting for an answer.
+Put the Setup the entries share in a series ([A series](#a-series)), so each entry's `## Setup` holds only its own part.
 Before a batch's first submit, write the line step 2 of [Steps](#steps) gives, once for the batch, naming each entry:
 
 ```sh

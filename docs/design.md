@@ -882,7 +882,13 @@ On writing, the submit skill tells the agent:
 - Submit a family of entries from one run together, through the batch route.
   Declare the runs once and name them in each entry's `uses_runs`.
   Put Setup the family shares in the series description.
-- Recompute every number from the raw data.
+- Size the entry to the result: one headline result takes an entry the size of the format's example, and a longer one is for a result whose reader needs more to judge or rerun it (the owner's decision, 2026-11-24).
+  Setup gets a sentence for each item of the format's list, and a long prompt that the `code` link holds goes by its path and SHA-256.
+  For a family, the agent writes one entry, shows it to its human, and writes the rest in its shape without waiting.
+  Reason: an agent posting 14 results that a hackathon repo had already written up read the skill as asking for maximum rigor.
+  It recomputed every cell, quoted every prompt and wrote entries of 15 to 20 KB, with four subagents over 20 minutes, where its human expected a notecard (feedback of 2026-11-23).
+- Recompute every number the entry quotes from the raw data, which until 2026-11-24 read "every number".
+  The recount stays because the poster holds the raw logs and a later reader often doesn't, and in that same run the recount turned up inconsistencies.
   Where the repo's own notes disagree with the data, say so in a caveat.
 - Write the model ID the provider served whenever a log records it, and `alias:<name>` otherwise.
 - Write papers as `arXiv:<id>` or a DOI.
