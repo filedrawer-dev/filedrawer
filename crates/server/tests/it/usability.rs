@@ -7,9 +7,17 @@ use crate::common;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output};
 
-const RUN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../ops/usability-run");
-const REMOVE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../ops/remove-entries");
-const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../ops/smoke-fixture.md");
+fn run_script() -> PathBuf {
+    common::crate_path("../../ops/usability-run")
+}
+
+fn remove_script() -> PathBuf {
+    common::crate_path("../../ops/remove-entries")
+}
+
+fn fixture() -> PathBuf {
+    common::crate_path("../../ops/smoke-fixture.md")
+}
 
 struct Server {
     child: Child,
@@ -65,7 +73,7 @@ fn serve() -> Server {
     server
 }
 
-fn script(path: &str, server: &Server, args: &[&str]) -> Output {
+fn script(path: &Path, server: &Server, args: &[&str]) -> Output {
     Command::new(path)
         .args(args)
         .env_remove("BASH_ENV")
@@ -89,7 +97,7 @@ fn text(output: &Output) -> String {
 fn account(server: &Server, name: &str) -> serde_json::Value {
     let state = server.dir.path().join(format!("{name}.json"));
     let made = script(
-        RUN,
+        &run_script(),
         server,
         &[
             "account",
@@ -144,7 +152,7 @@ fn curl(
 }
 
 fn submit(server: &Server, token: &str) -> String {
-    let (status, body) = curl(server, token, "POST", "/entries", Some(Path::new(FIXTURE)));
+    let (status, body) = curl(server, token, "POST", "/entries", Some(fixture().as_path()));
     assert_eq!(status, 201, "{body}");
     body.lines()
         .find_map(|line| line.strip_prefix("id: "))
@@ -160,7 +168,7 @@ fn an_account_is_made_through_signup_and_mail_and_deleted_with_its_held_entries(
     let id = submit(&server, token);
     let state = server.dir.path().join("jason1.json");
     let deleted = script(
-        RUN,
+        &run_script(),
         &server,
         &[
             "delete",
@@ -204,7 +212,7 @@ fn remove_entries_takes_down_each_listed_entry_as_the_admin() {
     )
     .unwrap();
     let remove = |file: &Path| {
-        Command::new(REMOVE)
+        Command::new(remove_script())
             .arg(file)
             .args(["--base", &server.url])
             .env_remove("FILEDRAWER_STAGING_KEY")
@@ -237,7 +245,7 @@ fn remove_entries_takes_down_each_listed_entry_as_the_admin() {
 fn production_is_refused() {
     let server = serve();
     let refused = script(
-        RUN,
+        &run_script(),
         &server,
         &[
             "account",
@@ -275,7 +283,7 @@ curl -sSf -o /dev/null -X POST -H "Authorization: Bearer $FILEDRAWER_TOKEN" \
 printf '%s %s %s\n' "$public" "$held" "$FILEDRAWER_TOKEN" > {ids}
 printf '%s\n' "$@" >> {ids}
 "#,
-        fixture = FIXTURE,
+        fixture = fixture().display(),
         ids = ids.display()
     );
     let path = bin.join("drive-agent");
@@ -297,7 +305,7 @@ fn a_token_carrying_run_deletes_its_account_and_lists_the_entries_left_public() 
     )
     .unwrap();
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
-    let ran = Command::new(RUN)
+    let ran = Command::new(run_script())
         .args([scenario.to_str().unwrap(), "claude", "jason3"])
         .args(["--base", &server.url])
         .env_remove("BASH_ENV")

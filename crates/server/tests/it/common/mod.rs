@@ -11,6 +11,8 @@ pub mod series;
 pub mod skills;
 pub mod through_caddy;
 
+use std::path::PathBuf;
+
 use axum::Router;
 use axum::body::Body;
 use axum::http::{HeaderMap, Request, StatusCode};
@@ -775,4 +777,19 @@ pub async fn owner(app: &TestApp) -> String {
         .await
         .unwrap();
     cookie
+}
+
+/// `relative`, a path from this crate's folder, in the tree this test runs in. nextest
+/// and cargo set `CARGO_MANIFEST_DIR` at run time to the crate of the workspace they
+/// run in, and the working directory to it too; the value compiled in names the tree
+/// the binary was built in, such as the commit check's copy (main.rs,
+/// `no_test_finds_files_through_the_tree_it_was_built_in`).
+/// Callers write the whole path, up from the crate to the repo's folder and down to the
+/// file, since bin/checks-needed reads such literals to learn which files outside
+/// crates/ the tests read.
+pub fn crate_path(relative: &str) -> PathBuf {
+    std::env::var_os("CARGO_MANIFEST_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::current_dir().unwrap())
+        .join(relative)
 }

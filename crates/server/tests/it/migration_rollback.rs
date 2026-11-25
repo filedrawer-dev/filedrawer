@@ -14,7 +14,7 @@ const LAST_BEFORE_THE_RULE: u32 = 31;
 const SIDECAR: &str = include_str!("../../migration-rollback.txt");
 
 fn migration_files() -> BTreeMap<u32, (String, String)> {
-    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/migrations");
+    let dir = crate::common::crate_path("migrations");
     std::fs::read_dir(dir)
         .unwrap()
         .map(|entry| entry.unwrap().path())

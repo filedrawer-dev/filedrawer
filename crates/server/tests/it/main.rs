@@ -96,3 +96,37 @@ fn every_file_here_is_a_module() {
         "tests/it/main.rs has no `mod` line for {missing:?}"
     );
 }
+
+/// A test that reads the repo's files finds them through `common::crate_path`, the tree
+/// it runs in. `CARGO_MANIFEST_DIR` read at compile time names the tree it was built
+/// in: the commit check builds a copy of what's staged into the worktree's own target/,
+/// so a later run in the worktree can read that copy and pass on files it never saw.
+#[test]
+fn no_test_finds_files_through_the_tree_it_was_built_in() {
+    // Built with concat!, so this file doesn't match itself.
+    let pattern = concat!("env!(\"CARGO_", "MANIFEST_DIR\")");
+    // It copies the sources the binary was built from, on purpose.
+    let allowed = ["../cli/tests/it/stale.rs"];
+    let mut found = Vec::new();
+    let mut dirs = vec![std::path::PathBuf::from("..")];
+    while let Some(dir) = dirs.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            let in_tests = path.components().any(|part| part.as_os_str() == "tests");
+            if path.is_dir() {
+                dirs.push(path);
+            } else if in_tests
+                && path.extension().is_some_and(|ext| ext == "rs")
+                && !allowed.iter().any(|a| path == std::path::Path::new(a))
+                && std::fs::read_to_string(&path).unwrap().contains(pattern)
+            {
+                found.push(path.display().to_string());
+            }
+        }
+    }
+    found.sort();
+    assert!(
+        found.is_empty(),
+        "these read files through the tree they were built in; use common::crate_path: {found:?}"
+    );
+}

@@ -9,8 +9,6 @@ use crate::common::listening::free_port;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output};
 
-const SCRIPT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../ops/smoke-staging");
-
 /// The skills' tags as this build has them. Not a static: nextest runs each test in a
 /// process of its own, so a static would be made per test anyway, and never dropped.
 fn true_skill_tags() -> tempfile::TempDir {
@@ -151,7 +149,7 @@ fn server_and_token(name: &str) -> (Server, String) {
 fn script(args: &[&str], key: Option<&str>) -> Script {
     let tags = true_skill_tags();
     let cargo = failing_cargo_dir();
-    let mut command = Command::new(SCRIPT);
+    let mut command = Command::new(crate::common::crate_path("../../ops/smoke-staging"));
     command
         .args(args)
         .env_remove("BASH_ENV")
@@ -398,10 +396,8 @@ fn eval_samples_field_test_entries_without_printing_them() {
     let (server, token) = serve_attachments("eval-field");
     let fake = scratch_dir("eval-field-entries");
     let fake = fake.path();
-    let fixture = std::fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/smoke-fixture.md"),
-    )
-    .unwrap();
+    let fixture =
+        std::fs::read_to_string(crate::common::crate_path("../../ops/smoke-fixture.md")).unwrap();
     let marked = fixture.replace("## Caveats", "SECRET-FIELD-TEST-MARKER\n\n## Caveats");
     // Only a repo's latest round is sampled, and only its entries: an older round's
     // copy, notes with no front matter and a series stay unsent.
@@ -462,7 +458,7 @@ fn eval_samples_field_test_entries_without_printing_them() {
 
 #[test]
 fn every_eval_case_is_an_entry_the_analyzer_accepts() {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/screen-eval");
+    let dir = crate::common::crate_path("../../ops/screen-eval");
     let mut seen = 0;
     for expected in ["public", "rejected", "review"] {
         for file in std::fs::read_dir(dir.join(expected)).unwrap() {
@@ -623,10 +619,8 @@ fn sha256(bytes: &[u8]) -> String {
 fn field_test_box(name: &str) -> Scratch {
     let scratch = Scratch::new(&format!("smoke-{name}"), "field-test");
     let dir = &*scratch;
-    let fixture = std::fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/smoke-fixture.md"),
-    )
-    .unwrap();
+    let fixture =
+        std::fs::read_to_string(crate::common::crate_path("../../ops/smoke-fixture.md")).unwrap();
     let marked = fixture.replace("## Caveats", "SECRET-FIELD-TEST-MARKER\n\n## Caveats");
     let hiding = hiding_file();
     let plain = plain_file();
@@ -849,14 +843,10 @@ fn eval_resumes_a_stopped_run_without_sending_anything_twice() {
     let cases = ["public", "rejected", "review"]
         .iter()
         .map(|expected| {
-            std::fs::read_dir(
-                Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../ops/screen-eval")
-                    .join(expected),
-            )
-            .unwrap()
-            .filter(|file| file.as_ref().unwrap().path().extension() == Some("md".as_ref()))
-            .count()
+            std::fs::read_dir(crate::common::crate_path("../../ops/screen-eval").join(expected))
+                .unwrap()
+                .filter(|file| file.as_ref().unwrap().path().extension() == Some("md".as_ref()))
+                .count()
         })
         .sum::<usize>();
     assert_eq!(after.len(), cases, "each case sent once: {after:?}");
@@ -996,10 +986,8 @@ fn curl_entry(server: &Server, token: &str, id: &str) -> String {
 fn family_box(name: &str) -> Scratch {
     let scratch = Scratch::new(&format!("smoke-{name}"), "field-test");
     let dir = &*scratch;
-    let fixture = std::fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/smoke-fixture.md"),
-    )
-    .unwrap();
+    let fixture =
+        std::fs::read_to_string(crate::common::crate_path("../../ops/smoke-fixture.md")).unwrap();
     let marked = fixture.replace("## Caveats", "SECRET-FIELD-TEST-MARKER\n\n## Caveats");
     let with = |fields: &str| marked.replacen("---\n", &format!("---\n{fields}"), 1);
     let family = dir.join("round3/demo-repo");

@@ -71,8 +71,9 @@ A path needs rust when it is a build input, or lies in a folder that is one:
   holds a Cargo.toml (a crate outside crates/);
 - each path a crate's .rs, .toml or .html files name with a `..` step, taken from the
   file's folder, its crate's and its crate's templates/: include_str!, include_bytes!,
-  sqlx::migrate!, askama's dirs, and CARGO_MANIFEST_DIR joins in tests, which read
-  ops/ files at run time. A path that reaches the repo root makes every path an input;
+  sqlx::migrate!, askama's dirs, and the paths tests pass to common::crate_path,
+  which read ops/ files at run time. A path that reaches the repo root makes every
+  path an input;
 - what the scripts among those inputs reach, in turn: a shell script's
   `$(dirname "$0")/PATH`, also through a name assigned one (`repo="$(dirname "$0")/.."`
   then `$repo/PATH`), and a Python script's joins onto `Path(__file__)` and its

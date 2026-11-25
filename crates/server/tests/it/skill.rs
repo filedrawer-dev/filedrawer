@@ -2046,11 +2046,11 @@ async fn skill_md_names_the_commit_the_binary_was_built_from() {
 
 /// What `bin/live-preview --print` writes for `path`, for a site at `PUBLIC_URL`.
 fn previewed(path: &str) -> String {
-    let script = concat!(env!("CARGO_MANIFEST_DIR"), "/../../bin/live-preview");
-    let output = std::process::Command::new(script)
+    let script = crate::common::crate_path("../../bin/live-preview");
+    let output = std::process::Command::new(&script)
         .args(["--print", path, "--public-url", PUBLIC_URL])
         .output()
-        .unwrap_or_else(|e| panic!("{script}: {e}"));
+        .unwrap_or_else(|e| panic!("{}: {e}", script.display()));
     assert!(
         output.status.success(),
         "{path}: {}",

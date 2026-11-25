@@ -187,7 +187,7 @@ fn metadata_files_lists_the_folders_files() {
 
 #[test]
 fn each_skill_bundles_the_entry_format_as_it_stands() {
-    let format = read(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/entry-format.md"));
+    let format = read(&crate::common::crate_path("../../docs/entry-format.md"));
     for name in NAMES {
         let bundled = read(&skills_dir().join(name).join("references/entry-format.md"));
         assert!(

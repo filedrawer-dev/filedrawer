@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 pub const NAMES: [&str; 2] = ["filedrawer-search", "filedrawer-submit"];
 
 pub fn skills_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills")
+    super::crate_path("../../skills")
 }
 
 /// A skill's file as the repo holds it, naming production.
