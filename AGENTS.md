@@ -161,6 +161,7 @@ Each check asks `agent-commit-gate` for a place there only as it starts (`$CHECK
 Every check runs without `CHECK_BASE` (CI, an agent without llm-toolbox, or no commit known to pass), when nothing differs from it, when the change touches those rules, when git can't diff against it, and when `bin/checks-needed` is missing, fails or runs past 60 s.
 A small fix commit gets clippy and the skills check through `bin/agent-quick-check`.
 CI runs all of them.
+The checks run on a copy of what's staged in `$TMPDIR/filedrawer-check-<hash>/`, one per worktree, which each run updates in place so cargo rebuilds only what changed, and removes once its worktree is gone; a check of a worktree waits, saying so, while another check of it runs.
 A push to main runs `.githooks/pre-push` (`bin/git-pre-push`), which refuses a commit whose skills are out of step with origin's tags.
 Run `cargo fmt` after each batch of edits to `.rs` files: otherwise the hook reformats them at commit, and edits you make after that no longer match the text you hold.
 `python3 install.py` enables the hooks once per clone and installs cargo-nextest and sqlx-cli; sandbox-setup runs it after a recreate.

@@ -4,8 +4,20 @@
 # agent-commit-gate, on the tip of each landing; at an agent's commit the gate runs
 # bin/agent-commit-check in its place, and only an agent without the gate runs this
 # from bin/git-pre-commit. CI runs it directly.
-# The checks run on what's staged: a copy of the index in a temporary folder, so
-# unstaged changes can neither fail a commit nor rescue it. Each check's output shows
+# The checks run on what's staged: a copy of the index, so unstaged changes can neither
+# fail a commit nor rescue it. The copy is one folder per worktree,
+# $TMPDIR/filedrawer-check-<hash of the worktree's path>/tree, which each run brings to
+# the index with a private index of its own beside it: it rewrites only the files whose
+# contents or mode changed and deletes every other file, so cargo finds the rest where
+# it built them, with their mtimes, and rebuilds only what changed (#136; a new folder
+# each run rebuilt the workspace crates, about 70 s a check). It lies outside the repo,
+# since tools that search parent folders for their settings would find the worktree's:
+# sqlx's macros its .env, which names a database, and clippy its clippy.toml. A run
+# holds the folder's lock throughout and waits, saying so, while another check of the
+# worktree holds it; it takes it in an outer shell and runs itself again without the
+# lock's fd, since a process a check leaves running, such as the sccache server, would
+# otherwise hold it. Each run first removes the folders of worktrees that are gone,
+# such as those wt-ship landed, unless their lock is held. Each check's output shows
 # only when it fails. They run one after the other, since cargo locks target/ anyway.
 # bin/tests, the tests of the hook scripts, run through bin/pytest, uvx with a
 # pinned pytest and the plugins bin/tests/pytest.ini uses, so the host needs no venv.
@@ -86,11 +98,41 @@ for arg in "$@"; do
   esac
 done
 repo=$(git rev-parse --show-toplevel)
-tree=$(mktemp -d)
+tmp=${TMPDIR:-/tmp}
+state="$tmp/filedrawer-check-$(printf %s "$repo" | sha256sum | cut -c1-16)"
+if [ -z "${AGENT_PRE_COMMIT_LOCKED:-}" ]; then
+  for old in "$tmp"/filedrawer-check-*; do
+    if [ "$old" != "$state" ] && [ -f "$old/worktree" ] && [ ! -d "$(cat "$old/worktree")" ]; then
+      (flock -n 8 && rm -rf "$old") 8>"$old/lock" || :
+    fi
+  done
+  mkdir -p "$state"
+  printf '%s\n' "$repo" >"$state/worktree"
+  exec 9>"$state/lock"
+  if ! flock -n 9; then
+    echo "agent-pre-commit: waits for another check of this worktree to finish" >&2
+    flock 9
+  fi
+  AGENT_PRE_COMMIT_LOCKED=1 sh "$0" "$@" 9>&-
+  exit
+fi
+unset AGENT_PRE_COMMIT_LOCKED
+tree="$state/tree"
 logs=$(mktemp -d)
-trap 'rm -rf "$tree" "$logs"' EXIT
+trap 'rm -rf "$logs"' EXIT
 trap 'exit 130' INT TERM HUP
-git -C "$repo" checkout-index -a --prefix="$tree/"
+# The tree the index holds, then the folder brought to it through its own index, whose
+# stat data lets read-tree rewrite only the files that differ. A lock file a killed
+# run left would stop every later one, and this run holds the folder's lock.
+staged=$(git -C "$repo" write-tree)
+gitdir=$(git -C "$repo" rev-parse --absolute-git-dir)
+in_tree() {
+  GIT_INDEX_FILE="$state/index" git --git-dir="$gitdir" --work-tree="$tree" "$@"
+}
+mkdir -p "$tree"
+rm -f "$state/index.lock"
+in_tree read-tree --reset -u "$staged"
+in_tree clean -ffdxq
 need_every_check() {
   for check in rust bin-tests skills routes py-rules sh-rules test-mods caddy; do
     echo "$check $1"

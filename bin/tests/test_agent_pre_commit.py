@@ -7,6 +7,8 @@ bin/checks-needed in a scratch workspace, the hook with fakes of cargo and uvx f
 PATH that note their arguments, so no real check runs. Which references count is asked
 of bin/checks-needed directly, which is faster."""
 
+import fcntl
+import hashlib
 import os
 import re
 import shutil
@@ -114,6 +116,8 @@ LAYOUT = {
     "crates/app/tests/it/fixtures/entry.md": "",
     "docs/format.md": "# Format\n",
     "docs/notes.md": "# Notes\n",
+    # As in the repo: the check's folder lives in target/.
+    ".gitignore": "target/\n",
 }
 FAKE = (
     "#!/bin/sh\n"
@@ -195,33 +199,16 @@ def hook(
     """Run the hook with fake cargo and uvx, and CHECK_BASE set to `base` as
     `git rev-parse` gives it (None: unset), and check it exits with `code`; return the
     checks it ran (nextest, doctest, clippy, pytest) and the hook's run."""
-    fakes = repo.parent / "fakes"
-    fakes.mkdir(exist_ok=True)
-    for tool in ("cargo", "uvx"):
-        # FAKE_UVX in `env` replaces the fake uvx's text.
-        (fakes / tool).write_text((env or {}).get(f"FAKE_{tool.upper()}", FAKE))
-        (fakes / tool).chmod(0o755)
-    log = repo.parent / "calls"
-    log.write_text("")
-    hook_env = {
-        k: v
-        for k, v in os.environ.items()
-        if not k.startswith("GIT_") and k not in ("CHECK_BASE", "CHECK_QUEUE_EXIT")
-    }
-    hook_env |= {"PATH": f"{fakes}{os.pathsep}{os.environ['PATH']}"}
-    if base is not None:
-        hook_env["CHECK_BASE"] = git(repo, "rev-parse", base)
-    hook_env |= {"FAKE_LOG": str(log), **(env or {})}
     done = subprocess.run(
         [str(repo / "bin" / script), *args],
         cwd=repo,
-        env=hook_env,
+        env=hook_env(repo, env, base),
         capture_output=True,
         text=True,
         check=False,
     )
     assert done.returncode == code, done.stdout + done.stderr
-    calls = log.read_text().splitlines()
+    calls = (repo.parent / "calls").read_text().splitlines()
     named = {
         "nextest": "cargo nextest run",
         "doctest": "cargo test --doc",
@@ -234,6 +221,34 @@ def hook(
         if any(call.startswith(start) for call in calls)
     }
     return ran, done
+
+
+def hook_env(repo: Path, env: dict | None, base: str | None) -> dict:
+    """The hook's environment, as hook() takes `env` and `base`: fakes of cargo and uvx
+    first on PATH, which note their calls in the log `calls` beside the repo, emptied
+    here, and TMPDIR the folder `tmp` beside it, where the hook keeps its check
+    folder."""
+    (repo.parent / "tmp").mkdir(exist_ok=True)
+    fakes = repo.parent / "fakes"
+    fakes.mkdir(exist_ok=True)
+    for tool in ("cargo", "uvx"):
+        # FAKE_UVX in `env` replaces the fake uvx's text.
+        (fakes / tool).write_text((env or {}).get(f"FAKE_{tool.upper()}", FAKE))
+        (fakes / tool).chmod(0o755)
+    log = repo.parent / "calls"
+    log.write_text("")
+    out = {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith("GIT_") and k not in ("CHECK_BASE", "CHECK_QUEUE_EXIT")
+    }
+    out |= {
+        "PATH": f"{fakes}{os.pathsep}{os.environ['PATH']}",
+        "TMPDIR": str(repo.parent / "tmp"),
+    }
+    if base is not None:
+        out["CHECK_BASE"] = git(repo, "rev-parse", base)
+    return out | {"FAKE_LOG": str(log), **(env or {})}
 
 
 def run(repo: Path, *args: str, **options) -> set[str]:
@@ -1237,3 +1252,200 @@ def test_nextest_builds_before_it_runs(repo):
         "cargo nextest run --cargo-quiet --no-run",
         "cargo nextest run --cargo-quiet",
     ]
+# The checks run in one folder per worktree, which each run brings to what's staged, so
+# cargo finds the files it built from where they were (#136). It lies in $TMPDIR, out
+# of the repo, so no tool that searches parent folders for its settings (sqlx's .env,
+# clippy.toml) finds the worktree's.
+
+
+def check_state(repo: Path) -> Path:
+    """The folder of the worktree's check: the copy, its index, the lock."""
+    digest = hashlib.sha256(str(repo.resolve()).encode()).hexdigest()[:16]
+    return repo.parent / "tmp" / f"filedrawer-check-{digest}"
+
+
+def check_tree(repo: Path) -> Path:
+    return check_state(repo) / "tree"
+
+
+def logging_cargo(line: str) -> dict:
+    """An env for hook() whose fake cargo appends the shell line `line`'s output to
+    the log."""
+    return {"FAKE_CARGO": f'#!/bin/sh\n{{ {line}; }} >> "$FAKE_LOG" 2>&1\n'}
+
+
+def test_the_checks_run_in_the_worktrees_check_folder(repo):
+    change(repo, "crates/app/src/extra.rs")
+
+    hook(repo, "--quick", env=logging_cargo("pwd"))
+
+    calls = (repo.parent / "calls").read_text().splitlines()
+    assert calls == [str(check_tree(repo).resolve())]
+
+
+def test_a_second_check_rewrites_only_the_files_that_changed(repo):
+    change(repo, "crates/app/src/extra.rs", "one\n")
+    hook(repo, "--quick")
+    unchanged = check_tree(repo) / "docs/notes.md"
+    assert unchanged.is_file()
+    before = unchanged.stat().st_mtime_ns
+
+    change(repo, "crates/app/src/extra.rs", "two\n")
+    hook(repo, "--quick")
+
+    assert unchanged.stat().st_mtime_ns == before
+    assert (check_tree(repo) / "crates/app/src/extra.rs").read_text() == "two\n"
+
+
+def test_the_check_folder_holds_exactly_what_is_staged(repo):
+    change(repo, "crates/app/src/extra.rs", "one\n")
+    hook(repo, "--quick")
+    tree = check_tree(repo)
+    assert tree.is_dir()
+    (tree / "stray.rs").write_text("left behind\n")
+    (tree / "stray").mkdir()
+    (tree / "stray/inner.rs").write_text("left behind\n")
+    (tree / "docs/notes.md").write_text("tampered\n")
+    (tree / "bin/other").chmod(0o644)
+    git(repo, "rm", "-q", "tool.toml")
+    (repo / "conf/settings.toml").write_text("unstaged\n")
+
+    change(repo, "crates/app/src/extra.rs", "two\n")
+    hook(repo, "--quick")
+
+    assert not (tree / "stray.rs").exists()
+    assert not (tree / "stray").exists()
+    assert (tree / "docs/notes.md").read_text() == "# Notes\n"
+    assert os.access(tree / "bin/other", os.X_OK)
+    assert not (tree / "tool.toml").exists()
+    assert (tree / "conf/settings.toml").read_text() == ""
+
+
+def test_git_in_the_check_folder_finds_no_repo(repo):
+    # Else a check that runs git there would read the worktree, unstaged edits and all.
+    change(repo, "crates/app/src/extra.rs")
+
+    hook(
+        repo,
+        "--quick",
+        env=logging_cargo("git rev-parse --show-toplevel || echo no-repo"),
+    )
+
+    assert (repo.parent / "calls").read_text().splitlines()[-1] == "no-repo"
+
+
+def test_no_file_of_the_worktree_lies_above_the_check_folder(repo):
+    # sqlx's macros read the nearest .env up from each crate, which sqlx-refresh
+    # writes in a worktree: found, they'd build against its database, not .sqlx/.
+    (repo / ".env").write_text("DATABASE_URL=sqlite://unstaged.db\n")
+    change(repo, "crates/app/src/extra.rs")
+    above = (
+        'd=$(dirname "$PWD"); while [ "$d" != / ]; do'
+        ' [ -e "$d/.env" ] && echo "found $d/.env"; d=$(dirname "$d"); done; echo looked'
+    )
+
+    hook(repo, "--quick", env=logging_cargo(above))
+
+    assert (repo.parent / "calls").read_text().splitlines() == ["looked"]
+
+
+def test_a_lock_file_a_killed_sync_left_doesnt_stop_the_next_check(repo):
+    change(repo, "crates/app/src/extra.rs", "one\n")
+    hook(repo, "--quick")
+    (check_state(repo) / "index.lock").write_text("")
+
+    change(repo, "crates/app/src/extra.rs", "two\n")
+    hook(repo, "--quick")
+
+    assert (check_tree(repo) / "crates/app/src/extra.rs").read_text() == "two\n"
+
+
+def test_a_check_removes_the_folders_of_worktrees_that_are_gone(repo, tmp_path):
+    gone = repo.parent / "tmp/filedrawer-check-0000000000000000"
+    (gone / "tree").mkdir(parents=True)
+    (gone / "worktree").write_text(str(tmp_path / "removed-worktree"))
+    kept = repo.parent / "tmp/filedrawer-check-1111111111111111"
+    (kept / "tree").mkdir(parents=True)
+    (kept / "worktree").write_text(str(tmp_path))
+    change(repo, "docs/notes.md")
+
+    hook(repo)
+
+    assert not gone.exists()
+    assert (kept / "tree").is_dir()
+
+
+def test_a_check_keeps_a_gone_worktrees_folder_while_its_check_runs(repo, tmp_path):
+    busy = repo.parent / "tmp/filedrawer-check-2222222222222222"
+    (busy / "tree").mkdir(parents=True)
+    (busy / "worktree").write_text(str(tmp_path / "removed-worktree"))
+    change(repo, "docs/notes.md")
+
+    with (busy / "lock").open("w") as held:
+        fcntl.flock(held, fcntl.LOCK_EX)
+        hook(repo)
+
+    assert (busy / "tree").is_dir()
+
+
+def test_the_checks_processes_dont_hold_the_lock(repo):
+    # A process a check leaves running, such as the sccache server cargo starts, would
+    # otherwise hold the lock and stall every later check of the worktree.
+    change(repo, "crates/app/src/extra.rs")
+
+    hook(repo, "--quick", env=logging_cargo("ls -l /proc/$$/fd"))
+
+    calls = (repo.parent / "calls").read_text()
+    assert "/dev/null" in calls or "pipe:" in calls, calls
+    assert "check-tree.lock" not in calls
+
+
+def blocked_in_flock(pid: int) -> bool:
+    """Whether a child of process `pid` is a flock that waits."""
+    children = Path(f"/proc/{pid}/task/{pid}/children").read_text().split()
+    for child in children:
+        try:
+            comm = Path(f"/proc/{child}/comm").read_text().strip()
+            state = Path(f"/proc/{child}/stat").read_text().rsplit(")", 1)[1].split()[0]
+        except FileNotFoundError:
+            continue
+        if comm == "flock" and state == "S":
+            return True
+    return False
+
+
+def test_a_check_waits_for_another_check_of_the_worktree(repo):
+    change(repo, "crates/app/src/extra.rs")
+    calls = repo.parent / "calls"
+    env = hook_env(repo, None, "HEAD")
+    check_state(repo).mkdir(parents=True)
+    with (check_state(repo) / "lock").open("w") as held:
+        fcntl.flock(held, fcntl.LOCK_EX)
+        check = subprocess.Popen(
+            [str(repo / "bin/agent-pre-commit"), "--quick"],
+            cwd=repo,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            assert check.stderr is not None
+            said = check.stderr.readline()
+            # Until it blocks on the lock, or gets past it, which fails below.
+            waited = False
+            while check.poll() is None and not calls.read_text():
+                if blocked_in_flock(check.pid):
+                    waited = True
+                    break
+            calls_while_held = calls.read_text()
+        except BaseException:
+            check.kill()
+            check.wait()
+            raise
+    out, err = check.communicate()
+
+    assert "waits for another check of this worktree" in said
+    assert waited and calls_while_held == ""
+    assert check.returncode == 0, out + said + err
+    assert "cargo clippy" in calls.read_text()
