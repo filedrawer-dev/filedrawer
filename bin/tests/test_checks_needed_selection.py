@@ -9,7 +9,7 @@ import importlib.util
 import random
 from pathlib import Path, PurePosixPath
 
-from hypothesis import HealthCheck, example, given, settings
+from hypothesis import example, given
 from hypothesis import strategies as st
 
 SCRIPT = Path(__file__).resolve().parents[1] / "checks-needed"
@@ -145,7 +145,6 @@ def expected(refs, changed):
 
 # Each run reads the references in a shuffled order and is held to a search that
 # doesn't depend on any, so the answer can't depend on the order either.
-@settings(max_examples=100, deadline=None, suppress_health_check=[HealthCheck.too_slow])
 @given(graphs(), st.randoms(use_true_random=False))
 # A test runs ops/s2, which runs the changed lib/s1, which runs ops/s3, named by
 # nothing else: s3 is tested through the changed script, so the selection is narrow.
