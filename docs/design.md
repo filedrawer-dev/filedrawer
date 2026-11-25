@@ -28,7 +28,7 @@ The owner expects most contributors to be independent researchers, newcomers to 
 - Any result that won't become a paper: nulls, inconclusive results, and effects nobody plans to refine.
   What qualifies is that no person has spent meaningful time refining or explaining the result, and that by posting it here the author signals they don't plan to soon.
   A positive result lands in the drawer for many reasons: it is confounded, nobody separated the causes, it rests on one seed, or the sprint ended.
-  The README and the submit skill list such reasons.
+  The submit skill lists such reasons; the home page's README needn't.
 - A write-up that was never submitted anywhere doesn't count as a paper, so its results get entries that link it.
 - Results that aren't experiments on models are in scope when their safety motivation ties them to AI: simulations, design checks, code audits, instrument validations, and reanalyses of stored data, published or the author's own.
   A small analysis inside a project's notes counts when it produces a result.
