@@ -713,7 +713,19 @@ def main() -> int:
             f"live-preview: port {args.port} is taken ({error.strerror}); pass --port"
         )
     public_url = f"http://localhost:{listener.server_port}"
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    serving = threading.Event()
+
+    def on_sigterm(*_) -> None:
+        # An exception from a signal handler is raised wherever the main thread is, and
+        # one raised inside a weakref callback or a finalizer is printed and dropped, so
+        # the preview ran on and its test waited out pytest-timeout. Once serving, ask
+        # the loop to stop instead; shutdown() waits for it, so not from this thread.
+        if serving.is_set():
+            threading.Thread(target=listener.shutdown, daemon=True).start()
+        else:
+            sys.exit(0)
+
+    signal.signal(signal.SIGTERM, on_sigterm)
     with contextlib.ExitStack() as cleanup:
         try:
             upstream = args.upstream
@@ -732,6 +744,7 @@ def main() -> int:
             for path in preview.documents.links():
                 print(f"live-preview: {public_url}{path}")
             sys.stdout.flush()
+            serving.set()
             listener.serve_forever()
         except KeyboardInterrupt:
             pass
