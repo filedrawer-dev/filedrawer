@@ -78,6 +78,7 @@ The field test's entries and logs are in `field-test/`, git-excluded and local o
   `CODING_STANDARDS.md` holds the rules the review applies.
 - `crates/server/templates`: the HTML pages, askama templates.
   A template can't reach a field from inside a macro call, so `matches!(file.state, ...)` fails to compile; give the type a method instead.
+  The server sends a page only to a request with `Sec-Fetch-Dest: document` (design.md, Agent interface): `curl -H 'Sec-Fetch-Dest: document' URL` gets the HTML, and a curl without it, `Accept: text/html` or not, gets the text agents read.
 - `crates/server/legal`: the text of `/terms` and `/privacy`, one markdown file each, which a browser gets rendered and an agent gets as it is.
 - `crates/server/static`: the pages' one stylesheet, the home page's one script (its copy button), and the Courier Prime fonts, with their license, compiled into the binary.
   Colors are tokens on `:root`, light by default and dark under `prefers-color-scheme: dark`; a change of look changes the tokens, not the rules.
@@ -85,6 +86,7 @@ The field test's entries and logs are in `field-test/`, git-excluded and local o
   It renders `GET /` from `base.html` and `home.html` on disk on each request, around the entries of a dev server it builds and seeds, serves `site.css` and `copy.js` from disk, and reloads the page when any of the four changes; other pages' markup is the dev server's, as built.
   It also serves `/skill.md`, `/install.sh` and the skills' files from the checkout, as plain text, filled in by its own copy of the server's rules, which a test in `crates/server/tests/it/skill.rs` holds to the server's (#71).
   Run it without `heavy`, which it refuses: it queues its own build, and inside a heavy job it would hold the lane every commit check waits for until it stopped.
+  `bin/live-preview --static OUT` writes the home page, down to its README card and without the drawer, to one file that opens from disk with the site's own fonts, and starts nothing: use it to screenshot the page, rather than building a render by hand.
 - `skills/`: `filedrawer-search` and `filedrawer-submit`, the skills agents install from this repo's git tags and the server serves at `/skills/<name>/` (design.md, Skills).
   Their files name `https://filedrawer.dev` outright, with nothing to fill; staging and dev point them at themselves where they serve or install them.
   They aren't skills for working on this repo, which live in `.claude/skills/`.

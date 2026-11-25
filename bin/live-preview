@@ -10,6 +10,7 @@
     bin/live-preview --no-build      start the server as last built
     bin/live-preview --upstream URL  preview against a server already running
     bin/live-preview --print PATH    print one of the documents and exit
+    bin/live-preview --static OUT    write the home page to one file and exit
 
 Askama compiles the templates into the binary, so seeing a template edit otherwise
 means a rebuild that waits in heavy's queue. Here a browser's GET / is rendered on
@@ -28,6 +29,14 @@ plain text, which a browser shows where it would download markdown, so the page
 can't reload itself: reload by hand. /skill.md carries the skills' versions in X-Filedrawer-Skills, as the server's does.
 The start prints a link to each. --print PATH
 writes one to stdout and starts nothing, for --public-url URL when given.
+
+--static OUT writes the home page as a browser gets it on a bare /, down to its
+README card, and starts nothing: no dev server, no build. It leaves out the
+drawer under the card, tabs, search box and entries, which only a server has.
+The file opens from disk looking as the site does, for a screenshot (llm-toolbox's
+web-shot): its stylesheet is inlined with the checkout's own font files, and
+copy.js is linked from the checkout. It names https://filedrawer.dev, or
+--public-url URL. It doesn't go with --print.
 
 Every other request (other pages, forms, an agent's GET /) goes to the dev server
 unchanged, so other pages' markup is what it was built with.
@@ -211,7 +220,7 @@ def on_virtiofs(path: Path) -> bool:
 
 class Preview:
     """The checkout's home page as its templates render now, around the dev server's
-    drawer."""
+    drawer, or with none (--static)."""
 
     def __init__(self, root: Path, upstream: str, public_url: str) -> None:
         self.templates = root / "crates/server/templates"
@@ -281,20 +290,64 @@ class Preview:
         self.drop_caches()
         start = server_page.index('<nav class="guides"')
         end = server_page.index('<p class="foot">')
+        html = self.page(
+            server_page[start:end].rstrip() + "\n",
+            readme,
+            f"/static/site.css?live={self.stamp(self.static / 'site.css')}",
+            f"/static/copy.js?live={self.stamp(self.static / 'copy.js')}",
+        )
+        return html.replace("</body>", RELOAD + "\n</body>", 1)
+
+    def static_page(self) -> str:
+        """The home page with its README and no drawer, to open from disk: the
+        stylesheet inlined, its fonts the checkout's files, and copy.js linked from
+        the checkout, since an inline script can't be deferred."""
+        self.drop_caches()
+        link = '<link rel="stylesheet" href="about:stylesheet">'
+        html = self.page(
+            "", True, "about:stylesheet", (self.static / "copy.js").as_uri()
+        )
+        if link not in html:
+            raise ValueError(
+                f"base.html no longer links its stylesheet as {link}: change"
+                " static_page in bin/live-preview to match its new tag"
+            )
+        css = re.sub(
+            r"url\(/static/fonts/([^)]+)\)",
+            lambda match: f"url({self.font_file(match.group(1)).as_uri()})",
+            (self.static / "site.css").read_text(),
+        )
+        return html.replace(link, f"<style>\n{css}</style>", 1)
+
+    def font_file(self, served: str) -> Path:
+        """The checkout's file for the font the stylesheet names `served`: the server
+        serves each under a name that carries its version (routes/assets.rs), which
+        the file's name leaves out."""
+        font = self.static / "fonts" / re.sub(r"-\d+(?:\.\d+)+(?=-)", "", served)
+        if not font.is_file():
+            raise ValueError(
+                f"site.css names the font {served}, and {font} is no file: add the"
+                " font, or fix its name in site.css"
+            )
+        return font
+
+    def page(
+        self, drawer_html: str, readme: bool, css_href: str, script_href: str
+    ) -> str:
+        """home.html rendered around `drawer_html`."""
         environment = jinja2.Environment(
             loader=jinja2.FunctionLoader(self.source),
             autoescape=True,
             keep_trailing_newline=True,
             undefined=jinja2.StrictUndefined,
         )
-        html = environment.get_template("home.html").render(
+        return environment.get_template("home.html").render(
             public_url=self.public_url,
             readme=readme,
-            drawer_html=server_page[start:end].rstrip() + "\n",
-            css_href=f"/static/site.css?live={self.stamp(self.static / 'site.css')}",
-            script_href=f"/static/copy.js?live={self.stamp(self.static / 'copy.js')}",
+            drawer_html=drawer_html,
+            css_href=css_href,
+            script_href=script_href,
         )
-        return html.replace("</body>", RELOAD + "\n</body>", 1)
 
 
 def error_page(error: Exception) -> str:
@@ -605,12 +658,29 @@ def main() -> int:
         " would serve it, and exit",
     )
     parser.add_argument(
+        "--static",
+        metavar="OUT",
+        type=Path,
+        help="write the home page, without its drawer, to OUT as one file to open"
+        " from disk, and exit",
+    )
+    parser.add_argument(
         "--public-url",
-        help="with --print, the site the document names (default: the preview's)",
+        help="with --print or --static, the site the text names (default: the"
+        f" preview's with --print, {PRODUCTION} with --static)",
     )
     args = parser.parse_args()
-    if args.public_url and not args.print:
-        sys.exit("live-preview: --public-url goes with --print")
+    if args.public_url and not (args.print or args.static):
+        sys.exit("live-preview: --public-url goes with --print or --static")
+    if args.static and args.print:
+        sys.exit("live-preview: --static doesn't go with --print: run it once for each")
+    if args.static:
+        preview = Preview(args.root.resolve(), "", args.public_url or PRODUCTION)
+        try:
+            args.static.write_text(preview.static_page())
+        except (OSError, ValueError, jinja2.TemplateError) as error:
+            sys.exit(f"live-preview: {error}")
+        return 0
     if args.print:
         site = args.public_url or f"http://localhost:{args.port}"
         try:
