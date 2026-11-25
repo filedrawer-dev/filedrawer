@@ -1,7 +1,7 @@
 #!/bin/sh
 # The full check: the tests and clippy, the steps that follow the pre-commit hooks
 # (cargo fmt is one of those). wt-ship runs it, through llm-toolbox's
-# agent-commit-gate, on each commit when it lands; at an agent's commit the gate runs
+# agent-commit-gate, on the tip of each landing; at an agent's commit the gate runs
 # bin/agent-commit-check in its place, and only an agent without the gate runs this
 # from bin/git-pre-commit. CI runs it directly.
 # The checks run on what's staged: a copy of the index in a temporary folder, so
