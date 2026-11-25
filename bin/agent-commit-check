@@ -4,10 +4,12 @@
 # (`agent-commit-gate -h`); its passes go on a record of their own, so wt-ship runs the
 # full agent-pre-commit on the tip of each landing. It runs what agent-quick-check
 # runs, whose comment says how; it names $CHECK_QUEUE_EXIT too, since the gate reads
-# each check's own bytes for it. It adds one test, the routes test, when the router or
-# a document naming routes changed, since a review found a commit whose new routes
-# failed it, the rule tests that read sources (the wall-clock rule of bin/tests, the
-# scripts' early-exit pipes, the workflows' run blocks) when a file they read changed,
+# each check's own bytes for it. It adds the routes test when the router or a document
+# naming routes changed, since a review found a commit whose new routes failed it
+# (with the skill_folders tests for a skill change, since a review found a skill
+# request in a header form they refuse), the rule tests that read sources (the
+# wall-clock rule of bin/tests, the scripts' early-exit pipes, the workflows' run
+# blocks) when a file they read changed,
 # since reviews found a test with a timeout=, a pipe into `grep -q` and parsing in a
 # workflow that their commits let through, and bin/test-modules
 # when a crate's tests/it changed, since a `git add -A` twice swept an unregistered

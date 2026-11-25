@@ -910,6 +910,7 @@ def test_quick_runs_the_routes_test_when_the_router_changes(repo):
     assert ran == {"clippy", "nextest"}, done.stdout + done.stderr
     calls = (repo.parent / "calls").read_text()
     assert "skill::the_documents_name_every_route_meant_for_agents" in calls, calls
+    assert "skill_folders::" not in calls, calls
     # The small-fix check runs no test.
     assert run(repo, "--quick") == {"clippy"}
 
@@ -1110,6 +1111,38 @@ def test_a_skill_change_synced_passes_with_no_build_or_test(skills_repo):
     )
     git(skills_repo, "add", "-A")
     assert run(skills_repo) == set()
+
+
+def test_quick_runs_the_skill_folder_tests_with_the_routes_test_for_a_skill_change(
+    skills_repo,
+):
+    # A skill's request in a header form skill_folders refuses once passed its
+    # commit and failed only the full check.
+    change(
+        skills_repo,
+        "crates/server/Cargo.toml",
+        '[package]\nname = "filedrawer-server"\n',
+    )
+    # As the real server's skills.rs does, which makes each skill a build input.
+    change(
+        skills_repo,
+        "crates/server/src/skills.rs",
+        'const S: &str = include_str!(concat!("../../../skills/", "demo", "/SKILL.md"));\n',
+    )
+    commit(skills_repo, "the server crate")
+    edit_skill(skills_repo, "# Demo, edited")
+    subprocess.run(
+        [str(skills_repo / "bin/skills"), "sync"],
+        cwd=skills_repo,
+        check=True,
+        capture_output=True,
+    )
+    git(skills_repo, "add", "-A")
+    ran, done = hook(skills_repo, "--quick", "--routes")
+    assert "nextest" in ran, done.stdout + done.stderr
+    calls = (skills_repo.parent / "calls").read_text()
+    assert "skill::the_documents_name_every_route_meant_for_agents" in calls, calls
+    assert "skill_folders::" in calls, calls
 
 
 @pytest.mark.parametrize("args", [(), ("--quick",)], ids=["full", "quick"])

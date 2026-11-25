@@ -47,7 +47,8 @@
 # --quick runs clippy alone, for bin/agent-quick-check and bin/agent-commit-check, and
 # --quick --routes, for the second, also the routes test when the router or a document
 # naming routes changed (bin/checks-needed's `routes`), so a new route nobody named
-# for agents or listed in NOT_FOR_AGENTS fails at its commit; the
+# for agents or listed in NOT_FOR_AGENTS fails at its commit, and for a skill change
+# the skill_folders tests in the same run; the
 # gate gives each a CHECK_BASE of its own (`agent-commit-gate -h`). --rules, which the
 # commit check also passes, runs the rule tests that read sources when a path they
 # read changed. For a path under bin/tests (bin/checks-needed's `py-rules`):
@@ -273,10 +274,16 @@ if [ -f Cargo.toml ] && needs rust; then
     echo "COMMIT REFUSED: .sqlx/ is stale for a query this change adds or edits: run bin/sqlx-refresh, stage .sqlx/, and commit again." >&2
   fi
   # At a commit, the one test that a new route, unnamed for agents and unlisted in
-  # NOT_FOR_AGENTS, fails; the full check's nextest runs it with the rest.
+  # NOT_FOR_AGENTS, fails, and for a skill change the skill_folders tests too, which
+  # refuse a request in the wrong header form: they share the routes test's build, so
+  # they cost only their runtime. The full check's nextest runs them with the rest.
   if [ -n "$routes" ] && needs routes && [ -f crates/server/Cargo.toml ]; then
+    filter='test(=skill::the_documents_name_every_route_meant_for_agents)'
+    if needs skills; then
+      filter="$filter | test(/^skill_folders::/)"
+    fi
     timed routes cargo nextest run --cargo-quiet -p filedrawer-server \
-      -E 'test(=skill::the_documents_name_every_route_meant_for_agents)' >"$logs/routes" 2>&1 || { cat "$logs/routes"; failed=1; }
+      -E "$filter" >"$logs/routes" 2>&1 || { cat "$logs/routes"; failed=1; }
   fi
 fi
 exit $failed

@@ -15,7 +15,8 @@ name and the first path that needs it:
     bin-tests  pytest over bin/tests, or the test files --bin-tests picks
     skills     bin/skills sync --check, which needs no build
     routes     at a commit, the test that every route is named for agents or
-               listed in NOT_FOR_AGENTS (the full check's nextest holds it)
+               listed in NOT_FOR_AGENTS, and for a skill change the
+               skill_folders tests (the full check's nextest holds them)
     py-rules   at a commit, bin/tests/test_no_wall_clock_limits.py and
                bin/tests/test_checks_needed.py, which need no build (the full
                check's bin-tests holds them)
