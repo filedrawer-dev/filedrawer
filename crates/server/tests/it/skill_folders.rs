@@ -237,6 +237,10 @@ fn front_matter_keeps_to_the_agent_skills_standard() {
     }
 }
 
+/// The submit skill's requests that need no token and may come before its human
+/// sets up posting. `POST /accounts` isn't one: its command makes the file first.
+const TOKEN_FREE_ROUTES: [&str; 2] = ["/skill.md", "/tags"];
+
 #[test]
 fn every_request_to_the_site_sends_the_header_file_and_names_the_skill() {
     for name in NAMES {
@@ -248,8 +252,11 @@ fn every_request_to_the_site_sends_the_header_file_and_names_the_skill() {
             .collect();
         assert!(!commands.is_empty(), "{name}");
         for command in commands {
-            let needs_no_token =
-                name == "filedrawer-search" || command.contains(&format!("{SITE}/skill.md"));
+            // design.md, Skills (#38).
+            let needs_no_token = name == "filedrawer-search"
+                || TOKEN_FREE_ROUTES
+                    .iter()
+                    .any(|route| command.contains(&format!("{SITE}{route}")));
             let header = if needs_no_token {
                 HEADER_FILE_IF_ANY
             } else {
