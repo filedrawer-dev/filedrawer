@@ -41,9 +41,12 @@ rust, skills or routes also picks bin/tests/test_checks_needed.py, whose table o
 tree follows the references those checks read. The whole suite runs when nothing
 changed, when a changed path lies in bin/ or ops/ or is .gitattributes, and when a
 path is reached by a file in bin/tests that isn't a test_*.py file (a helper any test
-may import) or by a script no test names (one a test may run through PATH). So an
-analyzer source change runs test_analyzer_docs.py, test_checks_needed.py and
+may import) or by a script no test names (one a test may run through PATH), in turn:
+a test names a script when it names one that names it, the changed script included.
+So an analyzer source change runs test_analyzer_docs.py, test_checks_needed.py and
 test_license_copies.py, not the whole suite.
+bin/tests/test_checks_needed_selection.py holds the rules to a search of every chain
+on random graphs.
 
 --why PATH says why a change to PATH, relative to TREE's root, needs each check it
 needs: the check's name, then the chain of references that made PATH one of its
@@ -663,10 +666,17 @@ def tests_reaching(inputs: Inputs, path: str) -> set[str] | None:
     tests = {h for found in holders.values() for h in found if within(h, "bin/tests")}
     if any(not PurePosixPath(test).name.startswith("test_") for test in tests):
         return None
-    # A script counts as tested once a test, or a script that counts, names it.
+    # A script counts as tested once a test, or a script that counts, names it. The
+    # changed path counts too when it's a script a tested one names: what it runs is
+    # tested through it.
     scripts = set(holders) - {path}
+    named = {h for h, ref in inputs.refs if ref == path}
     tested: set[str] = set()
-    while more := {s for s in scripts - tested if holders[s] & (tests | tested)}:
+    while more := {
+        s
+        for s in (scripts | {path}) - tested
+        if (named if s == path else holders[s]) & (tests | tested)
+    }:
         tested |= more
     return None if scripts - tested else tests
 

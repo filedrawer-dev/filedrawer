@@ -631,7 +631,7 @@ def test_bin_pytest_runs_the_pinned_pytest_with_its_plugins_on_its_arguments(rep
 
     assert done.returncode == 0, done.stderr
     assert log.read_text() == (
-        "uvx --quiet --with pytest-timeout==2.4.0 --with pytest-xdist==3.8.0 pytest@9.2.0"
+        "uvx --quiet --with pytest-timeout==2.4.0 --with pytest-xdist==3.8.0 --with hypothesis==6.170.15 pytest@9.2.0"
         " -q -p no:cacheprovider -n0 bin/tests/test_tool.py -k tool\n"
     )
 
