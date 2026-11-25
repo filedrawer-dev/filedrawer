@@ -8,6 +8,7 @@ account's own steps are tested against a real server in
 crates/server/tests/it/usability.rs.
 """
 
+import contextlib
 import datetime
 import http.server
 import json
@@ -320,14 +321,22 @@ class InstallerSite(http.server.BaseHTTPRequestHandler):
         pass
 
 
+@contextlib.contextmanager
+def serving(handler):
+    """Serves HANDLER on a loopback port for the block, yielding its base URL."""
+    httpd = http.server.HTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        yield f"http://127.0.0.1:{httpd.server_port}"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
 @pytest.fixture
 def installer_site():
-    httpd = http.server.HTTPServer(("127.0.0.1", 0), InstallerSite)
-    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
-    thread.start()
-    yield f"http://127.0.0.1:{httpd.server_port}"
-    httpd.shutdown()
-    httpd.server_close()
+    with serving(InstallerSite) as url:
+        yield url
 
 
 def test_setup_installs_with_the_sites_installer_in_the_scenarios_mode(
@@ -345,3 +354,95 @@ def test_setup_installs_with_the_sites_installer_in_the_scenarios_mode(
     # the key.
     assert (home / "header-seen").read_text() == "X-Staging-Key: k\n"
     assert (home / ".config" / "filedrawer" / "install.sh").exists()
+
+
+PINNED_SKILL = """---
+name: filedrawer-search
+metadata:
+  version: "3"
+  files: "SKILL.md references/notes.md"
+---
+Search https://filedrawer.dev with ~/.config/filedrawer/filedrawer.dev.header.
+"""
+
+
+def tag_site(files):
+    """A stand-in for the raw host: serves FILES, a path → bytes map, else 404."""
+
+    class TagSite(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = files.get(self.path)
+            self.send_response(200 if body is not None else 404)
+            self.end_headers()
+            if body is not None:
+                self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    return TagSite
+
+
+# Installs a newer copy of the skill, with a file the old tag doesn't hold.
+NEWER_INSTALLER = b"""d="$HOME/.agents/skills/filedrawer-search"
+mkdir -p "$d/references"
+echo new > "$d/SKILL.md"
+echo new > "$d/references/only-in-new.md"
+"""
+
+
+class NewerInstallerSite(InstallerSite):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(NEWER_INSTALLER)
+
+
+TAG = "/refs/tags/skill-filedrawer-search-v3/skills/filedrawer-search"
+
+
+def run_pinned_setup(tmp_path, tag_files):
+    """Runs setup with filedrawer-search pinned to version 3, after an install of a
+    newer copy, against a raw host serving TAG_FILES; returns it with the site."""
+    with serving(NewerInstallerSite) as site, serving(tag_site(tag_files)) as raw:
+        done, home = run_setup(
+            tmp_path,
+            {"install": "installed", "pin": {"filedrawer-search": 3}},
+            FILEDRAWER_STAGING_KEY="k",
+            FILEDRAWER_USABILITY_BASE=site,
+            FILEDRAWER_USABILITY_RAW=raw,
+        )
+    return done, home, site
+
+
+def test_setup_replaces_a_pinned_skill_with_its_tags_files_pointed_at_the_site(
+    tmp_path,
+):
+    done, home, site = run_pinned_setup(
+        tmp_path,
+        {
+            f"{TAG}/SKILL.md": PINNED_SKILL.encode(),
+            f"{TAG}/references/notes.md": b"see https://filedrawer.dev/tags\n",
+        },
+    )
+    assert done.returncode == 0, done.stderr
+    folder = home / ".agents" / "skills" / "filedrawer-search"
+    assert (folder / "SKILL.md").read_text() == PINNED_SKILL.replace(
+        "https://filedrawer.dev", site
+    ).replace("/filedrawer.dev.header", "/127.0.0.1.header")
+    assert (folder / "references" / "notes.md").read_text() == f"see {site}/tags\n"
+    assert not (folder / "references" / "only-in-new.md").exists()
+
+
+def test_setup_names_a_pinned_tag_it_cant_fetch(tmp_path):
+    done, _, _ = run_pinned_setup(tmp_path, {})
+    assert done.returncode == 1
+    assert "skill-filedrawer-search-v3/skills/filedrawer-search/SKILL.md" in done.stderr
+    assert "Traceback" not in done.stderr
+
+
+def test_setup_names_a_pinned_tag_whose_skill_md_lists_no_files(tmp_path):
+    done, _, _ = run_pinned_setup(tmp_path, {f"{TAG}/SKILL.md": b"not a skill\n"})
+    assert done.returncode == 1
+    assert "lists no files" in done.stderr
+    assert "Traceback" not in done.stderr
