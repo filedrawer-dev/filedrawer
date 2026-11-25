@@ -704,3 +704,58 @@ def test_a_document_the_checkout_cant_give_is_a_500_that_says_why(documents):
 def test_public_url_without_print_is_refused_in_one_line(tmp_path):
     message = fails_in_one_line("--root", tmp_path, "--public-url", "https://x.example")
     assert "--print" in message
+
+
+def test_static_writes_the_home_page_as_one_file_and_starts_nothing(tmp_path):
+    """The page a browser gets on a bare `/`, with an empty drawer: its stylesheet
+    inlined with the checkout's fonts, its script linked from the checkout, and no
+    reload script, so it opens from disk as the site would show it."""
+    copy_pages(tmp_path)
+    out = tmp_path / "home.html"
+    done = subprocess.run(
+        [SCRIPT, "--root", tmp_path, "--static", out],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert done.returncode == 0, done.stderr
+    page = out.read_text()
+    static = tmp_path / "crates/server/static"
+    assert 'class="ind"' in page and 'class="paste-label"' in page, page
+    assert "https://filedrawer.dev/skill.md" in page, page
+    assert "/__live/version" not in page and "{{" not in page, page
+    assert '<link rel="stylesheet"' not in page, page
+    fonts = re.findall(r"url\(([^)]*\.woff2)\)", page)
+    assert fonts and all(Path(font.removeprefix("file://")).is_file() for font in fonts)
+    assert f'src="{(static / "copy.js").as_uri()}"' in page, page
+    assert 'class="drawer"' not in page, page
+
+
+def test_static_refuses_a_stylesheet_whose_font_is_no_file(tmp_path):
+    """A font the page couldn't load would fall back to another, and wrap the text
+    differently from the site, without a word."""
+    copy_pages(tmp_path)
+    next((tmp_path / "crates/server/static/fonts").glob("*-400-normal.woff2")).unlink()
+    message = fails_in_one_line("--root", tmp_path, "--static", tmp_path / "home.html")
+    assert "400-normal.woff2" in message and "site.css" in message
+    assert not (tmp_path / "home.html").exists()
+
+
+def test_static_does_not_go_with_print(tmp_path):
+    copy_pages(tmp_path)
+    message = fails_in_one_line(
+        "--root", tmp_path, "--static", tmp_path / "home.html", "--print", "/skill.md"
+    )
+    assert "--print" in message
+    assert not (tmp_path / "home.html").exists()
+
+
+def test_static_names_the_site_it_is_told_to(tmp_path):
+    copy_pages(tmp_path)
+    out = tmp_path / "home.html"
+    subprocess.run(
+        [SCRIPT, "--root", tmp_path, "--static", out]
+        + ["--public-url", "https://staging.example"],
+        check=True,
+    )
+    assert "https://staging.example/skill.md" in out.read_text()
