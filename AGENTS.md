@@ -91,7 +91,7 @@ The field test's entries and logs are in `field-test/`, git-excluded and local o
 - `skills/`: `filedrawer-search` and `filedrawer-submit`, the skills agents install from this repo's git tags and the server serves at `/skills/<name>/` (design.md, Skills).
   Their files name `https://filedrawer.dev` outright, with nothing to fill; staging and dev point them at themselves where they serve or install them.
   They aren't skills for working on this repo, which live in `.claude/skills/`.
-  They describe only what the server does, plus where else the search skill has the agent look (design.md, Skills), so update them with each change to a route.
+  They describe only what the server does, plus where else the search skill has the agent look and the Alignment Forum tags the submit skill has it check (design.md, Skills and Agent interface), so update them with each change to a route.
   Then run `bin/skills sync`, which also follows a change to `docs/entry-format.md`: it copies the format into each skill and records each version in `skills/versions.txt`, bumping past every version origin's tags or origin/main already hold; a test refuses a skill changed without it.
   Commits and landings run `bin/skills sync --check`, which fetches origin's tags first and refuses a version tagged with other contents; so does a push to main, through the pre-push hook (`bin/git-pre-push`).
   CI's `release-skills` job tags each new version before staging deploys, with a deploy key `ops/protect-skill-tags` sets up (`-h`).

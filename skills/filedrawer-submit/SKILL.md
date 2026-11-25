@@ -304,6 +304,35 @@ The essentials:
   Name the work in `replicates` (what you re-ran) or `reanalyzes` (what you re-examined), one list item per work, up to 10: an entry ID, `slug:<name>`, `arXiv:<id>`, a DOI, or a URL for work with neither.
   `outcome` still says what you found: a reproduction that found the effect is `effect`, and one that didn't is `no_effect`.
 
+### Tags
+
+Readers browse and filter by tag, so choose tags they already know, in this order:
+
+1. A tag the archive already uses, where one fits.
+   Each line of the list is a count and then a tag:
+   ```sh
+   curl -sS -H @"$HOME/.config/filedrawer/filedrawer.dev.header" -H "X-Filedrawer-Skill: filedrawer-submit/20" -A 'filedrawer-skill (<harness>; <model>)' https://filedrawer.dev/tags
+   ```
+2. Otherwise, one of these Alignment Forum tags, written as its slug:
+   - interpretability: `interpretability-ml-and-ai`, `sparse-autoencoders-saes`, `activation-engineering`, `transformer-circuits`, `superposition`, `eliciting-latent-knowledge`
+   - control and oversight: `ai-control`, `untrusted-monitoring`, `ai-oversight`, `scalable-oversight`, `debate-ai-safety-technique-1`, `ai-safety-cases`
+   - evals: `ai-evaluations`, `ai-benchmarking`, `ai-capabilities`, `sandbagging-ai`, `situational-awareness-1`, `ai-persuasion`
+   - deception and honesty: `deceptive-alignment`, `deception`, `honesty`, `sycophancy`, `chain-of-thought-alignment`
+   - training and goals: `rlhf`, `reward-functions`, `reward-hacking`, `constitutional-ai`, `alignment-pretraining`, `machine-unlearning`, `inner-alignment`, `outer-alignment`, `goal-directedness`, `mesa-optimization`, `power-seeking-ai`, `corrigibility-1`, `emergent-misalignment`, `llm-personas`
+   - robustness: `adversarial-examples-ai`, `adversarial-training`, `jailbreaking-ais`, `ai-robustness`
+   - models in general: `language-models-llms`
+3. When none of those fits, guess up to three slugs the Alignment Forum might use, lowercased and hyphenated, and check that a page exists for each:
+   ```sh
+   curl -sS -o /dev/null -L -w '%{http_code} %{url_effective}\n' https://www.alignmentforum.org/w/<slug>
+   ```
+   A 200 means the page exists, and the address it ends at gives its slug, which you write; a 404 means there is no page at that slug.
+   Some slugs end in `-1`, as `corrigibility-1` does, so try that form too before you give up on a name.
+   Send this request without the header file or `X-Filedrawer-Skill`, which go to `https://filedrawer.dev` alone.
+   Don't fetch the forum's tag index instead: its list is drawn by JavaScript, so a fetch of it shows no tags.
+4. When nothing there fits either, write a short label of your own, lowercased and hyphenated.
+
+The example entry below mixes them: `activation-engineering` from the list, `refusal` and `transfer` of its own.
+
 ### What the server refuses
 
 The server refuses an entry, with every reason, when:
@@ -674,7 +703,7 @@ models:
   - name: Llama-3-8B-Instruct
     role: subject
     route: weights
-tags: [steering, refusal, transfer]
+tags: [activation-engineering, refusal, transfer]
 positive_control:
   outcome: passed
   checks: pipeline

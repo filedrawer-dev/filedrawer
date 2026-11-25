@@ -64,7 +64,7 @@ models:               # one item per model and role:
   - name:             #   the model ID the provider served, or alias:<name> when no log recorded it
     role:             #   subject | judge | monitor | other
     route:            #   how it was reached, such as api, claude-cli, codex, openrouter or weights
-tags:                 # up to 20 short labels, each at most 60 characters on one line; reuse tags from GET /tags where they fit
+tags:                 # up to 20 short labels, each at most 60 characters on one line; reuse tags from GET /tags where they fit, else the Alignment Forum's tag slugs
 positive_control:
   outcome:            #   passed | failed | not_run | mixed
   checks:             #   pipeline | manipulation
@@ -127,6 +127,8 @@ The server warns about both.
   Write the ID the provider served whenever a log records it.
   When none does, write the alias, such as `alias:haiku`, and the server maps aliases to IDs by date (design.md, [Agent interface](design.md#agent-interface)).
 - `tags` are short labels.
+  Reuse a tag from `GET /tags` where one fits; otherwise prefer the Alignment Forum's tag slug, as its page `https://www.alignmentforum.org/w/<slug>` has it, such as `ai-control` or `interpretability-ml-and-ai`, so readers find a vocabulary they already know.
+  The submit skill bundles a list of them.
   The server reads an entry's first 20, and skips, with a warning, a tag over 60 characters or one holding a line break, another control character or an invisible character, such as a zero-width space.
   A zero-width joiner or non-joiner between two visible characters that aren't both ASCII, as in Persian words and emoji sequences, isn't invisible in this sense, nor is a presentation selector (U+FE0E, U+FE0F) right after a visible character outside ASCII, such as an emoji, or after a keycap's digit, `#` or `*`.
   Reason: each line of `GET /tags` is the server's count and then a tag, with nothing of the server's after it.
@@ -329,7 +331,7 @@ models:
   - name: Llama-3-8B-Instruct
     role: subject
     route: weights
-tags: [steering, refusal, transfer]
+tags: [activation-engineering, refusal, transfer]
 positive_control:
   outcome: passed
   checks: pipeline
