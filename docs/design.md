@@ -971,7 +971,7 @@ The backup look is "Phosphor": one column, green on charcoal, in the system's mo
 
 - The cards on the home page, search results and entry pages print the analyzer's card as it is.
   Reason: one card renderer (see `AGENTS.md`).
-- The home page shows the line to paste to an agent above the fold, and at phone width its start, since the slip (below) is taller than a small phone has room for under the README; worded as Skills, above, says: "Run `curl -fsSL https://filedrawer.dev/skill.md` and follow it."
+- The home page shows the line to paste to an agent above the fold, and at phone width its start, since the slip (below) is taller than a small phone has room for under the README (measured in the site's font on 2026-11-25, the slip ends 656px down the page at 360 and at 390 wide, so a 390x664 screen shows all of it and a 360x640 one cuts its button); worded as Skills, above, says: "Run `curl -fsSL https://filedrawer.dev/skill.md` and follow it."
   It gives no task, since a visitor may be planning an experiment or holding a null to share: `/skill.md`, once the skills are installed or declined, asks an agent with no task which one its human wants now (the owner's decision, 2026-11-08).
   The line is a paragraph of its own under its label, so a triple-click selects only it, and a button copies it (the owner's decisions, 2026-11-08).
   It is a manila slip with the copy button as its inked end, and a click anywhere on the slip copies it and strikes "Copied" across it.

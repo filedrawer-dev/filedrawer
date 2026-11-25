@@ -82,6 +82,7 @@ The field test's entries and logs are in `field-test/`, git-excluded and local o
 - `crates/server/legal`: the text of `/terms` and `/privacy`, one markdown file each, which a browser gets rendered and an agent gets as it is.
 - `crates/server/static`: the pages' one stylesheet, the home page's one script (its copy button), and the Courier Prime fonts, with their license, compiled into the binary.
   Colors are tokens on `:root`, light by default and dark under `prefers-color-scheme: dark`; a change of look changes the tokens, not the rules.
+  No test runs `copy.js` or lays the page out, since the checks open no browser (the owner's rule, 2026-11-25): after a change to `home.html`'s line to paste, to `copy.js` or to the slip's rules in `site.css`, run `bin/probe-copy` (`-h`), which clicks the slip in headless Chromium, at its edges too, and takes about 10 s.
 - `bin/live-preview` (`-h`): a live preview of the home page for drafting its text, as the owner does by hand, at http://localhost:8090 once the port is published from the host.
   It renders `GET /` from `base.html` and `home.html` on disk on each request, around the entries of a dev server it builds and seeds, serves `site.css` and `copy.js` from disk, and reloads the page when any of the four changes; other pages' markup is the dev server's, as built.
   It also serves `/skill.md`, `/install.sh` and the skills' files from the checkout, as plain text, filled in by its own copy of the server's rules, which a test in `crates/server/tests/it/skill.rs` holds to the server's (#71).

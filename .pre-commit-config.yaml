@@ -32,7 +32,7 @@ repos:
         name: ruff check (uv run scripts)
         entry: uvx ruff@0.14.4 check
         language: system
-        files: &uv-scripts ^(bin/(field-test-batches|live-preview)|ops/release-cli)$
+        files: &uv-scripts ^(bin/(field-test-batches|live-preview|probe-copy)|ops/release-cli)$
       - id: ruff-format-uv-scripts
         name: ruff format (uv run scripts)
         entry: uvx ruff@0.14.4 format

@@ -1,0 +1,272 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["playwright==1.64.1"]
+# ///
+"""Click the home page's copy slip in a real browser, and say where it fails.
+
+    bin/probe-copy [--root DIR]
+
+The server's tests read the home page's markup, and nothing in them runs copy.js
+or lays the page out, so run this by hand after a change to home.html's line to
+paste, to copy.js, or to site.css's rules for the slip. It writes the page with
+`bin/live-preview --static`, opens it in headless Chromium at 1280 and at 400 wide,
+and checks, with a real pointer (move, press, release):
+
+- a click copies the line, the button says Copied and the clipboard holds the line
+  exactly: at the slip's center, 1px inside each of its four edges, at the button's
+  center and 1px inside the button's top edge. A slip that moves when pressed slides
+  out from under a click at its edge, which then copies nothing;
+- with the clipboard refused, a click selects the line and the button names the key
+  that copies it, and neither the button's width nor the slip's height changes: a
+  wider label would rewrap the line just selected;
+- a drag across part of the line keeps what it selected and copies nothing.
+
+It finds the slip as copy.js does, from `button[data-copy]`, so a renamed class
+doesn't break it. --root DIR probes another checkout's pages, with this one's
+live-preview.
+
+It prints `probe-copy: ok` and how much it checked, or a line for each failure.
+Exit status: 0; 1 when a check failed; 2 when the page can't be written or no
+Chromium is installed for Playwright, with the command that installs one.
+
+It is no part of the commit checks, which open no browser.
+"""
+
+import argparse
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[1]
+WIDTHS = (1280, 400)
+HEIGHT = 900
+INSTALL = "uv run --with playwright==1.64.1 playwright install chromium"
+# How long a click's effect may take to show: the copy is one awaited call.
+SETTLE_MS = 1000
+
+# The slip as copy.js finds it, and what a check reads of it. Boxes are [x, y, w, h].
+STATE_JS = """() => {
+  const button = document.querySelector("button[data-copy]");
+  const slip = button.closest("p");
+  const line = document.getElementById(button.dataset.copy);
+  const box = (rect) => [rect.x, rect.y, rect.width, rect.height];
+  const range = document.createRange();
+  range.selectNodeContents(line);
+  return {
+    label: button.textContent.trim(),
+    line: line.textContent,
+    selected: getSelection().toString(),
+    slip: box(slip.getBoundingClientRect()),
+    button: box(button.getBoundingClientRect()),
+    firstRow: box(range.getClientRects()[0]),
+  };
+}"""
+
+
+class Unusable(Exception):
+    """The probe couldn't run: no page, or no browser."""
+
+
+def points(slip, button):
+    """Where to click, by name, as (x, y): `slip` and `button` are boxes [x, y, w, h]."""
+    x, y, width, height = slip
+    button_x, button_y, button_width, button_height = button
+    return {
+        "the slip's center": (x + width / 2, y + height / 2),
+        "1px inside the slip's top edge": (x + width / 4, y + 1),
+        "1px inside the slip's left edge": (x + 1, y + height / 2),
+        "1px inside the slip's bottom edge": (x + width / 4, y + height - 1),
+        "1px inside the slip's right edge": (x + width - 1, y + height / 2),
+        "the button's center": (
+            button_x + button_width / 2,
+            button_y + button_height / 2,
+        ),
+        "1px inside the button's top edge": (button_x + button_width / 2, button_y + 1),
+    }
+
+
+def write_page(root, folder):
+    """The home page of the checkout at ROOT, written to FOLDER, as a file:// URL."""
+    page = folder / "home.html"
+    done = subprocess.run(
+        [REPO / "bin" / "live-preview", "--root", root, "--static", page],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if done.returncode:
+        raise Unusable(done.stderr.strip() or "live-preview --static failed")
+    return page.as_uri()
+
+
+def launch(playwright):
+    """Playwright's Chromium, or the newest one in its cache when its own build isn't
+    downloaded."""
+    try:
+        return playwright.chromium.launch()
+    except Exception as error:  # noqa: BLE001  Playwright raises its own Error, with no finer type
+        if "Executable doesn't exist" not in str(error):
+            raise
+    cached = sorted(
+        (Path.home() / ".cache" / "ms-playwright").glob(
+            "chromium-*/chrome-linux*/chrome"
+        ),
+        key=lambda path: int(path.parts[-3].split("-")[1]),
+    )
+    if not cached:
+        raise Unusable(f"no Chromium for Playwright; install one with: {INSTALL}")
+    return playwright.chromium.launch(executable_path=str(cached[-1]))
+
+
+def open_page(browser, url, width, clipboard):
+    """A new tab on URL, WIDTH wide, allowed to use the clipboard or not."""
+    context = browser.new_context(viewport={"width": width, "height": HEIGHT})
+    if clipboard:
+        context.grant_permissions(["clipboard-read", "clipboard-write"])
+    tab = context.new_page()
+    tab.goto(url, wait_until="load")
+    return tab
+
+
+def press(tab, x, y, idle):
+    """A click at (x, y) as a hand makes it, then the slip's state once the button's
+    label has changed from IDLE, or after SETTLE_MS when it hasn't."""
+    from playwright.sync_api import TimeoutError as NeverChanged
+
+    tab.mouse.move(5, 5)
+    tab.mouse.move(x, y)
+    tab.mouse.down()
+    tab.mouse.up()
+    try:
+        tab.wait_for_function(
+            "idle => document.querySelector('button[data-copy]').textContent.trim() !== idle",
+            arg=idle,
+            timeout=SETTLE_MS,
+        )
+    except NeverChanged:
+        pass
+    return tab.evaluate(STATE_JS)
+
+
+def check_clicks(browser, url, width):
+    """Each failure of a click to copy, at each of points()."""
+    failures = []
+    start = open_page(browser, url, width, clipboard=True)
+    idle = start.evaluate(STATE_JS)
+    start.context.close()
+    for name, (x, y) in points(idle["slip"], idle["button"]).items():
+        tab = open_page(browser, url, width, clipboard=True)
+        # The clipboard is the machine's: empty what the last click left in it.
+        tab.evaluate("navigator.clipboard.writeText('')")
+        after = press(tab, x, y, idle["label"])
+        copied = tab.evaluate("navigator.clipboard.readText()")
+        tab.context.close()
+        if after["label"] != "Copied" or copied != idle["line"]:
+            failures.append(
+                f"at {width} wide, a click at {name} copied nothing:"
+                f" the button says {after['label']!r} and the clipboard holds {copied!r}"
+            )
+    return failures
+
+
+def check_refused(browser, url, width):
+    """Each failure of the fallback, where the clipboard is refused."""
+    tab = open_page(browser, url, width, clipboard=False)
+    idle = tab.evaluate(STATE_JS)
+    x, y = points(idle["slip"], idle["button"])["the button's center"]
+    after = press(tab, x, y, idle["label"])
+    tab.context.close()
+    failures = []
+    if after["label"] in (idle["label"], "Copied"):
+        failures.append(
+            f"at {width} wide, with the clipboard refused, the button says"
+            f" {after['label']!r}, not the key that copies"
+        )
+    if after["selected"] != idle["line"]:
+        failures.append(
+            f"at {width} wide, with the clipboard refused, the selection is"
+            f" {after['selected']!r}, not the line"
+        )
+    for what, box, at in (
+        ("button's width", "button", 2),
+        ("slip's height", "slip", 3),
+    ):
+        if abs(after[box][at] - idle[box][at]) > 0.5:
+            failures.append(
+                f"at {width} wide, with the clipboard refused, the {what} went from"
+                f" {idle[box][at]:.0f} to {after[box][at]:.0f}px: the line rewrapped"
+            )
+    return failures
+
+
+def check_drag(browser, url, width):
+    """Each failure of a drag across the line's first row to keep its selection."""
+    tab = open_page(browser, url, width, clipboard=True)
+    idle = tab.evaluate(STATE_JS)
+    x, y, row_width, row_height = idle["firstRow"]
+    tab.mouse.move(x + 3, y + row_height / 2)
+    tab.mouse.down()
+    tab.mouse.move(x + row_width - 3, y + row_height / 2, steps=5)
+    tab.mouse.up()
+    tab.wait_for_timeout(SETTLE_MS)
+    after = tab.evaluate(STATE_JS)
+    tab.context.close()
+    failures = []
+    if not after["selected"] or after["selected"] == idle["line"]:
+        failures.append(
+            f"at {width} wide, a drag across the line's first row selected"
+            f" {after['selected']!r}, not that row"
+        )
+    if after["label"] != idle["label"]:
+        failures.append(
+            f"at {width} wide, a drag across the line copied: the button says"
+            f" {after['label']!r}"
+        )
+    return failures
+
+
+def probe(url):
+    from playwright.sync_api import sync_playwright
+
+    failures = []
+    with sync_playwright() as playwright:
+        browser = launch(playwright)
+        for width in WIDTHS:
+            for check in (check_clicks, check_refused, check_drag):
+                failures += check(browser, url, width)
+        browser.close()
+    return failures
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "--root",
+        type=Path,
+        default=REPO,
+        help="the checkout whose pages to probe (default: this one)",
+    )
+    args = parser.parse_args(argv)
+    try:
+        with tempfile.TemporaryDirectory(prefix="probe-copy-") as folder:
+            failures = probe(write_page(args.root.resolve(), Path(folder)))
+    except Unusable as error:
+        print(f"probe-copy: {error}", file=sys.stderr)
+        return 2
+    for failure in failures:
+        print(f"probe-copy: {failure}")
+    if failures:
+        return 1
+    print(
+        "probe-copy: ok (clicks at the slip's center, edges and button, the refused"
+        f" clipboard and a drag, at {' and '.join(map(str, WIDTHS))} wide)"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
