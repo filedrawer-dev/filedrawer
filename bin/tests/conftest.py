@@ -96,6 +96,15 @@ def no_shared_sccache(monkeypatch):
     monkeypatch.setenv("RUSTC_WRAPPER", "")
 
 
+@pytest.fixture(autouse=True)
+def own_tmpdir(tmp_path_factory, monkeypatch):
+    """Each test's processes get an empty TMPDIR of its own, under pytest's base temp,
+    so none writes to the real /tmp: agent-pre-commit keeps its check folder there, and
+    the hook tests left one in /tmp per test repo. Python's own tempfile caches its
+    folder before this runs, so this reaches only the processes a test starts."""
+    monkeypatch.setenv("TMPDIR", str(tmp_path_factory.mktemp("tmpdir")))
+
+
 CADDY_SCRIPT = Path(__file__).resolve().parents[1] / "caddy"
 # bin/caddy's exit status when Caddy can't be had on this machine (no network).
 CADDY_UNAVAILABLE = 69
