@@ -173,16 +173,33 @@ fn text_of(html: &str) -> String {
 }
 
 #[tokio::test]
-async fn the_home_pages_agent_line_names_curl_and_links_the_installer() {
+async fn the_home_pages_agent_line_names_curl_and_holds_no_link() {
     let app = test_app().await;
     let page = app.send(opened("/")).await;
     let installer = format!("{PUBLIC_URL}/skill.md");
     let line = paste_line(&page.body);
     assert!(
-        line.contains(&format!(
-            r#"`curl -fsSL <a href="{installer}">{installer}</a>`"#
-        )),
+        line.contains(&format!("`curl -fsSL {installer}`")),
         "{line}"
+    );
+    // A click anywhere on the line copies it, so no part of it leads elsewhere.
+    assert!(!line.contains("<a "), "{line}");
+}
+
+#[tokio::test]
+async fn a_link_under_the_agent_line_shows_what_the_agent_will_follow() {
+    let app = test_app().await;
+    let page = app.send(opened("/")).await;
+    let line = paste_line(&page.body);
+    let after = &page.body[page.body.find(line).unwrap() + line.len()..];
+    let after = &after[..after.find("</section>").expect("the card's end")];
+    let link = &after[after
+        .find(r#"<a class="what""#)
+        .expect("a link under the line")..];
+    assert_eq!(
+        attribute(link, "href"),
+        format!("{PUBLIC_URL}/skill.md"),
+        "{after}"
     );
 }
 

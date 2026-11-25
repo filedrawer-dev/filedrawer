@@ -175,7 +175,7 @@ def test_the_home_page_renders_from_the_checkout_with_the_servers_drawer(preview
     status, headers, page = preview.get("/")
     assert status == 200, page
     assert headers["Content-Type"].startswith("text/html")
-    assert "Paste this to your agent:" in page, page
+    assert 'class="paste-label"' in page, page
     assert "a seeded entry" in page, page
     assert "the binary's README" not in page, page
     # It reloads itself when a file changes.
@@ -202,12 +202,11 @@ def test_a_server_page_with_no_drawer_passes_through(preview):
 
 def test_an_edit_shows_on_the_next_request(preview):
     home = preview.template("home.html")
-    home.write_text(
-        home.read_text().replace("Paste this to your agent:", "Hand this over:")
-    )
+    label = '<p class="paste-label">'
+    assert "Hand this over:" not in preview.get("/")[2]
+    home.write_text(home.read_text().replace(label, label + "Hand this over: "))
     _, _, page = preview.get("/")
     assert "Hand this over:" in page, page
-    assert "Paste this to your agent:" not in page, page
 
 
 def href(page: str, attribute: str, path: str) -> str:
@@ -508,7 +507,7 @@ def test_a_template_error_shows_as_a_page_that_reloads(preview):
     assert "TemplateSyntaxError" in page, page
     assert "/__live/version" in page, page
     home.write_text(good)
-    assert "Paste this to your agent:" in preview.get("/")[2]
+    assert 'class="paste-label"' in preview.get("/")[2]
 
 
 def test_help_names_the_options():

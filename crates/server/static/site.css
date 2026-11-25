@@ -92,21 +92,34 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
 
 /* The home page's README card. */
 .pitch { max-width: 40rem; margin: 0 auto 2.5rem; }
-/* The line to paste to an agent: on the ruled line after its label, indented, and a
-   paragraph of its own, so a triple-click selects only it. */
+/* The line to paste to an agent: a manila slip under its label, and a paragraph of its
+   own, so a triple-click selects only the line. Without script it is the line alone. */
 .paste-label { margin-top: 1.5em !important; }
-.paste { padding-left: 3ch; }
-/* Its copy button, after its last word: it fits within a rule, so the text stays on
-   them, and a selection of the line leaves it out. */
-.copy { font: inherit; font-size: .8em; font-weight: 700; line-height: 1.3; letter-spacing: .08em; text-transform: uppercase;
-  min-width: 10ch; padding: 0 .4rem; margin-left: 1ch; vertical-align: .1em; background: transparent; color: var(--ink);
-  border: 1.5px solid var(--ink); border-radius: 3px; user-select: none; }
-.copy:hover { background: var(--ink); color: var(--card); }
-.copy:focus-visible { outline-color: var(--ink); }
+.card .paste { display: flex; position: relative; margin: .65em 0 .85em; background: var(--manila);
+  border: 1.5px solid var(--ink); border-radius: 3px; box-shadow: 3px 3px 0 var(--ink); }
+.paste code { flex: 1; min-width: 0; padding: .75em 1ch; font: inherit; font-weight: 700; }
+/* Its copy button, the slip's inked end, which a selection of the line leaves out.
+   copy.js shows it and marks the slip live: a click anywhere on the slip then copies,
+   so the whole slip answers the pointer as a button does, by its shadow alone: a slip
+   that moved would slide out from under a click at its edge. The button is as wide
+   as its longest label, "Copied", so the line beside it never rewraps. */
+.copy { flex: none; display: flex; align-items: center; justify-content: center; gap: .7ch; min-width: 13ch; padding: .3em 1ch;
+  letter-spacing: .1em; text-transform: uppercase; user-select: none; }
+.copy[hidden], .copied[hidden] { display: none; }
+.copy svg { flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; }
+.copy:focus-visible { outline-offset: -5px; }
+.paste.live { cursor: pointer; transition: box-shadow .06s; }
+.paste.live:hover { box-shadow: 5px 5px 0 var(--ink); }
+.paste.live:active { box-shadow: inset 3px 3px 0 var(--ink); }
+/* Under the slip, the link to what the line has an agent follow. */
+.paste-what { color: var(--dim); }
+/* "Copied", struck across the slip for two seconds. */
+.copied { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%) rotate(-6deg); background: var(--card);
+  font-size: 1.15em; opacity: .95; pointer-events: none; user-select: none; animation: strike .18s ease-out; }
+@keyframes strike { from { transform: translate(-50%, -50%) rotate(-6deg) scale(1.7); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .copied { animation: none; } .paste.live { transition: none; } }
 /* Read by a screen reader, unseen: the copy button's news, which a label change doesn't announce. */
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.paste code { font: inherit; font-weight: 700; }
-
 /* Divider-card tabs: the ways to browse, then the search box. */
 .guides { display: flex; gap: .4rem; align-items: flex-end; flex-wrap: wrap; margin-bottom: -1px; }
 .guides a { background: var(--manila); padding: .3rem 1rem .25rem; border-radius: 8px 8px 0 0; text-decoration: none; color: var(--ink);
@@ -182,3 +195,5 @@ td form button, .inline button { margin-top: 0; }
   .big { padding: 1.1rem 1.2rem 3rem; }
   .card { padding-left: 1rem; padding-right: 1rem; }
 }
+/* The copy button goes under a line too narrow to share its slip. */
+@media (max-width: 520px) { .card .paste { flex-direction: column; } }

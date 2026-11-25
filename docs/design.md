@@ -958,9 +958,13 @@ The backup look is "Phosphor": one column, green on charcoal, in the system's mo
 
 - The cards on the home page, search results and entry pages print the analyzer's card as it is.
   Reason: one card renderer (see `AGENTS.md`).
-- The home page shows the line to paste to an agent above the fold, at phone width too, worded as Skills, above, says: "Run `curl -fsSL https://filedrawer.dev/skill.md` and follow it."
+- The home page shows the line to paste to an agent above the fold, and at phone width its start, since the slip (below) is taller than a small phone has room for under the README; worded as Skills, above, says: "Run `curl -fsSL https://filedrawer.dev/skill.md` and follow it."
   It gives no task, since a visitor may be planning an experiment or holding a null to share: `/skill.md`, once the skills are installed or declined, asks an agent with no task which one its human wants now (the owner's decision, 2026-11-08).
-  The line sits on the ruled line under its label, a paragraph of its own, so a triple-click selects only it; its URL is a link, so a person can read what their agent will follow; and a button after it copies it (the owner's decisions, 2026-11-08).
+  The line is a paragraph of its own under its label, so a triple-click selects only it, and a button copies it (the owner's decisions, 2026-11-08).
+  It is a manila slip with the copy button as its inked end, and a click anywhere on the slip copies it and strikes "Copied" across it.
+  Reason: the first person to try the site didn't notice the small button that followed the line (the owner's decision, 2026-11-25, from nine mockups on the branch `prototype/copy-button`, #134).
+  The slip's URL is no link, since a click there copies; a link under the slip, "See what it does", leads to it instead, so a person can still read what their agent will follow.
+  It is under the slip and not in the label, where it cost the label a second row at phone width and pushed the copy button below the fold (the owner's decisions, 2026-11-25).
 - The site serves its own fonts: Courier Prime, under the SIL Open Font License.
   Reason: with Google Fonts, Google would see every visitor's IP, and the privacy page would have to name it.
   No page loads anything from another host, and the pages' Content-Security-Policy allows nothing from another host and no script but the server's own, on the home page alone, so an entry can't run code or make a reader's browser fetch from a third party either.
