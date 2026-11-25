@@ -74,6 +74,15 @@ repos:
         language: system
         files: ^\.github/
         pass_filenames: false
+      # Leftover conflict markers, in any staged text file: a failed edit once staged
+      # AGENTS.md with a rebase's markers in it, and only wt-ship's landing would have
+      # refused it. --assume-in-merge checks outside a merge too, which is when an
+      # agent's stash or rebase leaves them.
+      - id: check-merge-conflict
+        name: conflict markers
+        entry: uvx --from pre-commit-hooks==6.0.0 check-merge-conflict --assume-in-merge
+        language: system
+        types: [text]
       # The repo's own shell scripts, which pre-commit finds by a .sh name or an
       # executable's shebang. Pinned as actionlint's shellcheck is. --norc, so a
       # ~/.shellcheckrc or a .shellcheckrc in the repo can't make a host's verdict differ

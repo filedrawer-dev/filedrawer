@@ -19,6 +19,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 import pytest
+from hypothesis import HealthCheck, settings
 
 # Autouse fixtures, registered by import: each test, and each module's fixtures, fail
 # when they leave a process running. leftover_processes.py is a copy of llm-toolbox's,
@@ -27,6 +28,16 @@ from leftover_processes import (  # noqa: F401
     _leftover_processes_of_module,
     _leftover_processes_of_test,
 )
+
+# The property tests' example counts, by HYPOTHESIS_PROFILE: `dev` while writing one,
+# `deep` for a longer search before trusting a change, the default otherwise. No
+# deadline and no too_slow check: a slow machine may let a bug pass, but must never
+# fail a test (CODING_STANDARDS.md, Python in bin/).
+_UNTIMED = {"deadline": None, "suppress_health_check": [HealthCheck.too_slow]}
+settings.register_profile("default", max_examples=100, **_UNTIMED)
+settings.register_profile("dev", max_examples=20, **_UNTIMED)
+settings.register_profile("deep", max_examples=3000, **_UNTIMED)
+settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "default"))
 
 OPENERS = ("wslview", "explorer.exe", "xdg-open", "open")
 # Tools that reach other machines. A test that needs one uses fake_host.
