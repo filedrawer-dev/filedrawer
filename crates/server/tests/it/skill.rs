@@ -32,6 +32,8 @@ const NOT_FOR_AGENTS: &[&str] = &[
     "/account/delete",
     // The page behind a claim's emailed link (#130).
     "/claim",
+    // The buttons of the page where a person approves an agent's code (#54).
+    "/device/approve",
     // GitHub sign-in, in a browser (#119).
     "/login/github",
     "/login/github/callback",
@@ -1841,7 +1843,17 @@ async fn an_upgrade_refuses_a_tag_that_names_a_file_outside_its_folder() {
     assert_not_upgraded(&home, name);
 }
 
-// The submit skill's token commands.
+// The submit skill's token commands, in the order "The token" gives them: the one
+// for a token in the environment, the two that connect with a code, and the human's.
+
+/// The command that asks for a code to connect with.
+const ASK_CODE: usize = 1;
+/// The command that waits for the code's approval and keeps the token.
+const WAIT_CODE: usize = 2;
+/// The command the human runs in a terminal.
+const BY_HAND: usize = 3;
+/// The human's command, fed a token pasted into chat.
+const PASTED: usize = 4;
 
 async fn submit_skill() -> String {
     served("/skills/filedrawer-submit/SKILL.md").await
@@ -1894,7 +1906,7 @@ async fn the_humans_command_replaces_the_token_line() {
     let root = tempfile::tempdir().unwrap();
     let old = "Authorization: Bearer fdt_old\nX-Staging-Key: k\n";
     let (home, file) = home_with_header(root.path(), old);
-    let by_hand = command(&submit_skill().await, "### The token", 1);
+    let by_hand = command(&submit_skill().await, "### The token", BY_HAND);
     let output = run_with(&by_hand, &home, root.path(), &[], "fdt_new\n");
     assert!(output.status.success(), "{}", text(&output));
     assert_eq!(
@@ -1909,7 +1921,7 @@ async fn the_humans_command_refuses_what_isnt_a_token() {
     let root = tempfile::tempdir().unwrap();
     let old = "Authorization: Bearer fdt_old\n";
     let (home, file) = home_with_header(root.path(), old);
-    let by_hand = command(&submit_skill().await, "### The token", 1);
+    let by_hand = command(&submit_skill().await, "### The token", BY_HAND);
     for typed in ["\n", "hunter2\n"] {
         let output = run_with(&by_hand, &home, root.path(), &[], typed);
         assert!(!output.status.success(), "{typed:?}: {}", text(&output));
@@ -1922,8 +1934,8 @@ async fn a_token_pasted_into_chat_goes_through_the_humans_command() {
     let root = tempfile::tempdir().unwrap();
     let (home, file) = home_with_header(root.path(), "X-Staging-Key: k\n");
     let skill = submit_skill().await;
-    let pasted = command(&skill, "### The token", 2);
-    let by_hand = command(&skill, "### The token", 1);
+    let pasted = command(&skill, "### The token", PASTED);
+    let by_hand = command(&skill, "### The token", BY_HAND);
     assert!(pasted.ends_with(&format!("| {by_hand}")), "{pasted}");
     let pasted = pasted.replace("'TOKEN'", "'fdt_pasted'");
     let output = run_with(&pasted, &home, root.path(), &[], "");
@@ -2085,6 +2097,154 @@ fn home_for_production(site: &StandIn, header: &str) -> (PathBuf, PathBuf) {
     let file = config.join("filedrawer.dev.header");
     std::fs::write(&file, header).unwrap();
     (home, file)
+}
+
+/// Runs the skill's command that asks for a code, and returns what it printed and
+/// the code, with the wait it names cut to nothing, so the command that waits
+/// polls at once.
+fn asked_for_code(site: &StandIn, home: &Path) -> (String, String) {
+    let ask = command(
+        &raw("filedrawer-submit", "SKILL.md"),
+        "### The token",
+        ASK_CODE,
+    );
+    let output = site.run(&ask, home);
+    let printed = text(&output);
+    assert!(output.status.success(), "{printed}");
+    let code = printed
+        .lines()
+        .find_map(|line| line.strip_prefix("user_code: "))
+        .unwrap_or_else(|| panic!("no code printed: {printed}"))
+        .to_string();
+    let device = home.join(".config/filedrawer/filedrawer.dev.device");
+    let kept = std::fs::read_to_string(&device).unwrap();
+    assert!(kept.contains("\ninterval: 5\n"), "{kept}");
+    std::fs::write(&device, kept.replace("\ninterval: 5\n", "\ninterval: 0\n")).unwrap();
+    (printed, code)
+}
+
+/// The ID of the stand-in app's own account, which signed up and verified.
+async fn own_account(site: &StandIn) -> String {
+    let mine = site
+        .app
+        .get_with_token("/entries/mine", &site.app.token)
+        .await;
+    let line = common::field(&mine.body, "account").expect(&mine.body);
+    line.split(' ').next().unwrap().to_string()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_skills_commands_connect_with_a_code_and_keep_secrets_unprinted() {
+    let site = StandIn::at(PRODUCTION).await;
+    let (home, file) = home_for_production(&site, "X-Staging-Key: k\n");
+    let (printed, code) = asked_for_code(&site, &home);
+    assert!(printed.starts_with("200\n"), "{printed}");
+    assert!(
+        printed.contains("verification_uri: https://filedrawer.dev/device"),
+        "{printed}"
+    );
+    assert!(!printed.contains("fdd_"), "the device code was printed");
+    let device = home.join(".config/filedrawer/filedrawer.dev.device");
+    let mode =
+        std::os::unix::fs::PermissionsExt::mode(&std::fs::metadata(&device).unwrap().permissions());
+    assert_eq!(mode & 0o077, 0, "{mode:o}");
+    let account = own_account(&site).await;
+    let approved = filedrawer_server::device::approve(&site.app.pool, &code, &account, "agent")
+        .await
+        .unwrap();
+    assert!(approved);
+    let wait = command(
+        &raw("filedrawer-submit", "SKILL.md"),
+        "### The token",
+        WAIT_CODE,
+    );
+    let output = site.run(&wait, &home);
+    let printed = text(&output);
+    assert!(output.status.success(), "{printed}");
+    assert!(!printed.contains("fdt_"), "the token was printed");
+    let kept = std::fs::read_to_string(&file).unwrap();
+    let token = kept
+        .strip_prefix("X-Staging-Key: k\nAuthorization: Bearer ")
+        .and_then(|rest| rest.strip_suffix('\n'))
+        .unwrap_or_else(|| panic!("the file holds {kept:?}; printed: {printed}"));
+    let mine = site.app.get_with_token("/entries/mine", token).await;
+    assert_eq!(mine.status, StatusCode::OK, "{}", mine.body);
+    assert!(!device.exists(), "the device code stayed behind");
+    // With a token in the file, it asks for no code.
+    let ask = command(
+        &raw("filedrawer-submit", "SKILL.md"),
+        "### The token",
+        ASK_CODE,
+    );
+    let again = site.run(&ask, &home);
+    assert!(!again.status.success(), "{}", text(&again));
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), kept);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_denied_code_ends_the_wait_with_the_header_file_as_it_was() {
+    let site = StandIn::at(PRODUCTION).await;
+    let (home, file) = home_for_production(&site, "X-Staging-Key: k\n");
+    let (_, code) = asked_for_code(&site, &home);
+    assert!(
+        filedrawer_server::device::deny(&site.app.pool, &code)
+            .await
+            .unwrap()
+    );
+    let wait = command(
+        &raw("filedrawer-submit", "SKILL.md"),
+        "### The token",
+        WAIT_CODE,
+    );
+    let output = site.run(&wait, &home);
+    let printed = text(&output);
+    assert_eq!(output.status.code(), Some(1), "{printed}");
+    assert!(printed.starts_with("access_denied: "), "{printed}");
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "X-Staging-Key: k\n"
+    );
+    let device = home.join(".config/filedrawer/filedrawer.dev.device");
+    assert!(!device.exists(), "the device code stayed behind");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_header_file_it_cant_write_keeps_the_token_unprinted_and_fails() {
+    let site = StandIn::at(PRODUCTION).await;
+    let (home, file) = home_for_production(&site, "X-Staging-Key: k\n");
+    let (_, code) = asked_for_code(&site, &home);
+    let account = own_account(&site).await;
+    assert!(
+        filedrawer_server::device::approve(&site.app.pool, &code, &account, "agent")
+            .await
+            .unwrap()
+    );
+    let config = home.join(".config/filedrawer");
+    let mode = |bits| std::os::unix::fs::PermissionsExt::from_mode(bits);
+    std::fs::set_permissions(&config, mode(0o500)).unwrap();
+    let wait = command(
+        &raw("filedrawer-submit", "SKILL.md"),
+        "### The token",
+        WAIT_CODE,
+    );
+    let output = site.run(&wait, &home);
+    std::fs::set_permissions(&config, mode(0o700)).unwrap();
+    let printed = text(&output);
+    assert_eq!(output.status.code(), Some(3), "{printed}");
+    assert!(!printed.contains("fdt_"), "the token was printed");
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "X-Staging-Key: k\n"
+    );
+    // The file it names holds the token's line.
+    let kept = printed
+        .split("is in ")
+        .nth(1)
+        .and_then(|rest| rest.split(':').next())
+        .unwrap_or_else(|| panic!("no file named: {printed}"));
+    let line = std::fs::read_to_string(kept).unwrap();
+    assert!(line.starts_with("Authorization: Bearer fdt_"), "{line}");
+    std::fs::remove_file(kept).unwrap();
 }
 
 const MAKE_ACCOUNT: &str = "### An account without signing up";

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE device_requests SET denied_at = ?\n         WHERE user_code_hash = ? AND expires_at > ?\n           AND approved_at IS NULL AND denied_at IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "f5349415abf4e9177aef163da65ff55a6a38654f168ca7f0cf1b0e5369959428"
+}

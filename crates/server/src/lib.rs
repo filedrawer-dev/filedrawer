@@ -18,6 +18,7 @@ pub mod config;
 pub mod daily_email;
 pub mod db;
 mod deletion;
+pub mod device;
 mod duplicates;
 pub mod email_change;
 mod entries;
@@ -321,6 +322,17 @@ fn build(state: AppState) -> Routes<Router> {
                 MAX_FORM_BYTES,
             ),
         )
+        .route(
+            "/device",
+            limited(
+                get(routes::device::page_for_code).post(routes::device::typed),
+                MAX_FORM_BYTES,
+            ),
+        )
+        .route(
+            "/device/approve",
+            limited(post(routes::device::decide), MAX_FORM_BYTES),
+        )
         .route("/account", get(account::account))
         .route("/account/tokens", post(account::create_token))
         .route("/account/tokens/{id}/revoke", post(account::revoke_token))
@@ -385,6 +397,14 @@ fn build(state: AppState) -> Routes<Router> {
     accounts
         .map_router(|router| Router::new().merge(router.layer(same_origin)))
         .route("/accounts", post(routes::agent_account::make))
+        .route(
+            "/device/code",
+            limited(post(routes::device::ask), MAX_FORM_BYTES),
+        )
+        .route(
+            "/device/token",
+            limited(post(routes::device::poll), MAX_FORM_BYTES),
+        )
         .route(
             "/account/claim",
             limited(post(routes::claim::ask), MAX_FORM_BYTES),

@@ -28,8 +28,8 @@ pub struct Revoke {
     pub apply: bool,
 }
 
-/// After a leak: ends every session, revokes every token and spends every unused
-/// email link, and with `passwords` clears every password, in one transaction, for
+/// After a leak: ends every session, revokes every token, ends every agent's code
+/// waiting to become one and spends every unused email link, and with `passwords` clears every password, in one transaction, for
 /// every account. Without `apply` it changes nothing. Returns what it ended, or
 /// would end.
 pub async fn revoke_all(pool: &SqlitePool, revoke: Revoke) -> Result<Revoked, AdminError> {
@@ -84,6 +84,10 @@ pub async fn revoke_all(pool: &SqlitePool, revoke: Revoke) -> Result<Revoked, Ad
         .execute(&mut *tx)
         .await?;
         sqlx::query!("DELETE FROM email_changes")
+            .execute(&mut *tx)
+            .await?;
+        // An agent's approved code would make a token at its next poll.
+        sqlx::query!("DELETE FROM device_requests")
             .execute(&mut *tx)
             .await?;
         if revoke.passwords {

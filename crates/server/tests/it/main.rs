@@ -22,6 +22,7 @@ mod config;
 mod daily_email;
 mod db;
 mod deletion;
+mod device;
 mod duplicates;
 mod email_change;
 mod entries_mine;

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE device_requests SET last_polled_at = ?, interval_secs = ? WHERE device_hash = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "a13969d0c43112add892f9fa3c47e9762f5f355776fc8102551e19a9d341c581"
+}

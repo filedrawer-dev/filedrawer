@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Connect an agent{% endblock %}
+{% block content %}
+<h1>Connect an agent</h1>
+{% if let Some(error) = error %}<p class="error">{{ error }}</p>{% endif %}
+<p class="device-confirm">An agent asked for code <code class="device-code">{{ user_code }}</code> at {{ asked_at }} (UTC). Approving it gives the agent a token to post to File Drawer as account <code>{{ account_id }}</code>, {{ crate::respond::shown_name(display_name) }}.</p>
+<p>The agent describes itself as:</p>
+<p><code class="device-agent">{% if let Some(user_agent) = user_agent %}{{ user_agent }}{% else %}(nothing){% endif %}</code></p>
+<p>That is the agent's own description, which any program can claim. Approve only if your own agent showed you this code just now. If someone sent you the code, deny it: whoever holds that agent would post as you.</p>
+<p>The token can submit entries, fix and publish them while they are held, and delete a pending entry it submitted. It can't change this account, make tokens or withdraw an entry.</p>
+<form method="post" action="/device/approve">
+<input type="hidden" name="user_code" value="{{ user_code }}">
+<label>Token name, as your account page will list it <input type="text" name="name" value="{{ name }}" maxlength="100" required></label>
+<button type="submit" name="decision" value="approve">Approve</button>
+</form>
+<form method="post" action="/device/approve">
+<input type="hidden" name="user_code" value="{{ user_code }}">
+<button type="submit" name="decision" value="deny">Deny</button>
+</form>
+{% endblock %}
