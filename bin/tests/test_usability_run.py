@@ -498,15 +498,17 @@ class NewerInstallerSite(InstallerSite):
 
 
 TAG = "/refs/tags/skill-filedrawer-search-v3/skills/filedrawer-search"
+BRANCH = "/refs/heads/draft-search/skills/filedrawer-search"
 
 
-def run_pinned_setup(tmp_path, tag_files):
-    """Runs setup with filedrawer-search pinned to version 3, after an install of a
-    newer copy, against a raw host serving TAG_FILES; returns it with the site."""
+def run_pinned_setup(tmp_path, tag_files, pinned=3):
+    """Runs setup with filedrawer-search pinned to PINNED, version 3 by default,
+    after an install of a newer copy, against a raw host serving TAG_FILES; returns
+    it with the site."""
     with serving(NewerInstallerSite) as site, serving(tag_site(tag_files)) as raw:
         done, home = run_setup(
             tmp_path,
-            {"install": "installed", "pin": {"filedrawer-search": 3}},
+            {"install": "installed", "pin": {"filedrawer-search": pinned}},
             FILEDRAWER_STAGING_KEY="k",
             FILEDRAWER_USABILITY_BASE=site,
             FILEDRAWER_USABILITY_RAW=raw,
@@ -531,6 +533,61 @@ def test_setup_replaces_a_pinned_skill_with_its_tags_files_pointed_at_the_site(
     ).replace("/filedrawer.dev.header", "/127.0.0.1.header")
     assert (folder / "references" / "notes.md").read_text() == f"see {site}/tags\n"
     assert not (folder / "references" / "only-in-new.md").exists()
+
+
+def test_setup_pins_a_skill_to_a_branch_named_in_place_of_a_version(tmp_path):
+    # A draft of the next version, pushed as a branch, runs before it lands.
+    done, home, site = run_pinned_setup(
+        tmp_path,
+        {
+            f"{BRANCH}/SKILL.md": PINNED_SKILL.encode(),
+            f"{BRANCH}/references/notes.md": b"see https://filedrawer.dev/tags\n",
+        },
+        pinned="draft-search",
+    )
+    assert done.returncode == 0, done.stderr
+    folder = home / ".agents" / "skills" / "filedrawer-search"
+    assert f"Search {site} with" in (folder / "SKILL.md").read_text()
+    assert (folder / "references" / "notes.md").read_text() == f"see {site}/tags\n"
+    assert not (folder / "references" / "only-in-new.md").exists()
+
+
+@pytest.mark.parametrize("pinned", ["3", 3])
+def test_setup_reads_a_pin_of_digits_as_a_version_string_or_not(tmp_path, pinned):
+    done, home, _ = run_pinned_setup(
+        tmp_path,
+        {
+            f"{TAG}/SKILL.md": PINNED_SKILL.encode(),
+            f"{TAG}/references/notes.md": b"notes\n",
+        },
+        pinned=pinned,
+    )
+    assert done.returncode == 0, done.stderr
+
+
+@pytest.mark.parametrize("pinned", ["../main", "a b", "x?y", "３", "draft/../v3", ""])
+def test_setup_refuses_a_pin_that_isnt_a_version_or_a_branch_name(tmp_path, pinned):
+    done, _, _ = run_pinned_setup(tmp_path, {}, pinned=pinned)
+    assert done.returncode == 1
+    assert "not a version or a branch name" in done.stderr
+    assert "Traceback" not in done.stderr
+
+
+@pytest.mark.parametrize("name", ["../../escape.md", "/etc/x", "references/../../x"])
+def test_setup_refuses_a_listed_file_outside_the_skills_folder(tmp_path, name):
+    skill = PINNED_SKILL.replace("references/notes.md", name)
+    done, home, _ = run_pinned_setup(tmp_path, {f"{TAG}/SKILL.md": skill.encode()})
+    assert done.returncode == 1
+    assert "outside the skill's folder" in done.stderr
+    assert "Traceback" not in done.stderr
+    assert not (home / ".agents" / "escape.md").exists()
+
+
+def test_setup_names_a_pinned_branch_it_cant_fetch(tmp_path):
+    done, _, _ = run_pinned_setup(tmp_path, {}, pinned="draft-search")
+    assert done.returncode == 1
+    assert "refs/heads/draft-search/skills/filedrawer-search/SKILL.md" in done.stderr
+    assert "Traceback" not in done.stderr
 
 
 def test_setup_names_a_pinned_tag_it_cant_fetch(tmp_path):

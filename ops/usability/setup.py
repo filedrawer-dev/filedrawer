@@ -15,7 +15,9 @@ says a run on staging needs. Then, by the scenario's keys:
                   skill-<name>-v<version>, pointed at the site as the installer does,
                   to run an older version's text; with mode auto, the skill's own
                   upgrade check installs the current version once it fires, so an
-                  A/B of versions runs with mode ask
+                  A/B of versions runs with mode ask. A name in place of the
+                  version, such as "draft-search", takes the files from that
+                  branch on GitHub instead, to run a draft before it lands
   version_down    skill names whose installed copy gets metadata.version lowered by
                   one, so the agent finds an upgrade (after any pin)
   agents_blocked  true: ~/.agents is a file, so an install fails
@@ -74,7 +76,7 @@ def install(scenario: dict, base: str, key: str) -> None:
     subprocess.run([*curl, "-o", str(script), f"{base}/install.sh"], check=True)
     subprocess.run(["sh", str(script), scenario.get("mode", "auto")], check=True)
     for skill, version in scenario.get("pin", {}).items():
-        pin(skill, int(version), base)
+        pin(skill, str(version), base)
     for skill in scenario.get("version_down", []):
         path = Path.home() / ".agents" / "skills" / skill / "SKILL.md"
         text = path.read_text()
@@ -87,12 +89,20 @@ def install(scenario: dict, base: str, key: str) -> None:
 RAW = "https://raw.githubusercontent.com/filedrawer-dev/filedrawer"
 
 
-def pin(skill: str, version: int, base: str) -> None:
-    """Replaces the installed skill's folder with its files at tag VERSION, pointed
-    at BASE as the installer points a copy installed from a site other than
-    production."""
+def pin(skill: str, version: str, base: str) -> None:
+    """Replaces the installed skill's folder with its files at tag VERSION, or at
+    the branch VERSION names when it isn't a number, pointed at BASE as the
+    installer points a copy installed from a site other than production."""
     raw = os.environ.get("FILEDRAWER_USABILITY_RAW", RAW)
-    tag = f"{raw}/refs/tags/skill-{skill}-v{version}/skills/{skill}"
+    if re.fullmatch(r"[0-9]+", version):
+        ref = f"refs/tags/skill-{skill}-v{version}"
+    elif re.fullmatch(r"[A-Za-z0-9._/-]+", version) and ".." not in version:
+        ref = f"refs/heads/{version}"
+    else:
+        sys.exit(
+            f"setup: the pin for {skill}, {version!r}, is not a version or a branch name"
+        )
+    tag = f"{raw}/{ref}/skills/{skill}"
     host = urllib.parse.urlsplit(base).hostname
 
     def fetch(name: str) -> str:
@@ -103,7 +113,7 @@ def pin(skill: str, version: int, base: str) -> None:
         except (OSError, UnicodeDecodeError) as e:
             sys.exit(
                 f"setup: couldn't fetch {url} to pin {skill}: {e}. If the network"
-                " is down, run again later; if not, that version has no tag"
+                f" is down, run again later; if not, {ref} doesn't exist"
             )
         return text.replace("https://filedrawer.dev", base).replace(
             "/filedrawer.dev.header", f"/{host}.header"
@@ -113,10 +123,13 @@ def pin(skill: str, version: int, base: str) -> None:
     listed = re.search(r'^  files: "([^"]*)"$', skill_md, re.MULTILINE)
     if not listed:
         sys.exit(
-            f"setup: {tag}/SKILL.md lists no files, so it isn't a skill's tag:"
+            f"setup: {tag}/SKILL.md lists no files, so it isn't a skill's folder:"
             f" check the version pinned for {skill}"
         )
     files = listed.group(1).split()
+    for name in files:
+        if name.startswith("/") or ".." in name.split("/"):
+            sys.exit(f"setup: {tag}/SKILL.md lists {name}, outside the skill's folder")
     texts = {name: skill_md if name == "SKILL.md" else fetch(name) for name in files}
     folder = Path.home() / ".agents" / "skills" / skill
     shutil.rmtree(folder, ignore_errors=True)

@@ -64,7 +64,9 @@ SCENARIO is a path, or a name in the usability folder's `scenarios/`, with or wi
   Use persona-like names (`jason7`), since the agent sees its user's name.
 - Its turns use the field-test key, `{KEY}` in a scenario, for fetch tools; the run refuses a key that is closed or expires within 2 hours.
 - A scenario that plants an earlier result for the agent to find, an entry or a public post, is checked first with two searches written from the prompt's own words, as an agent writes them, not from the target's title: a title query finds a post that the agent's queries miss.
-- To compare two versions of a skill, run a pinned arm of the current version beside the new one, through setup's `pin` (`ops/usability/setup.py`), which needs no push, with mode `ask` so the pinned skill doesn't upgrade itself; `ops/usability-run sessions RUN_DIR...` counts, per session, whether the skill loaded and what it searched.
+- To compare two versions of a skill, run a pinned arm of the current version beside the new one, through setup's `pin` (`ops/usability/setup.py`), which needs no push, with mode `ask` so the pinned skill doesn't upgrade itself.
+  To run a draft before it lands, push it as a branch and pin the skill to the branch's name in place of a version, as the draft's version is untagged; keep the branch until the runs' results are read, since a rerun fetches it again.
+  `ops/usability-run sessions RUN_DIR...` counts, per session, whether the skill loaded and what it searched.
 - A step only a person can take mid-run, such as confirming an emailed claim link in a browser, is a scenario turn `{"wait_for_file": "NAME", "say": "..."}`: the run prints one line naming the file to create in the run's folder (in a batch, in the run's log), waits for it, then types `say`.
 - For a check after the run with the agent's own token, `--keep-header FILE` keeps the agent's header file, unblanked and mode 600, at FILE, and the run's last line says whether it did; nothing prints it, and `report` and the run folder's `files/` stay blanked.
   It holds the staging key line too, so keep it out of repos.

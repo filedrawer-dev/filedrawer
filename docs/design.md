@@ -918,7 +918,10 @@ On writing, the submit skill tells the agent:
 
 The search skill loads before an agent plans an experiment (#30; the owner's decisions of 2026-11-08).
 
-- Its description names the moments: before planning or designing an AI safety experiment; before a run that costs real compute or money, of an experiment not yet searched for in the session, so reruns and small changes don't search again; when choosing between directions; when a result surprises the agent, a null where an effect was expected or the reverse; when the human asks what has been tried.
+- Its description names the moments: before planning or designing an AI safety experiment, methods work on a safety tool included, such as whether a probe, monitor, SAE feature or steering vector for deception, refusal or another unsafe behavior still works after the model is quantized, fine-tuned or swapped, but not a tool for a capability or a style (#143); before a run that costs real compute or money, of an experiment not yet searched for in the session, so reruns and small changes don't search again; when choosing between directions; when a result surprises the agent, a null where an effect was expected or the reverse; when the human asks what has been tried.
+  Reason for the safety-tool line: in an A/B on staging (2026-11-26, Claude Code only), the skill loaded before designs of a deception probe under 4-bit quantization, a refusal steering vector under LoRA fine-tuning and deception SAE features under fine-tuning, the line's own examples, in 9 of 9 sessions with the line against 4 of 18 without it; the sandbagging plan beside them loaded it in every session of both arms.
+  A first draft that named the tools without "for deception, refusal or another unsafe behavior" also loaded it for a part-of-speech probe, a formality steering vector and French-text SAE features, 9 of 9 sessions, where the version without the line loaded it once in 9; with the qualifier, 0 of 9, and never for a style LoRA in any arm.
+  Unmeasured: Codex, a monitor, and a model that is swapped rather than changed.
   It doesn't search for work that isn't AI safety.
 - A match is reported at once: the agent stops before the planned run, rather than waiting for a break as the submit skill does.
   Reason: search exists to change the plan.
