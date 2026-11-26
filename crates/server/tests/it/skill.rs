@@ -2208,6 +2208,45 @@ async fn a_denied_code_ends_the_wait_with_the_header_file_as_it_was() {
     assert!(!device.exists(), "the device code stayed behind");
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn a_header_file_it_cant_write_keeps_the_token_unprinted_and_fails() {
+    let site = StandIn::at(PRODUCTION).await;
+    let (home, file) = home_for_production(&site, "X-Staging-Key: k\n");
+    let (_, code) = asked_for_code(&site, &home);
+    let account = own_account(&site).await;
+    assert!(
+        filedrawer_server::device::approve(&site.app.pool, &code, &account, "agent")
+            .await
+            .unwrap()
+    );
+    let config = home.join(".config/filedrawer");
+    let mode = |bits| std::os::unix::fs::PermissionsExt::from_mode(bits);
+    std::fs::set_permissions(&config, mode(0o500)).unwrap();
+    let wait = command(
+        &raw("filedrawer-submit", "SKILL.md"),
+        "### The token",
+        WAIT_CODE,
+    );
+    let output = site.run(&wait, &home);
+    std::fs::set_permissions(&config, mode(0o700)).unwrap();
+    let printed = text(&output);
+    assert_eq!(output.status.code(), Some(3), "{printed}");
+    assert!(!printed.contains("fdt_"), "the token was printed");
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "X-Staging-Key: k\n"
+    );
+    // The file it names holds the token's line.
+    let kept = printed
+        .split("is in ")
+        .nth(1)
+        .and_then(|rest| rest.split(':').next())
+        .unwrap_or_else(|| panic!("no file named: {printed}"));
+    let line = std::fs::read_to_string(kept).unwrap();
+    assert!(line.starts_with("Authorization: Bearer fdt_"), "{line}");
+    std::fs::remove_file(kept).unwrap();
+}
+
 const MAKE_ACCOUNT: &str = "### An account without signing up";
 
 #[tokio::test(flavor = "multi_thread")]

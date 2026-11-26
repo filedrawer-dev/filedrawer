@@ -198,6 +198,18 @@ pub fn one_line_name(text: &str, max: usize) -> Option<&str> {
     (length >= 1 && length <= max && !text.contains(char::is_control)).then_some(text)
 }
 
+/// The longest token name, in characters.
+pub const TOKEN_NAME_CHARS: usize = 100;
+
+/// `text` trimmed, if it can name a token an agent's code makes: 1 to
+/// [`TOKEN_NAME_CHARS`] characters on one line that show something, with no
+/// invisible or direction-changing character, since the agent chooses it and the
+/// approval page and the account page show it.
+pub fn token_name(text: &str) -> Option<&str> {
+    let text = text.trim();
+    analyzer::is_label(text, TOKEN_NAME_CHARS).then_some(text)
+}
+
 /// The longest display name, in characters (design.md, Accounts).
 pub const DISPLAY_NAME_CHARS: usize = 50;
 

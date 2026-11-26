@@ -20,8 +20,7 @@ use crate::pages::{DeviceConfirmPage, DevicePage, Message, page};
 use crate::respond::Format;
 use crate::time::now_utc;
 
-/// The longest token name, as the account page's form takes.
-const NAME_CHARS: usize = 100;
+use crate::accounts::TOKEN_NAME_CHARS as NAME_CHARS;
 
 #[derive(Deserialize)]
 pub struct AskForm {
@@ -41,9 +40,9 @@ pub async fn ask(
     let name = if form.name.trim().is_empty() {
         device::DEFAULT_NAME
     } else {
-        accounts::one_line_name(&form.name, NAME_CHARS).ok_or_else(|| {
+        accounts::token_name(&form.name).ok_or_else(|| {
             AppError::BadRequest(format!(
-                "a token's name is 1 to {NAME_CHARS} characters on one line"
+                "a token's name is 1 to {NAME_CHARS} characters on one line, with no invisible characters"
             ))
         })?
     };
@@ -91,9 +90,12 @@ pub struct PollForm {
 /// starts with RFC 8628's error code.
 pub async fn poll(
     State(state): State<AppState>,
+    ip: ClientIp,
     format: Format,
     Form(form): Form<PollForm>,
 ) -> Result<Response, AppError> {
+    // In memory, before the poll's write transaction.
+    state.rate_limits.device_poll_from(&ip)?;
     let (code, description, interval) = match device::poll(&state.pool, &form.device_code).await? {
         Poll::Approved { account_id, token } => {
             let account = HeaderValue::from_str(&account_id).expect("an account ID is ASCII");
@@ -294,8 +296,10 @@ pub async fn decide(
             ))
         }
         "approve" => {
-            let Some(name) = accounts::one_line_name(&form.name, NAME_CHARS) else {
-                let error = format!("A token's name is 1 to {NAME_CHARS} characters on one line.");
+            let Some(name) = accounts::token_name(&form.name) else {
+                let error = format!(
+                    "A token's name is 1 to {NAME_CHARS} characters on one line, with no invisible characters."
+                );
                 return confirm_page(
                     &state,
                     &session.id,

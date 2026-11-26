@@ -434,3 +434,40 @@ async fn an_expired_request_is_tidied_away() {
     let polled = poll(&app, &asked.device_code).await;
     assert_eq!(poll_error(&polled), "expired_token");
 }
+
+#[tokio::test]
+async fn a_token_name_holds_nothing_invisible() {
+    let app = test_app().await;
+    // A right-to-left override, which would show the name's end first.
+    let refused = agent_post(&app, "/device/code", "name=agent%E2%80%AEtxt".into(), false).await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.body);
+    let asked = ask(&app, "").await;
+    let (cookie, _) = person(&app).await;
+    let renamed = decide(&app, &cookie, &asked.user_code, "approve", "agent\u{200b}").await;
+    assert_eq!(
+        renamed.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        renamed.body
+    );
+    let polled = poll(&app, &asked.device_code).await;
+    assert_eq!(poll_error(&polled), "authorization_pending");
+}
+
+#[tokio::test]
+async fn polls_are_limited_per_ip() {
+    let app = test_app().await.with_limits(Limits {
+        device_polls_per_ip: common::through_caddy::per_minute(1),
+        ..wide()
+    });
+    let asked = ask(&app, "").await;
+    let first = poll(&app, &asked.device_code).await;
+    assert_eq!(poll_error(&first), "authorization_pending");
+    let second = poll(&app, &asked.device_code).await;
+    assert_eq!(
+        second.status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "{}",
+        second.body
+    );
+}

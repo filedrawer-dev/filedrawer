@@ -41,6 +41,7 @@ pub fn wide() -> Limits {
         claims_site: hourly(10_000),
         device_codes_per_ip: hourly(10_000),
         device_codes_site: hourly(10_000),
+        device_polls_per_ip: per_minute(10_000),
         wrong_device_codes_per_account: hourly(10_000),
         wrong_device_codes_per_ip: hourly(10_000),
         emails_per_address: hourly(10_000),

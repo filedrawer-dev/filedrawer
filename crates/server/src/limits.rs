@@ -66,6 +66,9 @@ pub struct Limits {
     /// human's browser (#54): per client IP, and across the whole site.
     pub device_codes_per_ip: Vec<Window>,
     pub device_codes_site: Vec<Window>,
+    /// Polls of `POST /device/token` per client IP, counted in memory before the
+    /// poll's write, so a flood of polls can't hold the database's write lock.
+    pub device_polls_per_ip: Rate,
     /// Codes typed on `/device` that match no waiting request: per account, and
     /// per client IP, so codes can't be guessed at the request rate.
     pub wrong_device_codes_per_account: Vec<Window>,
@@ -94,6 +97,7 @@ impl Limits {
             claims_site: vec![daily(2000)],
             device_codes_per_ip: vec![hourly(10), daily(40)],
             device_codes_site: vec![daily(2000)],
+            device_polls_per_ip: per_minute(60),
             wrong_device_codes_per_account: vec![hourly(10)],
             wrong_device_codes_per_ip: vec![hourly(20)],
             emails_per_address: vec![hourly(5), daily(20)],
@@ -232,6 +236,13 @@ impl RateLimits {
     pub fn link_checks_by(&self, account_id: &str, rate: Rate, count: u32) -> Result<(), AppError> {
         self.take_many(&format!("links:{account_id}"), rate, count, Instant::now())
             .map_err(|wait| too_many("this account's link checks for the hour", wait))
+    }
+
+    /// Counts a poll of `POST /device/token` from `ip`.
+    pub fn device_poll_from(&self, ip: &ClientIp) -> Result<(), AppError> {
+        let rate = self.limits.device_polls_per_ip;
+        self.take(&format!("device-poll:{}", ip.0), rate, Instant::now())
+            .map_err(|wait| too_many("device-code polls from this IP address", wait))
     }
 
     /// Counts a token-authenticated write by `account_id`.
