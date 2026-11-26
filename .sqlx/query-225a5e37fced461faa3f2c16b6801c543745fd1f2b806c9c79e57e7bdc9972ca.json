@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT e.seq AS \"seq!: i64\", e.id, e.status AS \"status: Status\", e.batch_seq,\n                  b.id AS \"batch_id?\", e.token_id, e.review_reason, e.screen_verdict\n           FROM entries e LEFT JOIN batches b ON b.seq = e.batch_seq\n           WHERE (?1 IS NULL OR e.account_id = ?1) AND (?2 IS NULL OR e.id = ?2)\n             AND (?3 IS NULL OR e.batch_seq = ?3) AND (?4 IS NULL OR e.seq = ?4)\n           ORDER BY e.seq",
+  "query": "SELECT e.seq AS \"seq!: i64\", e.id, e.status AS \"status: Status\", e.batch_seq,\n                  b.id AS \"batch_id?\", e.token_id, e.review_reason, e.screen_verdict,\n                  (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public')\n                    AS \"newer?\"\n           FROM entries e LEFT JOIN batches b ON b.seq = e.batch_seq\n           WHERE (?1 IS NULL OR e.account_id = ?1) AND (?2 IS NULL OR e.id = ?2)\n             AND (?3 IS NULL OR e.batch_seq = ?3) AND (?4 IS NULL OR e.seq = ?4)\n           ORDER BY e.seq",
   "describe": {
     "columns": [
       {
@@ -90,6 +90,17 @@
             "name": "screen_verdict"
           }
         }
+      },
+      {
+        "name": "newer?",
+        "ordinal": 8,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "id"
+          }
+        }
       }
     ],
     "parameters": {
@@ -103,8 +114,9 @@
       true,
       true,
       true,
+      true,
       true
     ]
   },
-  "hash": "cd53ef60fe3696111177db5417d10e36aabd72a59004110313d4daa590f4078b"
+  "hash": "225a5e37fced461faa3f2c16b6801c543745fd1f2b806c9c79e57e7bdc9972ca"
 }

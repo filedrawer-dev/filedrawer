@@ -1279,7 +1279,9 @@ pub async fn entry_runs(
 
 /// The description of `account_id`'s run `run_id` once every entry using it is
 /// public (design.md, Agent interface), and `None` before then or with no such run.
-/// A run's description is author text, shown only once no hidden entry uses it.
+/// A run's description is author text, shown only once no hidden entry uses it. A
+/// version withdrawn while public was public, so it doesn't hide the description
+/// again from the entries still public.
 pub async fn run_description(
     connection: &mut sqlx::SqliteConnection,
     account_id: &str,
@@ -1289,7 +1291,10 @@ pub async fn run_description(
         "SELECT r.declaration FROM runs r WHERE r.account_id = ?1 AND r.id = ?2
            AND NOT EXISTS (
                SELECT 1 FROM entry_runs other JOIN entries x ON x.seq = other.entry_seq
-               WHERE other.account_id = ?1 AND other.run_id = ?2 AND x.status != 'public')",
+               WHERE other.account_id = ?1 AND other.run_id = ?2 AND x.status != 'public'
+                 AND NOT (x.status = 'withdrawn'
+                          AND EXISTS (SELECT 1 FROM withdrawal_notices n
+                                      WHERE n.entry_seq = x.seq)))",
         account_id,
         run_id
     )

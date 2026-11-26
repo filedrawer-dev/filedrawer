@@ -1,0 +1,74 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT e.id, n.reason, n.withdrawn_at, n.screen, n.screen_reasons\n         FROM withdrawal_notices n JOIN entries e ON e.seq = n.entry_seq\n         WHERE e.account_id = ? AND e.status = 'withdrawn'\n         ORDER BY n.withdrawn_at DESC, e.seq DESC",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "reason",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "withdrawal_notices",
+            "name": "reason"
+          }
+        }
+      },
+      {
+        "name": "withdrawn_at",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "withdrawal_notices",
+            "name": "withdrawn_at"
+          }
+        }
+      },
+      {
+        "name": "screen",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "withdrawal_notices",
+            "name": "screen"
+          }
+        }
+      },
+      {
+        "name": "screen_reasons",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "withdrawal_notices",
+            "name": "screen_reasons"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "bd77eec19139c131bbc1bf3d231454dacd371196d785c63bc6ed92b82a2530f3"
+}

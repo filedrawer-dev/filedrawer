@@ -1014,3 +1014,41 @@ async fn the_accounts_agents_made_and_those_claimed_are_counted() {
         "{body}"
     );
 }
+
+#[tokio::test]
+async fn it_lists_withdrawal_reasons_held_for_the_owner_without_their_text() {
+    let (app, _) = app_in(Environment::Production, true).await;
+    let (cookie, token) = common::browser_account(&app, "grace@example.com").await;
+    let id = common::series::submit_with(&app, &token, &entry("Steering", "")).await;
+    let reason = format!("Withdrawn: {HAZARD}");
+    let withdrawn = app
+        .form(
+            &format!("/account/e/{id}/withdraw"),
+            &[("reason", &reason)],
+            Some(&cookie),
+        )
+        .await;
+    assert_eq!(withdrawn.status, StatusCode::OK, "{}", withdrawn.body);
+    filedrawer_server::jobs::publish_due(&app.state, OffsetDateTime::now_utc())
+        .await
+        .unwrap();
+
+    send_daily_email(&app.state, soon()).await.unwrap();
+
+    let email = the_report(&app);
+    assert!(
+        email
+            .body
+            .contains("Withdrawal reasons held for the owner (1)"),
+        "{}",
+        email.body
+    );
+    assert!(
+        email.body.contains(&format!(
+            "notice http://localhost/e/{id}, entry http://localhost/admin/e/{id}"
+        )),
+        "{}",
+        email.body
+    );
+    assert!(!email.body.contains("Withdrawn:"), "{}", email.body);
+}

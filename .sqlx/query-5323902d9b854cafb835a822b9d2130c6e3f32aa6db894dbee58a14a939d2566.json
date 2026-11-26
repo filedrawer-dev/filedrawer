@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT n.withdrawn_at FROM withdrawal_notices n JOIN entries e ON e.seq = n.entry_seq\n         WHERE e.id = ? AND e.account_id = ? AND e.status = 'withdrawn'",
+  "describe": {
+    "columns": [
+      {
+        "name": "withdrawn_at",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "withdrawal_notices",
+            "name": "withdrawn_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "5323902d9b854cafb835a822b9d2130c6e3f32aa6db894dbee58a14a939d2566"
+}

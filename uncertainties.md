@@ -600,6 +600,32 @@ The owner asked for a claim by email address, with a code the human enters and t
 - Chosen: one, since the batch publishes as one once its last member passes.
 - Against: an agent reading the text can't tell which members are screened today.
 
+### Withdrawal notices
+
+#### A refused or held reason (#31)
+
+- Options: the author gives another reason, as a rejected entry is fixed and sent again; the notice shows with no reason for good; or the owner decides.
+- Chosen: no second reason.
+  A refused reason stays off the notice, and the account page lists the screen's reasons for its author; a reason held as a likely hazard, or from an account under the review guard, stays off it with a note to write to the contact address.
+  The owner learns of a held reason from the daily email, which links its notice and its entry; no admin page shows the reason or publishes it yet, and `withdrawal_notices` keeps each reason and the screen's verdict.
+- Against: a reason refused by mistake can't be put right without the owner, and the owner reads a held reason only in the database.
+
+#### What the notice serves, and with which status (#31)
+
+- Options: 200 or 410; the title or none; the entry's text kept or deleted.
+- Chosen: 200, so fetch tools that drop a 410's body still show the notice; no title, card or text, since the author may have withdrawn the version for what its title says; the text stays in the database, as a removed entry's does, so the owner can still read it and the chain's links hold.
+- Against: a 410 says plainly that the entry is gone, and an author who withdraws text for privacy may expect it deleted.
+
+#### The reason's cap and form (#31)
+
+- Chosen: at most 1,000 characters, trimmed, line breaks kept, shown as plain text, with no markdown or links rendered.
+- Against: a longer account of what went wrong belongs in a new version, so the cap may be too high; plain text loses a link to the replacing work, which a reader then copies by hand.
+
+#### Account deletion and withdrawn versions (#31)
+
+- Chosen: deleting the account deletes its withdrawn versions with their notices, as it deletes every entry that isn't public, so their pages then answer 404.
+- Against: a reader who followed a citation then learns nothing; keeping the notices, as public entries stay, would tell them the version was withdrawn.
+
 ### Series
 
 #### Series: what a section anchor is

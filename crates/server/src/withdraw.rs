@@ -3,12 +3,15 @@
 //! it submitted itself, and a browser session withdraws one that may still be
 //! withdrawn, with its whole batch. Every rule is checked again inside the deleting
 //! transaction, and the deletion itself is `deletion::delete_entries`.
+//!
+//! A browser session also withdraws a public version, alone and with a reason,
+//! which leaves a notice in its place (`notices`).
 
 use sqlx::{SqliteConnection, SqlitePool};
 
 use crate::respond::one_line;
 use crate::time::now;
-use crate::{AppState, attachments, deletion, entries, series};
+use crate::{AppState, attachments, deletion, entries, notices, series};
 
 /// An entry's status, as the schema's CHECK lists them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, sqlx::Type)]
@@ -75,8 +78,11 @@ impl<'a> Asker<'a> {
 /// Why an entry, or its batch, isn't deleted. Each names the entry it is about.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum Refusal {
-    /// It is public; withdrawing a public version is another matter (#31).
-    #[error("entry {id} is public, and only an entry that was never public is deleted")]
+    /// It is public: a token can't withdraw it, and a batch withdrawn as one holds
+    /// only entries that were never public.
+    #[error(
+        "entry {id} is public, so it isn't deleted: its author withdraws it from the account page in a browser, which leaves a notice in its place"
+    )]
     Public { id: String },
     /// A token deletes only a pending entry; this one is past its hold.
     #[error(
@@ -99,6 +105,12 @@ pub enum Refusal {
     /// It was rejected.
     #[error("entry {id} was rejected, so nothing of it is published")]
     Rejected { id: String },
+    /// A public version replaced it, and only a chain's latest version is withdrawn,
+    /// so the chain doesn't fork into two latest versions.
+    #[error(
+        "entry {id} was replaced by {by}, a public version, and only a chain's latest version is withdrawn; withdraw {by} first, or post a new version that says what went wrong"
+    )]
+    Replaced { id: String, by: String },
     /// The archive's owner removed it, or withdrew it; a batch's member can be.
     #[error("entry {id} was removed by the archive's owner")]
     Removed { id: String },
@@ -132,6 +144,8 @@ struct Row {
     token_id: Option<String>,
     review_reason: Option<String>,
     screen_verdict: Option<String>,
+    /// The public version that replaced it, if any.
+    newer: Option<String>,
 }
 
 /// Which entries `rows` reads; a filter left `None` matches every entry.
@@ -157,7 +171,9 @@ async fn rows(
     sqlx::query_as!(
         Row,
         r#"SELECT e.seq AS "seq!: i64", e.id, e.status AS "status: Status", e.batch_seq,
-                  b.id AS "batch_id?", e.token_id, e.review_reason, e.screen_verdict
+                  b.id AS "batch_id?", e.token_id, e.review_reason, e.screen_verdict,
+                  (SELECT n.id FROM entries n WHERE n.previous_seq = e.seq AND n.status = 'public')
+                    AS "newer?"
            FROM entries e LEFT JOIN batches b ON b.seq = e.batch_seq
            WHERE (?1 IS NULL OR e.account_id = ?1) AND (?2 IS NULL OR e.id = ?2)
              AND (?3 IS NULL OR e.batch_seq = ?3) AND (?4 IS NULL OR e.seq = ?4)
@@ -403,6 +419,61 @@ pub async fn delete_batch(
     carry_out(state, Target::Batch { token, id }).await
 }
 
+/// What a browser session's withdrawal did.
+#[derive(Debug)]
+pub enum Withdrawal {
+    /// Never public, so deleted now, with its whole batch: these entries.
+    Deleted { ids: Vec<String> },
+    /// Public, so withdrawn now, at `at`, leaving its notice.
+    Withdrawn { at: String },
+    /// The account withdrew it, or deleted it, earlier, at `at`.
+    Already { at: String },
+    /// The account has no such entry that it may see.
+    NotFound,
+    /// The rules refuse it; the confirm page says why, as it stands now.
+    Refused,
+    /// It is public, and the reason isn't one the notice takes.
+    BadReason(notices::BadReason),
+}
+
+/// Withdraws `account_id`'s entry `id` from its browser session: a public version
+/// alone, with `reason`, which its notice shows once screened; any other by
+/// [`delete_entry`]'s rules, with its whole batch.
+pub async fn withdraw(
+    state: &AppState,
+    account_id: &str,
+    id: &str,
+    reason: Option<&str>,
+) -> Result<Withdrawal, sqlx::Error> {
+    let mut transaction = crate::db::write_tx(&state.pool).await?;
+    if let Some(row) = row(&mut transaction, account_id, id).await?
+        && row.status == Status::Public
+    {
+        if row.newer.is_some() {
+            return Ok(Withdrawal::Refused);
+        }
+        let reason = match notices::reason(reason) {
+            Ok(reason) => reason,
+            Err(bad) => return Ok(Withdrawal::BadReason(bad)),
+        };
+        let at = now();
+        notices::withdraw(&mut transaction, row.seq, &reason, &at).await?;
+        transaction.commit().await?;
+        return Ok(Withdrawal::Withdrawn { at });
+    }
+    drop(transaction);
+    if let Some(at) = notices::withdrawn_at(&state.pool, account_id, id).await? {
+        return Ok(Withdrawal::Already { at });
+    }
+    let asker = Asker::Session { account_id };
+    Ok(match delete_entry(state, asker, id).await? {
+        Outcome::Deleted { ids, .. } => Withdrawal::Deleted { ids },
+        Outcome::AlreadyDeleted { at, .. } => Withdrawal::Already { at },
+        Outcome::NotFound => Withdrawal::NotFound,
+        Outcome::Refused(_) => Withdrawal::Refused,
+    })
+}
+
 /// An entry a withdrawal would delete, as the confirm page lists it.
 pub struct Member {
     pub id: String,
@@ -427,6 +498,11 @@ pub struct Preview {
     /// Why it can't be withdrawn now, if it can't.
     pub refusal: Option<Refusal>,
     pub made_public: Vec<MadePublic>,
+    /// It is public, so withdrawing it leaves a notice with a reason.
+    pub public: bool,
+    /// The public version it replaced, which search shows again once it is
+    /// withdrawn, since no public version replaces it then.
+    pub back_to: Option<String>,
 }
 
 /// What withdrawing `account_id`'s entry `id` would delete and make public, and
@@ -439,6 +515,29 @@ pub async fn preview(
     id: &str,
 ) -> Result<Option<Preview>, sqlx::Error> {
     let mut trial = crate::db::write_tx(pool).await?;
+    if let Some(row) = row(&mut trial, account_id, id).await?
+        && row.status == Status::Public
+    {
+        let title = title_of(&mut trial, row.seq).await?;
+        let back_to = back_to(&mut trial, row.seq).await?;
+        trial.rollback().await?;
+        let refusal = row.newer.map(|by| Refusal::Replaced {
+            id: row.id.clone(),
+            by,
+        });
+        return Ok(Some(Preview {
+            members: vec![Member {
+                id: row.id,
+                status: row.status.name(),
+                title,
+            }],
+            batch_id: None,
+            refusal,
+            made_public: Vec::new(),
+            public: true,
+            back_to,
+        }));
+    }
     let target = Target::Entry {
         asker: Asker::Session { account_id },
         id,
@@ -465,7 +564,24 @@ pub async fn preview(
         batch_id: doomed.batch_id,
         refusal: doomed.allowed.err(),
         made_public,
+        public: false,
+        back_to: None,
     }))
+}
+
+/// The public version public entry `seq` replaced: the one search shows again once
+/// `seq`, the chain's latest, is withdrawn.
+async fn back_to(
+    connection: &mut SqliteConnection,
+    seq: i64,
+) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar!(
+        "SELECT p.id FROM entries e JOIN entries p ON p.seq = e.previous_seq
+         WHERE e.seq = ? AND p.status = 'public'",
+        seq
+    )
+    .fetch_optional(&mut *connection)
+    .await
 }
 
 /// Entry `seq`'s title, on one line.
@@ -548,8 +664,29 @@ pub struct Listed {
     pub title: String,
 }
 
-/// The account's entries that may be withdrawn, newest first.
+/// The account's entries that may be withdrawn as never public, newest first.
 pub async fn listing(pool: &SqlitePool, account_id: &str) -> Result<Vec<Listed>, sqlx::Error> {
+    listed(pool, account_id, |row| withdrawable(row).is_ok()).await
+}
+
+/// The account's public entries that are their chain's latest version, which it may
+/// withdraw with a notice, newest first.
+pub async fn public_listing(
+    pool: &SqlitePool,
+    account_id: &str,
+) -> Result<Vec<Listed>, sqlx::Error> {
+    listed(pool, account_id, |row| {
+        row.status == Status::Public && row.newer.is_none()
+    })
+    .await
+}
+
+/// The account's entries that `keep` keeps, newest first.
+async fn listed(
+    pool: &SqlitePool,
+    account_id: &str,
+    keep: fn(&Row) -> bool,
+) -> Result<Vec<Listed>, sqlx::Error> {
     let mut connection = pool.acquire().await?;
     let filter = Rows {
         account_id: Some(account_id),
@@ -558,7 +695,7 @@ pub async fn listing(pool: &SqlitePool, account_id: &str) -> Result<Vec<Listed>,
     let rows = rows(&mut connection, filter).await?;
     let mut listed = Vec::new();
     for row in rows.into_iter().rev() {
-        if withdrawable(&row).is_ok() {
+        if keep(&row) {
             listed.push(Listed {
                 title: title_of(&mut connection, row.seq).await?,
                 id: row.id,

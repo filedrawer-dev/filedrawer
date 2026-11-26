@@ -35,6 +35,7 @@ mod links;
 pub mod mail;
 pub mod mail_queue;
 mod markdown;
+mod notices;
 pub mod outbound;
 mod pages;
 pub mod passwords;
@@ -343,7 +344,10 @@ fn build(state: AppState) -> Routes<Router> {
         )
         .route(
             "/account/e/{id}/withdraw",
-            get(routes::withdraw::confirm_page).post(routes::withdraw::withdraw),
+            limited(
+                get(routes::withdraw::confirm_page).post(routes::withdraw::withdraw),
+                MAX_FORM_BYTES,
+            ),
         )
         .route("/admin", get(admin::queue))
         .route(

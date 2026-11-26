@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE entries SET status = 'withdrawn' WHERE seq = ? AND status = 'public'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "636d13fae7d9633d36f22760c618d4a4fee1ca47492f19708b1f2fa56af9156a"
+}

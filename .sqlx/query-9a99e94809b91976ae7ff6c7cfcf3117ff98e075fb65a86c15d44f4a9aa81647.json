@@ -1,0 +1,153 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT e.id, e.account_id, a.display_name AS \"display_name?: String\",\n                  h.login AS \"github_login?: String\", e.submitted_at, e.published_at,\n                  (SELECT p.id FROM entries p WHERE p.seq = e.previous_seq AND p.status = 'public') AS \"previous_id?\",\n                  (SELECT x.id FROM entries x WHERE x.previous_seq = e.seq AND x.status = 'public') AS \"superseded_by?\",\n                  n.reason, n.withdrawn_at, n.screen, n.screen_reasons\n           FROM withdrawal_notices n JOIN entries e ON e.seq = n.entry_seq\n           JOIN authors a ON a.id = e.account_id\n           LEFT JOIN github_handles h ON h.account_id = e.account_id\n           WHERE e.id = ? AND e.status = 'withdrawn'",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "account_id",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "account_id"
+          }
+        }
+      },
+      {
+        "name": "display_name?: String",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "name": "github_login?: String",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "github_links",
+            "name": "login"
+          }
+        }
+      },
+      {
+        "name": "submitted_at",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "submitted_at"
+          }
+        }
+      },
+      {
+        "name": "published_at",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "published_at"
+          }
+        }
+      },
+      {
+        "name": "previous_id?",
+        "ordinal": 6,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "superseded_by?",
+        "ordinal": 7,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "reason",
+        "ordinal": 8,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "withdrawal_notices",
+            "name": "reason"
+          }
+        }
+      },
+      {
+        "name": "withdrawn_at",
+        "ordinal": 9,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "withdrawal_notices",
+            "name": "withdrawn_at"
+          }
+        }
+      },
+      {
+        "name": "screen",
+        "ordinal": 10,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "withdrawal_notices",
+            "name": "screen"
+          }
+        }
+      },
+      {
+        "name": "screen_reasons",
+        "ordinal": 11,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "withdrawal_notices",
+            "name": "screen_reasons"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "9a99e94809b91976ae7ff6c7cfcf3117ff98e075fb65a86c15d44f4a9aa81647"
+}

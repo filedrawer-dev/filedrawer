@@ -167,6 +167,8 @@ struct Report {
     /// Entries in review or held, the oldest first.
     waiting: Vec<Waiting>,
     frozen: Vec<String>,
+    /// Withdrawal notices' reasons the screen held for the owner, the oldest first.
+    held_reasons: Vec<crate::notices::HeldReason>,
     screen: Read<Failure>,
     /// Whether the screen's last call failed, with no success after it.
     screen_failing: bool,
@@ -359,6 +361,7 @@ impl Report {
         .await?;
         let (frozen, waiting): (Vec<_>, Vec<_>) =
             standing.into_iter().partition(|row| row.status == "frozen");
+        let held_reasons = crate::notices::held(pool).await?;
         let health = state.screening_health.snapshot();
         let screen_failing = health.last_failure.as_ref().is_some_and(|failure| {
             health
@@ -396,6 +399,7 @@ impl Report {
             agent_made: agents.made,
             agent_claimed: agents.claimed,
             frozen: frozen.into_iter().map(|row| row.id).collect(),
+            held_reasons,
             screen: screen.clone(),
             screen_failing,
             cap_usd: state.screening_daily_nano_usd as f64 / 1e9,
@@ -434,6 +438,7 @@ impl Report {
         let news = !self.published.is_empty()
             || !self.waiting.is_empty()
             || !self.frozen.is_empty()
+            || !self.held_reasons.is_empty()
             || !self.at_share.is_empty()
             || !self.caps.is_empty();
         let mail = self.mail_dropped > 0 || self.mail_late > 0;
@@ -488,6 +493,20 @@ impl Report {
             let _ = writeln!(text, "\nFrozen ({}):", self.frozen.len());
             for id in &self.frozen {
                 let _ = writeln!(text, "- {id} {url}/admin/e/{id}");
+            }
+        }
+        if !self.held_reasons.is_empty() {
+            let _ = writeln!(
+                text,
+                "\nWithdrawal reasons held for the owner ({}), kept off their notices; no admin page shows the reason yet:",
+                self.held_reasons.len()
+            );
+            for crate::notices::HeldReason { id, why } in &self.held_reasons {
+                let _ = writeln!(
+                    text,
+                    "- {id} {}: notice {url}/e/{id}, entry {url}/admin/e/{id}",
+                    one_line(why)
+                );
             }
         }
         self.screening_lines(&mut text, url);

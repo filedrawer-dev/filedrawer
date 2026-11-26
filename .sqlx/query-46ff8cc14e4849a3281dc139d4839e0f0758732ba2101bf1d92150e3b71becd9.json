@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT e.account_id, n.reason, n.screen_attempts\n         FROM withdrawal_notices n JOIN entries e ON e.seq = n.entry_seq\n         WHERE n.entry_seq = ? AND n.screen IS NULL AND e.status = 'withdrawn'",
+  "describe": {
+    "columns": [
+      {
+        "name": "account_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "account_id"
+          }
+        }
+      },
+      {
+        "name": "reason",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "withdrawal_notices",
+            "name": "reason"
+          }
+        }
+      },
+      {
+        "name": "screen_attempts",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "withdrawal_notices",
+            "name": "screen_attempts"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "46ff8cc14e4849a3281dc139d4839e0f0758732ba2101bf1d92150e3b71becd9"
+}

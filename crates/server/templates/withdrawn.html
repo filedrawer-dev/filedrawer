@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Entry {{ id }} · withdrawn{% endblock %}
+{% block head %}<link rel="alternate" type="text/plain" href="/e/{{ id }}.txt">{% endblock %}
+{% block page %}
+<main class="card big">
+<div class="call"><span>{{ id }}</span><span class="stamp unknown">withdrawn</span></div>
+{% include "above_delimiter.html" %}
+<div class="authored">{% for line in reason %}<p>{{ line }}</p>{% endfor %}</div>
+</main>
+{% endblock %}

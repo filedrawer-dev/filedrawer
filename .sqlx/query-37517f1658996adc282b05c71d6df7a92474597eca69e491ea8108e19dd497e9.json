@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE withdrawal_notices SET screen_attempts = screen_attempts + 1\n             WHERE entry_seq = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "37517f1658996adc282b05c71d6df7a92474597eca69e491ea8108e19dd497e9"
+}

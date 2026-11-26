@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT r.declaration FROM runs r WHERE r.account_id = ?1 AND r.id = ?2\n           AND NOT EXISTS (\n               SELECT 1 FROM entry_runs other JOIN entries x ON x.seq = other.entry_seq\n               WHERE other.account_id = ?1 AND other.run_id = ?2 AND x.status != 'public'\n                 AND NOT (x.status = 'withdrawn'\n                          AND EXISTS (SELECT 1 FROM withdrawal_notices n\n                                      WHERE n.entry_seq = x.seq)))",
+  "describe": {
+    "columns": [
+      {
+        "name": "declaration",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "runs",
+            "name": "declaration"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "79787936abf190f352cbc20c5c01f5ee03b546ad6439bf3a364f8dfd4e6e286b"
+}

@@ -3,7 +3,7 @@
 {% block content %}
 <h1>Delete your account</h1>
 {% if let Some(error) = error %}<p class="error">{{ error }}</p>{% endif %}
-<p>Deleting it removes your email address, password, name and tokens, and deletes <span class="unpublished">{{ unpublished }}</span> {% if unpublished == 1 %}entry that isn't{% else %}entries that aren't{% endif %} public yet, along with the series you made that no one can read yet, unless another account's entry cites one. It can't be undone.</p>
+<p>Deleting it removes your email address, password, name and tokens, and deletes <span class="unpublished">{{ unpublished }}</span> {% if unpublished == 1 %}entry that isn't{% else %}entries that aren't{% endif %} public, counting any public version you withdrew, which goes with its notice, along with the series you made that no one can read yet, unless another account's entry cites one. It can't be undone.</p>
 <p><span class="public">{{ public }}</span> public {% if public == 1 %}entry stays{% else %}entries stay{% endif %} up, shown as "account deleted" with your account ID and no name. To have public entries erased as well, ask the site's owner for a purge.</p>
 <form method="post" action="/account/delete">
 {% if let Some(login) = confirm_login %}

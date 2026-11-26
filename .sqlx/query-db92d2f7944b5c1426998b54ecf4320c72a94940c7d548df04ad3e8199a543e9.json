@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT p.id FROM entries e JOIN entries p ON p.seq = e.previous_seq\n         WHERE e.seq = ? AND p.status = 'public'",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "db92d2f7944b5c1426998b54ecf4320c72a94940c7d548df04ad3e8199a543e9"
+}

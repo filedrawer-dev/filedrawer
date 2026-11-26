@@ -447,8 +447,12 @@ pub struct AccountPage<'a> {
     pub series: &'a [Owned],
     /// A token just made, shown this once.
     pub new_token: Option<&'a str>,
-    /// Its entries that may be withdrawn.
+    /// Its entries that may be withdrawn as never public.
     pub withdrawable: &'a [Listed],
+    /// Its public entries, which it may withdraw with a notice.
+    pub public: &'a [Listed],
+    /// The public versions it withdrew, with where each reason stands.
+    pub withdrawn: &'a [crate::notices::Own],
 }
 
 /// The confirm page for withdrawing an entry, or its whole batch.
@@ -463,6 +467,24 @@ pub struct WithdrawPage<'a> {
     /// Why it can't be withdrawn now, if it can't.
     pub refusal: Option<&'a str>,
     pub made_public: &'a [MadePublic],
+    /// It is public, so the form asks for the notice's reason.
+    pub public: bool,
+    /// The public version search shows again once it is withdrawn.
+    pub back_to: Option<&'a str>,
+    /// Why the reason sent wasn't taken.
+    pub error: Option<&'a str>,
+    pub max_reason_chars: usize,
+}
+
+/// The notice a withdrawn public version's page shows in its place.
+#[derive(Template)]
+#[template(path = "withdrawn.html")]
+pub struct WithdrawnPage<'a> {
+    pub id: &'a str,
+    /// The server's fields, shown above the delimiter by `above_delimiter.html`.
+    pub fields: Vec<Field>,
+    /// The reason, line by line, once screening passed it.
+    pub reason: Vec<String>,
 }
 
 /// An entry on the admin queue page, with the title read from its text.

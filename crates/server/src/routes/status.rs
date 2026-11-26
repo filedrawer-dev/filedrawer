@@ -15,7 +15,7 @@ use crate::link_checks::{GITHUB_HOURLY_WITHOUT_TOKEN, LinkHealth};
 use crate::respond::{Format, one_line};
 use crate::screening::{Model, Screener};
 use crate::time::{now_utc, stamp};
-use crate::{AppState, entries, mail_queue, queue};
+use crate::{AppState, entries, mail_queue, notices, queue};
 
 const NONE_YET: &str = "none since the server started";
 
@@ -41,6 +41,7 @@ pub async fn status(State(state): State<AppState>, format: Format) -> Result<Res
     let spent_usd = dollars(queue::spent_today(&state.pool, now_utc()).await?);
     let cap_usd = dollars(state.screening_daily_nano_usd);
     let (waiting, oldest) = entries::waiting_to_screen(&state.pool).await?;
+    let (notices_waiting, notices_held) = notices::counts(&state.pool).await?;
     let health = state.screening_health.snapshot();
     let success = health.last_success.map(stamp);
     let failure = health.last_failure.map(|failure| {
@@ -58,6 +59,7 @@ pub async fn status(State(state): State<AppState>, format: Format) -> Result<Res
     let text = format!(
         "environment: {environment}\nscreener: {screener_text}\n\
          spent today: ${spent_usd:.4} of the day's ${cap_usd:.2}\nwaiting: {}\n\
+         withdrawal reasons waiting: {notices_waiting}\nwithdrawal reasons held: {notices_held}\n\
          last success: {}\nlast failure: {}\n{}\
          emails waiting: {}\nemail last sent: {}\nemail last failure: {}\n",
         match &oldest {
@@ -88,6 +90,7 @@ pub async fn status(State(state): State<AppState>, format: Format) -> Result<Res
         "cap_usd": cap_usd,
         "waiting": waiting,
         "oldest_waiting_since": oldest,
+        "withdrawal_reasons": {"waiting": notices_waiting, "held": notices_held},
         "last_success": success,
         "last_failure": failure.map(|(at, subject, error)| {
             json!({"at": at, "subject": subject, "error": error})

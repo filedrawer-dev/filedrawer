@@ -73,6 +73,27 @@
 </table>
 {% endif %}
 
+{% if !public.is_empty() %}
+<h2>Public entries</h2>
+<p>Withdrawing a public entry takes it out of search and leaves a notice on its page in its place, with your reason once screening has checked it. It can't be undone. Each version is withdrawn on its own, a chain's latest first, so this lists only the latest version of each chain.</p>
+<table>
+<tr><th>Entry</th><th>Title</th><th></th></tr>
+{% for one in public %}
+<tr><td><a href="/e/{{ one.id }}"><code>{{ one.id }}</code></a></td><td>{{ one.title }}</td><td><form method="get" action="/account/e/{{ one.id }}/withdraw"><button type="submit">Withdraw</button></form></td></tr>
+{% endfor %}
+</table>
+{% endif %}
+
+{% if !withdrawn.is_empty() %}
+<h2>Withdrawn entries</h2>
+<table>
+<tr><th>Entry</th><th>Withdrawn</th><th>Reason on its notice</th></tr>
+{% for one in withdrawn %}
+<tr><td><a href="/e/{{ one.id }}"><code>{{ one.id }}</code></a></td><td>{{ one.withdrawn_at }}</td><td>{% match one.reason %}{% when crate::notices::Reason::Waiting %}waiting for screening{% when crate::notices::Reason::Shown(_) %}shown{% when crate::notices::Reason::Refused(reasons) %}not shown: screening refused it ({{ reasons.join("; ") }}){% when crate::notices::Reason::Held %}not shown: held for the archive's owner; write to {{ crate::respond::CONTACT }} about it{% endmatch %}</td></tr>
+{% endfor %}
+</table>
+{% endif %}
+
 {% if !series.is_empty() %}
 <h2>Your series</h2>
 <table>

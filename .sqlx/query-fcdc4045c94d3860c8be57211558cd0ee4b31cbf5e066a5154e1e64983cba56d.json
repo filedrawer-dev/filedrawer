@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT e.id, n.screen_reasons\n         FROM withdrawal_notices n JOIN entries e ON e.seq = n.entry_seq\n         WHERE e.status = 'withdrawn' AND n.screen = 'review'\n         ORDER BY n.withdrawn_at, n.entry_seq",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "screen_reasons",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "withdrawal_notices",
+            "name": "screen_reasons"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "fcdc4045c94d3860c8be57211558cd0ee4b31cbf5e066a5154e1e64983cba56d"
+}

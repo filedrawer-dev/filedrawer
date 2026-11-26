@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE withdrawal_notices SET screen = ?, screen_reasons = ?, screened_at = ?\n         WHERE entry_seq = ? AND screen IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "9f34934d33776938fced5a0e18cbf4e0f087884893753800d3850eabe6957d91"
+}

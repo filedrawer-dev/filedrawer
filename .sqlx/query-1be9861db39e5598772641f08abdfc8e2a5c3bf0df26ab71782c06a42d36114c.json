@@ -1,0 +1,28 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COALESCE(SUM(n.screen IS NULL), 0) AS \"waiting!: i64\",\n                  COALESCE(SUM(n.screen = 'review'), 0) AS \"held!: i64\"\n           FROM withdrawal_notices n JOIN entries e ON e.seq = n.entry_seq\n           WHERE e.status = 'withdrawn'",
+  "describe": {
+    "columns": [
+      {
+        "name": "waiting!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "held!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "1be9861db39e5598772641f08abdfc8e2a5c3bf0df26ab71782c06a42d36114c"
+}

@@ -442,6 +442,8 @@ async fn account_page(
     let view = accounts::view(&state.pool, account_id).await?;
     let series = series::created_by(&state.pool, account_id).await?;
     let withdrawable = withdraw::listing(&state.pool, account_id).await?;
+    let public = withdraw::public_listing(&state.pool, account_id).await?;
+    let withdrawn = crate::notices::own(&state.pool, account_id).await?;
     let github_login = github_accounts::login_of(&state.pool, account_id).await?;
     let has_password = accounts::has_password(&state.pool, account_id).await?;
     let pending_email = email_change::pending(&state.pool, account_id).await?;
@@ -455,6 +457,8 @@ async fn account_page(
         has_password,
         series: &series,
         withdrawable: &withdrawable,
+        public: &public,
+        withdrawn: &withdrawn,
         display_name: &view.display_name,
         account_id: &view.id,
         email: view.email.as_deref(),

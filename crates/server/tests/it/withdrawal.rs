@@ -95,7 +95,7 @@ async fn published_batch(app: &TestApp, token: &str, body: Value) -> (String, Ve
 }
 
 #[tokio::test]
-async fn the_account_page_offers_to_withdraw_only_entries_that_were_never_public() {
+async fn the_account_page_offers_to_withdraw_entries_never_public_or_public() {
     let models = FakeModels::default();
     let app = models_app(&models).await;
     let (cookie, token) = browser_account(&app, EMAIL).await;
@@ -117,10 +117,10 @@ async fn the_account_page_offers_to_withdraw_only_entries_that_were_never_public
 
     let page = app.page("/account", Some(&cookie)).await;
     assert_eq!(page.status, StatusCode::OK, "{}", page.body);
-    for id in [&pending, &screening] {
+    for id in [&pending, &screening, &public] {
         assert!(offers(&page.body, id), "{id}: {}", page.body);
     }
-    for id in [&public, &rejected, &review] {
+    for id in [&rejected, &review] {
         assert!(!offers(&page.body, id), "{id}: {}", page.body);
     }
     assert!(page.body.contains("Pending one"), "{}", page.body);
@@ -209,7 +209,6 @@ async fn entries_with_the_owner_or_past_screening_are_not_withdrawn() {
     let models = FakeModels::default();
     let app = models_app(&models).await;
     let (cookie, token) = browser_account(&app, EMAIL).await;
-    let public = submit_with(&app, &token, &entry("Public one", "")).await;
     let rejected = submit_with(&app, &token, &entry("Steering FAKE-OFFTOPIC", "")).await;
     let hazard = entry(&format!("Steering {HAZARD}"), "");
     let review = submit_with(&app, &token, &hazard).await;
@@ -255,9 +254,7 @@ async fn entries_with_the_owner_or_past_screening_are_not_withdrawn() {
     }
 
     let page = app.page("/account", Some(&cookie)).await;
-    for id in [
-        &public, &rejected, &review, &passed, &held, &frozen, &failed,
-    ] {
+    for id in [&rejected, &review, &passed, &held, &frozen, &failed] {
         assert!(!offers(&page.body, id), "{id}: {}", page.body);
         let before = status(&app, &token, id).await;
         let confirm = app

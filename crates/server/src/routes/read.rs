@@ -21,7 +21,7 @@ use crate::limits::ClientIp;
 use crate::link_checks::{self, LinkFlags};
 use crate::markdown;
 use crate::pages::{
-    Drawer, EntryPage, FileView, SearchPage, SeriesBlock, Stamp, fields_above, page,
+    Drawer, EntryPage, FileView, SearchPage, SeriesBlock, Stamp, WithdrawnPage, fields_above, page,
 };
 use crate::reads;
 use crate::respond::{
@@ -29,7 +29,7 @@ use crate::respond::{
     one_line, wants_page,
 };
 use crate::routes::account::optional_session_account;
-use crate::{AppState, allowance, attachments, deletion, time, warnings};
+use crate::{AppState, allowance, attachments, deletion, notices, time, warnings};
 use crate::{search_log, series};
 use analyzer::slug_references;
 use url::Url;
@@ -60,6 +60,9 @@ pub async fn entry(
         shown => return shown,
     }
     let Some(entry) = entries::public_entry(&state.pool, &id).await? else {
+        if let Some(notice) = notices::notice(&state.pool, &id).await? {
+            return Ok(notice_reply(&notice, format, as_page));
+        }
         // The account that deleted it is told when; anyone else, nothing.
         if let Some(account) = &account
             && let Some(at) = deletion::deleted_entry(&state.pool, &account.id, &id).await?
@@ -361,6 +364,65 @@ async fn shown_series(state: &AppState, seq: i64) -> Result<Option<CitedSeries>,
             (version.title, description)
         });
     Ok(Some(CitedSeries { cite, shown }))
+}
+
+/// A withdrawn public version's notice, for everyone: the server's fields, with when
+/// it was withdrawn, then below the delimiter the author's reason once screening
+/// passed it. The entry's own text isn't served.
+fn notice_reply(notice: &notices::Notice, format: Format, as_page: bool) -> Response {
+    let note = "its author withdrew this version, so the site no longer serves its text";
+    let mut text = format!(
+        "id: {}\nstatus: withdrawn\nsubmitted: {}\npublished: {}\nwithdrawn: {}\nauthor: account {}, {}{}\n",
+        notice.id,
+        notice.submitted_at,
+        notice.published_at.as_deref().unwrap_or(""),
+        notice.withdrawn_at,
+        notice.account_id,
+        notice
+            .github_login
+            .as_deref()
+            .map(|login| format!("{}, ", entries::github_handle(login)))
+            .unwrap_or_default(),
+        author_name(notice.display_name.as_deref())
+    );
+    if let Some(previous) = &notice.previous_id {
+        text.push_str(&format!("previous: {previous}\n"));
+    }
+    if let Some(newer) = &notice.superseded_by {
+        text.push_str(&format!("superseded_by: {newer}\n"));
+    }
+    text.push_str(&format!("note: {note}\nreason: {}\n", notice.reason.line()));
+    let shown = notice.reason.shown();
+    if as_page {
+        return page(
+            StatusCode::OK,
+            &WithdrawnPage {
+                id: &notice.id,
+                fields: fields_above(&text),
+                reason: shown
+                    .map(|reason| reason.lines().map(str::to_string).collect())
+                    .unwrap_or_default(),
+            },
+        );
+    }
+    text.push_str(&format!("{DELIMITER}\n{}\n", shown.unwrap_or("")));
+    let json = json!({
+        "id": notice.id,
+        "status": "withdrawn",
+        "submitted": notice.submitted_at,
+        "published": notice.published_at,
+        "withdrawn": notice.withdrawn_at,
+        "previous": notice.previous_id,
+        "superseded_by": notice.superseded_by,
+        "author": {
+            "display_name": json_name(notice.display_name.as_deref()),
+            "account_id": notice.account_id,
+        },
+        "note": note,
+        "reason_status": notice.reason.status(),
+        "reason": shown,
+    });
+    format.reply(StatusCode::OK, text, json)
 }
 
 /// What an entry's author reads once the archive's owner removed it: that it was

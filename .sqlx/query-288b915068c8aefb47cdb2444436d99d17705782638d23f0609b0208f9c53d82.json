@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO withdrawal_notices (entry_seq, reason, withdrawn_at) VALUES (?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "288b915068c8aefb47cdb2444436d99d17705782638d23f0609b0208f9c53d82"
+}

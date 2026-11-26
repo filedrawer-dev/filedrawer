@@ -64,6 +64,7 @@ mod status;
 mod submit;
 mod usability;
 mod versions;
+mod withdraw_public;
 mod withdrawal;
 
 /// Cargo builds only the files `main.rs` reaches, so a test file here without a `mod`

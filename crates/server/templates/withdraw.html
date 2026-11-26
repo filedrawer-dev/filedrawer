@@ -14,6 +14,18 @@
 {% if let Some(why) = refusal %}
 <p class="error">It can't be withdrawn: {{ why }}.</p>
 <p><a href="/account">Back to your account</a></p>
+{% else if public %}
+<p class="final">This version is public. Withdrawing it takes it out of search and <code>/cards.txt</code>, and its page shows a notice in its place: when you withdrew it, and your reason once screening has checked it, as it checks entry text. Its text is no longer served. It can't be undone, and it can't have a new version.</p>
+{% if let Some(back) = back_to %}
+<p>Search shows <code>{{ back }}</code> again, the version this one replaced.</p>
+{% endif %}
+{% if let Some(error) = error %}
+<p class="error">{{ error }}.</p>
+{% endif %}
+<form method="post" action="/account/e/{{ id }}/withdraw">
+<label>Why you withdraw it, for the notice (at most {{ max_reason_chars }} characters) <textarea name="reason" maxlength="{{ max_reason_chars }}" rows="4" required></textarea></label>
+<button type="submit">Withdraw</button>
+</form>
 {% else %}
 <p class="final">Withdrawing deletes {% if members.len() == 1 %}it{% else %}them all{% endif %}, since {% if members.len() == 1 %}it was{% else %}none was{% endif %} ever public. It can't be undone.</p>
 {% if !made_public.is_empty() %}

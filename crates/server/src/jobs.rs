@@ -4,7 +4,7 @@
 use time::{Duration, OffsetDateTime};
 
 use crate::attachments::{self, StoreError};
-use crate::{AppState, entries, queue, time::stamp};
+use crate::{AppState, entries, notices, queue, time::stamp};
 
 /// How long an accepted submission is held so its author can fix it. Each
 /// resubmission starts it again.
@@ -54,6 +54,10 @@ pub async fn publish_due(state: &AppState, now: OffsetDateTime) -> Result<usize,
         if entries::status(&state.pool, *seq).await?.as_deref() != Some("screening") {
             done += 1;
         }
+    }
+    // Withdrawal notices' reasons after the entries, within the same caps.
+    for seq in notices::unscreened(&state.pool).await? {
+        notices::screen(state, seq, now).await?;
     }
     Ok(done)
 }

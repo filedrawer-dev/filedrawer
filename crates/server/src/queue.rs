@@ -244,7 +244,7 @@ pub async fn screen_text(
 }
 
 /// Whether the day, or the account's share of it, is spent.
-async fn over_cap(
+pub(crate) async fn over_cap(
     state: &AppState,
     account_id: &str,
     now: OffsetDateTime,
@@ -486,8 +486,9 @@ pub async fn spent_on(
 /// Logs each model call and what it cost (design.md: "the server logs what each
 /// screening cost").
 /// Calls whose `subject` is attached code are marked so: they may spend at most
-/// half the caps. An entry deleted while its call was in flight is logged with no
-/// entry, and its cost still counts (the owner's decision, 2026-11-08).
+/// half the caps. Calls on a withdrawal notice's reason are marked as the notice's,
+/// not its entry's text. An entry deleted while its call was in flight is logged
+/// with no entry, and its cost still counts (the owner's decision, 2026-11-08).
 pub async fn log_calls(
     pool: &SqlitePool,
     entry_seq: Option<i64>,
@@ -498,13 +499,15 @@ pub async fn log_calls(
 ) -> Result<(), sqlx::Error> {
     let at = stamp(now);
     let attachment = subject == Subject::Code;
+    let notice = subject == Subject::Notice;
+    let what = subject.name();
     for call in calls {
         let model = call.model.id();
         let cost = call.model.cost_nano_usd(call.usage);
         sqlx::query!(
             "INSERT INTO screenings (entry_seq, account_id, model, input_tokens, output_tokens,
-                 cost_nano_usd, at, attachment)
-             VALUES ((SELECT seq FROM entries WHERE seq = ?), ?, ?, ?, ?, ?, ?, ?)",
+                 cost_nano_usd, at, attachment, notice)
+             VALUES ((SELECT seq FROM entries WHERE seq = ?), ?, ?, ?, ?, ?, ?, ?, ?)",
             entry_seq,
             account_id,
             model,
@@ -512,11 +515,18 @@ pub async fn log_calls(
             call.usage.output_tokens,
             cost,
             at,
-            attachment
+            attachment,
+            notice
         )
         .execute(pool)
         .await?;
-        tracing::info!(model, cost_nano_usd = cost, ?entry_seq, "screening call");
+        tracing::info!(
+            model,
+            cost_nano_usd = cost,
+            ?entry_seq,
+            what,
+            "screening call"
+        );
     }
     Ok(())
 }

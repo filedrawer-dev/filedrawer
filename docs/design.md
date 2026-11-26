@@ -152,6 +152,7 @@ The owner expects most contributors to be independent researchers, newcomers to 
 - The server keeps a record of each entry deleted by token or withdrawn: its ID, its account and the time.
   The account's later `GET /e/<id>` or `DELETE /e/<id>` of it answers that it was deleted then, not 404, so a retried request that had worked is recognized; nobody else learns anything from it (the owner's decision, 2026-11-08).
 - Deleting an account, from a browser session with the password (or, with none, the GitHub login typed), deletes the email address, a pending change of it, login, display name, linked GitHub account, tokens, private feedback and queued email, and every entry not yet public, except those the owner removed, which stay for analysis (see [Admin](#admin)).
+  It also deletes the public versions the account withdrew, with their notices, whose pages then answer 404 (uncertainties.md, "Account deletion and withdrawn versions").
   By the same rule it deletes the series the screen refused, except those the owner confirmed as a hazard.
   It also deletes the series the account made that no one but their members could read yet, no version readable, unless another account's entry cites one; any other series outlives the account, as a removed one does (the owner's decision, 2026-11-17).
   An entry rejected in the last 60 days counts as citing it (the owner's decision, 2026-11-17).
@@ -527,6 +528,7 @@ Each entry has one status field: `pending`, `screening`, `review`, `held`, `froz
 - In review the owner publishes the entry, rejects it, or sets `held` until a vendor fixes the hole.
 - `frozen` comes from a revoked invite code (see [Limits and abuse](#limits-and-abuse)).
   `removed` comes from the owner (see [Admin](#admin)).
+  `withdrawn` comes from its author withdrawing it while it is public (see [Entry lifecycle](#entry-lifecycle)).
 
 Reason: with one status, an entry in the review queue, or waiting past the spending cap, can't be published unreviewed by another path.
 
@@ -563,8 +565,18 @@ Inconclusive entries are welcome and marked as such.
   The submit skill suggests this path whenever a result goes into a paper.
   Withdrawing an entry that was never public still deletes it, for an author who wants nothing out before the paper.
 - The author withdraws one version at a time, from the account page in a browser.
-  Withdrawing a public version leaves a notice giving the reason, which screening checks like entry text (#31).
+  Withdrawing a public version leaves a notice giving the reason, which screening checks like entry text.
   Withdrawing an entry that was never public deletes it.
+- A public version is withdrawn alone, batch or not, with a reason of at most 1,000 characters, from its confirm page (#31).
+  Only a chain's latest public version is withdrawn: a version a public one replaced is refused, so the chain never forks into two latest versions.
+  It becomes `withdrawn` at once: search, `/cards.txt` and the series page drop it, and `/e/<id>` serves its notice to everyone in place of its text.
+  The notice gives the server's fields (`status: withdrawn`, when it was submitted, published and withdrawn, its author, and the public versions before and after it) and, below the delimiter, the reason once the screen passed it.
+  The screen reads the reason with its own instructions, as a reason rather than as research, at the next run of the queue and within the same caps.
+  A reason it refuses stays off the notice, and the account page tells its author why; one it holds as a likely hazard, or one from an account under the review guard, stays off it too, for the archive's owner.
+  A held reason shows in the owner's daily email, with links to the notice and to the entry's admin page, and staging's `/staging/status` counts the reasons waiting and held; no admin page shows a held reason or acts on it yet.
+  The cost log marks each call on a reason as the notice's, apart from calls on the entry's text.
+  The version it replaced, when public, is the chain's latest again, so search shows it and a new version may follow it.
+  A run's description stays shown, since the version was public.
   The owner can withdraw a whole chain of versions at once, so a hazard's first version doesn't outlive the withdrawal of its second.
 - The account page withdraws an entry that is `pending` or `screening` (the owner's decision, 2026-11-08).
   Not one in `review`, `held` or `frozen`, which waits on the owner, nor one that reads `screening` with the owner's verdict on it, as an entry the owner passed or rejected does until the queue places it; and not a `rejected` or `public` one.
