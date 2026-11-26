@@ -2,7 +2,8 @@
 """Scripted usability runs of File Drawer's skills on staging, through llm-toolbox's
 drive-agent, each as a fresh staging account.
 
-    ops/usability-run SCENARIO HARNESS NAME     one run (HARNESS: claude or codex)
+    ops/usability-run SCENARIO HARNESS NAME [--keep-header FILE]
+                                                one run (HARNESS: claude or codex)
     ops/usability-run batch SCENARIO:HARNESS:NAME...   several runs at once
     ops/usability-run report RUN_DIR...         a few lines on what each run did
     ops/usability-run sessions RUN_DIR...       a line a session, and how often the
@@ -28,6 +29,19 @@ that fails is tried again after a few seconds, and counts as done when the token
 refused then, since the first try's answer was lost; when it fails again, the
 account's login stays in account-login.json there (mode 600), and `delete --state`
 with that file finishes it.
+
+A scenario turn {"wait_for_file": "FILE", "say": "..."} is for a step only a person
+can take mid-run, such as confirming an emailed claim link: drive-agent prints one
+line naming the file to create, runs/<date>/NAME-HARNESS/FILE (in a batch, in the
+run's log), waits for it, then types `say`. The scenario reaches drive-agent as it
+is (`drive-agent -h` has the rules).
+
+--keep-header FILE has drive-agent copy the agent's header file,
+~/.config/filedrawer/<host>.header, to FILE (mode 600) as the run ends, before the
+home is removed and unblanked, so a check after the run can send it; the run's
+last line says whether it kept one. Nothing prints its contents, and `report` and
+the run folder's files/ stay blanked. FILE must not exist. Only for token "none",
+whose agent makes its own account: the run deletes an account it made.
 
 The account signs up as a person would: a plus-address of the usability mailbox
 (<local>+<NAME>-<random>@<domain>), a random password, the display name Jason Carver
@@ -86,6 +100,7 @@ Options:
                      (default) or a loopback URL (tests); production is refused,
                      and the server must answer /staging/status
   --state FILE       (account, delete) the account's login, written mode 600
+  --keep-header FILE (a run) keep the agent's header file at FILE (above)
 
 Environment:
   FILEDRAWER_STAGING_KEY          the staging key, sent as X-Staging-Key
@@ -542,6 +557,12 @@ def run(args) -> int:
         )
     if args.harness not in ("claude", "codex"):
         raise Usage("HARNESS is claude or codex")
+    if args.keep_header and scenario.get("token", "none") != "none":
+        raise Usage(
+            "--keep-header is for token none: the run deletes the account it "
+            "makes, and its token with it"
+        )
+    keep = keep_header_file(args.keep_header) if args.keep_header else None
     key = field_test_key(scenario, site)
     folder = usability_dir()
     day = folder / "runs" / time.strftime("%Y-%m-%d")
@@ -583,6 +604,9 @@ def run(args) -> int:
     if key:
         env["KEY"] = key
         argv += ["--var", "KEY"]
+    if keep:
+        host = urllib.parse.urlsplit(site.base).hostname
+        argv += ["--keep-file", f".config/filedrawer/{host}.header:{keep}"]
     if login:
         env["FILEDRAWER_TOKEN"] = login["token"]
         argv += [
@@ -608,7 +632,27 @@ def run(args) -> int:
             "The field-test key is open: when the round is over, ask the owner to run "
             "`ops/field-test-key close`."
         )
+    if keep:
+        if keep.exists():
+            print(f"Kept the agent's header file, unblanked, at {keep} (mode 600).")
+        else:
+            print(
+                f"usability-run: No header file kept at {keep}: see drive-agent's "
+                "line above.",
+                file=sys.stderr,
+            )
     return 0 if status == 0 else 1
+
+
+def keep_header_file(given: str) -> Path:
+    """--keep-header's FILE, refused before any account exists when drive-agent
+    would refuse it: an existing file, or a folder that isn't there."""
+    path = Path(given).absolute()
+    if os.path.lexists(path):
+        raise Usage(f"--keep-header: {path} exists")
+    if not path.parent.is_dir():
+        raise Usage(f"--keep-header: no folder {path.parent}")
+    return path
 
 
 # Seconds before a failed account deletion is tried again.
@@ -1307,6 +1351,7 @@ def main() -> int:
         parser.add_argument("harness")
         parser.add_argument("name")
         parser.add_argument("--base", default=STAGING)
+        parser.add_argument("--keep-header")
         return run(parser.parse_args(sys.argv[1:]))
     except SystemExit:
         return 2

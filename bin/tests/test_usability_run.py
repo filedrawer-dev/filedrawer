@@ -30,6 +30,14 @@ import json, os, sys
 names = [sys.argv[i + 1] for i, a in enumerate(sys.argv) if a in ("--var", "--setup-env", "--agent-env")]
 json.dump({"argv": sys.argv[1:], "env": {n: os.environ.get(n) for n in names}},
           open(os.environ["FAKE_DRIVE_LOG"], "w"))
+# As drive-agent keeps a file: whole, mode 600, printing only that it did.
+for i, a in enumerate(sys.argv):
+    if a == "--keep-file" and os.environ.get("FAKE_KEPT"):
+        rel, dest = sys.argv[i + 1].split(":", 1)
+        fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        os.write(fd, os.environ["FAKE_KEPT"].encode())
+        os.close(fd)
+        print("jason: kept ~/" + rel + " at " + dest)
 """
 
 
@@ -162,6 +170,80 @@ def test_production_is_refused(setting):
         setting, name, "claude", "jason10", "--base", "https://filedrawer.dev"
     )
     assert done.returncode == 2 and "--base must be" in done.stderr
+
+
+def test_keep_header_has_drive_agent_keep_the_agents_header_file(
+    setting, server, tmp_path
+):
+    token = "fdt_" + "z" * 52
+    setting["env"]["FAKE_KEPT"] = f"Authorization: Bearer {token}\n"
+    name = scenario(setting, turns=["hi"])
+    kept = tmp_path / "kept.header"
+    done = usability_run(
+        setting, name, "claude", "jason12", "--base", server, "--keep-header", kept
+    )
+    assert done.returncode == 0, done.stderr
+    argv = json.loads(setting["log"].read_text())["argv"]
+    assert argv[argv.index("--keep-file") + 1] == (
+        f".config/filedrawer/127.0.0.1.header:{kept}"
+    )
+    assert kept.read_text() == f"Authorization: Bearer {token}\n"
+    assert done.stdout.strip().splitlines()[-1] == (
+        f"Kept the agent's header file, unblanked, at {kept} (mode 600)."
+    )
+    assert token not in done.stdout + done.stderr
+
+
+def test_keep_header_names_a_header_file_the_run_couldnt_keep(
+    setting, server, tmp_path
+):
+    name = scenario(setting, turns=["hi"])
+    kept = tmp_path / "kept.header"
+    done = usability_run(
+        setting, name, "claude", "jason13", "--base", server, "--keep-header", kept
+    )
+    assert done.returncode == 0, done.stderr
+    assert f"No header file kept at {kept}" in done.stderr
+    assert not kept.exists()
+
+
+@pytest.mark.parametrize("where, why", [("exists", "exists"), ("no/kept", "no folder")])
+def test_keep_header_to_a_file_it_cant_write_is_refused_before_the_run(
+    setting, server, tmp_path, where, why
+):
+    (tmp_path / "exists").touch()
+    name = scenario(setting, turns=["hi"])
+    done = usability_run(
+        setting,
+        name,
+        "claude",
+        "jason14",
+        "--base",
+        server,
+        "--keep-header",
+        tmp_path / where,
+    )
+    assert done.returncode == 2 and why in done.stderr, done.stderr
+    assert not setting["log"].exists()
+
+
+@pytest.mark.parametrize("token", ["header", "env"])
+def test_keep_header_with_a_token_the_run_deletes_is_refused_before_the_run(
+    setting, server, tmp_path, token
+):
+    name = scenario(setting, turns=["hi"], token=token)
+    done = usability_run(
+        setting,
+        name,
+        "claude",
+        "jason15",
+        "--base",
+        server,
+        "--keep-header",
+        tmp_path / "kept",
+    )
+    assert done.returncode == 2 and "token none" in done.stderr, done.stderr
+    assert not setting["log"].exists()
 
 
 def test_an_unknown_token_mode_is_refused(setting, server):
