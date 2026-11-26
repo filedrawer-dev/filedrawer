@@ -3,12 +3,10 @@ remote_with_secret. A fake ssh runs the remote command line locally, through bas
 as the server's shell would, so the quoting is tested the way the server sees it.
 """
 
-import fcntl
-import json
 import os
 import subprocess
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -71,29 +69,16 @@ class Ran:
         return logged_calls(self.log, tool)
 
 
-def run_once(tmp_path_factory, name: str, make: Callable[[Path, FakeHost], Ran]) -> Ran:
-    """make(root, host), with a fresh FakeHost under a fresh `root`, once per test
-    run. xdist sets up a module's fixtures in each worker that runs one of its tests,
-    which spread a dozen tests' one run over most workers, so the first worker to get
-    here runs it, under a lock in the folder all the run's workers share, and leaves
-    what it did there for the others."""
-
-    def make_isolated() -> Ran:
-        with isolated(tmp_path_factory):
-            root = tmp_path_factory.mktemp(name)
-            return make(root, FakeHost(root / "fake-host"))
-
-    if "PYTEST_XDIST_WORKER" not in os.environ:
-        return make_isolated()
-    # Each worker's base temp is a folder of the run's own.
-    shared = tmp_path_factory.getbasetemp().parent
-    saved = shared / f"{name}.json"
-    with (shared / f"{name}.lock").open("w") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        if not saved.exists():
-            saved.write_text(json.dumps(asdict(make_isolated())))
-    fields = json.loads(saved.read_text())
-    return Ran(**{**fields, "sent": tuple(fields["sent"])})
+def isolated_run(
+    tmp_path_factory, name: str, make: Callable[[Path, FakeHost], Ran]
+) -> Ran:
+    """make(root, host), with a fresh FakeHost under a fresh `root`, for a module's
+    fixture, in the environment the autouse fixtures give each test. xdist sets up
+    a module's fixtures once in each worker that runs one of its tests, so a shared
+    run still runs once per such worker."""
+    with isolated(tmp_path_factory):
+        root = tmp_path_factory.mktemp(name)
+        return make(root, FakeHost(root / "fake-host"))
 
 
 @pytest.fixture
@@ -617,7 +602,7 @@ def plain_rerun(tmp_path_factory) -> Ran:
         result = run_wizard(cwd=root, answers="", env=host.env)
         return Ran.of(result, host, root / "ops/.vps.env")
 
-    return run_once(tmp_path_factory, "plain-rerun", make)
+    return isolated_run(tmp_path_factory, "plain-rerun", make)
 
 
 def set_up_rerun(root: Path, fake_host: FakeHost):
@@ -777,7 +762,7 @@ def full_run(tmp_path_factory) -> Ran:
         result = run_wizard("production", cwd=root, answers=FULL_RUN, env=host.env)
         return Ran.of(result, host, env_file)
 
-    return run_once(tmp_path_factory, "full-run", make)
+    return isolated_run(tmp_path_factory, "full-run", make)
 
 
 @pytest.fixture(scope="module")
@@ -807,7 +792,7 @@ def production_rerun(tmp_path_factory) -> Ran:
         result = run_wizard("production", cwd=root, answers="", env=host.env)
         return Ran.of(result, host, env_file)
 
-    return run_once(tmp_path_factory, "production-rerun", make)
+    return isolated_run(tmp_path_factory, "production-rerun", make)
 
 
 def set_up_production(root: Path, fake_host: FakeHost) -> Path:
