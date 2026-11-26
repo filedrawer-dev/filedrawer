@@ -64,7 +64,9 @@ SCENARIO is a path, or a name in the usability folder's `scenarios/`, with or wi
   Use persona-like names (`jason7`), since the agent sees its user's name.
 - Its turns use the field-test key, `{KEY}` in a scenario, for fetch tools; the run refuses a key that is closed or expires within 2 hours.
 - A scenario that plants an earlier result for the agent to find, an entry or a public post, is checked first with two searches written from the prompt's own words, as an agent writes them, not from the target's title: a title query finds a post that the agent's queries miss.
-- To compare two versions of a skill, run a pinned arm of the current version beside the new one, through setup's `pin` (`ops/usability/setup.py`), which needs no push, with mode `ask` so the pinned skill doesn't upgrade itself; `ops/usability-run sessions RUN_DIR...` counts, per session, whether the skill loaded and what it searched.
+- To compare two versions of a skill, run a pinned arm of the current version beside the new one, through setup's `pin` (`ops/usability/setup.py`), which needs no push, with mode `ask` so the pinned skill doesn't upgrade itself.
+  To run a draft before it lands, push it as a branch and pin the skill to the branch's name in place of a version, as the draft's version is untagged; keep the branch until the runs' results are read, since a rerun fetches it again.
+  `ops/usability-run sessions RUN_DIR...` counts, per session, whether the skill loaded and what it searched.
 - Run it with `bgrun --wait -o LOG`, as each turn may take 20 minutes.
   `ops/usability-run batch SCENARIO:HARNESS:NAME...` starts several runs at once, each logging to `logs/` in the usability folder, and prints one line a run once all have ended.
 - To read runs, start with `ops/usability-run report RUN_DIR...`: at most 15 lines a run, with keys and tokens blanked, saying how `/skill.md` was fetched, what got installed, the upgrade mode, the site and installer commands, and any write to the site or call naming production.
