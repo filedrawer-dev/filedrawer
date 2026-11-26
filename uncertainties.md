@@ -720,11 +720,21 @@ The owner asked for a claim by email address, with a code the human enters and t
 #### When code counts as public, for a told-to-post
 
 - Options: any commit on a GitHub remote; or the commit the result ran at, when GitHub serves its page to a request with no token.
-- Chosen: the run's commit, checked with an unauthenticated `curl` of its commit page.
+- Chosen: the run's commit, checked with the host's API and the commit's page (next entry).
   A private remote also holds the commit, and a public repo may not hold the code that produced the result.
   The agent pushes no branch to make code public.
-- Against: the check covers GitHub only; code on Hugging Face or Zenodo gets the question though it may be public.
+- Against: the check covers GitHub only; code on Zenodo gets the question though it may be public.
   The owner's decision named "code that isn't public or has no license file"; a public repo with no license file is linked without a question here, since a link licenses nothing and the MIT line only matters when code is attached.
+
+#### A proxy that adds GitHub credentials to the code check (#108)
+
+A sandbox's or company's proxy can add the human's GitHub token to every request, so the commit page answers 200 for a private repo the account can read, and the agent can't tell.
+
+- Options: a server route, such as `GET /check-code?url=`, that fetches the link from the server before the submit; or, in the skill alone, read the repo's `private` flag from the host's API, which credentials can't flip, beside the commit page, and treat the submit reply's "code link dead" as the last word, sending the entry again without `code` while it is pending.
+- Chosen: the skill alone (submit 22).
+  The server's submit already fetches the link with no credentials, and the hour's hold leaves room for the `PUT`, so the reply is the route's check, after the fact but before anything is public.
+  The API check also covers Hugging Face (`/api/models/` and `/api/datasets/`).
+- Against: a dead link reaches the pending entry, and an agent that skips step 3 leaves it there; a route would catch it before the submit, and work for agents that ignore warnings, at the cost of a new route the skills must name and the server must rate-limit.
 
 #### "Post it, and attach the code"
 
