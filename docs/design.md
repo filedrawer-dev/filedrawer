@@ -1232,18 +1232,21 @@ Python is fine for scripts and internal tools.
   Litestream 0.5 changed its config format, so check the retention settings against its current docs.
   A monthly automated restore test proves the backups work.
 - The bucket uses B2 Object Lock in compliance mode with 30 days' retention, plus a lifecycle rule that deletes old versions once the lock lapses.
-  Reason: Litestream's key must be able to delete files, so an attacker holding it could delete old versions in a bucket that only had versioning.
+  Reason: Litestream's key can hide every file, and the lifecycle rule would then delete them; the lock keeps each version for 30 days whatever the key does.
+  The key needs only `listFiles`, `readFiles` and `writeFiles`, not `deleteFiles`: Litestream deletes by name, with no version ID, which B2 turns into a hide marker that needs only `writeFiles`, while removing a version needs `deleteFiles` (#4's findings, from Litestream 0.5.18's source and B2's docs on S3 DeleteObject and S3-compatible app keys).
   Nobody can override compliance mode.
   Deleted data leaves the backups within 45 days.
-  Check at build time that Litestream works with Object Lock.
+  Check at build time that Litestream works with Object Lock, and that its key needs no `deleteFiles` (`ops/b2-probe`, #156).
 - Attached files aren't in the database, so Litestream doesn't carry them.
   The queue worker copies each new file to a B2 bucket of its own, named by its hash, and records that it did, so an upload never waits on B2.
   That bucket's key may upload and hide files but not delete them, and a lifecycle rule deletes hidden versions after 30 days.
   A purge hides the file.
   A restore fetches every file the restored database records and the disk lacks, then applies the purge log again, and the monthly restore test checks both.
   Reason (2026-11-06, #12): a file stored by its hash is written once, so Object Lock's 30 days would protect it only in its first month.
-  A key that can't delete protects every file for as long as it is live, and purged files still leave the backups within 45 days.
-  Check at build time that B2 lets such a key hide files (#4).
+  A key that can't delete protects each file for 30 days after an attack, not for as long as it is live: it can still hide a file, or upload other bytes under its name, which hides the true version, and the lifecycle rule deletes either 30 days later (#4's findings).
+  What notices such an attack in time is the weekly files check #160 builds, which lists the bucket against the database and fails on a recorded file that is hidden or whose newest version has the wrong hash.
+  Purged files still leave the backups within 45 days.
+  Check at build time that B2 lets such a key hide files but not delete a version (`ops/b2-probe`, #156).
 - During the beta, until #4 lands, production's backups are a nightly copy of its database and Hetzner's daily server backups, 7 kept (the owner's decisions, 2026-11-09, #41).
   The beta accepts up to a day's loss, and backups at the host's own company, so losing the Hetzner account loses both.
   Reason: Hetzner snapshots a running disk, which may catch the live database mid-transaction; the nightly copy is always whole, and Hetzner's backups carry it with the attached files and the config.
