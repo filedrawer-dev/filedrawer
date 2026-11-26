@@ -117,8 +117,8 @@ Entry text, series descriptions, feedback and screening notes are written by str
 - A test that starts a process stops it and waits for it to exit, even when the test fails: `bin/tests/leftover_processes.py`, whose fixtures `bin/tests/conftest.py` gives every test and module, kills what a test or a module's fixtures leave running and fails it, naming each process.
 - A test sets no wall-clock limit of its own: no `timeout=` in a call and no `pytest.mark.timeout` (`bin/tests/test_no_wall_clock_limits.py`).
   pytest.ini's timeout is the one hang guard, set far above any loaded run, since a slow machine may let a bug pass but must never fail a test.
-- `uvx ruff@0.14.4 check` and `uvx ruff@0.14.4 format --check` pass.
-  0.14.4 is the version `.pre-commit-config.yaml` pins; a newer ruff checks more rules than the hook does.
+- `bin/ruff check` and `bin/ruff format --check` pass.
+  `bin/ruff` runs the version `.pre-commit-config.yaml`'s hooks pin; a newer ruff checks more rules than the hook does.
   pre-commit hands the ruff hooks the files identify tags as Python, which misses a script run through `uv run --script`.
   Such a script goes in the `files` of the `ruff-uv-scripts` and `ruff-format-uv-scripts` hooks; `bin/tests/test_ruff_reaches_python_scripts.py` fails until it does.
 - A failure prints one line saying what failed and what to do, and exits non-zero.
