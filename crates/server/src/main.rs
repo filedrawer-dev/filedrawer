@@ -63,7 +63,8 @@ user:email scope; the token it gets is revoked at once.
 FILEDRAWER_LINK_CHECKS=off fetches nothing, for tests that run this binary;
 production refuses it. FILEDRAWER_PUBLISHER_SECONDS sets how often the screening
 queue runs, which is when an entry with attached code is screened: 30 seconds unless
-set, and only dev takes it, for the same tests.
+set, in seconds that may be a fraction, such as 0.1, up to a day. Only dev takes it,
+for the same tests.
 
 Once a day, after midnight UTC, the server emails the admins what screening
 published, what waits for them, what failed, and new feedback, when there is

@@ -394,13 +394,27 @@ impl Config {
             Some(_) if environment != Environment::Dev => {
                 return Err(ConfigError::PublisherTickOutsideDev);
             }
-            Some(text) => match text.parse::<u64>() {
-                Ok(seconds) if seconds > 0 => std::time::Duration::from_secs(seconds),
+            // A fraction, so the tests that wait on the tick wait less (#149); under a
+            // millisecond, the queue would run as fast as the loop spins, and a huge
+            // tick would overflow tokio's interval and panic the publisher, so past a
+            // day is refused.
+            Some(text) => match text
+                .parse::<f64>()
+                .ok()
+                .and_then(|seconds| std::time::Duration::try_from_secs_f64(seconds).ok())
+            {
+                Some(tick)
+                    if (std::time::Duration::from_millis(1)
+                        ..=std::time::Duration::from_secs(24 * 60 * 60))
+                        .contains(&tick) =>
+                {
+                    tick
+                }
                 _ => {
                     return Err(ConfigError::Invalid {
                         name: "FILEDRAWER_PUBLISHER_SECONDS",
                         value: text,
-                        expected: "a whole number of seconds from 1",
+                        expected: "a number of seconds from 0.001 to 86400, such as 1 or 0.1",
                     });
                 }
             },

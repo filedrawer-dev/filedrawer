@@ -937,8 +937,8 @@ fn resume_takes_its_cases_from_the_run_file_alone() {
 const ATTACHMENTS: &[(&str, &str)] = &[
     ("FILEDRAWER_FILES_URL", "http://files.localhost"),
     // An entry with attached code is screened on the publisher's tick, 30 s unless
-    // dev sets it.
-    ("FILEDRAWER_PUBLISHER_SECONDS", "1"),
+    // dev sets it, so a case waits at most a tenth of a second for it (#149).
+    ("FILEDRAWER_PUBLISHER_SECONDS", "0.1"),
 ];
 
 /// A new database under target/, with the attached files beside it: the server

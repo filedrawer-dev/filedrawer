@@ -356,6 +356,15 @@ fn the_publishers_tick_is_30_seconds_and_only_dev_takes_another() {
         ("FILEDRAWER_PUBLISHER_SECONDS", "1"),
     ];
     assert_eq!(config(&dev).unwrap().publisher_tick, Duration::from_secs(1));
+    // A fraction, so the tests that wait on the tick wait less (#149).
+    let fraction = [
+        ("FILEDRAWER_ENVIRONMENT", "dev"),
+        ("FILEDRAWER_PUBLISHER_SECONDS", "0.1"),
+    ];
+    assert_eq!(
+        config(&fraction).unwrap().publisher_tick,
+        Duration::from_millis(100)
+    );
     assert_eq!(
         config(&[("FILEDRAWER_PUBLISHER_SECONDS", "1")]).unwrap_err(),
         ConfigError::PublisherTickOutsideDev
@@ -372,7 +381,17 @@ fn the_publishers_tick_is_30_seconds_and_only_dev_takes_another() {
         config(&production).unwrap_err(),
         ConfigError::PublisherTickOutsideDev
     );
-    for bad in ["0", "soon", "0.5"] {
+    let day = [
+        ("FILEDRAWER_ENVIRONMENT", "dev"),
+        ("FILEDRAWER_PUBLISHER_SECONDS", "86400"),
+    ];
+    assert_eq!(
+        config(&day).unwrap().publisher_tick,
+        Duration::from_secs(86400)
+    );
+    // Under a millisecond the queue would run as fast as the loop spins; past a day
+    // no test wants it, and a huge tick would overflow tokio's interval.
+    for bad in ["0", "soon", "-1", "inf", "NaN", "0.0009", "86401", "1e30"] {
         assert!(
             matches!(
                 config(&[
