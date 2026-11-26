@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, name, created_at, revoked_at FROM tokens WHERE account_id = ?\n         ORDER BY created_at DESC",
+  "query": "SELECT id, name, created_at, revoked_at, from_code_at IS NOT NULL AS \"from_code!: bool\"\n           FROM tokens WHERE account_id = ? ORDER BY created_at DESC",
   "describe": {
     "columns": [
       {
@@ -46,6 +46,12 @@
             "name": "revoked_at"
           }
         }
+      },
+      {
+        "name": "from_code!: bool",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": "Expression"
       }
     ],
     "parameters": {
@@ -55,8 +61,9 @@
       false,
       false,
       false,
-      true
+      true,
+      false
     ]
   },
-  "hash": "b108a189a752bae8c7f711e465801e936bc6ffd4fee01bb840f46bea79a10308"
+  "hash": "9e4ac0e00aa4df639f56c76f7985885e77e24b004a53d4840b447196ae448106"
 }

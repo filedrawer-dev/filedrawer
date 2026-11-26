@@ -534,6 +534,45 @@ The owner asked for a claim by email address, with a code the human enters and t
   Chosen: only units dated after today move, only earlier, into days that have room counting every unit already there, series' and screened entries' included.
   Against: an entry whose screening already waits behind today's spent screening cap gains nothing from an earlier unit.
 
+#### Connecting an agent with a code
+
+The owner asked for an agent to connect from the browser with a code, as `gh auth login` does (#54); these choices around it are mine, and #54 asks about each.
+
+- The code.
+  Options: RFC 8628's base 20 (`BCDFGHJKLMNPQRSTVWXZ`, capitals with no vowels) or the claim codes' lowercase base 32; 8 characters or more; an expiry from 10 to 30 minutes.
+  Chosen: base 20, 8 letters shown as `XXXX-XXXX`, about 34.5 bits, read with case, spaces, the dash and any character outside the alphabet ignored; 15 minutes from the request.
+  Reason: base 20 types on a phone without a modifier key and spells no word; 15 minutes leaves room to sign up and verify an address on the way, where 10 often wouldn't.
+  Against: a longer life leaves a phished code usable longer; the claim's code has another alphabet, so the two codes the skills show look different.
+- Wrong codes.
+  Chosen: a code typed on `/device` that matches no waiting request counts against the account, 10 an hour, and the IP, 20 an hour; a code that matches is given back, as a right password is; past either, even the right code waits.
+  With at most about 20 codes waiting at once (2000 a day for 15 minutes each), 10 guesses an hour find one with odds near 1 in 100 million.
+  A guess that hits connects a stranger's agent to the guesser's account, so the stranger's entries post as the guesser; it reaches nothing of the stranger's.
+  Against: a session that mistypes 10 times waits an hour, and the per-IP count can lock out a room on one network.
+- Asking for codes.
+  Chosen: `POST /device/code` at the agent accounts' numbers, 10 an hour and 40 a day per IP and 2000 a day across the site, counted apart from them.
+  Against: someone with many addresses can use up the site's 2000 and send every agent to the terminal command for the day; a room on one network that connects more than 10 agents an hour waits.
+- The poll.
+  Chosen: every 5 s at first; a poll more than a second early gets `slow_down` and adds 5 s for every later poll, up to 60 s, as the RFC says; the stamps keep whole seconds, hence the second's slack.
+  The skill's command polls 18 times and then exits 2 for the agent to run it again, since a harness's command times out after about two minutes.
+  An unknown device code and an expired one both answer `expired_token`, so the hourly tidy needn't keep expired rows to tell them apart.
+  Against: an agent that never runs the command again leaves its human's approval unused until the code expires.
+- The replies.
+  Options: RFC 8628 and RFC 6749 as written, JSON with `client_id` and `grant_type`; or the site's plain text.
+  Chosen: the RFC's fields and error codes, as `key: value` lines, or JSON on request, with no `client_id` or `grant_type`; an error is a 400 whose one line starts with the RFC's code, and the approved poll's body is the header line `POST /accounts` gives, with `X-Filedrawer-Account`.
+  Against: an off-the-shelf OAuth client can't use it as it stands.
+- The approval page.
+  Chosen: two steps, the code and then a page naming the account, the token's name, which the agent sent and the human may change, the time it asked and the agent's User-Agent, labeled as its own description, with Approve and Deny; the page needs a session of a verified account, as a token on `/account` does, and no fresh login.
+  Reason: the phisher's victim is logged in already, so a fresh login doesn't stop the phishing it would be for; and whoever has the browser can make a token on `/account` without one.
+  It shows no IP address: the server keeps none in plain, and a phisher's would tell the victim little.
+  Against: a User-Agent is whatever the agent claims, so it reassures more than it proves; and a person who signs up on the way lands on the account page after verifying, and must open `/device` again.
+- What the token is.
+  Chosen: an ordinary token, which `/account` lists with "approved from an agent's code" beside its name, from a new column `tokens.from_code_at`; a password reset, a deletion and revoke-all end an approval whose token isn't made yet.
+  Against: nothing else tells such a token apart, so a phished one gets no shorter life or narrower rights.
+- The device code's file.
+  Chosen: the skill keeps the agent's reply, its device code included, in `~/.config/filedrawer/filedrawer.dev.device`, mode 600, which the waiting command deletes once it ends; staging and dev don't rename it, as they do the header file, so a run against two sites at once shares it.
+  Against: a file the waiting command never reached stays until the next request replaces it, holding a device code that expires in 15 minutes.
+- The privacy page says the agent's User-Agent is kept while it waits for its human, for at most about an hour and a quarter.
+
 ### Versions and batches
 
 #### Versions form one line

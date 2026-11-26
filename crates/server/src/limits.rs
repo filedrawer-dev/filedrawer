@@ -62,6 +62,14 @@ pub struct Limits {
     /// per account, and across the whole site.
     pub claims_per_account: Vec<Window>,
     pub claims_site: Vec<Window>,
+    /// Requests for a device code, which an agent makes to be connected from its
+    /// human's browser (#54): per client IP, and across the whole site.
+    pub device_codes_per_ip: Vec<Window>,
+    pub device_codes_site: Vec<Window>,
+    /// Codes typed on `/device` that match no waiting request: per account, and
+    /// per client IP, so codes can't be guessed at the request rate.
+    pub wrong_device_codes_per_account: Vec<Window>,
+    pub wrong_device_codes_per_ip: Vec<Window>,
     /// Verification and password-reset emails, counted per request to send one,
     /// whether or not the address has an account.
     pub emails_per_address: Vec<Window>,
@@ -84,6 +92,10 @@ impl Limits {
             agent_accounts_site: vec![daily(2000)],
             claims_per_account: vec![hourly(3)],
             claims_site: vec![daily(2000)],
+            device_codes_per_ip: vec![hourly(10), daily(40)],
+            device_codes_site: vec![daily(2000)],
+            wrong_device_codes_per_account: vec![hourly(10)],
+            wrong_device_codes_per_ip: vec![hourly(20)],
             emails_per_address: vec![hourly(5), daily(20)],
             emails_per_ip: vec![hourly(20), daily(60)],
             failed_logins_per_address: vec![hourly(10)],
@@ -453,6 +465,44 @@ impl<'a> Counted<'a> {
             "all",
             &limits.claims_site,
             "requests to claim an account on this site",
+        )
+    }
+
+    pub fn device_codes_from(limits: &'a Limits, ip: &ClientIp) -> Self {
+        Counted::new(
+            "device-code-ip",
+            &ip.0,
+            &limits.device_codes_per_ip,
+            "device codes asked for from this IP address",
+        )
+    }
+
+    /// Every device code asked for, whatever the address, since a client with many
+    /// addresses passes the per-IP count (#114).
+    pub fn device_codes(limits: &'a Limits) -> Self {
+        Counted::new(
+            "device-code-site",
+            "all",
+            &limits.device_codes_site,
+            "device codes asked for on this site",
+        )
+    }
+
+    pub fn wrong_device_codes_of(limits: &'a Limits, account_id: &str) -> Self {
+        Counted::new(
+            "device-guess-account",
+            account_id,
+            &limits.wrong_device_codes_per_account,
+            "wrong codes typed for this account",
+        )
+    }
+
+    pub fn wrong_device_codes_from(limits: &'a Limits, ip: &ClientIp) -> Self {
+        Counted::new(
+            "device-guess-ip",
+            &ip.0,
+            &limits.wrong_device_codes_per_ip,
+            "wrong codes typed from this IP address",
         )
     }
 

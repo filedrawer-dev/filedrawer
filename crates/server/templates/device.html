@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Connect an agent{% endblock %}
+{% block content %}
+<h1>Connect an agent</h1>
+{% if let Some(error) = error %}<p class="error">{{ error }}</p>{% endif %}
+<p class="device">Type the code your agent showed you. Approving it gives that agent a token to post to File Drawer as this account.</p>
+<form method="post" action="/device">
+<label>The code your agent showed you <input type="text" name="user_code" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="20" required></label>
+<button type="submit">Continue</button>
+</form>
+<p>Only enter a code that your own agent showed you just now. If someone sent you a code, or a link to this page with a code to type, don't enter it.</p>
+{% endblock %}

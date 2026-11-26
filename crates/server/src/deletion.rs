@@ -58,8 +58,9 @@ pub async fn password_hash(
 }
 
 /// Deletes the account in one transaction.
-/// Deleted: its email, login, name, sessions, tokens, email links, queued email, the
-/// address it asked to change to,
+/// Deleted: its email, login, name, sessions, tokens, the agents' codes it approved
+/// whose tokens aren't made yet, email links, queued email, the address it asked to
+/// change to,
 /// private feedback and series memberships; every entry of its that isn't public or
 /// removed, with what was read from it; runs and batches nothing left uses; the
 /// series it made that have no readable version and no other account's entry cites;
@@ -95,6 +96,10 @@ pub async fn delete(state: &AppState, account_id: &str) -> Result<(), sqlx::Erro
         sqlx::query!("DELETE FROM email_changes WHERE account_id = ?", account_id),
         sqlx::query!(
             "DELETE FROM account_claims WHERE account_id = ?",
+            account_id
+        ),
+        sqlx::query!(
+            "DELETE FROM device_requests WHERE account_id = ?",
             account_id
         ),
         // The kept entries forget the tokens that submitted them, which go next.

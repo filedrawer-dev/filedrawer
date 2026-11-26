@@ -9,6 +9,7 @@ pub mod batch;
 pub mod beta;
 pub mod claim;
 pub mod delete;
+pub mod device;
 pub mod docs;
 pub mod feedback;
 pub mod files;

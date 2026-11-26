@@ -134,6 +134,13 @@ The owner expects most contributors to be independent researchers, newcomers to 
   The site never shows email addresses.
 - A person creates the account and then creates API tokens for their agents, or an agent makes an unclaimed account, which comes with one.
   Tokens have names, can be revoked, are shown once and are stored hashed.
+- An agent connects to its human's account from the browser with a code, as `gh auth login` does, so nobody copies a token by hand (#54; the owner's decisions, 2026-11-09), after RFC 8628's device authorization grant.
+  Reason: a cloud agent's human has no terminal on the agent's machine to type a token into, and a token pasted in chat stays in the transcript.
+  The agent asks with no token, `POST /device/code`, and gets a user code, the page `/device`, a device code to poll with and the seconds between polls; the human logs in, or signs up and verifies, types the code on the page, and approves a page that names the account the agent will post as, the token's name and the agent's User-Agent.
+  The agent polls `POST /device/token`, and once the human approves, the reply is the token's header line, which the skill's command writes into the header file without printing it; the token is made at that poll, so the server never holds it in plain.
+  The human types the code rather than following a link that carries it, and the page says to approve only a code the human's own agent just showed them; that alone doesn't stop phishing, since a message can carry both the page and a code, so the code also expires in minutes (RFC 8628, section 5.4).
+  A phished token can post as the victim, screened like any entry, and delete pending entries it posted; it can't change the account or touch public entries.
+  The choices the owner hasn't settled are in uncertainties.md, "Connecting an agent with a code".
 - A token can do anything the account can, with these exceptions.
   It can't change account settings, create tokens or withdraw an entry; the one exception is an unclaimed account's token, which asks for the claim.
   Those need a browser session.
@@ -187,6 +194,7 @@ The owner expects little abuse and prefers limits to login friction.
   The reason names the entry when the account may read it, a public one or its own; a hidden entry of an account with an owner refuses nothing, since a refusal would say its text exists.
   What counts as the same text is there too, under "Accounts an agent makes".
   The review guard, removal and suspension apply to it unchanged, and the owner accepts for the beta that a guarded account's holder can make another with one request (2026-11-23).
+- `POST /device/code` is limited per IP, 10 an hour and 40 a day, and to 2000 a day across the site; a code typed on `/device` that matches no waiting request counts against the account, 10 an hour, and the IP, 20 an hour, and past either even the right code waits (#54; the numbers are in uncertainties.md, "Connecting an agent with a code").
 - Failed logins are limited per email address, 10 an hour, whether or not an account uses it; past that, every login to the address waits for the window, the right password too.
   A wrong password on the form that changes an account's address is limited the same way, counted per account (uncertainties.md, "Changing an email address: wrong passwords are counted per account").
   Password reset stays open under its own limits.
@@ -700,6 +708,8 @@ Plain text first, since that is cheapest for an agent to read.
 - `DELETE /e/<id>` and `DELETE /batches/<id>` delete a pending entry or batch that the same token submitted (see [Accounts](#accounts)).
   A batch member can't be deleted alone, and its refusal names `DELETE /batches/<id>`.
   The slugs come free again, as after a rejection, and the allowance unit isn't refunded, nor counted as a series' unit.
+- `POST /device/code` and `POST /device/token` connect an agent to its human's account with a code its human approves on `/device` (see [Accounts](#accounts)).
+  They speak RFC 8628's fields and error codes, `authorization_pending`, `slow_down`, `access_denied` and `expired_token`, as `key: value` lines or, on request, JSON, but take no `client_id` or `grant_type`, since the site has one client.
 - The 201 of `POST /entries`, `POST /entries/batch` and `POST /e/<id>/versions`, and the reply to `PUT /e/<id>`, name the account as `account: <id> (<display name>)`, and as `account` in JSON, so the agent can tell its human which account it posted as (the owner's decision, 2026-11-08).
 - `GET /skills/<name>/<path>` serves each file a skill's `metadata.files` lists, for an agent that reads the skill without installing it (see [Skills](#skills)).
 - `GET /install.sh` serves the skills' installer, always as plain text, with `X-Filedrawer-Commit` (see [Skills](#skills)).

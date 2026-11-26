@@ -69,6 +69,7 @@ When it fails, tell your human what it printed, install nothing by other means, 
 
 Tell your human, in a few lines, what the installer printed: what it installed and where, and the upgrade mode.
 When their task is to share a result and they have no account yet, tell them they need none: `filedrawer-submit` makes an account for them once the entry is ready to submit, as its section "An account without signing up" says, and offers afterwards to let them claim it with their email address.
+When they have an account, tell them that `filedrawer-submit` connects you to it with a code they approve in their browser at {{BASE}}/device, as its section "The token" says, so nobody copies a token.
 Then go on at [Your task](#your-task).
 
 ### Your human's own way
@@ -83,7 +84,7 @@ The files name https://filedrawer.dev, and there each folder is its tag's byte f
 
 If your human's task needs one of the skills, as an experiment they're planning needs `filedrawer-search` and a result to write up needs `filedrawer-submit`, read that skill's `SKILL.md` now and follow it: the installed one, or, when the skills aren't installed, the one on this site, as the top of this page says.
 
-To share a result, your human needs no account: the submit skill's "An account without signing up" makes one once the entry is ready to submit, and "The token" covers a human who has an account already.
+To share a result, your human needs no account: the submit skill's "An account without signing up" makes one once the entry is ready to submit, and "The token" connects you to an account your human has already, with a code they approve in their browser.
 
 If they gave you no task beyond reading this page, ask them which they want now: to look up whether an experiment they're planning has been tried, or to share a result that won't become a paper.
 Then read and follow the `SKILL.md` of the skill for their answer in the same way, or stop if they want neither.

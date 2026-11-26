@@ -418,6 +418,27 @@ pub struct ClaimPage<'a> {
     pub error: Option<&'a str>,
 }
 
+/// The page where a person types the code their agent showed them (#54).
+#[derive(Template)]
+#[template(path = "device.html")]
+pub struct DevicePage<'a> {
+    pub error: Option<&'a str>,
+}
+
+/// What approving an agent's code would do, with its buttons (#54). The name and
+/// the User-Agent are the agent's own words.
+#[derive(Template)]
+#[template(path = "device_confirm.html")]
+pub struct DeviceConfirmPage<'a> {
+    pub user_code: &'a str,
+    pub name: &'a str,
+    pub user_agent: Option<&'a str>,
+    pub asked_at: &'a str,
+    pub account_id: &'a str,
+    pub display_name: &'a str,
+    pub error: Option<&'a str>,
+}
+
 #[derive(Template)]
 #[template(path = "delete.html")]
 pub struct DeletePage<'a> {

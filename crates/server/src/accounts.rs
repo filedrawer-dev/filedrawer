@@ -402,6 +402,8 @@ pub async fn reset_with_link(
     mark_verified(&mut transaction, &account_id).await?;
     // A change of address someone asked for with the old password ends with it.
     crate::email_change::cancel_in(&mut transaction, &account_id).await?;
+    // So does an agent's code approved whose token isn't made yet.
+    crate::device::cancel_approvals_in(&mut transaction, &account_id).await?;
     // GitHub can list as verified an address its user no longer holds, so whoever
     // reset through it may not be who linked GitHub (the owner's decision,
     // 2026-11-22).
@@ -560,6 +562,8 @@ pub struct TokenView {
     pub name: String,
     pub created_at: String,
     pub revoked_at: Option<String>,
+    /// Whether it was made by approving an agent's code, not on the account page.
+    pub from_code: bool,
 }
 
 pub async fn view(pool: &SqlitePool, account_id: &str) -> Result<AccountView, sqlx::Error> {
@@ -571,8 +575,8 @@ pub async fn view(pool: &SqlitePool, account_id: &str) -> Result<AccountView, sq
     .await?;
     let tokens = sqlx::query_as!(
         TokenView,
-        "SELECT id, name, created_at, revoked_at FROM tokens WHERE account_id = ?
-         ORDER BY created_at DESC",
+        r#"SELECT id, name, created_at, revoked_at, from_code_at IS NOT NULL AS "from_code!: bool"
+           FROM tokens WHERE account_id = ? ORDER BY created_at DESC"#,
         account_id
     )
     .fetch_all(pool)

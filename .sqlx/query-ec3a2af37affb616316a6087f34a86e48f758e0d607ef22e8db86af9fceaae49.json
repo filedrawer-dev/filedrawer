@@ -1,0 +1,93 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT r.name, r.interval_secs, r.last_polled_at, r.account_id, r.approved_at,\n                  r.denied_at,\n                  (r.account_id IS NULL OR EXISTS (\n                      SELECT 1 FROM accounts a WHERE a.id = r.account_id AND a.deleted_at IS NULL\n                  )) AS \"account_lives!: bool\"\n           FROM device_requests r WHERE r.device_hash = ? AND r.expires_at > ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "name",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "device_requests",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "interval_secs",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "device_requests",
+            "name": "interval_secs"
+          }
+        }
+      },
+      {
+        "name": "last_polled_at",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "device_requests",
+            "name": "last_polled_at"
+          }
+        }
+      },
+      {
+        "name": "account_id",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "device_requests",
+            "name": "account_id"
+          }
+        }
+      },
+      {
+        "name": "approved_at",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "device_requests",
+            "name": "approved_at"
+          }
+        }
+      },
+      {
+        "name": "denied_at",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "device_requests",
+            "name": "denied_at"
+          }
+        }
+      },
+      {
+        "name": "account_lives!: bool",
+        "ordinal": 6,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "ec3a2af37affb616316a6087f34a86e48f758e0d607ef22e8db86af9fceaae49"
+}

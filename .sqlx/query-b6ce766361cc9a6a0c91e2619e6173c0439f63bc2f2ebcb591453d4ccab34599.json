@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO device_requests\n                 (device_hash, user_code_hash, name, user_agent, created_at, expires_at,\n                  interval_secs)\n             VALUES (?, ?, ?, ?, ?, ?, ?)\n             ON CONFLICT DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "b6ce766361cc9a6a0c91e2619e6173c0439f63bc2f2ebcb591453d4ccab34599"
+}
