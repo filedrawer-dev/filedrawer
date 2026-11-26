@@ -1,144 +1,160 @@
 #!/usr/bin/env python3
-"""Print the commit a daily run of .github/workflows/mutants.yml tests the changes since.
+"""Find where a daily mutants run starts: the commit after which no run has covered
+the lines.
 
-    bin/mutants-base REPO
+    mutants-base --retention-days 90          in a GitHub Actions job (GITHUB_REPOSITORY set)
+    mutants-base --retention-days 30 --repo OWNER/NAME --workflow mutants.yml --branch main
 
-REPO is the GitHub repo, as owner/name; run it in a checkout with the full history,
-with GH_TOKEN allowed to read the repo's actions.
+A run covers its range when its workflow uploads the artifact `mutants-covered`; each
+workflow says when it does (llm-toolbox's when a run judged mutants, cut off or not;
+filedrawer's when every mutant was tested, by a daily run or a full one). The base is
+the head commit of the newest successful run of the workflow on the branch, started by
+the schedule or by hand, that still holds that artifact and whose head is in HEAD's
+history (a force-push can drop it). --retention-days is the artifact's retention-days
+in the workflow: older runs can't hold it, so only the runs of the last N+1 days are
+asked for. With no such run, as before the first or once the artifacts expired, the
+base is the commit that added the workflow file. --override REV takes REV instead, for
+a run started by hand over a range of its own.
 
-The base is the head of the newest run of the workflow on main, scheduled or started
-by hand, that has the artifact `mutants-covered`: the summary job uploads it only when
-every mutant of the run was tested, and the setup job when a daily run found no
-mutants in its lines. A full run counts as well as a daily one, since it tested every
-mutant at its head. A run whose head this checkout's HEAD
-doesn't hold, as after a force push, is passed over. The artifacts last 30 days, so
-only the runs of the last 31 are asked for. With no such run, the base is the commit
-that added the workflow, and the run tests every mutant in the lines changed since.
+Prints `base=SHA`, and `skip=true` when the base is HEAD (nothing landed since), else
+`skip=false`: lines for $GITHUB_OUTPUT. On stderr, one line says where the base came
+from. It asks GitHub through `gh api`, which needs GH_TOKEN with `actions: read`; any
+error from gh or git, or a call that takes past MUTANTS_BASE_GH_SECONDS (default 60),
+fails it: a guessed base would skip lines or test old ones again without saying so.
 
-Prints the base's full SHA on stdout and, on stderr, where it came from.
+llm-toolbox's bin/mutants-base is the original, and filedrawer keeps a copy: change the
+original and copy it over.
 
-llm-toolbox's bin/mutants-base answers the same question for its mutate-check workflow,
-with its own rules (a cut-off run counts, the artifacts last 90 days); a change to how
-a run's base is found here may belong there too.
-
-Exit status: 0 the base was printed; 1 a gh or git call failed or ran past 60 s,
-as on an API error (it says which, and prints no base); 2 a usage error.
+Exit status: 0 found; 1 gh or git failed (the message says which); 2 usage error.
 """
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
 
-WORKFLOW = ".github/workflows/mutants.yml"
 COVERED = "mutants-covered"
-# The mutants artifact's retention-days, and a day's slack.
-LOOKBACK = timedelta(days=31)
-CALL_TIMEOUT = 60
+EVENTS = ("schedule", "workflow_dispatch")
+GH_SECONDS = float(os.environ.get("MUTANTS_BASE_GH_SECONDS", "60"))
 
 
-class CallFailed(Exception):
-    pass
+class Failed(Exception):
+    """A gh or git call failed; the message says which and why."""
 
 
-def call(argv: list[str]) -> bytes:
+def run(*argv: str) -> str:
     try:
         done = subprocess.run(
-            argv, capture_output=True, timeout=CALL_TIMEOUT, check=False
+            argv, capture_output=True, text=True, timeout=GH_SECONDS, check=False
         )
     except subprocess.TimeoutExpired:
-        raise CallFailed(f"{' '.join(argv)} ran past {CALL_TIMEOUT} s") from None
-    if done.returncode != 0:
-        stderr = done.stderr.decode(errors="replace").strip()
-        raise CallFailed(f"{' '.join(argv)} failed: {stderr}")
+        raise Failed(f"{' '.join(argv)} took past {GH_SECONDS:g} seconds") from None
+    if done.returncode:
+        said = (done.stderr or done.stdout).strip().splitlines()
+        raise Failed(f"{' '.join(argv)} failed: {said[-1] if said else 'no message'}")
     return done.stdout
 
 
-def json_lines(argv: list[str]) -> list[dict]:
+def json_lines(*argv: str) -> list[dict]:
     """The objects a `gh api --jq` call prints, one a line."""
-    return [json.loads(line) for line in call(argv).decode().splitlines() if line]
+    return [json.loads(line) for line in run(*argv).splitlines() if line]
 
 
-def candidate_runs(repo: str) -> list[dict]:
-    """The workflow's successful scheduled and dispatched runs on main, newest first."""
-    since = (datetime.now(UTC) - LOOKBACK).strftime("%Y-%m-%d")
+def candidate_runs(args: argparse.Namespace) -> list[dict]:
+    """The workflow's successful scheduled and dispatched runs on the branch, from
+    the days its artifact can last, newest first."""
+    since = datetime.now(UTC) - timedelta(days=args.retention_days + 1)
     runs = json_lines(
-        [
-            "gh", "api", "-X", "GET", "--paginate",
-            f"repos/{repo}/actions/workflows/mutants.yml/runs",
-            "-f", "branch=main", "-f", "status=success",
-            "-f", f"created=>={since}", "-f", "per_page=100",
-            "--jq", ".workflow_runs[]",
-        ]
+        "gh", "api", "-X", "GET", "--paginate",
+        f"repos/{args.repo}/actions/workflows/{args.workflow}/runs",
+        "-f", f"branch={args.branch}", "-f", "status=success",
+        "-f", f"created=>={since:%Y-%m-%d}", "-f", "per_page=100",
+        "--jq", ".workflow_runs[]",
     )  # fmt: skip
     return [
-        run
-        for run in runs
-        if run["head_branch"] == "main"
-        and run["conclusion"] == "success"
-        and run["event"] in ("schedule", "workflow_dispatch")
+        found
+        for found in runs
+        if found["head_branch"] == args.branch
+        and found["conclusion"] == "success"
+        and found["event"] in EVENTS
     ]
 
 
-def holds(commit: str) -> bool:
-    """Whether HEAD holds `commit`; false too for a commit this clone lacks."""
-    done = subprocess.run(
-        ["git", "merge-base", "--is-ancestor", commit, "HEAD"],
-        capture_output=True,
-        timeout=CALL_TIMEOUT,
-        check=False,
-    )
+def in_history(sha: str) -> bool:
+    """Whether HEAD holds `sha`; false too for a commit this clone lacks."""
+    try:
+        done = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", sha, "HEAD"],
+            capture_output=True,
+            timeout=GH_SECONDS,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        raise Failed(f"git merge-base took past {GH_SECONDS:g} seconds") from None
     return done.returncode == 0
 
 
 def covered(repo: str, run_id: int) -> bool:
     """Whether the run has a `mutants-covered` artifact GitHub still keeps."""
     artifacts = json_lines(
-        [
-            "gh", "api",
-            f"repos/{repo}/actions/runs/{run_id}/artifacts?name={COVERED}",
-            "--jq", ".artifacts[]",
-        ]
+        "gh", "api",
+        f"repos/{repo}/actions/runs/{run_id}/artifacts?name={COVERED}",
+        "--jq", ".artifacts[]",
     )  # fmt: skip
     return any(a["name"] == COVERED and not a["expired"] for a in artifacts)
 
 
-def workflow_added() -> str:
-    out = call(["git", "log", "--diff-filter=A", "--format=%H", "--", WORKFLOW])
-    shas = out.decode().split()
-    if not shas:
-        raise CallFailed(f"git log finds no commit that added {WORKFLOW}")
-    return shas[-1]
-
-
-def base(repo: str) -> tuple[str, str]:
+def find_base(args: argparse.Namespace) -> tuple[str, str]:
     """The base and where it came from."""
-    for run in candidate_runs(repo):
-        if holds(run["head_sha"]) and covered(repo, run["id"]):
-            return run["head_sha"], (
-                f"the head of {run['html_url']}, the newest run that tested every "
-                "mutant in its range"
+    if args.override:
+        sha = run("git", "rev-parse", "--verify", f"{args.override}^{{commit}}")
+        return sha.strip(), f"--override {args.override}"
+    for found in candidate_runs(args):
+        if in_history(found["head_sha"]) and covered(args.repo, found["id"]):
+            return found["head_sha"], (
+                f"the head of {found['html_url']}, the newest run that covered its range"
             )
-    return workflow_added(), (
-        "the commit that added the workflow: no run of the last 31 days on main "
-        "tested every mutant in its range"
+    path = f".github/workflows/{args.workflow}"
+    added = run("git", "log", "--diff-filter=A", "--format=%H", "--", path).split()
+    if not added:
+        raise Failed(f"no commit in HEAD's history adds {path}")
+    return added[-1], (
+        f"the commit that added {path}: no run of the last {args.retention_days + 1} "
+        f"days on {args.branch} covered its range"
     )
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("repo", help="the GitHub repo, as owner/name")
-    args = parser.parse_args()
+    parser.add_argument(
+        "--retention-days",
+        type=int,
+        required=True,
+        metavar="N",
+        help="the retention-days of the workflow's mutants-covered artifact",
+    )
+    parser.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY"))
+    parser.add_argument("--workflow", default="mutants.yml")
+    parser.add_argument("--branch", default="main")
+    parser.add_argument("--override", metavar="REV")
+    args = parser.parse_args(argv)
+    if not args.repo:
+        parser.error("give --repo OWNER/NAME, or set GITHUB_REPOSITORY")
+    if args.retention_days < 1:
+        parser.error("--retention-days takes a whole number of days, 1 or more")
     try:
-        sha, why = base(args.repo)
-    except CallFailed as error:
+        base, why = find_base(args)
+        head = run("git", "rev-parse", "HEAD").strip()
+    except Failed as error:
         print(f"mutants-base: {error}", file=sys.stderr)
         return 1
     print(f"mutants-base: the base is {why}.", file=sys.stderr)
-    print(sha)
+    print(f"base={base}")
+    print(f"skip={'true' if base == head else 'false'}")
     return 0
 
 

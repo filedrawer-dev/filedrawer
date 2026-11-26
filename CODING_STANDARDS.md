@@ -122,7 +122,7 @@ Entry text, series descriptions, feedback and screening notes are written by str
   Such a script goes in the `files` of the `ruff-uv-scripts` and `ruff-format-uv-scripts` hooks; `bin/tests/test_ruff_reaches_python_scripts.py` fails until it does.
 - A failure prints one line saying what failed and what to do, and exits non-zero.
   A hook's refusal ends with a `COMMIT REFUSED:` line.
-- `bin/pre-commit-run`, `bin/slop-lint` and `bin/tests/leftover_processes.py` are copies of llm-toolbox's.
+- `bin/mutants-base`, `bin/pre-commit-run`, `bin/slop-lint` and `bin/tests/leftover_processes.py` are copies of llm-toolbox's.
   Change them there and copy them back, not here.
 
 ## Shell in `bin/` and `ops/`

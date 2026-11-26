@@ -23,7 +23,7 @@ repos:
         language: system
         types: [python]
         # Copies from llm-toolbox change there and are copied back (CODING_STANDARDS.md).
-        exclude: ^bin/(pre-commit-run|slop-lint|tests/leftover_processes\.py)$
+        exclude: ^bin/(mutants-base|pre-commit-run|slop-lint|tests/leftover_processes\.py)$
       # The same two for the scripts that run through `uv run --script`: identify,
       # which pre-commit's `types` go by, doesn't read that shebang as Python.
       # bin/tests/test_ruff_reaches_python_scripts.py fails on a Python script in bin/
