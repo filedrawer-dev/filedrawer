@@ -45,7 +45,7 @@ def sha256(data: bytes) -> str:
 # --dir DIR` copies binary-ID to DIR, under the name in file-ID, as GitHub unpacks an
 # artifact of one file under that file's name; `gh auth status` succeeds unless
 # `logged-out` exists. Every call is a line in `log`.
-FAKE_GH = """#!/usr/bin/env python3
+FAKE_GH = """#!/usr/bin/env -S python3 -IS
 import json, shutil, sys
 from pathlib import Path
 root = Path({root!r})

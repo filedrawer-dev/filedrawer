@@ -35,7 +35,7 @@ REPO_URL = "https://github.com/filedrawer-dev/filedrawer"
 # Starts with y, so every confirm says yes.
 TOKEN = "yes-cio_s3cret-token"
 
-FAKE = r'''#!/usr/bin/env python3
+FAKE = r'''#!/usr/bin/env -S python3 -IS
 """cargo, gh, curl or npx, by the name it was called with, against the state in $FAKE_STATE."""
 import json, os, re, sys
 from pathlib import Path

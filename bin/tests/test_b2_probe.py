@@ -40,7 +40,7 @@ def fake_archive(path: Path) -> str:
     """A Litestream release archive whose binary runs fake_litestream.py; returns
     its SHA-256."""
     script = (
-        f'#!/bin/sh\nexec "{sys.executable}" -I "{FAKE_LITESTREAM}" "$@"\n'.encode()
+        f'#!/bin/sh\nexec "{sys.executable}" -I -S "{FAKE_LITESTREAM}" "$@"\n'.encode()
     )
     with tarfile.open(path, "w:gz") as tar:
         for name, data, mode in [

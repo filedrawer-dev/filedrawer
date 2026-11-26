@@ -28,7 +28,7 @@ WHEELS = [
     )
 ]
 
-FAKE = r'''#!/usr/bin/env python3
+FAKE = r'''#!/usr/bin/env -S python3 -IS
 """curl or pipx, by the name it was called with, against the state in $FAKE_STATE."""
 import os, sys
 from pathlib import Path

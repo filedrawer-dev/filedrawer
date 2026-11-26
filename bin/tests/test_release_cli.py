@@ -162,7 +162,7 @@ class Box:
         self.git("branch", "-q", "--set-upstream-to=origin/main")
 
     def fake(self, path: Path) -> None:
-        path.write_text(f"#!{sys.executable}\n{FAKE}")
+        path.write_text(f"#!{sys.executable} -IS\n{FAKE}")
         path.chmod(0o755)
 
     def git(self, *args: str, cwd: Path | None = None) -> str:

@@ -20,7 +20,7 @@ SCRIPT = REPO / "bin/release-plan"
 SLUG = "filedrawer-dev/filedrawer"
 TIP = "a" * 40
 
-FAKE = r'''#!/usr/bin/env python3
+FAKE = r'''#!/usr/bin/env -S python3 -IS
 """curl, cargo or gh, by the name it was called with, against $FAKE_STATE."""
 import io, json, os, re, sys, tarfile
 from pathlib import Path

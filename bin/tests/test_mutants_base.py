@@ -95,7 +95,7 @@ class Fake:
         (root / "fake_gh.py").write_text(FAKE_GH)
         gh = bin_dir / "gh"
         gh.write_text(
-            f'#!/bin/sh\nexec "{sys.executable}" -I "{root}/fake_gh.py" "{root}" "$@"\n'
+            f'#!/bin/sh\nexec "{sys.executable}" -I -S "{root}/fake_gh.py" "{root}" "$@"\n'
         )
         gh.chmod(0o755)
         self.env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}

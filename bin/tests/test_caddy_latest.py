@@ -90,7 +90,8 @@ def ci(tmp_path):
     world_path = tmp_path / "world.json"
     log = tmp_path / "gh.log"
     executable(
-        fakes / "gh", f'#!/bin/sh\nexec python3 {FAKE_GH} {world_path} {log} "$@"\n'
+        fakes / "gh",
+        f'#!/bin/sh\nexec python3 -I -S {FAKE_GH} {world_path} {log} "$@"\n',
     )
     executable(fakes / "curl", FAKE_CURL.format(files=files))
     state = SimpleNamespace(world=world, files=files, data=data, asset=asset)

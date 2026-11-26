@@ -32,7 +32,7 @@ def box(tmp_path):
     fakes = tmp_path / "fakes"
     fakes.mkdir()
     curl = fakes / "curl"
-    curl.write_text(f'#!/bin/sh\nexec "{sys.executable}" -I "{FAKE_CURL}" "$@"\n')
+    curl.write_text(f'#!/bin/sh\nexec "{sys.executable}" -I -S "{FAKE_CURL}" "$@"\n')
     curl.chmod(curl.stat().st_mode | stat.S_IXUSR)
     log = tmp_path / "curl.log"
     rules = tmp_path / "rules.json"

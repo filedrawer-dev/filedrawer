@@ -34,7 +34,7 @@ STALE_TEXT = (
 # A fake curl: notes its stdin config in the log, one line per call, and answers
 # the status of the first [substring, status] pair in $FAKE_CURL_RULES whose
 # substring the config holds, else 401.
-FAKE_CURL = """#!/usr/bin/env python3
+FAKE_CURL = """#!/usr/bin/env -S python3 -IS
 import json, os, sys
 config = sys.stdin.read()
 with open(os.environ["FAKE_LOG"], "a") as log:

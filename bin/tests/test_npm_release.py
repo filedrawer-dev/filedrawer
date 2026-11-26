@@ -27,7 +27,7 @@ PLATFORMS = [
 ]
 VERSION = "0.4.0"
 
-FAKE = r'''#!/usr/bin/env python3
+FAKE = r'''#!/usr/bin/env -S python3 -IS
 """curl or npx, by the name it was called with, against the state in $FAKE_STATE."""
 import json, os, re, sys
 from pathlib import Path

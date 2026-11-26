@@ -85,7 +85,7 @@ def ci(tmp_path):
     )
     gh = fakes / "gh"
     gh.write_text(
-        f'#!/bin/sh\nexec python3 {FAKE_GH} {world_path} {tmp_path / "gh.log"} "$@"\n'
+        f'#!/bin/sh\nexec python3 -I -S {FAKE_GH} {world_path} {tmp_path / "gh.log"} "$@"\n'
     )
     audit.chmod(0o755)
     gh.chmod(0o755)

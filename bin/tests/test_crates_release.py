@@ -21,7 +21,7 @@ JWT = "github-jwt-for-crates"
 TOKEN = "cio-short-lived-s3cret"
 TOKEN_URL = "https://pipelines.example/token?api-version=2.0"
 
-FAKE = r'''#!/usr/bin/env python3
+FAKE = r'''#!/usr/bin/env -S python3 -IS
 """curl or cargo, by the name it was called with, against $FAKE_STATE."""
 import json, os, sys
 from pathlib import Path
