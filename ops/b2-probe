@@ -1,0 +1,1247 @@
+#!/usr/bin/env python3
+"""Probes Backblaze B2 and Litestream 0.5.18 against throwaway buckets, to answer
+what #4's findings couldn't from the docs and the source alone (#156). The owner
+runs it from their own machine: it needs the B2 account's master application key,
+which never enters the sandbox.
+
+    ops/b2-probe run        make the buckets and keys, run every check, delete the keys
+    ops/b2-probe recheck    5 days later: did the lifecycle delete a hidden version
+                            once its lock lapsed? Then removes the buckets
+    ops/b2-probe cleanup    remove what the probe made without waiting for an answer
+
+Options: --state FILE (default $XDG_STATE_HOME/filedrawer/b2-probe.json, under
+~/.local/state), and --keep on recheck to leave the buckets after the answer.
+
+Where to find the master key: B2's web console, Application Keys, "Master
+Application Key". Generating a new one revokes the old one, so use the one in your
+password manager if you have it. The probe reads it from B2_APPLICATION_KEY_ID and
+B2_APPLICATION_KEY when both are set, and otherwise asks for it, without echo. It
+stores no key: the state file holds bucket names and ids, the restricted keys' ids
+and the probe's file ids, and no key's secret.
+
+What `run` makes, all named fd-probe-<random>-*:
+  a "lock" bucket with Object Lock in compliance mode and a 1-day default retention,
+  a "plain" bucket without the lock, both private, SSE-B2 by default, and the
+  lifecycle rule {"fileNamePrefix": "", "daysFromHidingToDeleting": 1}; and a key
+  for each bucket with only listFiles, readFiles and writeFiles, valid for a day.
+
+What it checks, with the plain bucket's key unless it says otherwise:
+  - an S3 DeleteObjects by name, with no version id, is allowed and hides the file
+    (the version stays), in both buckets;
+  - b2_hide_file is allowed;
+  - b2_delete_file_version and an S3 DeleteObject with a version id are refused;
+  - Litestream, with put-object-content-md5 on and the lock bucket's key:
+    replicates a small database; replicates one above 5 MiB with the default
+    part-size, which goes through a multipart upload with no checksum (expected
+    refused; the line says what B2 answered); does it again with part-size 128MiB;
+    takes a second snapshot and runs a retention pass, which should hide the first;
+    restores with -integrity-check full and compares the rows.
+    Then it rolls the database back, as the deploy's rollback puts its copy back:
+    the older file in place, `litestream reset`, a new snapshot, and a restore that
+    must give the older rows.
+  - It hides a canary file in each bucket for `recheck`, the lock bucket's locked
+    for 3 days (b2_update_file_retention), so the lifecycle, which may delete it
+    from day 1, first finds it locked.
+Then it deletes both keys, whatever happened, a SIGTERM, SIGHUP or Ctrl-C included.
+
+`recheck` lists the canaries. When the plain bucket's is gone, the lifecycle has
+run; the lock bucket's then says whether the lifecycle comes back for a version
+it skipped for its lock once that lock lapses (day 3). It also counts which of
+Litestream's hidden versions are gone. Until both answers are in it says WAIT and
+keeps everything, so rerun it a day later. Once they are, it removes the buckets.
+`cleanup` deletes only buckets B2 lists, by id, under this probe's own
+fd-probe-<tag>- name, and refuses any other.
+
+Cost and time: the buckets hold a few tens of MiB for under a week, inside B2's
+free 10 GB, and the calls are inside its free daily allowance. `run` takes a few
+minutes; each of its 8 Litestream runs may take up to 900 s before the probe gives
+up on it. The lock bucket can't be deleted until its versions' locks lapse, 3 days
+after `run`; `cleanup` before then removes the rest and says when to come back.
+
+Each result is a line: PASS or FAIL for a check with an expected outcome, ANSWER
+for an open question, WAIT for one not yet answerable, and ok/note for progress.
+No line holds a key's value: every secret is blanked from what the probe prints,
+Litestream's errors included. It exits 1 when a check fails, 3 on WAIT, and 2 when
+it couldn't run. At the end it prints what is left for the owner to clean up, if
+anything.
+
+Litestream 0.5.18 is downloaded once per machine, checked against the SHA-256 in
+PINS, and cached under $XDG_CACHE_HOME/filedrawer/litestream/ (~/.cache by
+default). To move to another release, change VERSION and every hash in PINS: each
+release's checksums.txt lists every asset's SHA-256, and GitHub's API lists a
+digest for each asset; check that both agree before copying a hash here. Litestream
+runs with an environment holding only PATH, HOME and the restricted key, so an
+AWS_* setting of the owner's can't redirect it.
+
+Tests point it elsewhere: FILEDRAWER_B2_API_URL (B2's API, default
+https://api.backblazeb2.com), FILEDRAWER_LITESTREAM_URL and
+FILEDRAWER_LITESTREAM_SHA256 (an overridden URL alone is still checked against the
+pinned hash).
+"""
+
+import argparse
+import base64
+import datetime
+import getpass
+import hashlib
+import hmac
+import io
+import json
+import os
+import platform
+import re
+import secrets
+import signal
+import sqlite3
+import subprocess
+import sys
+import tarfile
+import tempfile
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+VERSION = "0.5.18"
+BASE_URL = f"https://github.com/benbjohnson/litestream/releases/download/v{VERSION}"
+# Each archive's SHA-256, from the release's checksums.txt, which matched GitHub's
+# API digests and the downloaded archives on 2026-11-26.
+PINS = {
+    "linux-x86_64": "d3687b9fd0f2e9426bbd3da828429ff3f1dfc5c9b74d54fdf028e4ee510e7dea",
+    "linux-arm64": "922a09e6a7ac67f2095571894dc6382e94e1dd4cdd9674883ddf1a8e74ab982d",
+    "darwin-x86_64": "25846be4fc4a4e0b4fd9ac5d0e019c10ec70a4dc12fe84255f5607b8b9a520e0",
+    "darwin-arm64": "6d3e0875e5416628ef3d274e8f7bb0ecc2a19cbbe76b9ba43efe9901d82a5c84",
+}
+TARGETS = {
+    ("Linux", "x86_64"): "linux-x86_64",
+    ("Linux", "aarch64"): "linux-arm64",
+    ("Darwin", "arm64"): "darwin-arm64",
+    ("Darwin", "x86_64"): "darwin-x86_64",
+}
+B2_API_URL = "https://api.backblazeb2.com"
+DAY = 86400
+# Litestream's own capability set (#4's findings, section 2), and what the checks
+# expect it to be refused.
+KEY_CAPABILITIES = ["listFiles", "readFiles", "writeFiles"]
+LIFECYCLE = [{"fileNamePrefix": "", "daysFromHidingToDeleting": 1}]
+CANARY = "probe/lifecycle-canary.txt"
+# The lock canary's lock: past the lifecycle's first chance at it (a day after
+# hiding), so its answer says whether the lifecycle returns once the lock lapses.
+CANARY_LOCK_DAYS = 3
+RECHECK_DAYS = 5
+# The S3 SDK's default part size; a file at or above it goes up in parts.
+DEFAULT_PART_SIZE = 5 * 1024 * 1024
+BIG_DB_BYTES = 12 * 1024 * 1024
+LITESTREAM_TIME_LIMIT = 900
+
+EXIT_FAIL, EXIT_ERROR, EXIT_WAIT = 1, 2, 3
+
+
+class ProbeError(Exception):
+    """The probe can't go on; the message says why."""
+
+
+class Interrupted(BaseException):
+    """A SIGTERM or SIGHUP, raised where the probe is so its cleanup still runs."""
+
+
+def interrupted(signum: int, frame: object) -> None:
+    raise Interrupted(signal.Signals(signum).name)
+
+
+def now() -> float:
+    return time.time()
+
+
+def pause(seconds: float) -> None:
+    time.sleep(seconds)
+
+
+def utc(ts: float) -> str:
+    return datetime.datetime.fromtimestamp(ts, datetime.UTC).strftime(
+        "%Y-%m-%d %H:%M UTC"
+    )
+
+
+# --- Output ---------------------------------------------------------------------
+
+
+class Report:
+    """Prints result lines with every known secret blanked, and counts the outcomes."""
+
+    def __init__(self) -> None:
+        self.secrets: list[str] = []
+        self.failed = False
+        self.waiting = False
+        self.results: list[str] = []
+
+    def secret(self, value: str) -> None:
+        if value and value not in self.secrets:
+            self.secrets.append(value)
+
+    def blank(self, text: str) -> str:
+        for value in sorted(self.secrets, key=len, reverse=True):
+            text = text.replace(value, "[secret]")
+        return text
+
+    def line(self, tag: str, name: str, detail: str = "") -> None:
+        text = self.blank(f"{tag:<6} {name}" + (f": {detail}" if detail else ""))
+        print(text, flush=True)
+        if tag in ("PASS", "FAIL", "ANSWER", "WAIT"):
+            self.results.append(text)
+        if tag == "FAIL":
+            self.failed = True
+        if tag == "WAIT":
+            self.waiting = True
+
+    def check(self, name: str, passed: bool, detail: str) -> None:
+        self.line("PASS" if passed else "FAIL", name, detail)
+
+    def summary(self) -> None:
+        if self.results:
+            print("\nResult lines to paste into #156:", flush=True)
+            for text in self.results:
+                print(f"  {text}", flush=True)
+
+
+# --- HTTP -----------------------------------------------------------------------
+
+
+def http(
+    method: str, url: str, headers: dict[str, str], body: bytes = b""
+) -> tuple[int, bytes]:
+    """One request; returns the status and the body, an error status included."""
+    request = urllib.request.Request(
+        url, data=body or None, method=method, headers=headers
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=120) as reply:
+            return reply.status, reply.read()
+    except urllib.error.HTTPError as error:
+        return error.code, error.read()
+    except (urllib.error.URLError, OSError) as error:
+        raise ProbeError(
+            f"{method} {urllib.parse.urlsplit(url).netloc}: {error}"
+        ) from None
+
+
+class B2Error(Exception):
+    def __init__(self, call: str, status: int, code: str, message: str) -> None:
+        super().__init__(f"{call}: {status} {code}: {message}")
+        self.status = status
+        self.code = code
+
+
+class B2:
+    """A session of B2's native API (v4) for one application key."""
+
+    def __init__(self, key_id: str, key: str, report: Report) -> None:
+        report.secret(key)
+        base = os.environ.get("FILEDRAWER_B2_API_URL", B2_API_URL).rstrip("/")
+        basic = base64.b64encode(f"{key_id}:{key}".encode()).decode()
+        report.secret(basic)
+        status, body = http(
+            "GET",
+            f"{base}/b2api/v4/b2_authorize_account",
+            {"Authorization": f"Basic {basic}"},
+        )
+        reply = parse_json(body)
+        if status != 200:
+            raise B2Error(
+                "b2_authorize_account",
+                status,
+                reply.get("code", ""),
+                reply.get("message", ""),
+            )
+        storage = reply["apiInfo"]["storageApi"]
+        self.key_id = key_id
+        self.key = key
+        self.account_id = reply["accountId"]
+        self.token = reply["authorizationToken"]
+        report.secret(self.token)
+        self.api_url = storage["apiUrl"].rstrip("/")
+        self.s3_url = storage["s3ApiUrl"].rstrip("/")
+        self.capabilities = set(storage.get("allowed", {}).get("capabilities", []))
+        self.report = report
+
+    def try_call(self, name: str, payload: dict) -> tuple[int, dict]:
+        status, body = http(
+            "POST",
+            f"{self.api_url}/b2api/v4/{name}",
+            {"Authorization": self.token, "Content-Type": "application/json"},
+            json.dumps(payload).encode(),
+        )
+        return status, parse_json(body)
+
+    def call(self, name: str, payload: dict) -> dict:
+        status, reply = self.try_call(name, payload)
+        if status != 200:
+            raise B2Error(name, status, reply.get("code", ""), reply.get("message", ""))
+        return reply
+
+    def upload(self, bucket_id: str, name: str, data: bytes) -> dict:
+        target = self.call("b2_get_upload_url", {"bucketId": bucket_id})
+        self.report.secret(target["authorizationToken"])
+        status, body = http(
+            "POST",
+            target["uploadUrl"],
+            {
+                "Authorization": target["authorizationToken"],
+                "X-Bz-File-Name": urllib.parse.quote(name, safe="/"),
+                "Content-Type": "text/plain",
+                "X-Bz-Content-Sha1": hashlib.sha1(data).hexdigest(),
+                "Content-Length": str(len(data)),
+            },
+            data,
+        )
+        reply = parse_json(body)
+        if status != 200:
+            raise B2Error(
+                "b2_upload_file",
+                status,
+                reply.get("code", ""),
+                reply.get("message", ""),
+            )
+        return reply
+
+    def versions(self, bucket_id: str, prefix: str = "") -> list[dict]:
+        """Every version under prefix, newest first within each name, hide markers too."""
+        found: list[dict] = []
+        start: dict = {}
+        while True:
+            reply = self.call(
+                "b2_list_file_versions",
+                {
+                    "bucketId": bucket_id,
+                    "prefix": prefix,
+                    "maxFileCount": 1000,
+                    **start,
+                },
+            )
+            found.extend(reply.get("files", []))
+            if not reply.get("nextFileName"):
+                return found
+            start = {"startFileName": reply["nextFileName"]}
+            if reply.get("nextFileId"):
+                start["startFileId"] = reply["nextFileId"]
+
+    def s3(self, method: str, bucket: str, key: str = "", query: str = "", body: bytes = b"",
+           headers: dict[str, str] | None = None) -> tuple[int, bytes]:  # fmt: skip
+        """A signed S3 request to this key's S3 endpoint, path style."""
+        path = f"/{bucket}" + (f"/{key}" if key else "")
+        url = f"{self.s3_url}{urllib.parse.quote(path, safe='/-_.~')}" + (
+            f"?{query}" if query else ""
+        )
+        signed = sign_v4(
+            method, url, dict(headers or {}), body, self.key_id, self.key,
+            s3_region(self.s3_url), time.gmtime(now()),
+        )  # fmt: skip
+        return http(method, url, signed, body)
+
+
+def parse_json(body: bytes) -> dict:
+    try:
+        value = json.loads(body or b"{}")
+    except ValueError:
+        return {"message": body[:200].decode("utf-8", "replace")}
+    return value if isinstance(value, dict) else {}
+
+
+def s3_region(s3_url: str) -> str:
+    """us-west-004 from https://s3.us-west-004.backblazeb2.com; us-east-1 otherwise."""
+    host = urllib.parse.urlsplit(s3_url).hostname or ""
+    match = re.fullmatch(r"s3\.([a-z0-9-]+)\.backblazeb2\.com", host)
+    return match.group(1) if match else "us-east-1"
+
+
+def sign_v4(method: str, url: str, headers: dict[str, str], body: bytes, key_id: str,
+            secret: str, region: str, when: time.struct_time) -> dict[str, str]:  # fmt: skip
+    """AWS Signature Version 4 for S3, payload signed: returns headers to send,
+    Authorization included. Every header given is signed."""
+    parts = urllib.parse.urlsplit(url)
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", when)
+    day = stamp[:8]
+    payload = hashlib.sha256(body).hexdigest()
+    signed = {k.lower(): v.strip() for k, v in headers.items()}
+    signed["host"] = parts.netloc
+    signed["x-amz-content-sha256"] = payload
+    signed["x-amz-date"] = stamp
+    names = sorted(signed)
+    query = sorted(
+        (urllib.parse.quote(k, safe="-_.~"), urllib.parse.quote(v, safe="-_.~"))
+        for k, v in urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
+    )
+    canonical = "\n".join([
+        method,
+        parts.path or "/",
+        "&".join(f"{k}={v}" for k, v in query),
+        "".join(f"{name}:{signed[name]}\n" for name in names),
+        ";".join(names),
+        payload,
+    ])  # fmt: skip
+    scope = f"{day}/{region}/s3/aws4_request"
+    to_sign = "\n".join(
+        [
+            "AWS4-HMAC-SHA256",
+            stamp,
+            scope,
+            hashlib.sha256(canonical.encode()).hexdigest(),
+        ]
+    )
+    key = f"AWS4{secret}".encode()
+    for part in (day, region, "s3", "aws4_request"):
+        key = hmac.new(key, part.encode(), hashlib.sha256).digest()
+    signature = hmac.new(key, to_sign.encode(), hashlib.sha256).hexdigest()
+    out = {k: v for k, v in headers.items() if k.lower() != "host"}
+    out["x-amz-content-sha256"] = payload
+    out["x-amz-date"] = stamp
+    out["Authorization"] = (
+        f"AWS4-HMAC-SHA256 Credential={key_id}/{scope}, "
+        f"SignedHeaders={';'.join(names)}, Signature={signature}"
+    )
+    return out
+
+
+def delete_objects_xml(keys: list[str]) -> bytes:
+    objects = "".join(f"<Object><Key>{k}</Key></Object>" for k in keys)
+    return f'<?xml version="1.0" encoding="UTF-8"?><Delete>{objects}<Quiet>false</Quiet></Delete>'.encode()
+
+
+def s3_delete_by_name(session: B2, bucket: str, key: str) -> tuple[int, bytes]:
+    body = delete_objects_xml([key])
+    md5 = base64.b64encode(hashlib.md5(body).digest()).decode()
+    return session.s3(
+        "POST", bucket, query="delete=", body=body,
+        headers={"Content-MD5": md5, "Content-Type": "application/xml"},
+    )  # fmt: skip
+
+
+# --- Litestream -----------------------------------------------------------------
+
+
+def target(system: str, machine: str) -> str | None:
+    return TARGETS.get((system, machine))
+
+
+def litestream() -> Path:
+    """The pinned Litestream binary, downloaded and checked on first use."""
+    name = target(platform.system(), platform.machine())
+    if name is None:
+        raise ProbeError(f"Litestream {VERSION} has no release for this platform")
+    want = os.environ.get("FILEDRAWER_LITESTREAM_SHA256", PINS[name])
+    root = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
+    cached = root / "filedrawer" / "litestream" / want / "litestream"
+    if cached.is_file():
+        return cached
+    url = os.environ.get(
+        "FILEDRAWER_LITESTREAM_URL", f"{BASE_URL}/litestream-{VERSION}-{name}.tar.gz"
+    )
+    try:
+        with urllib.request.urlopen(url, timeout=120) as reply:
+            data = reply.read()
+    except (urllib.error.URLError, OSError) as error:
+        raise ProbeError(f"downloading Litestream {VERSION}: {error}") from None
+    got = hashlib.sha256(data).hexdigest()
+    if got != want:
+        raise ProbeError(
+            f"Litestream's archive has SHA-256 {got}, not the pinned {want}; nothing cached"
+        )
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
+        member = next(
+            (m for m in tar.getmembers() if m.isfile() and m.name == "litestream"), None
+        )
+        source = member and tar.extractfile(member)
+        if source is None:
+            raise ProbeError("Litestream's archive holds no litestream binary")
+        binary = source.read()
+    cached.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=cached.parent, delete=False) as out:
+        out.write(binary)
+    os.chmod(out.name, 0o755)
+    os.replace(out.name, cached)
+    return cached
+
+
+def make_db(path: Path, rows: int, row_bytes: int) -> None:
+    """A scratch database in WAL mode, filled with random (incompressible) bytes."""
+    with sqlite3.connect(path) as db:
+        db.execute("PRAGMA journal_mode=wal")
+        db.execute(
+            "CREATE TABLE IF NOT EXISTS rows (id INTEGER PRIMARY KEY, body BLOB)"
+        )
+        db.executemany(
+            "INSERT INTO rows (body) VALUES (?)",
+            ((os.urandom(row_bytes),) for _ in range(rows)),
+        )
+    db.close()
+
+
+def rows_digest(path: Path) -> str:
+    digest = hashlib.sha256()
+    with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as db:
+        for row_id, body in db.execute("SELECT id, body FROM rows ORDER BY id"):
+            digest.update(f"{row_id}:".encode() + body)
+    db.close()
+    return digest.hexdigest()
+
+
+class Litestream:
+    """Runs the pinned Litestream with one bucket's restricted key."""
+
+    def __init__(
+        self, binary: Path, work: Path, bucket: str, s3_url: str, key_id: str, key: str
+    ) -> None:
+        self.binary = binary
+        self.work = work
+        self.bucket = bucket
+        self.s3_url = s3_url
+        self.runs = 0
+        self.env = {
+            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+            "HOME": str(work),
+            "AWS_ACCESS_KEY_ID": key_id,
+            "AWS_SECRET_ACCESS_KEY": key,
+        }
+
+    def config(
+        self, db: Path, prefix: str, part_size: str | None, retention: str
+    ) -> Path:
+        replica = {
+            "type": "s3",
+            "bucket": self.bucket,
+            "path": prefix,
+            "endpoint": self.s3_url,
+            "region": s3_region(self.s3_url),
+            "force-path-style": True,
+            "sign-payload": True,
+            "put-object-content-md5": True,
+        }
+        if part_size:
+            replica["part-size"] = part_size
+        config = {
+            "snapshot": {"interval": "24h", "retention": retention},
+            "dbs": [{"path": str(db), "replica": replica}],
+        }
+        # YAML is a superset of JSON, so Litestream reads this as it is.
+        path = self.work / f"{prefix}-{retention}.yml"
+        path.write_text(json.dumps(config, indent=2))
+        return path
+
+    def run(self, config: Path, *args: str) -> tuple[int, str]:
+        """Exit status and the last error line Litestream logged, if any."""
+        self.runs += 1
+        log = self.work / f"litestream-{self.runs}.log"
+        with log.open("w") as out:
+            try:
+                done = subprocess.run(
+                    [str(self.binary), *args[:1], "-config", str(config), *args[1:]],
+                    env=self.env, cwd=self.work, stdout=out, stderr=subprocess.STDOUT,
+                    timeout=LITESTREAM_TIME_LIMIT, check=False,
+                )  # fmt: skip
+                status = done.returncode
+            except subprocess.TimeoutExpired:
+                status = -1
+        lines = log.read_text(errors="replace").splitlines()
+        errors = [line for line in lines if re.search(r"\berror\b", line, re.I)]
+        last = (errors or lines or [""])[-1]
+        if status == -1:
+            last = f"no exit after {LITESTREAM_TIME_LIMIT} s; {last}"
+        return status, last[:400]
+
+
+# --- State ----------------------------------------------------------------------
+
+
+def default_state() -> Path:
+    root = os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state"
+    return Path(root) / "filedrawer" / "b2-probe.json"
+
+
+class State:
+    """What the probe made, written after each step so cleanup finds it all."""
+
+    def __init__(self, path: Path, data: dict) -> None:
+        self.path = path
+        self.data = data
+
+    @classmethod
+    def load(cls, path: Path) -> "State":
+        if not path.exists():
+            raise ProbeError(
+                f"no probe state at {path}; nothing to recheck or clean up"
+            )
+        return cls(path, json.loads(path.read_text()))
+
+    def save(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(self.data, indent=2) + "\n")
+        os.replace(tmp, self.path)
+
+
+# --- run ------------------------------------------------------------------------
+
+
+def master_key(report: Report) -> B2:
+    key_id = os.environ.get("B2_APPLICATION_KEY_ID", "")
+    key = os.environ.get("B2_APPLICATION_KEY", "")
+    if not (key_id and key):
+        print(
+            "B2 master application key (B2 web console, Application Keys).",
+            file=sys.stderr,
+        )
+        key_id = input("keyID: ").strip()
+        key = getpass.getpass("applicationKey (not echoed): ").strip()
+    report.secret(key)
+    try:
+        return B2(key_id, key, report)
+    except B2Error as error:
+        raise ProbeError(
+            f"the key was refused ({error}); use the master application key"
+        ) from None
+
+
+def setup(master: B2, state: State, report: Report) -> None:
+    tag = state.data["tag"]
+    for role, locked in (("lock", True), ("plain", False)):
+        name = f"fd-probe-{tag}-{role}"
+        bucket = master.call(
+            "b2_create_bucket",
+            {
+                "accountId": master.account_id,
+                "bucketName": name,
+                "bucketType": "allPrivate",
+                "fileLockEnabled": locked,
+                "lifecycleRules": LIFECYCLE,
+                "defaultServerSideEncryption": {
+                    "mode": "SSE-B2",
+                    "algorithm": "AES256",
+                },
+            },
+        )
+        state.data["buckets"][role] = {"name": name, "id": bucket["bucketId"]}
+        state.save()
+        if locked:
+            master.call(
+                "b2_update_bucket",
+                {
+                    "accountId": master.account_id,
+                    "bucketId": bucket["bucketId"],
+                    "defaultRetention": {
+                        "mode": "compliance",
+                        "period": {"duration": 1, "unit": "days"},
+                    },
+                },
+            )
+        report.line(
+            "ok",
+            f"bucket {name}",
+            "Object Lock, compliance, 1 day" if locked else "no lock",
+        )
+
+
+def make_key(master: B2, state: State, role: str, report: Report) -> B2:
+    bucket = state.data["buckets"][role]
+    made = master.call(
+        "b2_create_key",
+        {
+            "accountId": master.account_id,
+            "capabilities": KEY_CAPABILITIES,
+            "keyName": f"{bucket['name']}-key",
+            "validDurationInSeconds": DAY,
+            "bucketIds": [bucket["id"]],
+        },
+    )
+    report.secret(made["applicationKey"])
+    state.data["keys"].append(made["applicationKeyId"])
+    state.save()
+    session = B2(made["applicationKeyId"], made["applicationKey"], report)
+    report.line(
+        "ok", f"key for {bucket['name']}", ", ".join(sorted(session.capabilities))
+    )
+    return session
+
+
+def newest_first(versions: list[dict], name: str) -> list[dict]:
+    return sorted(
+        (v for v in versions if v["fileName"] == name),
+        key=lambda v: v["uploadTimestamp"],
+        reverse=True,
+    )
+
+
+def hidden_behind_marker(master: B2, bucket_id: str, name: str, file_id: str) -> bool:
+    """The upload is still there, and a hide marker is now the name's newest version."""
+    ordered = newest_first(master.versions(bucket_id, name), name)
+    return (
+        bool(ordered)
+        and ordered[0]["action"] == "hide"
+        and any(v["fileId"] == file_id for v in ordered)
+    )
+
+
+def check_key(master: B2, key: B2, bucket: dict, report: Report, locked: bool) -> None:
+    """The restricted key deletes by name and hides, and is refused deleting a version."""
+    where = "lock" if locked else "plain"
+    name = f"probe/delete-by-name-{where}.txt"
+    up = key.upload(bucket["id"], name, b"delete by name\n")
+    status, body = s3_delete_by_name(key, bucket["name"], name)
+    accepted = status == 200 and b"<Error>" not in body
+    kept = accepted and hidden_behind_marker(master, bucket["id"], name, up["fileId"])
+    report.check(
+        f"S3 delete by name ({where} bucket)",
+        kept,
+        "allowed with writeFiles; a hide marker, the version kept"
+        if kept
+        else f"status {status}, {s3_error(body)}"
+        + ("" if not accepted else "; the version is gone or not hidden"),
+    )
+    if locked:
+        return
+
+    name = "probe/hide.txt"
+    up = key.upload(bucket["id"], name, b"hide\n")
+    status, reply = key.try_call(
+        "b2_hide_file", {"bucketId": bucket["id"], "fileName": name}
+    )
+    kept = status == 200 and hidden_behind_marker(
+        master, bucket["id"], name, up["fileId"]
+    )
+    report.check(
+        "b2_hide_file",
+        kept,
+        "allowed with writeFiles" if kept else f"{status} {reply.get('code', '')}",
+    )
+
+    name = "probe/delete-version.txt"
+    up = key.upload(bucket["id"], name, b"delete version\n")
+    status, reply = key.try_call(
+        "b2_delete_file_version", {"fileName": name, "fileId": up["fileId"]}
+    )
+    report.check(
+        "b2_delete_file_version refused",
+        status == 401 and reply.get("code") == "unauthorized",
+        f"{status} {reply.get('code', '')}"
+        + (" (the key can delete versions)" if status == 200 else ""),
+    )
+
+    name = "probe/s3-delete-version.txt"
+    up = key.upload(bucket["id"], name, b"s3 delete version\n")
+    query = urllib.parse.urlencode({"versionId": up["fileId"]})
+    status, body = key.s3("DELETE", bucket["name"], name, query=query)
+    still = any(
+        v["fileId"] == up["fileId"] for v in master.versions(bucket["id"], name)
+    )
+    report.check(
+        "S3 delete with a version id refused",
+        400 <= status < 500 and still,
+        f"status {status}, {s3_error(body)}"
+        + ("" if still else "; the version is gone"),
+    )
+    # The control: the master key, which has deleteFiles, deletes what the
+    # restricted key couldn't, so the refusal was the capability's.
+    if still:
+        status, reply = master.try_call(
+            "b2_delete_file_version", {"fileName": name, "fileId": up["fileId"]}
+        )
+        report.check(
+            "the master key deletes that version",
+            status == 200,
+            "so the refusals were the capability's"
+            if status == 200
+            else f"{status} {reply.get('code', '')}",
+        )
+
+
+def s3_error(body: bytes) -> str:
+    code = re.search(rb"<Code>([^<]*)</Code>", body)
+    message = re.search(rb"<Message>([^<]*)</Message>", body)
+    parts = [m.group(1).decode("utf-8", "replace") for m in (code, message) if m]
+    return ": ".join(parts) or "no error"
+
+
+def plant_canaries(
+    master: B2, keys: dict[str, B2], state: State, report: Report
+) -> None:
+    for role, key in keys.items():
+        bucket = state.data["buckets"][role]
+        up = key.upload(bucket["id"], CANARY, b"lifecycle canary\n")
+        if role == "lock":
+            master.call(
+                "b2_update_file_retention",
+                {
+                    "fileName": CANARY,
+                    "fileId": up["fileId"],
+                    "fileRetention": {
+                        "mode": "compliance",
+                        "retainUntilTimestamp": int(
+                            (now() + CANARY_LOCK_DAYS * DAY) * 1000
+                        ),
+                    },
+                },
+            )
+        key.call("b2_hide_file", {"bucketId": bucket["id"], "fileName": CANARY})
+        version = next(
+            v
+            for v in master.versions(bucket["id"], CANARY)
+            if v["fileId"] == up["fileId"]
+        )
+        until = retain_until(version)
+        if role == "lock":
+            report.check(
+                f"the lock canary is locked for {CANARY_LOCK_DAYS} days",
+                until is not None and until > now() + (CANARY_LOCK_DAYS - 0.1) * DAY,
+                f"until {utc(until)}" if until else "no retention on the upload",
+            )
+        state.data["canaries"][role] = {
+            "fileId": up["fileId"],
+            "hidden_at": now(),
+            "retain_until": until,
+        }
+        state.save()
+        lock = f", locked until {utc(until)}" if until else ""
+        report.line("ok", f"canary hidden in the {role} bucket{lock}")
+
+
+def retain_until(version: dict) -> float | None:
+    """When a version's lock lapses, in Unix seconds, or None when it has none."""
+    retention = (version.get("fileRetention") or {}).get("value") or {}
+    until = retention.get("retainUntilTimestamp")
+    return until / 1000 if until else None
+
+
+def check_litestream(
+    master: B2, key: B2, bucket: dict, state: State, report: Report, work: Path
+) -> None:
+    binary = litestream()
+    report.line("ok", f"Litestream {VERSION}", f"SHA-256 checked, {binary}")
+    tool = Litestream(binary, work, bucket["name"], key.s3_url, key.key_id, key.key)
+
+    small = work / "small.db"
+    make_db(small, 64, 1024)
+    status, last = tool.run(
+        tool.config(small, "small", None, "24h"),
+        "replicate",
+        "-once",
+        "-force-snapshot",
+    )
+    uploaded = master.versions(bucket["id"], "small/")
+    report.check(
+        "Litestream replicates into the lock bucket (single-part, Content-MD5)",
+        status == 0 and any(v["action"] == "upload" for v in uploaded),
+        f"{len(uploaded)} files" if status == 0 else f"exit {status}: {last}",
+    )
+
+    big = work / "big-default.db"
+    make_db(big, BIG_DB_BYTES // (1024 * 1024), 1024 * 1024)
+    status, last = tool.run(
+        tool.config(big, "multipart-default", None, "24h"),
+        "replicate",
+        "-once",
+        "-force-snapshot",
+    )
+    if status == 0:
+        report.line(
+            "ANSWER",
+            "multipart upload, default part-size, no checksum",
+            "B2 accepted it; part-size can stay",
+        )
+    else:
+        report.line(
+            "ANSWER",
+            "multipart upload, default part-size, no checksum",
+            f"refused, exit {status}: {last}",
+        )
+
+    db = work / "big-128.db"
+    make_db(db, BIG_DB_BYTES // (1024 * 1024), 1024 * 1024)
+    status, last = tool.run(
+        tool.config(db, "multipart-128", "128MiB", "24h"),
+        "replicate",
+        "-once",
+        "-force-snapshot",
+    )
+    snapshots = [
+        v
+        for v in master.versions(bucket["id"], "multipart-128/0009/")
+        if v["action"] == "upload"
+    ]
+    big_enough = any(v.get("contentLength", 0) > DEFAULT_PART_SIZE for v in snapshots)
+    report.check(
+        "Litestream, part-size 128MiB, a snapshot above 5 MiB",
+        status == 0 and big_enough,
+        f"{len(snapshots)} snapshot(s)" if status == 0 else f"exit {status}: {last}",
+    )
+    if status != 0:
+        return
+
+    pause(2)  # so the first snapshot is older than the 1 s retention below
+    before = work / "deploy-copy.db"
+    with sqlite3.connect(db) as conn, sqlite3.connect(before) as copy:
+        conn.backup(copy)
+    conn.close()
+    copy.close()
+    with sqlite3.connect(db) as conn:
+        conn.execute("INSERT INTO rows (body) VALUES (?)", (os.urandom(4096),))
+    conn.close()
+    status, last = tool.run(
+        tool.config(db, "multipart-128", "128MiB", "1s"),
+        "replicate", "-once", "-force-snapshot", "-enforce-retention",
+    )  # fmt: skip
+    after = master.versions(bucket["id"], "multipart-128/")
+    hidden = hidden_versions(after)
+    state.data["litestream_hidden"] = [v["fileId"] for v in hidden]
+    state.save()
+    report.check(
+        "Litestream's retention pass in the lock bucket",
+        status == 0
+        and any(v["fileName"].startswith("multipart-128/0009/") for v in hidden),
+        f"{len(hidden)} file(s) hidden, their versions kept"
+        if status == 0
+        else f"exit {status}: {last}",
+    )
+
+    config = tool.config(db, "multipart-128", "128MiB", "24h")
+    if not restore_matches(tool, config, db, work / "restored.db", report, "restore"):
+        return
+
+    # The deploy's rollback: the copy taken before the new rows goes back in place,
+    # and Litestream's local state, now ahead of the file, is reset (#4, section 5).
+    db.unlink()
+    for side in ("-wal", "-shm"):
+        Path(f"{db}{side}").unlink(missing_ok=True)
+    os.replace(before, db)
+    status, last = tool.run(config, "reset", str(db))
+    if status == 0:
+        status, last = tool.run(config, "replicate", "-once", "-force-snapshot")
+    if status != 0:
+        report.check(
+            "Litestream after a rollback and reset", False, f"exit {status}: {last}"
+        )
+        return
+    restore_matches(
+        tool, config, db, work / "rolled-back.db", report,
+        "Litestream after a rollback and reset",
+    )  # fmt: skip
+
+
+def restore_matches(
+    tool: "Litestream", config: Path, db: Path, out: Path, report: Report, name: str
+) -> bool:
+    """Restores with -integrity-check full and compares the rows with db's."""
+    status, last = tool.run(
+        config, "restore", "-o", str(out), "-integrity-check", "full", str(db)
+    )
+    same = status == 0 and out.exists() and rows_digest(out) == rows_digest(db)
+    report.check(
+        name if name != "restore" else "Litestream restore, -integrity-check full",
+        same,
+        "the restore's rows match"
+        if same
+        else (f"exit {status}: {last}" if status else "the restore's rows differ"),
+    )
+    return same
+
+
+def hidden_versions(versions: list[dict]) -> list[dict]:
+    """Uploads that a newer hide marker or upload of the same name has hidden."""
+    hidden = []
+    for name in {v["fileName"] for v in versions}:
+        ordered = newest_first(versions, name)
+        hidden.extend(v for v in ordered[1:] if v["action"] == "upload")
+    return hidden
+
+
+def delete_keys(master: B2, state: State, report: Report) -> None:
+    for key_id in list(state.data["keys"]):
+        status, reply = master.try_call("b2_delete_key", {"applicationKeyId": key_id})
+        # A key lives a day (validDurationInSeconds), so after that it is gone anyway.
+        if status == 200 or now() > state.data["started"] + DAY:
+            state.data["keys"].remove(key_id)
+            state.save()
+        else:
+            report.line(
+                "note",
+                "a restricted key wasn't deleted",
+                f"{status} {reply.get('code', '')}; it expires in a day",
+            )
+    if not state.data["keys"]:
+        report.line("ok", "restricted keys deleted")
+
+
+def cmd_run(args: argparse.Namespace, report: Report) -> None:
+    if args.state.exists():
+        raise ProbeError(
+            f"{args.state} holds an earlier probe; run recheck or cleanup first"
+        )
+    master = master_key(report)
+    state = State(
+        args.state,
+        {
+            "tag": secrets.token_hex(4),
+            "started": now(),
+            "buckets": {},
+            "keys": [],
+            "canaries": {},
+        },
+    )
+    state.save()
+    try:
+        setup(master, state, report)
+        keys = {
+            role: make_key(master, state, role, report) for role in ("lock", "plain")
+        }
+        check_key(
+            master, keys["plain"], state.data["buckets"]["plain"], report, locked=False
+        )
+        check_key(
+            master, keys["lock"], state.data["buckets"]["lock"], report, locked=True
+        )
+        plant_canaries(master, keys, state, report)
+        with tempfile.TemporaryDirectory(prefix="b2-probe-") as work:
+            check_litestream(
+                master,
+                keys["lock"],
+                state.data["buckets"]["lock"],
+                state,
+                report,
+                Path(work),
+            )
+    except (Exception, Interrupted, KeyboardInterrupt) as error:
+        report.line("FAIL", "the probe stopped", f"{type(error).__name__}: {error}")
+    finally:
+        delete_keys(master, state, report)
+    report.line(
+        "note",
+        f"recheck after {utc(state.data['started'] + RECHECK_DAYS * DAY)}",
+        f"ops/b2-probe recheck --state {args.state}",
+    )
+    report.summary()
+    leftovers(state, report)
+
+
+# --- recheck and cleanup --------------------------------------------------------
+
+
+def cmd_recheck(args: argparse.Namespace, report: Report) -> None:
+    state = State.load(args.state)
+    master = master_key(report)
+    canaries = state.data.get("canaries", {})
+    if set(canaries) != {"lock", "plain"}:
+        raise ProbeError(
+            "the run stopped before it hid both canaries; nothing to recheck, run cleanup"
+        )
+    gone = {}
+    until = canaries["lock"]["retain_until"]
+    for role in ("lock", "plain"):
+        bucket = state.data["buckets"][role]
+        found = [
+            v
+            for v in master.versions(bucket["id"], CANARY)
+            if v["fileId"] == canaries[role]["fileId"]
+        ]
+        gone[role] = not found
+        if role == "lock" and found:
+            # B2's own word on the lock, rather than what run saw.
+            held = retain_until(found[0])
+            until = held if held is not None else until
+    days = (now() - canaries["plain"]["hidden_at"]) / DAY
+    answered = True
+    if not gone["plain"]:
+        report.line(
+            "WAIT",
+            "lifecycle",
+            f"the plain bucket's hidden canary is still there after {days:.1f} days",
+        )
+        answered = False
+    elif gone["lock"] and until and now() < until:
+        report.line(
+            "FAIL",
+            "lifecycle under Object Lock",
+            f"the lock canary went before its lock lapsed ({utc(until)})",
+        )
+    elif gone["lock"]:
+        report.line(
+            "ANSWER",
+            "lifecycle under Object Lock",
+            "deletes a hidden version it skipped for its lock, once the lock lapses",
+        )
+    elif until and now() - until < 2 * DAY:
+        lapsed = "lapsed " + utc(until) if now() > until else "lapses " + utc(until)
+        report.line(
+            "WAIT",
+            "lifecycle under Object Lock",
+            f"the plain bucket's canary is gone; the lock {lapsed}",
+        )
+        answered = False
+    else:
+        report.line(
+            "ANSWER",
+            "lifecycle under Object Lock",
+            f"does NOT delete a hidden version after its lock lapses ({days:.1f} days after hiding, "
+            "while the plain bucket's went)",
+        )
+    hidden = state.data.get("litestream_hidden", [])
+    if hidden:
+        lock = state.data["buckets"]["lock"]["id"]
+        ids = {v["fileId"] for v in master.versions(lock, "multipart-128/")}
+        left = sum(1 for file_id in hidden if file_id in ids)
+        report.line(
+            "note",
+            "Litestream's hidden versions",
+            f"{len(hidden) - left} of {len(hidden)} gone",
+        )
+    report.summary()
+    if answered and not args.keep:
+        cleanup(master, state, report)
+    else:
+        leftovers(state, report)
+
+
+def cmd_cleanup(args: argparse.Namespace, report: Report) -> None:
+    state = State.load(args.state)
+    cleanup(master_key(report), state, report)
+
+
+def probe_bucket(master: B2, state: State, bucket: dict) -> bool:
+    """B2 lists this id under the probe's own name, so cleanup may empty it."""
+    status, reply = master.try_call(
+        "b2_list_buckets", {"accountId": master.account_id, "bucketId": bucket["id"]}
+    )
+    listed = reply.get("buckets", []) if status == 200 else []
+    prefix = f"fd-probe-{state.data['tag']}-"
+    return (
+        len(listed) == 1
+        and listed[0].get("bucketId") == bucket["id"]
+        and listed[0].get("bucketName") == bucket["name"]
+        and bucket["name"].startswith(prefix)
+    )
+
+
+def cleanup(master: B2, state: State, report: Report) -> None:
+    delete_keys(master, state, report)
+    for role, bucket in list(state.data["buckets"].items()):
+        if not probe_bucket(master, state, bucket):
+            report.line(
+                "FAIL",
+                f"cleanup refused bucket {bucket['name']}",
+                f"B2 doesn't list it by id under fd-probe-{state.data['tag']}-; "
+                "check the state file",
+            )
+            continue
+        for large in master.call(
+            "b2_list_unfinished_large_files", {"bucketId": bucket["id"]}
+        ).get("files", []):
+            master.try_call("b2_cancel_large_file", {"fileId": large["fileId"]})
+        locked_until = 0.0
+        for version in master.versions(bucket["id"]):
+            status, reply = master.try_call(
+                "b2_delete_file_version",
+                {"fileName": version["fileName"], "fileId": version["fileId"]},
+            )
+            if status != 200:
+                locked_until = max(locked_until, retain_until(version) or 0)
+        status, reply = master.try_call(
+            "b2_delete_bucket",
+            {"accountId": master.account_id, "bucketId": bucket["id"]},
+        )
+        if status == 200:
+            del state.data["buckets"][role]
+            state.save()
+            report.line("ok", f"bucket {bucket['name']} deleted")
+        else:
+            when = f"; its locks lapse {utc(locked_until)}" if locked_until else ""
+            report.line(
+                "note",
+                f"bucket {bucket['name']} kept",
+                f"{reply.get('code', status)}{when}",
+            )
+    leftovers(state, report)
+
+
+def leftovers(state: State, report: Report) -> None:
+    left = [b["name"] for b in state.data["buckets"].values()]
+    if state.data["keys"]:
+        left.append(
+            f"{len(state.data['keys'])} restricted key(s) named fd-probe-{state.data['tag']}-*-key"
+        )
+    if not left:
+        state.path.unlink(missing_ok=True)
+        print(
+            "\nNothing left to clean up: no probe bucket or key remains, and the state file is gone."
+        )
+        return
+    print(
+        "\nLeft in B2 (ops/b2-probe recheck or cleanup removes them; or by hand in B2's web console):"
+    )
+    for item in left:
+        print(f"  {item}")
+    print(f"State: {state.path}")
+
+
+# --- main -----------------------------------------------------------------------
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="ops/b2-probe",
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument(
+        "--state", type=Path, default=default_state(), help="the probe's state file"
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser(
+        "run",
+        parents=[common],
+        help="make the buckets and keys, run the checks, delete the keys",
+    )
+    recheck = sub.add_parser(
+        "recheck",
+        parents=[common],
+        help=f"{RECHECK_DAYS} days later: the lifecycle's answer, then cleanup",
+    )
+    recheck.add_argument(
+        "--keep", action="store_true", help="keep the buckets after the answer"
+    )
+    sub.add_parser(
+        "cleanup", parents=[common], help="remove the probe's buckets and keys"
+    )
+    args = parser.parse_args(argv)
+    report = Report()
+    previous = {
+        s: signal.signal(s, interrupted) for s in (signal.SIGTERM, signal.SIGHUP)
+    }
+    try:
+        return run_command(args, report)
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+
+
+def run_command(args: argparse.Namespace, report: Report) -> int:
+    try:
+        {"run": cmd_run, "recheck": cmd_recheck, "cleanup": cmd_cleanup}[args.command](
+            args, report
+        )
+    except (ProbeError, B2Error) as error:
+        print(report.blank(f"b2-probe: {error}"), file=sys.stderr)
+        return EXIT_ERROR
+    except (Exception, Interrupted, KeyboardInterrupt) as error:
+        print(
+            report.blank(f"b2-probe: stopped by {type(error).__name__}: {error}"),
+            file=sys.stderr,
+        )
+        if args.state.exists():
+            leftovers(State.load(args.state), report)
+        return EXIT_ERROR
+    if report.failed:
+        return EXIT_FAIL
+    return EXIT_WAIT if report.waiting else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
