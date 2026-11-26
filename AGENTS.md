@@ -176,6 +176,8 @@ So each worktree runs its own copies, and a commit that changes a hook script is
 A tree checked out at a commit older than `.githooks/` runs no hooks: rebase it onto main before you commit there.
 A clone set up by an older `install.py` keeps its links in `.git/hooks` to the main tree's scripts, which still work, until its next `python3 install.py` removes them.
 
+`rust-toolchain.toml` pins Rust to the version that built production's binary, so the sandbox, the owner's host and CI build with one compiler; a bump changes it and every workflow's `toolchain:` input together (`bin/tests/test_rust_toolchain.py`), and rebuilds every target once.
+
 The Rust tests run under cargo-nextest, set in `.config/nextest.toml` to print only the tests that fail, with their output, and a summary line.
 To run them that way, run `cargo nextest run --cargo-quiet`. nextest skips doctests, so the full check also runs `cargo test --doc`.
 Each crate's integration tests build as one binary, `tests/it/main.rs`, with each file in `tests/it/` a module of it, so a new test file needs a `mod` line there; a test in `main.rs` fails without one.

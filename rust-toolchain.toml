@@ -1,0 +1,8 @@
+# The Rust that builds this repo, everywhere rustup runs: the sandbox, the owner's
+# host and CI, whose workflows name the same version (bin/tests/test_rust_toolchain.py).
+# It is the version that built production's binary, so a check here sees what CI and
+# production see. Bump it by hand, here and in the workflows' `toolchain:` inputs.
+[toolchain]
+channel = "1.100.0"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

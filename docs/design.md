@@ -1281,6 +1281,8 @@ Python is fine for scripts and internal tools.
   A daily run takes at most 4 shards (`bin/mutants-shards`), so with a full run's 16 it stays within the org's 20 concurrent jobs.
   With no such run in the artifacts' 30 days, the base is the commit that added the workflow, so the first daily run is close to a full one.
   Each triage comments on #19 with a `Triaged run:` line, which marks the runs before it as addressed; llm-toolbox's `/upskill` lists the runs after it.
+- Rust is pinned, in `rust-toolchain.toml`, to the version that built production's binary, 1.100.0 (the owner's decision, 2026-11-25), and every workflow installs that version, not the day's stable.
+  Reason: CI took 1.100 on its own while the sandbox had 1.98, and Cargo 1.100's new build-directory layout moved test binaries, so two tests passed in the sandbox's commit checks and failed only in CI, which held back staging's deploy.
 - The commit checks' cargo steps build in one check slot per repo and machine, a tree and a target of their own that every worktree's checks share (the owner's decision, 2026-11-25, #146).
   Reason: a check folder that built into the worktree's own target leaked builds both ways, since cargo calls a unit fresh when no source is newer than its last build, whichever tree ran it: a check passed on unstaged code the worktree had built, and a worktree's build after a check kept the check's copy of `skills/`.
   In an agent's commit loop the slot measured as fast as before (#146's table); a new worktree's first check finds it warm.
