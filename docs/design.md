@@ -1142,6 +1142,7 @@ Python is fine for scripts and internal tools.
   Reason: GitHub holds staging's deploy key, so a binary sent with it must reach none of production's data or secrets.
   For the same reason each unit may bind only its own TCP port (`SocketBindAllow`), an nftables table of its own lets only Caddy and root open a new connection to either app's port or to Caddy's admin port 2019, at any local address, since both apps trust `X-Forwarded-For` from loopback and staging's key is Caddy's to check (security review, LIVE-3; the owner agreed, 2026-11-21), and the install script runs a new binary's `-h` check in a transient unit with no network, no socket binds and no view of the data.
   The outbound probe that follows has the unit's own access, network and data included, since it runs only once the new binary already serves with them.
+  The wizard's admin calls (`ops/remote/admin-grant.sh`, `ops/remote/ci-account.sh`) run the installed binary the same way, in a transient unit under the service's sandbox with a network of its own and no socket binds, so nothing they start outlives the call or takes a port Caddy forwards to (#117).
   The units allow UDP binds too, since the static musl binary's resolver binds a socket for each DNS query, and refusing that bind fails every lookup.
   The deploy user's sudo rule is a regular expression that admits only `staging <sha256>`.
 - Caddy's config imports one site file per environment, `/etc/caddy/sites/<env>.caddy`, so provisioning one never rewrites the other's sites; a file Caddy refuses is put back as it was.
