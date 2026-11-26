@@ -20,7 +20,10 @@ agent's box. At the end the account is deleted, which deletes every entry not ye
 public (design.md, Accounts); an entry already public stays up as "account deleted",
 and its ID is added to runs/<date>/public-entries.txt for ops/remove-entries.
 The run's folder is runs/<date>/NAME-HARNESS, with drive-agent's files and
-account.txt: the account's ID, its address's tag and what was deleted.
+account.txt: the account's ID, its address's tag and what was deleted. A deletion
+that fails is tried again after a few seconds; when it fails again, the account's
+login stays in account-login.json there (mode 600), and `delete --state` with that
+file finishes it.
 
 The account signs up as a person would: a plus-address of the usability mailbox
 (<local>+<NAME>-<random>@<domain>), a random password, the display name Jason Carver
@@ -555,14 +558,36 @@ def run(args) -> int:
     return 0 if status == 0 else 1
 
 
+# Seconds before a failed account deletion is tried again.
+RETRY_WAIT = 5
+
+
 def finish_account(
     site: Site, login: dict, out: Path, day: Path, run_name: str
 ) -> bool:
     """Deletes the run's account and notes it in account.txt; whether it went."""
     note = [f"account: {login['id']}", f"tag: {login['tag']}"]
     deleted = False
+    out.mkdir(parents=True, exist_ok=True)
+    kept = out / "account-login.json"
     try:
-        public = delete_account(site, login)
+        try:
+            public = delete_account(site, login)
+        except Failed as first:
+            # A dropped connection or a restart mid-deploy passes in seconds. The
+            # login is kept before the wait, so a stop during it leaves it behind.
+            write_state(kept, login)
+            time.sleep(RETRY_WAIT)
+            try:
+                public = delete_account(site, login)
+            except Failed as second:
+                why = (
+                    str(first)
+                    if str(first) == str(second)
+                    else f"{first}, then {second}"
+                )
+                raise Failed(why) from None
+            kept.unlink()
         deleted = True
         note.append("deleted: yes")
         note.append("public entries left: " + (" ".join(public) or "none"))
@@ -575,11 +600,13 @@ def finish_account(
             )
     except Failed as error:
         note.append(f"deleted: no ({error})")
+        note.append(f"login kept: {kept}")
         print(
-            f"usability-run: the account {login['id']} wasn't deleted: {error}",
+            f"usability-run: the account {login['id']} wasn't deleted, twice: "
+            f"{error}. Its login is kept in {kept}: `ops/usability-run delete "
+            f"--state {kept}` deletes it.",
             file=sys.stderr,
         )
-    out.mkdir(parents=True, exist_ok=True)
     (out / "account.txt").write_text("\n".join(note) + "\n")
     return deleted
 
@@ -767,7 +794,7 @@ def batch(args) -> int:
         text = log.read_text(errors="replace")
         key_open = key_open or KEY_OPEN in text
         for line in text.splitlines():
-            if "public entries stay up" in line:
+            if "public entries stay up" in line or "delete --state" in line:
                 print(f"  {line}")
     if key_open:
         print(
