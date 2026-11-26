@@ -72,6 +72,7 @@ def box(tmp_path):
         "PATH": f"{fakes}:{os.environ['PATH']}",
         "FILEDRAWER_ROOT": str(root),
         "FILEDRAWER_HEALTH_SECONDS": "2",
+        "FILEDRAWER_HEALTH_INTERVAL": "0",
         "FILEDRAWER_TEST_PROBES": str(tmp_path),
     }
     # The units as provisioning writes them, which the probe's unit copies.
@@ -557,6 +558,48 @@ def test_install_rolls_back_when_the_new_server_isnt_healthy(box):
     assert b"rolled back" in result.stderr
     assert b"v1" in (box.bin / "filedrawer").read_bytes()
     assert box.log.read_text().count("systemctl restart filedrawer-staging") == 2
+
+
+def logged_sleep(box) -> None:
+    """sleep records its argument and returns at once."""
+    executable(
+        box.tmp / "fakes" / "sleep", f'#!/bin/sh\necho "sleep $*" >> {box.log}\n'
+    )
+
+
+def test_a_failed_health_check_sleeps_between_tries_not_after_the_last(box):
+    executable(box.bin / "filedrawer", binary("v1").decode())
+    (box.tmp / "unhealthy").touch()
+    logged_sleep(box)
+    data = binary("v2")
+    result = install(
+        box, "staging", sha(data), data=data, FILEDRAWER_HEALTH_SECONDS="3"
+    )
+    assert result.returncode != 0
+    lines = box.log.read_text().splitlines()
+    curls = sum(line.startswith("curl ") for line in lines)
+    sleeps = [line for line in lines if line.startswith("sleep ")]
+    assert curls == 3, lines
+    assert sleeps == ["sleep 0"] * 2, lines
+
+
+def test_a_test_root_without_an_interval_override_waits_a_second_between_tries(box):
+    executable(box.bin / "filedrawer", binary("v1").decode())
+    answers_after(box, 1)
+    logged_sleep(box)
+    env = {k: v for k, v in box.env.items() if k != "FILEDRAWER_HEALTH_INTERVAL"}
+    data = binary("v2")
+    result = subprocess.run(
+        [INSTALL, "staging", sha(data)],
+        input=data,
+        env=env,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert [
+        line for line in box.log.read_text().splitlines() if line.startswith("sleep ")
+    ] == ["sleep 1"]
 
 
 def answers_after(box, tries: int) -> None:

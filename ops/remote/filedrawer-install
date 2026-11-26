@@ -46,17 +46,22 @@ set -euo pipefail
 cd /
 
 # The overrides are for tests, which set FILEDRAWER_ROOT. sudo's env_reset drops all
-# of them; when the root isn't overridden, the defaults are forced anyway.
+# of them, and the deploy user's rule grants no SETENV. Production's install
+# arrives over root's SSH instead, where sshd passes on no FILEDRAWER_* variable:
+# Debian's AcceptEnv takes only LANG and LC_*, and PermitUserEnvironment is off.
+# When the root isn't overridden, the defaults are forced anyway.
 root="${FILEDRAWER_ROOT:-}"
 if [[ -z "$root" ]]; then
   PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
   max_bytes=67108864
   health_seconds=30
+  health_interval=1
   lock_seconds=900
   probe_lock_seconds=120
 else
   max_bytes="${FILEDRAWER_MAX_BYTES:-67108864}"
   health_seconds="${FILEDRAWER_HEALTH_SECONDS:-30}"
+  health_interval="${FILEDRAWER_HEALTH_INTERVAL:-1}"
   lock_seconds="${FILEDRAWER_LOCK_SECONDS:-900}"
   probe_lock_seconds="${FILEDRAWER_PROBE_LOCK_SECONDS:-120}"
 fi
@@ -202,15 +207,18 @@ if ! systemd-run --unit="filedrawer-check-$environment" --wait --pipe --quiet --
   exit 1
 fi
 
-# healthy: polls /tags once a second. The first tries come before the server binds,
-# so each try's error stays quiet; only the last is printed, when none answered.
+# healthy: polls /tags once a second, health_seconds times, with no wait after the
+# last try. The first tries come before the server binds, so each try's error stays
+# quiet; only the last is printed, when none answered.
 healthy() {
   local tries error=""
-  for (( tries = 0; tries < health_seconds; tries++ )); do
+  for (( tries = 1; tries <= health_seconds; tries++ )); do
     if error=$(curl -fsS -o /dev/null --max-time 2 "http://127.0.0.1:$port/tags" 2>&1); then
       return 0
     fi
-    sleep 1
+    if (( tries < health_seconds )); then
+      sleep "$health_interval"
+    fi
   done
   [[ -n "$error" ]] && echo "$error" >&2
   return 1
