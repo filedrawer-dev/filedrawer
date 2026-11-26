@@ -232,4 +232,4 @@ Without network access they skip and say why, except in CI, where they fail.
 shellcheck refuses errors, warnings and infos, not style.
 To keep a finding that's intended, put `# shellcheck disable=SCnnnn  # why` on the line before it, as `ops/smoke-staging` does; a directive right after the shebang covers the file, as its SC2016 one does, since its `check` calls single-quote their conditions on purpose.
 
-To keep a line `slop-lint` flags, end it with `<!-- slop-lint: ignore -->`. `bin/pre-commit-run`, `bin/slop-lint` and `bin/tests/leftover_processes.py` are copies of llm-toolbox's. Update them by copying from there.
+To keep a line `slop-lint` flags, end it with `<!-- slop-lint: ignore -->`. `bin/mutants-base`, `bin/pre-commit-run`, `bin/slop-lint` and `bin/tests/leftover_processes.py` are copies of llm-toolbox's. Update them by copying from there.

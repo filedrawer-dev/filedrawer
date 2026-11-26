@@ -26,6 +26,7 @@ RUFF_ENTRY = re.compile(r"^(        entry: )uvx ruff@\S+ (check|format)$", re.M)
 PYTHON_SHEBANG = re.compile(rb"#!.*\b(python[0-9.]*|uv run)\b")
 # ruff-format leaves them alone: they are formatted in llm-toolbox (CODING_STANDARDS.md).
 LLM_TOOLBOX_COPIES = {
+    "bin/mutants-base",
     "bin/pre-commit-run",
     "bin/slop-lint",
     "bin/tests/leftover_processes.py",

@@ -1,10 +1,13 @@
-"""Tests for bin/mutants-base, which .github/workflows/mutants.yml's daily run asks for
-the commit to test the changes since. Each test runs the script as a process in a
-scratch git repo, with a fake gh first on PATH that answers from the runs and
-artifacts the test sets up."""
+"""Tests for bin/mutants-base, a copy of llm-toolbox's, as
+.github/workflows/mutants.yml's daily run calls it: each test runs the workflow's
+`Find the base` line as GitHub runs a step, in a scratch git repo, with a fake gh first
+on PATH that answers from the runs and artifacts the test sets up. llm-toolbox's
+test_mutants_base.py tests the script's rules; these catch a call that no longer fits
+it, which would otherwise show only in the next scheduled run."""
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -13,7 +16,9 @@ from pathlib import Path
 
 import pytest
 
-SCRIPT = Path(__file__).resolve().parents[1] / "mutants-base"
+ROOT = Path(__file__).resolve().parents[2]
+SCRIPT = ROOT / "bin" / "mutants-base"
+WORKFLOW = ROOT / ".github" / "workflows" / "mutants.yml"
 REPO = "filedrawer-dev/filedrawer"
 
 # Answers by the API path in the call, from files in the fake's folder: the runs' list
@@ -95,7 +100,7 @@ class Fake:
         (root / "fake_gh.py").write_text(FAKE_GH)
         gh = bin_dir / "gh"
         gh.write_text(
-            f'#!/bin/sh\nexec "{sys.executable}" -I "{root}/fake_gh.py" "{root}" "$@"\n'
+            f'#!/bin/sh\nexec "{sys.executable}" -I -S "{root}/fake_gh.py" "{root}" "$@"\n'
         )
         gh.chmod(0o755)
         self.env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
@@ -138,17 +143,31 @@ class Fake:
         ]
         return run_id
 
-    def base(self, *args: str) -> subprocess.CompletedProcess:
+    def step(self) -> tuple[subprocess.CompletedProcess, dict[str, str]]:
+        """Run the workflow's Find the base line in the scratch repo, with this
+        repo's bin/mutants-base where the line looks for it, as GitHub runs a `run:`
+        under `shell: bash`; return the run and the outputs it wrote."""
         (self.root / "runs.json").write_text(json.dumps(self.runs))
         (self.root / "artifacts.json").write_text(json.dumps(self.artifacts))
-        return subprocess.run(
-            [SCRIPT, *(args or (REPO,))],
+        (self.repo / "bin").mkdir(exist_ok=True)
+        shutil.copy2(SCRIPT, self.repo / "bin" / "mutants-base")
+        outputs = self.root / "github_output"
+        outputs.write_text("")
+        done = subprocess.run(
+            ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", step_line()],
             cwd=self.repo,
-            env=self.env,
+            env=self.env
+            | {
+                "GITHUB_REPOSITORY": REPO,
+                "GITHUB_OUTPUT": str(outputs),
+                "GH_TOKEN": "fake",
+            },
             capture_output=True,
             text=True,
             check=False,
         )
+        lines = outputs.read_text().splitlines()
+        return done, dict(line.split("=", 1) for line in lines)
 
     def calls(self) -> list[list[str]]:
         log = self.root / "log"
@@ -164,98 +183,66 @@ def fake(tmp_path, template) -> Fake:
     return Fake(tmp_path, tmp_path / "repo", shas)
 
 
+def step_line() -> str:
+    """The one-line `run:` of the workflow's Find the base step."""
+    lines = WORKFLOW.read_text().splitlines()
+    [start] = [
+        i for i, line in enumerate(lines) if line.strip() == "- name: Find the base"
+    ]
+    indent = lines[start].index("-")
+    for line in lines[start + 1 :]:
+        if line.strip() and len(line) - len(line.lstrip()) <= indent:
+            break
+        if found := re.fullmatch(r"\s+run: ([^|>].*)", line):
+            return found[1]
+    raise AssertionError("mutants.yml's Find the base step has no one-line run")
+
+
+def covered_retention_days() -> int:
+    """The retention-days of the workflow's mutants-covered uploads, which all agree."""
+    text = WORKFLOW.read_text()
+    found = set(
+        re.findall(
+            r"name: mutants-covered\n(?:\s+\w.*\n)*?\s+retention-days: (\d+)", text
+        )
+    )
+    assert len(found) == 1, f"mutants-covered's retention-days: {found or 'none'}"
+    return int(found.pop())
+
+
 def test_the_base_is_the_head_of_the_newest_covered_run(fake):
     fake.run("workflow")
-    fake.run("code")
-    done = fake.base()
+    fake.run("code", event="workflow_dispatch")
+    done, outputs = fake.step()
     assert done.returncode == 0, done.stderr
-    assert done.stdout == fake.shas["code"] + "\n"
+    assert outputs["base"] == fake.shas["code"]
     assert "actions/runs/101" in done.stderr
 
 
-def test_a_run_that_left_mutants_untested_is_passed_over(fake):
-    fake.run("workflow")
-    fake.run("code", covered=False)
-    done = fake.base()
-    assert done.returncode == 0, done.stderr
-    assert done.stdout == fake.shas["workflow"] + "\n"
-
-
-@pytest.mark.parametrize(
-    "older",
-    [
-        {"covered": False, "mutants": False},
-        {"expired": True},
-        {"event": "push"},
-        {"branch": "topic"},
-        {"conclusion": "failure"},
-    ],
-)
-def test_a_run_that_cant_show_it_covered_main_is_passed_over(fake, older):
-    fake.run("workflow")
-    fake.run("code", **older)
-    done = fake.base()
-    assert done.returncode == 0, done.stderr
-    assert done.stdout == fake.shas["workflow"] + "\n"
-
-
-def test_a_run_that_found_no_mutants_in_its_lines_counts(fake):
-    fake.run("workflow")
-    fake.run("code", mutants=False)
-    done = fake.base()
-    assert done.returncode == 0, done.stderr
-    assert done.stdout == fake.shas["code"] + "\n"
-
-
-def test_a_dispatched_run_counts(fake):
-    fake.run("code", event="workflow_dispatch")
-    done = fake.base()
-    assert done.stdout == fake.shas["code"] + "\n"
-
-
-@pytest.mark.parametrize("sha", [None, "f" * 40])
-def test_a_run_at_a_commit_this_branch_doesnt_hold_is_passed_over(fake, sha):
-    fake.run("workflow")
-    fake.run("side", sha=sha)
-    done = fake.base()
-    assert done.returncode == 0, done.stderr
-    assert done.stdout == fake.shas["workflow"] + "\n"
+def test_it_asks_only_for_the_runs_the_marker_can_outlast(fake):
+    fake.run("code")
+    fake.step()
+    runs_call = fake.calls()[0]
+    assert f"repos/{REPO}/actions/workflows/mutants.yml/runs" in runs_call
+    assert {"branch=main", "status=success"} <= set(runs_call)
+    [created] = [arg for arg in runs_call if arg.startswith("created=>=")]
+    since = datetime.strptime(created, "created=>=%Y-%m-%d").replace(tzinfo=UTC)
+    days = covered_retention_days()
+    assert timedelta(days=days) < datetime.now(UTC) - since < timedelta(days=days + 2)
 
 
 def test_with_no_covered_run_the_base_is_the_commit_that_added_the_workflow(fake):
     fake.run("code", covered=False)
-    done = fake.base()
+    done, outputs = fake.step()
     assert done.returncode == 0, done.stderr
-    assert done.stdout == fake.shas["workflow"] + "\n"
-    assert "added the workflow" in done.stderr
+    assert outputs["base"] == fake.shas["workflow"]
+    assert "added .github/workflows/mutants.yml" in done.stderr
 
 
-def test_it_asks_only_for_the_repos_successful_runs_on_main(fake):
-    fake.run("code")
-    fake.base()
-    runs_call = fake.calls()[0]
-    assert f"repos/{REPO}/actions/workflows/mutants.yml/runs" in runs_call
-    assert "branch=main" in runs_call
-    assert "status=success" in runs_call
-    # The artifacts last 30 days, so older runs can't show they covered anything.
-    [created] = [arg for arg in runs_call if arg.startswith("created=>=")]
-    since = datetime.strptime(created, "created=>=%Y-%m-%d").replace(tzinfo=UTC)
-    assert timedelta(days=30) < datetime.now(UTC) - since < timedelta(days=32)
-
-
-def test_an_api_error_fails_with_no_base(fake):
+def test_an_api_error_fails_the_step_with_no_base(fake):
     fake.run("code")
     (fake.root / "fail").touch()
-    done = fake.base()
+    done, outputs = fake.step()
     assert done.returncode == 1
-    assert done.stdout == ""
+    assert outputs == {}
     assert "HTTP 502" in done.stderr
-
-
-def test_without_a_repo_it_prints_usage(fake):
-    done = subprocess.run(
-        [SCRIPT], cwd=fake.repo, capture_output=True, text=True, check=False
-    )
-    assert done.returncode == 2
-    assert "usage" in done.stderr
-    assert fake.calls() == []
