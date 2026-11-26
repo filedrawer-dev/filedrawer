@@ -27,7 +27,9 @@ async fn tokenizer(create: &'static str) -> SqliteConnection {
     connection
 }
 
-/// SQLite's tokens of each document, in order.
+/// SQLite's tokens of each document, in order, a JSON array a document: a row a token
+/// was most of the test's time (#138), and an array has no separator a token could
+/// hold.
 async fn tokens_of(connection: &mut SqliteConnection, documents: &[String]) -> Vec<Vec<String>> {
     sqlx::query("DELETE FROM t")
         .execute(&mut *connection)
@@ -41,13 +43,14 @@ async fn tokens_of(connection: &mut SqliteConnection, documents: &[String]) -> V
             .await
             .unwrap();
     }
-    let rows: Vec<(i64, String)> = sqlx::query_as("SELECT doc, term FROM v ORDER BY doc, offset")
-        .fetch_all(&mut *connection)
-        .await
-        .unwrap();
+    let rows: Vec<(i64, String)> =
+        sqlx::query_as("SELECT doc, json_group_array(term ORDER BY offset) FROM v GROUP BY doc")
+            .fetch_all(&mut *connection)
+            .await
+            .unwrap();
     let mut tokens = vec![Vec::new(); documents.len()];
-    for (doc, term) in rows {
-        tokens[usize::try_from(doc).unwrap()].push(term);
+    for (doc, terms) in rows {
+        tokens[usize::try_from(doc).unwrap()] = serde_json::from_str(&terms).unwrap();
     }
     tokens
 }
