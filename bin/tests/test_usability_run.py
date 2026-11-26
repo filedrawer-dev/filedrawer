@@ -11,6 +11,8 @@ crates/server/tests/it/usability.rs.
 import contextlib
 import datetime
 import http.server
+import importlib.machinery
+import importlib.util
 import json
 import os
 import subprocess
@@ -446,3 +448,119 @@ def test_setup_names_a_pinned_tag_whose_skill_md_lists_no_files(tmp_path):
     assert done.returncode == 1
     assert "lists no files" in done.stderr
     assert "Traceback" not in done.stderr
+
+
+def load_script():
+    """ops/usability-run as a module, to drive its account cleanup directly: a run
+    with an account needs signup and mail, which crates/server/tests/it/usability.rs
+    covers against a real server."""
+    loader = importlib.machinery.SourceFileLoader("usability_run", str(SCRIPT))
+    spec = importlib.util.spec_from_loader("usability_run", loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    module.RETRY_WAIT = 0
+    return module
+
+
+def account_site(logins_to_fail):
+    """A stand-in site whose first LOGINS_TO_FAIL logins drop the connection."""
+    state = {"left": logins_to_fail}
+
+    class AccountSite(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"entries": []}')
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            if self.path == "/login" and state["left"] > 0:
+                state["left"] -= 1
+                self.close_connection = True
+                self.connection.close()
+                return
+            if self.path == "/login":
+                self.send_response(303)
+                self.send_header("Set-Cookie", "fd_session=s; Path=/")
+                self.send_header("Location", "/")
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"Account deleted")
+
+        def log_message(self, *args):
+            pass
+
+    return AccountSite
+
+
+LOGIN = {
+    "id": "a-1",
+    "tag": "jason5-x",
+    "address": "u+jason5-x@example.org",
+    "password": "pw-Zq81-distinct",
+    "token": "fdt_Zq81distinct",
+}
+
+
+def test_an_account_delete_that_fails_once_is_tried_again(tmp_path):
+    script = load_script()
+    with serving(account_site(1)) as base:
+        deleted = script.finish_account(
+            script.Site(base), dict(LOGIN), tmp_path / "out", tmp_path, "jason5-claude"
+        )
+    assert deleted
+    assert "deleted: yes" in (tmp_path / "out" / "account.txt").read_text()
+    assert not (tmp_path / "out" / "account-login.json").exists()
+
+
+def test_an_account_that_cant_be_deleted_keeps_its_login_for_delete_state(
+    tmp_path, capsys
+):
+    script = load_script()
+    with serving(account_site(2)) as base:
+        deleted = script.finish_account(
+            script.Site(base), dict(LOGIN), tmp_path / "out", tmp_path, "jason5-claude"
+        )
+    assert not deleted
+    kept = tmp_path / "out" / "account-login.json"
+    assert json.loads(kept.read_text()) == LOGIN
+    assert kept.stat().st_mode & 0o777 == 0o600
+    note = (tmp_path / "out" / "account.txt").read_text()
+    assert f"login kept: {kept}" in note
+    err = capsys.readouterr().err
+    assert f"ops/usability-run delete --state {kept}" in err
+    for secret in (LOGIN["password"], LOGIN["token"], LOGIN["address"]):
+        assert secret not in err + note
+
+
+def test_a_stop_while_the_deletion_waits_to_retry_keeps_the_login(tmp_path):
+    script = load_script()
+
+    def stop(seconds):
+        raise KeyboardInterrupt
+
+    script.time.sleep = stop
+    with serving(account_site(1)) as base, pytest.raises(KeyboardInterrupt):
+        script.finish_account(
+            script.Site(base), dict(LOGIN), tmp_path / "out", tmp_path, "jason5-claude"
+        )
+    assert json.loads((tmp_path / "out" / "account-login.json").read_text()) == LOGIN
+
+
+def test_a_batch_shows_each_runs_line_about_a_kept_login(batch_setting, server):
+    agent = batch_setting["env"]["PATH"].split(":")[0] + "/drive-agent"
+    Path(agent).write_text(
+        FAKE_BATCH_AGENT.replace(
+            "sys.exit(",
+            'print("usability-run: ... `ops/usability-run delete --state X` deletes'
+            ' it.", file=sys.stderr)\nsys.exit(',
+        )
+    )
+    scenario(batch_setting, "s1.json", turns=["hi"])
+    done = usability_run(batch_setting, "batch", "s1:claude:jason2", "--base", server)
+    assert "  usability-run: ... `ops/usability-run delete --state X` deletes it." in (
+        done.stdout.splitlines()
+    )

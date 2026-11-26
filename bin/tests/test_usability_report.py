@@ -264,3 +264,172 @@ def test_a_curl_continued_over_two_lines_is_one_request(tmp_path):
     assert (
         "  site writes: POST https://staging.filedrawer.dev/entries\n" in result.stdout
     ), result.stdout
+
+
+def human(ts, text):
+    return {"type": "user", "timestamp": ts, "message": {"content": text}}
+
+
+def tool_result(ts):
+    return {
+        "type": "user",
+        "timestamp": ts,
+        "message": {"content": [{"type": "tool_result", "content": "ok"}]},
+    }
+
+
+SANDBAG = "I want to test whether models sandbag more on a capability eval"
+PROBE = "I want to check whether a linear deception probe survives GPTQ"
+
+
+def test_sessions_gives_a_line_a_session_and_how_often_the_skill_loaded(tmp_path):
+    usability, run = make_run(tmp_path, {"gated": ["posting"], "turns": ["ab"]})
+    site = "https://staging.filedrawer.dev"
+    write_jsonl(
+        run / "transcript-a.jsonl",
+        [
+            human("2026-11-25T10:00:00Z", SANDBAG),
+            tool("2026-11-25T10:00:01Z", "Skill", skill="filedrawer-search"),
+            tool_result("2026-11-25T10:00:02Z"),
+            bash(
+                "2026-11-25T10:00:03Z",
+                f"for q in a b; do curl -sS -H @h '{site}/search?q=$q'; done; "
+                f"curl -sS '{site}/cards.txt' | head",
+            ),
+            tool("2026-11-25T10:00:04Z", "WebSearch", query="sandbagging grader"),
+            tool("2026-11-25T10:00:05Z", "WebSearch", query="weak grader"),
+            bash("2026-11-25T10:00:06Z", "curl -sSL https://arxiv.org/abs/2406.07358"),
+            tool("2026-11-25T10:00:07Z", "WebFetch", url="https://example.org/post"),
+        ],
+    )
+    write_jsonl(
+        run / "transcript-b.jsonl",
+        [
+            human("2026-11-25T11:00:00Z", PROBE),
+            bash(
+                "2026-11-25T11:00:01Z",
+                f"curl -sS -H 'X-Staging-Key: {KEY}' {site}/tags",
+            ),
+        ],
+    )
+    done = usability_run(usability, "sessions", run)
+    assert done.returncode == 0, done.stderr
+    assert KEY not in done.stdout
+    assert done.stdout.splitlines() == [
+        f'jason5-claude 1 "{SANDBAG[:40]}…" skill yes, file drawer 2, web 2, fetch 2',
+        f'jason5-claude 2 "{PROBE[:40]}…" skill no, file drawer 0, web 0, fetch 0',
+        "s2-search, filedrawer-search 7: skill loaded in 1 of 2 sessions",
+        f'  "{SANDBAG[:40]}…" 1/1',
+        f'  "{PROBE[:40]}…" 0/1',
+    ]
+
+
+def test_sessions_totals_each_skill_version_of_a_scenario_apart(tmp_path):
+    usability, run = make_run(tmp_path, {"gated": ["posting"], "turns": ["ab"]})
+    write_jsonl(
+        run / "transcript-a.jsonl",
+        [
+            human("2026-11-25T10:00:00Z", SANDBAG),
+            bash(
+                "2026-11-25T10:00:01Z",
+                "cat ~/.agents/skills/filedrawer-search/SKILL.md",
+            ),
+        ],
+    )
+    pinned = run.parent / "jason6-claude"
+    pinned.mkdir()
+    for name in ("scenario.json", "run.json", "turns.md"):
+        (pinned / name).write_text((run / name).read_text())
+    skill = pinned / "files" / ".agents" / "skills" / "filedrawer-search"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text('---\nmetadata:\n  version: "6"\n---\n')
+    write_jsonl(pinned / "transcript-a.jsonl", [human("2026-11-25T10:00:00Z", SANDBAG)])
+    done = usability_run(usability, "sessions", run, pinned, tmp_path / "nothing")
+    assert done.returncode == 1
+    lines = done.stdout.splitlines()
+    assert "nothing: no such folder" in lines
+    assert "s2-search, filedrawer-search 7: skill loaded in 1 of 1 sessions" in lines
+    assert "s2-search, filedrawer-search 6: skill loaded in 0 of 1 sessions" in lines
+
+
+def codex_user(ts, text):
+    return {
+        "timestamp": ts,
+        "type": "response_item",
+        "payload": {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": text}],
+        },
+    }
+
+
+def codex_exec(ts, cmd):
+    return {
+        "timestamp": ts,
+        "type": "response_item",
+        "payload": {
+            "type": "function_call",
+            "name": "exec_command",
+            "arguments": json.dumps({"cmd": cmd}),
+        },
+    }
+
+
+def test_sessions_reads_a_codex_session_past_its_injected_context(tmp_path):
+    usability, run = make_run(tmp_path, {"gated": ["posting"], "turns": ["ab"]})
+    run = run.rename(run.parent / "jason5-codex")
+    write_jsonl(
+        run / "transcript-rollout-a.jsonl",
+        [
+            codex_user(
+                "2026-11-25T10:00:00Z",
+                "<environment_context>\n  <cwd>/home/jason5</cwd>\n</environment_context>",
+            ),
+            codex_user("2026-11-25T10:00:01Z", SANDBAG),
+            codex_exec(
+                "2026-11-25T10:00:02Z",
+                "sed -n 1,200p ~/.agents/skills/filedrawer-search/SKILL.md",
+            ),
+            {
+                "timestamp": "2026-11-25T10:00:03Z",
+                "type": "response_item",
+                "payload": {"type": "web_search_call", "action": {"query": "grader"}},
+            },
+        ],
+    )
+    done = usability_run(usability, "sessions", run)
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.splitlines()[0] == (
+        f'jason5-codex 1 "{SANDBAG[:40]}…" skill yes, file drawer 0, web 1, fetch 0'
+    )
+
+
+def test_sessions_counts_only_a_read_of_the_skill_as_loading_it(tmp_path):
+    usability, run = make_run(tmp_path, {"gated": ["posting"], "turns": ["ab"]})
+    skill = "~/.agents/skills/filedrawer-search/SKILL.md"
+    write_jsonl(
+        run / "transcript-a.jsonl",
+        [
+            human("2026-11-25T10:00:00Z", SANDBAG),
+            bash("2026-11-25T10:00:01Z", f"ls -l {skill}; printf 'x' >> {skill}"),
+        ],
+    )
+    write_jsonl(
+        run / "transcript-b.jsonl",
+        [
+            human("2026-11-25T11:00:00Z", PROBE),
+            tool("2026-11-25T11:00:01Z", "Read", file_path=f"/home/j/{skill[2:]}"),
+        ],
+    )
+    done = usability_run(usability, "sessions", run)
+    lines = done.stdout.splitlines()
+    assert " skill no," in lines[0] and " skill yes," in lines[1], lines
+
+
+def test_sessions_treats_an_unreadable_run_json_as_no_run(tmp_path):
+    usability, run = make_run(tmp_path, {"gated": ["posting"], "turns": ["ab"]})
+    (run / "run.json").write_text("{")
+    done = usability_run(usability, "sessions", run)
+    assert done.returncode == 1
+    assert done.stdout == "jason5-claude: its run.json can't be read as JSON\n"
