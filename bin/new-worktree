@@ -17,11 +17,14 @@ bgrun in the new tree, its log in the tree's target/warm.log. The script prints 
 build's PID and doesn't wait: heavy's queue has no time limit. `waitone --pid PID`
 waits for it.
 
-A second job, `heavy -- bin/agent-pre-commit --warm`, its log in target/warm-checks.log,
-then builds the tests and clippy in the folder the commit checks build in, which has
-a path of its own (bin/agent-pre-commit's header), so the first commit and landing
-find it built: built cold, clippy there took 86 to 198 s of a commit's check. A tree
-checked out with --at before --warm existed gets no second job.
+The commit checks build in a check slot, one for the repo, with a target of its own
+(bin/agent-pre-commit's header). While it has no build, as on its first use or after
+cache/ was emptied, a second job, `heavy -- bin/agent-pre-commit --warm`, its log in
+target/warm-checks.log, builds the tests and clippy there, so the first commit and
+landing don't: built cold, clippy took 86 to 198 s of a commit's check. Once it is
+built, every worktree's checks keep it warm, and the script just says so. A tree
+checked out with --at before the slot existed gets no second job: its --warm would
+build the tree's own target from its check folder, the leak the slot ends (#146).
 
 --no-build skips it, for a change that touches no build input (AGENTS.md, Checks),
 such as most of docs/, bin/ and ops/: its commits run no Rust check, so the build
@@ -95,11 +98,21 @@ def background(
     )
 
 
-def warms_checks(tree: Path) -> bool:
-    """Whether the tree's bin/agent-pre-commit takes --warm: a copy that predates it
-    would take the unknown argument for the full check."""
+def slot_state(tree: Path) -> tuple[str, bool] | None:
+    """The tree's check slot, as its bin/agent-pre-commit names it, and whether it has
+    no build yet; None for a copy that predates the slot, which would take
+    --slot-cold for the full check, and whose --warm warms the wrong target."""
     check = tree / "bin/agent-pre-commit"
-    return check.is_file() and "--warm)" in check.read_text()
+    if not (check.is_file() and "--slot-cold)" in check.read_text()):
+        return None
+    said = subprocess.run(
+        [str(check), "--slot-cold"],
+        cwd=tree,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return said.stdout.strip(), said.returncode == 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -172,7 +185,13 @@ def main(argv: list[str] | None = None) -> int:
         "as the first `heavy --few-seconds` test run should: otherwise that run builds "
         "first and overruns --few-seconds' 60 s"
     )
-    if warms_checks(tree):
+    state = slot_state(tree)
+    if state is None:
+        return 0
+    slot, cold = state
+    if not cold:
+        print(f"the commit checks' slot {slot} is warm")
+    else:
         checks_log = tree / "target/warm-checks.log"
         checks = background(tree, checks_log, ["bin/agent-pre-commit", "--warm"])
         if checks.returncode != 0:

@@ -13,6 +13,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -227,8 +228,9 @@ def hook(
 def hook_env(repo: Path, env: dict | None, base: str | None) -> dict:
     """The hook's environment, as hook() takes `env` and `base`: fakes of cargo and uvx
     first on PATH, which note their calls in the log `calls` beside the repo, emptied
-    here, and TMPDIR the folder `tmp` beside it, where the hook keeps its check
-    folder."""
+    here, TMPDIR the folder `tmp` beside it, where the hook keeps its check folder,
+    and FILEDRAWER_CHECK_SLOT the folder `slot` beside it. A value of None in `env`
+    leaves that variable unset."""
     (repo.parent / "tmp").mkdir(exist_ok=True)
     fakes = repo.parent / "fakes"
     fakes.mkdir(exist_ok=True)
@@ -246,10 +248,17 @@ def hook_env(repo: Path, env: dict | None, base: str | None) -> dict:
     out |= {
         "PATH": f"{fakes}{os.pathsep}{os.environ['PATH']}",
         "TMPDIR": str(repo.parent / "tmp"),
+        "FILEDRAWER_CHECK_SLOT": str(slot(repo)),
     }
     if base is not None:
         out["CHECK_BASE"] = git(repo, "rev-parse", base)
-    return out | {"FAKE_LOG": str(log), **(env or {})}
+    out |= {"FAKE_LOG": str(log), **(env or {})}
+    return {k: v for k, v in out.items() if v is not None}
+
+
+def slot(repo: Path) -> Path:
+    """The check slot hook() gives the hook: one folder beside the repo."""
+    return repo.parent / "slot"
 
 
 def run(repo: Path, *args: str, **options) -> set[str]:
@@ -1252,6 +1261,7 @@ def test_the_hook_writes_each_check_it_runs_with_its_seconds(repo):
     change(repo, "crates/app/src/lib.rs", "pub fn f() {}\n")
     assert timings(repo) == [
         "bin-tests",
+        "slot-wait",
         "nextest-build",
         "nextest",
         "doctest",
@@ -1310,10 +1320,10 @@ def logging_cargo(line: str) -> dict:
     return {"FAKE_CARGO": f'#!/bin/sh\n{{ {line}; }} >> "$FAKE_LOG" 2>&1\n'}
 
 
-def test_the_checks_run_in_the_worktrees_check_folder(repo):
-    change(repo, "crates/app/src/extra.rs")
+def test_the_checks_that_build_nothing_run_in_the_worktrees_check_folder(repo):
+    change(repo, "bin/other", "#!/bin/sh\necho changed\n")
 
-    hook(repo, "--quick", env=logging_cargo("pwd"))
+    hook(repo, env={"FAKE_UVX": '#!/bin/sh\npwd >> "$FAKE_LOG"\n'})
 
     calls = (repo.parent / "calls").read_text().splitlines()
     assert calls == [str(check_tree(repo).resolve())]
@@ -1357,34 +1367,327 @@ def test_the_check_folder_holds_exactly_what_is_staged(repo):
     assert (tree / "conf/settings.toml").read_text() == ""
 
 
-def test_warm_builds_the_check_folder_and_checks_nothing(repo):
-    # bin/new-worktree runs it, so a new tree's first commit and landing find the
-    # check folder built.
-    hook(
-        repo,
-        "--warm",
-        base=None,
-        env=logging_cargo('echo "$PWD $CARGO_TARGET_DIR $*"'),
-    )
+# The cargo checks build in one check slot for the whole repo, its own tree and target
+# (#146): two trees building into one target leak builds into each other, since cargo
+# calls a unit fresh when no source is newer than its last build, whichever tree ran it.
 
-    tree = check_tree(repo).resolve()
-    target = repo / "target"
-    assert (repo.parent / "calls").read_text().splitlines() == [
-        f"{tree} {target} nextest run --cargo-quiet --no-run",
-        f"{tree} {target} clippy --quiet --all-targets -- -D warnings",
-    ]
-    assert (tree / "docs/notes.md").is_file()
+WHERE = logging_cargo('echo "$PWD $CARGO_TARGET_DIR $1"')
 
 
-def test_warm_builds_with_the_check_folder_unlocked(repo):
-    # So a commit that needs no build passes while it runs; cargo's own lock on
-    # target/ keeps a Rust check from building beside it.
-    lock = check_state(repo) / "lock"
-    probe = f'flock -n "{lock}" true && echo free || echo held'
+def where(repo: Path) -> list[str]:
+    """Each fake cargo call WHERE logged: its folder, CARGO_TARGET_DIR and command."""
+    return (repo.parent / "calls").read_text().splitlines()
 
-    hook(repo, "--warm", base=None, env=logging_cargo(probe))
 
-    assert (repo.parent / "calls").read_text().splitlines() == ["free", "free"]
+def in_slot(repo: Path, command: str) -> str:
+    return f"{(slot(repo) / 'tree').resolve()} {slot(repo) / 'target'} {command}"
+
+
+@pytest.mark.parametrize(
+    ("args", "commands"),
+    [
+        (("--quick",), ["clippy"]),
+        (("--quick", "--routes"), ["clippy", "nextest"]),
+        # Its version first, then the test build and the run.
+        ((), ["nextest", "nextest", "nextest", "test", "clippy"]),
+    ],
+    ids=["quick", "routes", "full"],
+)
+def test_every_cargo_check_runs_in_the_slot_with_its_own_target(repo, args, commands):
+    (repo / "crates/server/src").mkdir(parents=True)
+    (repo / "crates/server/Cargo.toml").write_text("")
+    commit(repo, "a server")
+    change(repo, "crates/server/src/lib.rs")
+
+    hook(repo, *args, env=WHERE)
+
+    cargo = [call for call in where(repo) if not call.startswith("uvx ")]
+    assert cargo == [in_slot(repo, command) for command in commands]
+
+
+def test_the_slot_holds_exactly_what_is_staged(repo):
+    change(repo, "crates/app/src/extra.rs", "staged\n")
+    (repo / "crates/app/src/extra.rs").write_text("unstaged\n")
+    (repo / "crates/app/src/untracked.rs").write_text("untracked\n")
+    (slot(repo) / "tree").mkdir(parents=True)
+    (slot(repo) / "tree/stray.rs").write_text("left behind\n")
+
+    hook(repo, "--quick")
+
+    tree = slot(repo) / "tree"
+    assert (tree / "crates/app/src/extra.rs").read_text() == "staged\n"
+    assert not (tree / "crates/app/src/untracked.rs").exists()
+    assert not (tree / "stray.rs").exists()
+
+
+def test_a_second_slot_check_rewrites_only_the_files_that_changed(repo):
+    change(repo, "crates/app/src/extra.rs", "one\n")
+    hook(repo, "--quick")
+    unchanged = slot(repo) / "tree/docs/notes.md"
+    before = unchanged.stat().st_mtime_ns
+
+    change(repo, "crates/app/src/extra.rs", "two\n")
+    hook(repo, "--quick")
+
+    assert unchanged.stat().st_mtime_ns == before
+    assert (slot(repo) / "tree/crates/app/src/extra.rs").read_text() == "two\n"
+
+
+def test_another_worktrees_check_uses_the_same_slot_with_its_own_staged_tree(
+    repo, template, tmp_path
+):
+    other = tmp_path / "other"
+    shutil.copytree(template, other, symlinks=True)
+    change(repo, "crates/app/src/extra.rs", "first\n")
+    hook(repo, "--quick")
+
+    change(other, "crates/app/src/extra.rs", "second\n")
+    hook(other, "--quick", env=WHERE | {"FILEDRAWER_CHECK_SLOT": str(slot(repo))})
+
+    assert where(other) == [in_slot(repo, "clippy")]
+    assert (slot(repo) / "tree/crates/app/src/extra.rs").read_text() == "second\n"
+
+
+@pytest.mark.parametrize(
+    ("path", "env"),
+    [
+        ("crates/app/src/extra.rs", {"CHECK_QUEUE_EXIT": "75"}),
+        ("docs/notes.md", {}),
+        ("bin/other", {}),
+    ],
+    ids=["outside-the-queue", "docs", "bin"],
+)
+def test_a_check_that_builds_nothing_leaves_the_slot_alone(repo, path, env):
+    change(repo, path)
+
+    hook(repo, "--quick", env=env, code=int(env.get("CHECK_QUEUE_EXIT", 0)))
+
+    assert not slot(repo).exists()
+
+
+def test_a_lock_file_a_killed_slot_sync_left_doesnt_stop_the_next_check(repo):
+    change(repo, "crates/app/src/extra.rs", "one\n")
+    hook(repo, "--quick")
+    (slot(repo) / "index.lock").write_text("")
+
+    change(repo, "crates/app/src/extra.rs", "two\n")
+    hook(repo, "--quick")
+
+    assert (slot(repo) / "tree/crates/app/src/extra.rs").read_text() == "two\n"
+
+
+@pytest.mark.parametrize("args", [("--quick", "--routes"), (), ("--warm",)])
+def test_no_cargo_process_holds_the_slots_lock(repo, args):
+    (repo / "crates/server/src").mkdir(parents=True)
+    (repo / "crates/server/Cargo.toml").write_text("")
+    commit(repo, "a server")
+    change(repo, "crates/server/src/lib.rs")
+
+    hook(repo, *args, env=logging_cargo('echo "$1"; ls -l /proc/$$/fd'))
+
+    calls = (repo.parent / "calls").read_text()
+    assert "/dev/null" in calls or "pipe:" in calls, calls
+    assert str(slot(repo)) not in calls, calls
+
+
+def test_the_checks_never_see_where_the_slot_is(repo):
+    # Else the bin tests' own scratch hooks would bring the real slot to their trees.
+    change(repo, "crates/app/src/extra.rs")
+
+    hook(repo, "--quick", env=logging_cargo('echo "${FILEDRAWER_CHECK_SLOT-unset}"'))
+
+    assert where(repo) == ["unset"]
+
+
+def test_a_check_waits_for_the_slot_and_names_who_holds_it(repo):
+    change(repo, "crates/app/src/extra.rs")
+    calls = repo.parent / "calls"
+    env = hook_env(repo, None, "HEAD")
+    slot(repo).mkdir()
+    (slot(repo) / "holder").write_text("4242 /elsewhere/filedrawer-wt-other\n")
+    with (slot(repo) / "lock").open("w") as held:
+        fcntl.flock(held, fcntl.LOCK_EX)
+        check = subprocess.Popen(
+            [str(repo / "bin/agent-pre-commit"), "--quick"],
+            cwd=repo,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            assert check.stderr is not None
+            said = check.stderr.readline()
+            waited = False
+            while check.poll() is None and not calls.read_text():
+                if blocked_in_flock(check.pid):
+                    waited = True
+                    break
+            calls_while_held = calls.read_text()
+        except BaseException:
+            check.kill()
+            check.wait()
+            raise
+    out, err = check.communicate()
+
+    assert "waits for the check slot" in said, said
+    assert "PID 4242" in said and "/elsewhere/filedrawer-wt-other" in said, said
+    assert waited and calls_while_held == ""
+    assert check.returncode == 0, out + said + err
+    assert "cargo clippy" in calls.read_text()
+    pid, holder = (slot(repo) / "holder").read_text().split()
+    assert pid.isdigit() and holder == str(repo)
+
+
+def test_the_wait_for_the_slot_is_timed(repo):
+    change(repo, "crates/app/src/extra.rs")
+
+    assert "slot-wait" in {line.split()[0] for line in timings(repo, "--quick")}
+
+
+@pytest.mark.parametrize(
+    ("args", "fails"),
+    [(("--quick",), "clippy"), ((), "--no-run")],
+    ids=["clippy", "test-build"],
+)
+def test_a_failed_cargo_check_says_where_the_slot_is_and_how_to_reset_it(
+    repo, args, fails
+):
+    change(repo, "crates/app/src/extra.rs")
+    failing = {
+        "FAKE_CARGO": f'#!/bin/sh\ncase "$*" in *{fails}*) echo broken; exit 101;; esac\n'
+    }
+
+    _, done = hook(repo, *args, env=failing, code=1)
+
+    assert "bin/agent-pre-commit --reset-slot" in done.stdout + done.stderr
+
+
+def test_a_check_of_a_slot_without_a_target_measures_nothing(repo):
+    change(repo, "crates/app/src/extra.rs")
+
+    _, done = hook(repo, "--quick")
+
+    assert done.stderr == ""
+
+
+def grown(repo: Path, stamp_age: int | None) -> Path:
+    """A slot whose target holds a sparse file of 21 GB, its size last checked
+    `stamp_age` seconds ago (None: never)."""
+    (slot(repo) / "target").mkdir(parents=True)
+    big = slot(repo) / "target/big"
+    with big.open("wb") as f:
+        f.truncate(21 * 1024**3)
+    if stamp_age is not None:
+        stamp = slot(repo) / "size-checked"
+        stamp.write_text("")
+        then = time.time() - stamp_age
+        os.utime(stamp, (then, then))
+    return big
+
+
+@pytest.mark.parametrize("stamp_age", [None, 2 * 86400], ids=["never", "days-ago"])
+def test_a_slot_target_past_20_gb_starts_over(repo, stamp_age):
+    big = grown(repo, stamp_age)
+    change(repo, "crates/app/src/extra.rs")
+
+    _, done = hook(repo, "--quick")
+
+    assert not big.exists()
+    assert "21 GB" in done.stderr and "builds cold" in done.stderr
+
+
+def test_the_slots_size_is_checked_at_most_once_a_day(repo):
+    big = grown(repo, 3600)
+    change(repo, "crates/app/src/extra.rs")
+
+    hook(repo, "--quick")
+
+    assert big.exists()
+
+
+def test_a_check_that_measured_the_slot_waits_a_day_to_again(repo):
+    change(repo, "crates/app/src/extra.rs", "one\n")
+    hook(repo, "--quick")
+    assert not (slot(repo) / "target").exists()
+    big = grown(repo, stamp_age=None)
+
+    change(repo, "crates/app/src/extra.rs", "two\n")
+    hook(repo, "--quick")
+
+    assert big.exists()
+
+
+def test_warm_builds_the_slot_and_checks_nothing(repo):
+    # bin/new-worktree runs it when the slot has no build, so a new tree's first
+    # commit and landing don't build cold.
+    hook(repo, "--warm", base=None, env=WHERE)
+
+    assert where(repo) == [in_slot(repo, "nextest"), in_slot(repo, "clippy")]
+    assert (slot(repo) / "tree/docs/notes.md").is_file()
+    pid, holder = (slot(repo) / "holder").read_text().split()
+    assert pid.isdigit() and holder == str(repo)
+
+
+def test_warm_skips_while_another_check_holds_the_slot(repo):
+    slot(repo).mkdir()
+    with (slot(repo) / "lock").open("w") as held:
+        fcntl.flock(held, fcntl.LOCK_EX)
+        _, done = hook(repo, "--warm", base=None, env=WHERE)
+
+    assert where(repo) == []
+    assert "skips" in done.stderr
+
+
+def test_warm_builds_nothing_once_another_check_has_built_the_slot(repo):
+    # bin/new-worktree asked before its job waited in heavy's queue.
+    (slot(repo) / "target/debug").mkdir(parents=True)
+
+    _, done = hook(repo, "--warm", base=None, env=WHERE)
+
+    assert where(repo) == []
+    assert "is warm" in done.stderr
+
+
+def test_reset_slot_empties_the_slot_but_keeps_its_lock(repo):
+    for part in ("tree/x", "target/debug/x", "index"):
+        (slot(repo) / part).parent.mkdir(parents=True, exist_ok=True)
+        (slot(repo) / part).write_text("")
+    (slot(repo) / "lock").write_text("")
+    lock = (slot(repo) / "lock").stat().st_ino
+
+    hook(repo, "--reset-slot", base=None)
+
+    assert sorted(p.name for p in slot(repo).iterdir()) == ["lock"]
+    assert (slot(repo) / "lock").stat().st_ino == lock
+
+
+def test_reset_slot_waits_for_the_check_that_holds_it(repo):
+    (slot(repo) / "target").mkdir(parents=True)
+    env = hook_env(repo, None, None)
+    with (slot(repo) / "lock").open("w") as held:
+        fcntl.flock(held, fcntl.LOCK_EX)
+        reset = subprocess.Popen(
+            [str(repo / "bin/agent-pre-commit"), "--reset-slot"],
+            cwd=repo,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            while reset.poll() is None and not blocked_in_flock(reset.pid):
+                pass
+            kept_while_held = (slot(repo) / "target").exists()
+        except BaseException:
+            reset.kill()
+            reset.wait()
+            raise
+    out, err = reset.communicate()
+
+    assert kept_while_held
+    assert reset.returncode == 0, out + err
+    assert not (slot(repo) / "target").exists()
 
 
 def test_a_failed_warm_build_stops_with_cargos_status(repo):
@@ -1395,6 +1698,32 @@ def test_a_failed_warm_build_stops_with_cargos_status(repo):
     assert (repo.parent / "calls").read_text().splitlines() == [
         "cargo nextest run --cargo-quiet --no-run"
     ]
+
+
+def test_slot_cold_says_whether_the_slot_has_a_build(repo):
+    _, done = hook(repo, "--slot-cold", base=None)
+    assert done.stdout.strip() == str(slot(repo))
+
+    (slot(repo) / "target/debug").mkdir(parents=True)
+    hook(repo, "--slot-cold", base=None, code=1)
+
+
+def test_the_slot_defaults_to_the_workspaces_cache_named_for_the_machine(repo):
+    (repo.parent / "cache").mkdir()
+    host = os.uname().nodename
+
+    _, done = hook(repo, "--slot-cold", base=None, env={"FILEDRAWER_CHECK_SLOT": None})
+
+    assert done.stdout.strip() == str(repo.parent / f"cache/repo/check-slot-{host}")
+
+
+def test_without_a_cache_the_slot_defaults_to_tmpdir(repo):
+    common = str((repo / ".git").resolve())
+    digest = hashlib.sha256(common.encode()).hexdigest()[:16]
+
+    _, done = hook(repo, "--slot-cold", base=None, env={"FILEDRAWER_CHECK_SLOT": None})
+
+    assert done.stdout.strip() == str(repo.parent / f"tmp/filedrawer-slot-{digest}")
 
 
 def test_git_in_the_check_folder_finds_no_repo(repo):
@@ -1477,15 +1806,19 @@ def test_the_checks_processes_dont_hold_the_lock(repo):
 
 
 def blocked_in_flock(pid: int) -> bool:
-    """Whether a child of process `pid` is a flock that waits."""
-    children = Path(f"/proc/{pid}/task/{pid}/children").read_text().split()
+    """Whether a descendant of process `pid` is a flock that waits. One that exits
+    while this reads it reads as gone (ENOENT or ESRCH)."""
+    try:
+        children = Path(f"/proc/{pid}/task/{pid}/children").read_text().split()
+    except OSError:
+        return False
     for child in children:
         try:
             comm = Path(f"/proc/{child}/comm").read_text().strip()
             state = Path(f"/proc/{child}/stat").read_text().rsplit(")", 1)[1].split()[0]
-        except FileNotFoundError:
+        except OSError:
             continue
-        if comm == "flock" and state == "S":
+        if (comm == "flock" and state == "S") or blocked_in_flock(int(child)):
             return True
     return False
 
@@ -1600,3 +1933,111 @@ def test_commit_needs_queue_says_no_when_checks_needed_fails(repo):
     commit(repo)
     change(repo, "crates/app/src/lib.rs", "pub fn f() {}\n")
     assert will_queue(repo) == 1
+
+
+# The leaks themselves, with real cargo on a crate of no dependencies, so each test
+# builds in seconds: a worktree and its check sharing one target reused each other's
+# builds (#146).
+
+REAL = {
+    "Cargo.toml": '[workspace]\nresolver = "3"\nmembers = ["crates/*"]\n',
+    "crates/app/Cargo.toml": (
+        '[package]\nname = "app"\nversion = "0.1.0"\nedition = "2024"\n'
+    ),
+    "crates/app/src/lib.rs": (
+        'pub const CODE: &str = "head";\n'
+        'pub const TEXT: &str = include_str!("../../../docs/text.md");\n'
+    ),
+    "crates/app/tests/it.rs": (
+        '#[test]\nfn code_is_heads() {\n    assert_eq!(app::CODE, "head");\n}\n'
+        # So the binary holds the text, for a test to look for it there.
+        "#[test]\nfn text_is_there() {\n    assert!(!app::TEXT.is_empty());\n}\n"
+    ),
+    "docs/text.md": "head\n",
+    "bin/pytest": "#!/bin/sh\n",
+    ".gitignore": "target/\nCargo.lock\n",
+}
+
+
+@pytest.fixture
+def real(tmp_path) -> Path:
+    if shutil.which("cargo") is None or shutil.which("cargo-nextest") is None:
+        pytest.skip("needs cargo and cargo-nextest")
+    root = tmp_path / "real"
+    for name, text in REAL.items():
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+        if text.startswith("#!"):
+            path.chmod(0o755)
+    shutil.copy(REPO / "bin/agent-pre-commit", root / "bin/agent-pre-commit")
+    git(root, "init", "-q")
+    git(root, "config", "user.name", "t")
+    git(root, "config", "user.email", "t@t")
+    commit(root, "init")
+    return root
+
+
+def real_env(root: Path) -> dict:
+    (root.parent / "tmp").mkdir(exist_ok=True)
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith(("GIT_", "CARGO_TARGET_DIR"))
+        and k not in ("CHECK_BASE", "CHECK_QUEUE_EXIT", "CHECK_TIMINGS")
+    }
+    return env | {
+        "TMPDIR": str(root.parent / "tmp"),
+        "FILEDRAWER_CHECK_SLOT": str(root.parent / "slot"),
+    }
+
+
+def real_check(root: Path) -> subprocess.CompletedProcess:
+    """The full check, every check forced (no CHECK_BASE), with real cargo."""
+    return subprocess.run(
+        [str(root / "bin/agent-pre-commit")],
+        cwd=root,
+        env=real_env(root),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def worktree_build(root: Path) -> Path:
+    """The worktree's own build, as an agent's test run makes it, into its target;
+    the path of the integration-test binary it built."""
+    done = subprocess.run(
+        ["cargo", "nextest", "run", "--cargo-quiet", "--no-run"],
+        cwd=root,
+        env=real_env(root),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert done.returncode == 0, done.stdout + done.stderr
+    deps = root / "target/debug/deps"
+    built = [p for p in deps.glob("it-*") if p.suffix != ".d" and os.access(p, os.X_OK)]
+    return max(built, key=lambda p: p.stat().st_mtime_ns)
+
+
+def test_a_check_after_the_worktree_built_unstaged_code_checks_the_staged_code(real):
+    first = real_check(real)
+    assert first.returncode == 0, first.stdout + first.stderr
+    lib = real / "crates/app/src/lib.rs"
+    lib.write_text(lib.read_text().replace('"head"', '"unstaged"'))
+    worktree_build(real)
+
+    again = real_check(real)
+
+    assert again.returncode == 0, again.stdout + again.stderr
+
+
+def test_a_worktree_build_after_a_check_builds_the_worktrees_own_text(real):
+    first = real_check(real)
+    assert first.returncode == 0, first.stdout + first.stderr
+    (real / "docs/text.md").write_text("worktree-edit\n")
+
+    binary = worktree_build(real)
+
+    assert b"worktree-edit" in binary.read_bytes()

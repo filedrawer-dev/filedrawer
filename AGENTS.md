@@ -144,7 +144,7 @@ The commit hook's `bin/sentence-lines` keeps it that way and leaves entries as t
 
 ## Checks
 
-Start a worktree with `bin/new-worktree TOPIC` (`-h`): it adds `../filedrawer-wt-TOPIC` beside the main tree and starts its warm build in the background, which sccache makes quick, then a second one of the folder the commit checks build in (`bin/agent-pre-commit --warm`), so the first commit doesn't build there cold.
+Start a worktree with `bin/new-worktree TOPIC` (`-h`): it adds `../filedrawer-wt-TOPIC` beside the main tree and starts its warm build in the background, which sccache makes quick, then, while the commit checks' slot (below) holds no build, a second one there (`bin/agent-pre-commit --warm`), so the first commit doesn't build cold.
 For a change with no build input (below), such as most of `docs/`, `bin/` and `ops/`, add `--no-build`, since its commits run no Rust check and so need no build.
 `bin/checks-needed --why PATH` says whether a path is a build input.
 
@@ -165,7 +165,9 @@ A commit whose check will wait there (clippy, the real-Caddy tests, or a change 
 Every check runs without `CHECK_BASE` (CI, an agent without llm-toolbox, or no commit known to pass), when nothing differs from it, when the change touches those rules, when git can't diff against it, and when `bin/checks-needed` is missing, fails or runs past 60 s.
 A small fix commit gets clippy and the skills check through `bin/agent-quick-check`.
 CI runs all of them.
-The checks run on a copy of what's staged in `$TMPDIR/filedrawer-check-<hash>/`, one per worktree, which each run updates in place so cargo rebuilds only what changed, and removes once its worktree is gone; a check of a worktree waits, saying so, while another check of it runs.
+The checks run on a copy of what's staged in `$TMPDIR/filedrawer-check-<hash>/`, one per worktree, which each run updates in place, and removes once its worktree is gone; a check of a worktree waits, saying so, while another check of it runs.
+The cargo checks build in one check slot for the repo, `../cache/filedrawer/check-slot-<machine>/` beside the main tree, a tree and a target of its own that every worktree's checks share, brought to what's staged the same way, so cargo rebuilds only what differs from the last check (#146): a target that two trees built into leaked builds between them, so a check could pass on unstaged code.
+A check waits, saying who holds it, while another worktree's check builds there, and a commit that builds nothing never waits on it; `bin/agent-pre-commit --slot-cold` prints its path, and `bin/agent-pre-commit --reset-slot` empties it once no check holds it, at the cost of one cold build.
 A push to main runs `.githooks/pre-push` (`bin/git-pre-push`), which refuses a commit whose skills are out of step with origin's tags.
 Run `cargo fmt` after each batch of edits to `.rs` files: otherwise the hook reformats them at commit, and edits you make after that no longer match the text you hold.
 `python3 install.py` enables the hooks once per clone and installs cargo-nextest and sqlx-cli; sandbox-setup runs it after a recreate.

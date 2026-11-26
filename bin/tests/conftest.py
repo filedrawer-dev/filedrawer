@@ -116,6 +116,15 @@ def own_tmpdir(tmp_path_factory, monkeypatch):
     monkeypatch.setenv("TMPDIR", str(tmp_path_factory.mktemp("tmpdir")))
 
 
+@pytest.fixture(autouse=True)
+def own_check_slot(tmp_path_factory, monkeypatch):
+    """Each test's processes get a check slot of their own (bin/agent-pre-commit), so a
+    hook a test runs never brings the real one, in the workspace's cache/, to its own
+    scratch tree."""
+    slot = tmp_path_factory.mktemp("slot") / "check-slot"
+    monkeypatch.setenv("FILEDRAWER_CHECK_SLOT", str(slot))
+
+
 CADDY_SCRIPT = Path(__file__).resolve().parents[1] / "caddy"
 # bin/caddy's exit status when Caddy can't be had on this machine (no network).
 CADDY_UNAVAILABLE = 69

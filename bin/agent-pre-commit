@@ -18,14 +18,36 @@
 # lock's fd, since a process a check leaves running, such as the sccache server, would
 # otherwise hold it. Each run first removes the folders of worktrees that are gone,
 # such as those wt-ship landed, unless their lock is held. Each check's output shows
-# only when it fails. They run one after the other, since cargo locks target/ anyway.
+# only when it fails. They run one after the other.
+# The cargo checks build elsewhere: in the check slot, one tree and its own target for
+# the whole repo on this machine, which every worktree's checks share (#146). Two trees
+# on one target leak builds into each other, since cargo calls a unit fresh when no
+# source is newer than its last build, whichever tree ran it: a check could pass on
+# unstaged code the worktree had built, and a worktree's build after a check kept the
+# check's copy of the files a crate embeds from outside its folder (skills/,
+# docs/entry-format.md), which cargo tracks by absolute path. The slot's tree, like the
+# folder, is brought to the index through a private index, so only read-tree writes it
+# and every change of contents gets a new mtime, which is all cargo's rule needs; at one
+# path it keeps the incremental cache, and it stays warm across worktrees, so a check
+# rebuilds what differs from the last one. It is $FILEDRAWER_CHECK_SLOT when set (CI
+# sets it beside its checkout); else cache/<repo>/check-slot-<machine> beside the main
+# tree when the workspace has a cache/ there (on the host disk; no parent holds a .env
+# or clippy.toml); else $TMPDIR/filedrawer-slot-<hash of the common git dir>. The
+# checks never see the variable. A run takes the slot's lock (its own file, fd 8) only
+# for the cargo block, after the queue exit, so a check that builds nothing never
+# touches it; one that waits says who holds it, its wait is timed as slot-wait, and the
+# cargo commands run without the fd, as above. Cargo deletes no old build, so once a day
+# a slot whose target passes 20 GB starts over, and that check builds cold. A cargo
+# failure names the slot and how to reset it: --reset-slot empties it once no check
+# holds it, keeping its lock file, which deleting the folder by hand would replace
+# under a running check.
 # bin/tests, the tests of the hook scripts, run through bin/pytest, uvx with a
 # pinned pytest and the plugins bin/tests/pytest.ini uses, so the host needs no venv.
 # Commits and wt-ship's landing checks run the copy of this script in the tree they
 # check, through the link
 # .githooks/agent-pre-commit, so a commit that changes it, such as for a new plugin, is
-# checked by its own version. The Rust checks wait for Cargo.toml, and share the repo's
-# target/ so dependencies build once. The tests run under cargo-nextest, which prints
+# checked by its own version. The Rust checks wait for Cargo.toml, and build in the
+# slot. The tests run under cargo-nextest, which prints
 # only the failures and a summary (.config/nextest.toml); it skips doctests, so cargo
 # test --doc runs those. nextest builds first, apart from the run, and each check's
 # seconds go to the file $CHECK_TIMINGS names, when agent-commit-gate names one: the
@@ -44,10 +66,13 @@
 # these rules, when git can't diff against it, and when bin/checks-needed is missing,
 # fails or runs past 60 s. agent-commit-gate keeps the record of passed trees; this
 # script keeps none.
-# --warm, which bin/new-worktree starts in a new tree, brings the folder to the index
-# under the lock, then, with the lock let go, builds there what the checks build, the
-# tests and clippy, and exits with the first failure's status. It checks nothing, so
-# it ignores CHECK_BASE and never asks for heavy's queue, which its caller is in.
+# --warm, which bin/new-worktree starts in a new tree while the slot is cold, brings
+# the slot to the index and builds there what the checks build, the tests and clippy,
+# and exits with the first failure's status; when another check holds the slot, it
+# skips, since that check warms it. It checks nothing, so it ignores CHECK_BASE and
+# never asks for heavy's queue, which its caller is in; when the slot was built since
+# bin/new-worktree asked, it builds nothing. --slot-cold prints the slot's path and
+# exits 0 when it holds no build yet, else 1.
 # --quick runs clippy alone, for bin/agent-quick-check and bin/agent-commit-check, and
 # --quick --routes, for the second, also the routes test when the router or a document
 # naming routes changed (bin/checks-needed's `routes`), so a new route nobody named
@@ -90,6 +115,8 @@
 set -e
 quick=
 warm=
+slot_cold=
+reset_slot=
 routes=
 rules=
 mods=
@@ -98,6 +125,8 @@ for arg in "$@"; do
   case "$arg" in
     --quick) quick=1 ;;
     --warm) warm=1 ;;
+    --slot-cold) slot_cold=1 ;;
+    --reset-slot) reset_slot=1 ;;
     --routes) routes=1 ;;
     --rules) rules=1 ;;
     --mods) mods=1 ;;
@@ -107,6 +136,80 @@ done
 repo=$(git rev-parse --show-toplevel)
 tmp=${TMPDIR:-/tmp}
 state="$tmp/filedrawer-check-$(printf %s "$repo" | sha256sum | cut -c1-16)"
+gitdir=$(git -C "$repo" rev-parse --absolute-git-dir)
+# The check slot, one per repo and machine, where every cargo check builds (#146).
+common=$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir)
+main=$(dirname "$common")
+if [ -n "${FILEDRAWER_CHECK_SLOT:-}" ]; then
+  slot=$FILEDRAWER_CHECK_SLOT
+elif [ -d "$(dirname "$main")/cache" ]; then
+  slot="$(dirname "$main")/cache/$(basename "$main")/check-slot-$(uname -n)"
+else
+  slot="$tmp/filedrawer-slot-$(printf %s "$common" | sha256sum | cut -c1-16)"
+fi
+# Bring the slot's tree to the tree $1, through the slot's own index, as the
+# per-worktree folder is brought below. Run it holding the slot's lock (fd 8).
+sync_slot() {
+  mkdir -p "$slot/tree"
+  rm -f "$slot/index.lock"
+  GIT_INDEX_FILE="$slot/index" git --git-dir="$gitdir" --work-tree="$slot/tree" \
+    read-tree --reset -u "$1"
+  GIT_INDEX_FILE="$slot/index" git --git-dir="$gitdir" --work-tree="$slot/tree" \
+    clean -ffdxq
+}
+# Cargo as the checks run it in the slot: without the slot's lock (fd 8), which a
+# process it leaves running, such as the sccache server, would otherwise hold.
+slot_cargo() { cargo "$@" 8>&-; }
+# Open the slot's lock as fd 8, unlocked.
+open_slot() {
+  mkdir -p "$slot"
+  exec 8>"$slot/lock"
+}
+# Holding the lock: record who holds it, bring the slot to the tree $1, and work
+# there, cargo building into the slot's target.
+enter_slot() {
+  printf '%s %s\n' "$$" "$repo" >"$slot/holder"
+  sync_slot "$1"
+  export CARGO_TARGET_DIR="$slot/target"
+  cd "$slot/tree"
+}
+# --reset-slot empties the slot, once no check holds it; its lock file stays, so a
+# check that waits for it keeps the same lock.
+if [ -n "$reset_slot" ]; then
+  open_slot
+  if ! flock -n 8; then
+    echo "agent-pre-commit: --reset-slot waits for the check that holds the check slot $slot" >&2
+    flock 8
+  fi
+  find "$slot" -mindepth 1 -maxdepth 1 ! -name lock -exec rm -rf {} +
+  echo "agent-pre-commit: emptied the check slot $slot; the next check builds it cold" >&2
+  exit 0
+fi
+if [ -n "${slot_cold:-}" ]; then
+  echo "$slot"
+  if [ -d "$slot/target/debug" ]; then
+    exit 1
+  fi
+  exit 0
+fi
+# --warm builds in the slot what the checks build there, unless another check holds
+# it, whose build warms it as well.
+if [ -n "$warm" ]; then
+  open_slot
+  if ! flock -n 8; then
+    echo "agent-pre-commit: --warm skips: another check holds the check slot $slot and warms it" >&2
+    exit 0
+  fi
+  # Another check may have built it since bin/new-worktree asked.
+  if [ -d "$slot/target/debug" ]; then
+    echo "agent-pre-commit: --warm builds nothing: the check slot $slot is warm" >&2
+    exit 0
+  fi
+  enter_slot "$(git -C "$repo" write-tree)"
+  slot_cargo nextest run --cargo-quiet --no-run || exit
+  slot_cargo clippy --quiet --all-targets -- -D warnings || exit
+  exit 0
+fi
 if [ -z "${AGENT_PRE_COMMIT_LOCKED:-}" ]; then
   for old in "$tmp"/filedrawer-check-*; do
     if [ "$old" != "$state" ] && [ -f "$old/worktree" ] && [ ! -d "$(cat "$old/worktree")" ]; then
@@ -121,16 +224,6 @@ if [ -z "${AGENT_PRE_COMMIT_LOCKED:-}" ]; then
     flock 9
   fi
   AGENT_PRE_COMMIT_LOCKED=1 sh "$0" "$@" 9>&-
-  # --warm's run above only brought the folder to the index. It builds with the lock
-  # let go, so a commit that needs no build passes meanwhile; cargo's lock on
-  # target/ holds back one that does.
-  if [ -n "$warm" ]; then
-    exec 9>&-
-    export CARGO_TARGET_DIR="$repo/target"
-    cd "$state/tree"
-    cargo nextest run --cargo-quiet --no-run || exit
-    cargo clippy --quiet --all-targets -- -D warnings || exit
-  fi
   exit
 fi
 unset AGENT_PRE_COMMIT_LOCKED
@@ -142,7 +235,6 @@ trap 'exit 130' INT TERM HUP
 # stat data lets read-tree rewrite only the files that differ. A lock file a killed
 # run left would stop every later one, and this run holds the folder's lock.
 staged=$(git -C "$repo" write-tree)
-gitdir=$(git -C "$repo" rev-parse --absolute-git-dir)
 in_tree() {
   GIT_INDEX_FILE="$state/index" git --git-dir="$gitdir" --work-tree="$tree" "$@"
 }
@@ -150,10 +242,6 @@ mkdir -p "$tree"
 rm -f "$state/index.lock"
 in_tree read-tree --reset -u "$staged"
 in_tree clean -ffdxq
-# --warm checks nothing: the outer run builds once the folder is brought to the index.
-if [ -n "$warm" ]; then
-  exit 0
-fi
 need_every_check() {
   for check in rust bin-tests skills routes py-rules sh-rules test-mods caddy; do
     echo "$check $1"
@@ -190,7 +278,7 @@ cd "$tree"
 # The timings file is this run's alone: a check it starts, such as the bin tests that
 # run this hook on fakes, would write its own there.
 timings_file=${CHECK_TIMINGS:-}
-unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_OBJECT_DIRECTORY GIT_PREFIX CHECK_BASE CHECK_QUEUE_EXIT CHECK_TIMINGS
+unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_OBJECT_DIRECTORY GIT_PREFIX CHECK_BASE CHECK_QUEUE_EXIT CHECK_TIMINGS FILEDRAWER_CHECK_SLOT
 failed=0
 # Run CMD, then write its seconds, to the millisecond, as `NAME SECONDS` to the file
 # CHECK_TIMINGS names, which agent-commit-gate hands each check, shows in its pass line
@@ -270,24 +358,55 @@ if [ -z "$quick" ] && needs bin-tests; then
   # shellcheck disable=SC2086  # paths without spaces, one word each
   timed bin-tests bin/pytest $bin_tests >"$logs/pytest" 2>&1 || { cat "$logs/pytest"; failed=1; }
 fi
+# The slot's lock is fd 8, from the cargo block on. A waiting check names who holds it.
+# shellcheck disable=SC2329  # timed runs it
+take_slot() {
+  if ! flock -n 8; then
+    holder=$(cat "$slot/holder" 2>/dev/null) || holder=
+    case "$holder" in
+      *' '*) holder="PID ${holder%% *} for ${holder#* }" ;;
+      *) holder="another check" ;;
+    esac
+    echo "agent-pre-commit: waits for the check slot $slot, held by $holder" >&2
+    flock 8
+  fi
+}
+# Cargo deletes no old build, so the slot's target grows with every worktree's
+# variants: once a day, past 20 GB, it starts over, at the cost of one cold build.
+bound_slot() {
+  if [ -n "$(find "$slot/size-checked" -mmin -1440 2>/dev/null)" ]; then
+    return 0
+  fi
+  : >"$slot/size-checked"
+  [ -d "$slot/target" ] || return 0
+  gb=$(du -s --apparent-size --block-size=1G "$slot/target" | cut -f1)
+  if [ "$gb" -gt 20 ]; then
+    echo "agent-pre-commit: the check slot's target holds $gb GB, past 20, so it starts over, and this check builds cold" >&2
+    rm -rf "$slot/target"
+  fi
+}
 if [ -f Cargo.toml ] && needs rust; then
   queue_first rust
-  export CARGO_TARGET_DIR="$repo/target"
+  open_slot
+  timed slot-wait take_slot
+  bound_slot
+  enter_slot "$staged"
+  cargo_failed=0
   if [ -z "$quick" ]; then
-    if ! cargo nextest --version >/dev/null 2>&1; then
+    if ! slot_cargo nextest --version >/dev/null 2>&1; then
       echo "COMMIT REFUSED: cargo-nextest is missing; install it with: cargo install cargo-nextest --locked" >&2
       exit 1
     fi
     # Built first, apart, so the timings tell compiling from running.
-    if timed nextest-build cargo nextest run --cargo-quiet --no-run >"$logs/build" 2>&1; then
-      timed nextest cargo nextest run --cargo-quiet >"$logs/test" 2>&1 || { cat "$logs/test"; failed=1; }
+    if timed nextest-build slot_cargo nextest run --cargo-quiet --no-run >"$logs/build" 2>&1; then
+      timed nextest slot_cargo nextest run --cargo-quiet >"$logs/test" 2>&1 || { cat "$logs/test"; cargo_failed=1; }
     else
       cat "$logs/build"
-      failed=1
+      cargo_failed=1
     fi
-    timed doctest cargo test --doc --quiet >"$logs/doc" 2>&1 || { cat "$logs/doc"; failed=1; }
+    timed doctest slot_cargo test --doc --quiet >"$logs/doc" 2>&1 || { cat "$logs/doc"; cargo_failed=1; }
   fi
-  timed clippy cargo clippy --quiet --all-targets -- -D warnings >"$logs/clippy" 2>&1 || { cat "$logs/clippy"; failed=1; }
+  timed clippy slot_cargo clippy --quiet --all-targets -- -D warnings >"$logs/clippy" 2>&1 || { cat "$logs/clippy"; cargo_failed=1; }
   # sqlx's own message names `cargo sqlx prepare`, which skips the database rebuild
   # this repo's refresh does. Its online and SQLX_OFFLINE messages both end so.
   if grep -q 'to update the query cache' "$logs/clippy"; then
@@ -302,8 +421,12 @@ if [ -f Cargo.toml ] && needs rust; then
     if needs skills; then
       filter="$filter | test(/^skill_folders::/)"
     fi
-    timed routes cargo nextest run --cargo-quiet -p filedrawer-server \
-      -E "$filter" >"$logs/routes" 2>&1 || { cat "$logs/routes"; failed=1; }
+    timed routes slot_cargo nextest run --cargo-quiet -p filedrawer-server \
+      -E "$filter" >"$logs/routes" 2>&1 || { cat "$logs/routes"; cargo_failed=1; }
+  fi
+  if [ "$cargo_failed" -ne 0 ]; then
+    failed=1
+    echo "agent-pre-commit: the cargo checks ran in the check slot $slot; if a failure looks like the slot's own, such as a missing file, run bin/agent-pre-commit --reset-slot and commit again: the next check rebuilds it" >&2
   fi
 fi
 exit $failed

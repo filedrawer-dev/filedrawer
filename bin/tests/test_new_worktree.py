@@ -1,6 +1,6 @@
 """Tests for bin/new-worktree, which adds a worktree beside the main tree and starts its
-warm build, then one of the commit checks' folder, in the background, unless
---no-build. Each runs a copy of the script
+warm build, then, while it is cold, one of the commit checks' slot, in the background,
+unless --no-build. Each runs a copy of the script
 committed to a scratch repo, since it finds its repo from its own path, with a fake
 bgrun first on PATH that notes its arguments."""
 
@@ -86,27 +86,66 @@ def test_adds_a_worktree_beside_the_main_tree_and_starts_its_warm_build(repo):
     assert "waitone --pid 4242" in done.stdout
 
 
-def test_a_second_job_warms_the_check_folder_where_the_tree_can(repo):
-    # The commit checks build in a folder of their own (bin/agent-pre-commit), which
-    # a build of the tree alone leaves cold for the first commit and landing. A copy
-    # that predates --warm would take it for the full check.
-    (repo.main / "bin/agent-pre-commit").write_text("case x in --quick) ;; esac\n")
-    git(repo.main, "add", "bin")
-    git(repo.main, "commit", "-q", "-m", "old check")
-    (repo.main / "bin/agent-pre-commit").write_text("case x in --warm) ;; esac\n")
-    git(repo.main, "commit", "-qam", "new check")
-    for topic, at in (("new", "HEAD"), ("old", "HEAD~1"), ("none", "HEAD~2")):
+def checks_script(cold: bool) -> str:
+    """A bin/agent-pre-commit that takes --slot-cold, saying the slot is cold or not."""
+    return (
+        "#!/bin/sh\n"
+        'case "$1" in --slot-cold) echo /the/slot; '
+        f"exit {0 if cold else 1} ;; --warm) ;; esac\n"
+    )
+
+
+def test_a_second_job_warms_the_check_slot_only_while_it_is_cold(repo):
+    # The commit checks build in a check slot of their own (bin/agent-pre-commit),
+    # which a build of the tree alone leaves cold for the first commit and landing.
+    # A copy whose --warm predates the slot would warm the tree's own target from its
+    # check folder, the leak the slot ends (#146); one with neither would take
+    # --warm for the full check.
+    check = repo.main / "bin/agent-pre-commit"
+    for message, text in (
+        ("no warm", "#!/bin/sh\ncase x in --quick) ;; esac\n"),
+        ("old warm", "#!/bin/sh\ncase x in --warm) ;; esac\n"),
+        ("slot, warm", checks_script(cold=False)),
+        ("slot, cold", checks_script(cold=True)),
+    ):
+        check.write_text(text)
+        check.chmod(0o755)
+        git(repo.main, "add", "bin")
+        git(repo.main, "commit", "-q", "-m", message)
+    trees = (
+        ("cold", "HEAD"),
+        ("warm", "HEAD~1"),
+        ("old", "HEAD~2"),
+        ("none", "HEAD~3"),
+    )
+    for topic, at in trees:
         done = repo.run(topic, "--at", at)
         assert done.returncode == 0, done.stderr
         assert "waitone --pid 4242" in done.stdout
-    new, old, none = (repo.tmp / f"proj-wt-{t}" for t in ("new", "old", "none"))
+        # Only a tree that has the slot and finds it built says it is warm.
+        assert ("is warm" in done.stdout) == (topic == "warm"), done.stdout
+    cold, warm, old, none = (repo.tmp / f"proj-wt-{t}" for t, _ in trees)
     build = "-- heavy -- cargo nextest run --cargo-quiet --no-run"
     assert repo.log.read_text().splitlines() == [
-        f"bgrun -o {new}/target/warm.log -C {new} {build}",
-        f"bgrun -o {new}/target/warm-checks.log -C {new} -- heavy -- bin/agent-pre-commit --warm",
+        f"bgrun -o {cold}/target/warm.log -C {cold} {build}",
+        f"bgrun -o {cold}/target/warm-checks.log -C {cold} -- heavy -- bin/agent-pre-commit --warm",
+        f"bgrun -o {warm}/target/warm.log -C {warm} {build}",
         f"bgrun -o {old}/target/warm.log -C {old} {build}",
         f"bgrun -o {none}/target/warm.log -C {none} {build}",
     ]
+
+
+def test_with_the_slot_warm_it_says_so(repo):
+    check = repo.main / "bin/agent-pre-commit"
+    check.write_text(checks_script(cold=False))
+    check.chmod(0o755)
+    git(repo.main, "add", "bin")
+    git(repo.main, "commit", "-q", "-m", "slot")
+
+    done = repo.run("t")
+
+    assert done.returncode == 0, done.stderr
+    assert "/the/slot is warm" in done.stdout
 
 
 def test_no_build_makes_the_tree_and_starts_no_build(repo):
