@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""Run ruff at the version .pre-commit-config.yaml's ruff hooks pin.
+
+    bin/ruff ARGS...    run `uvx --quiet ruff@VERSION ARGS...`: `bin/ruff check --fix`,
+                        `bin/ruff format`, `bin/ruff check -h` (ruff's own help)
+    bin/ruff -h         print this help
+
+Run ruff by hand this way rather than through a bare `uvx ruff`: a newer ruff checks
+rules the hook doesn't, and its `--fix` once rewrote 28 files no change touched.
+
+The version lives only in the hooks' entries (`uvx ruff@VERSION check|format`), which
+the commit hook and CI run; this script reads it from there on each run. Every
+argument goes to ruff, and the exit status is ruff's.
+
+Exit status: ruff's, or 2, running nothing, when the config is missing, a ruff entry
+pins no version, or the entries name two different ones.
+"""
+
+import os
+import re
+import sys
+from pathlib import Path
+
+CONFIG = Path(__file__).resolve().parents[1] / ".pre-commit-config.yaml"
+ENTRY = re.compile(r"^\s*entry:\s*(uvx ruff\b.*)$", re.M)
+PIN = re.compile(r"uvx ruff@(\S+)\s")
+
+
+def fail(why: str) -> int:
+    print(f"bin/ruff: {why}", file=sys.stderr)
+    return 2
+
+
+def main(argv: list[str]) -> int:
+    if argv[:1] in (["-h"], ["--help"]):
+        print(__doc__)
+        return 0
+    try:
+        text = CONFIG.read_text()
+    except OSError as error:
+        return fail(f"can't read {CONFIG} for ruff's version: {error.strerror}")
+    pins = set()
+    for entry in ENTRY.findall(text):
+        pin = PIN.match(entry)
+        if pin is None:
+            return fail(
+                f"{CONFIG} runs `{entry}`, which pins no version; "
+                "give every ruff entry the `uvx ruff@VERSION` the others name"
+            )
+        pins.add(pin[1])
+    if len(pins) != 1:
+        found = ", ".join(sorted(pins)) or "none"
+        return fail(
+            f"{CONFIG} should pin one ruff version in its `uvx ruff@VERSION` "
+            f"entries, but names {found}; make them agree"
+        )
+    os.execvp("uvx", ["uvx", "--quiet", f"ruff@{pins.pop()}", *argv])
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

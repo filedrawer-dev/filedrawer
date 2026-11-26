@@ -152,6 +152,7 @@ The commit hook's `bin/sentence-lines` keeps it that way and leaves entries as t
 ## Checks
 
 Start a worktree with `bin/new-worktree TOPIC` (`-h`): it adds `../filedrawer-wt-TOPIC` beside the main tree and starts its warm build in the background, which sccache makes quick, then, while the commit checks' slot (below) holds no build, a second one there (`bin/agent-pre-commit --warm`), so the first commit doesn't build cold.
+It starts at the main tree's HEAD, which may hold landings not yet pushed; for a pull request's branch, `git fetch` first and add `--at origin/main`, so the branch holds only its own commits.
 For a change with no build input (below), such as most of `docs/`, `bin/` and `ops/`, add `--no-build`, since its commits run no Rust check and so need no build.
 `bin/checks-needed --why PATH` says whether a path is a build input.
 
@@ -224,6 +225,7 @@ The first commit on a machine without network access is refused; `SKIP=lychee gi
 So is a commit there that stages a shell script while uv's cache lacks the pinned shellcheck; `SKIP=shellcheck git commit` skips only that one, and CI still runs it.
 The same goes for zizmor and a staged workflow: `SKIP=zizmor git commit`.
 To run one of the commit's checks by hand at the version the hook pins, such as shellcheck, actionlint or zizmor, run it through pre-commit: `uvx pre-commit@4.7.0 run <hook id> --files PATH...`, with the hook id from `.pre-commit-config.yaml`.
+Run ruff by hand as `bin/ruff` (`bin/ruff check --fix PATH`, `bin/ruff format PATH`), which runs the version the hooks pin, never a bare `uvx ruff`: a newer ruff checks rules the hook doesn't, and its `--fix` once rewrote 28 files no change touched.
 
 `bin/caddy` does the same for Caddy, pinned by SHA-512, and runs it with the given arguments.
 The tests in `bin/tests` that run a real Caddy against `ops/remote/caddy.sh`'s and `ops/remote/field-test-key.sh`'s config get it through conftest's `real_caddy` fixture, or from `$FILEDRAWER_TEST_CADDY` when that is set.
