@@ -11,6 +11,9 @@ drive-agent, each as a fresh staging account.
     ops/usability-run delete --state FILE       delete it; list its public entries
     ops/usability-run headers RUN_DIR           each fetch of the site in a run
 
+SCENARIO is a path, or a name in the usability folder's scenarios/, with or without
+.json (s14-no-account-claim finds scenarios/s14-no-account-claim.json).
+
 A run makes a staging account (unless the scenario's `token` is "none"), then runs
 `drive-agent run` with ops/usability/setup.py as its setup, the persona and projects
 from the usability folder, the field-test key as {KEY}, and the account's token where
@@ -21,16 +24,18 @@ public (design.md, Accounts); an entry already public stays up as "account delet
 and its ID is added to runs/<date>/public-entries.txt for ops/remove-entries.
 The run's folder is runs/<date>/NAME-HARNESS, with drive-agent's files and
 account.txt: the account's ID, its address's tag and what was deleted. A deletion
-that fails is tried again after a few seconds; when it fails again, the account's
-login stays in account-login.json there (mode 600), and `delete --state` with that
-file finishes it.
+that fails is tried again after a few seconds, and counts as done when the token is
+refused then, since the first try's answer was lost; when it fails again, the
+account's login stays in account-login.json there (mode 600), and `delete --state`
+with that file finishes it.
 
 The account signs up as a person would: a plus-address of the usability mailbox
 (<local>+<NAME>-<random>@<domain>), a random password, the display name Jason Carver
 and the usability invite code, which spares staging's per-IP signup limit
 (design.md, Limits); the verification mail is read over IMAP (INBOX, then Junk) by
 its exact address, then deleted. Every request sends the staging key, an Origin and
-User-Agent filedrawer-usability-run.
+User-Agent filedrawer-usability-run. A request whose connection fails is sent once
+more a second later, and a second failure names both.
 
 `batch` starts each run as the one-run form above, all at once, each logging to
 logs/SCENARIO-HARNESS-NAME.log in the usability folder (an earlier log of that name
@@ -133,6 +138,10 @@ class Failed(Exception):
     """Exit 1."""
 
 
+class TokenRefused(Failed):
+    """The server answered 401 to the account's token."""
+
+
 def usability_dir() -> Path:
     default = WORKSPACE / "keep" / "filedrawer" / "usability"
     return Path(os.environ.get("FILEDRAWER_USABILITY_DIR", default))
@@ -154,6 +163,18 @@ def read_env_file(path: Path) -> dict:
             parts = shlex.split(match[2]) if match[2].strip() else [""]
             values[match[1]] = parts[0] if parts else ""
     return values
+
+
+def scenario_file(given: str) -> Path | None:
+    """The scenario GIVEN names: a path, or a name in scenarios/, with or without
+    .json."""
+    folder = usability_dir() / "scenarios"
+    paths = [Path(given), folder / given, folder / f"{given}.json"]
+    return next((path for path in paths if path.is_file()), None)
+
+
+# Seconds before a request whose connection failed is sent again.
+REQUEST_RETRY_WAIT = 1
 
 
 class Site:
@@ -178,6 +199,20 @@ class Site:
         key: bool = True,
         accept: str = "text/plain",
     ) -> tuple[int, str]:
+        """Sends the request, and once more a second later when the connection
+        fails, as staging's TLS did once mid-handshake."""
+        try:
+            return self.send(method, path, form, token, key, accept)
+        except OSError as first:
+            time.sleep(REQUEST_RETRY_WAIT)
+            try:
+                return self.send(method, path, form, token, key, accept)
+            except OSError as second:
+                raise Failed(
+                    f"{method} {path}: {first}, then a second later: {second}"
+                ) from None
+
+    def send(self, method, path, form, token, key, accept) -> tuple[int, str]:
         kind = (
             http.client.HTTPSConnection
             if self.url.scheme == "https"
@@ -200,8 +235,6 @@ class Site:
             conn.request(method, path, body=body, headers=headers)
             response = conn.getresponse()
             text = response.read().decode(errors="replace")
-        except OSError as error:
-            raise Failed(f"{method} {path}: {error}") from None
         finally:
             conn.close()
         for name, value in response.getheaders():
@@ -388,25 +421,43 @@ def entries(site: Site, login: dict) -> list[str]:
         entries = json.loads(text)["entries"] if status == 200 else None
     except (ValueError, KeyError):
         entries = None
+    if status == 401:
+        raise TokenRefused(f"GET /entries/mine answered {status}")
     if entries is None:
         raise Failed(f"GET /entries/mine answered {status}")
     return [e["id"] for e in entries]
 
 
-def delete_account(site: Site, login: dict) -> list[str]:
+def delete_account(
+    site: Site, login: dict, earlier: list[str] | None = None
+) -> list[str]:
     """Deletes the account; returns the IDs of its entries still up after it. The
     deletion removes every entry not yet public, so each entry is asked for
     anonymously once the account is gone, and one that went public after the listing
     is still found. One the server doesn't answer for stays in the list, to be
-    checked by hand, since the account is gone either way."""
-    listed = entries(site, login)
-    site.cookie = ""
-    log_in(site, login)
-    status, text = site.request(
-        "POST", "/account/delete", {"password": login["password"]}
-    )
-    if status != 200 or "Account deleted" not in text:
-        raise Failed(f"deleting the account answered {status}")
+    checked by hand, since the account is gone either way.
+
+    EARLIER is what a failed attempt listed before it failed (its Failed's
+    `listed`): when the token is refused now, that attempt's deletion went through
+    and only its answer was lost, so those entries are checked."""
+    try:
+        listed = entries(site, login)
+    except TokenRefused:
+        if earlier is None:
+            raise
+        listed = earlier
+    else:
+        try:
+            site.cookie = ""
+            log_in(site, login)
+            status, text = site.request(
+                "POST", "/account/delete", {"password": login["password"]}
+            )
+            if status != 200 or "Account deleted" not in text:
+                raise Failed(f"deleting the account answered {status}")
+        except Failed as error:
+            error.listed = listed
+            raise
     site.cookie = ""
     return [entry for entry in listed if still_up(site, entry)]
 
@@ -473,9 +524,11 @@ def field_test_key(scenario: dict, site: Site) -> str | None:
 def run(args) -> int:
     site = Site(check_base(args.base))
     site.check_staging()
-    scenario_path = Path(args.scenario)
-    if not scenario_path.exists():
-        scenario_path = usability_dir() / "scenarios" / args.scenario
+    scenario_path = scenario_file(args.scenario)
+    if not scenario_path:
+        raise Usage(
+            f"no scenario {args.scenario} here or in {usability_dir() / 'scenarios'}"
+        )
     try:
         scenario = json.loads(scenario_path.read_text())
     except (OSError, ValueError) as error:
@@ -570,16 +623,22 @@ def finish_account(
     deleted = False
     out.mkdir(parents=True, exist_ok=True)
     kept = out / "account-login.json"
+    unkept = None
     try:
+        # The login is kept before the first request, whose own retry waits, so a
+        # stop during any wait leaves it behind. When it can't be, the deletion
+        # still goes ahead.
+        try:
+            write_state(kept, login)
+        except OSError as error:
+            unkept = str(error)
         try:
             public = delete_account(site, login)
         except Failed as first:
-            # A dropped connection or a restart mid-deploy passes in seconds. The
-            # login is kept before the wait, so a stop during it leaves it behind.
-            write_state(kept, login)
+            # A restart mid-deploy passes in seconds.
             time.sleep(RETRY_WAIT)
             try:
-                public = delete_account(site, login)
+                public = delete_account(site, login, getattr(first, "listed", None))
             except Failed as second:
                 why = (
                     str(first)
@@ -587,6 +646,7 @@ def finish_account(
                     else f"{first}, then {second}"
                 )
                 raise Failed(why) from None
+        if not unkept:
             kept.unlink()
         deleted = True
         note.append("deleted: yes")
@@ -600,11 +660,18 @@ def finish_account(
             )
     except Failed as error:
         note.append(f"deleted: no ({error})")
-        note.append(f"login kept: {kept}")
+        if unkept:
+            note.append(f"login not kept: {unkept}")
+            where = f"Its login couldn't be kept in {kept}: {unkept}."
+        else:
+            note.append(f"login kept: {kept}")
+            where = (
+                f"Its login is kept in {kept}: `ops/usability-run delete "
+                f"--state {kept}` deletes it."
+            )
         print(
             f"usability-run: the account {login['id']} wasn't deleted, twice: "
-            f"{error}. Its login is kept in {kept}: `ops/usability-run delete "
-            f"--state {kept}` deletes it.",
+            f"{error}. {where}",
             file=sys.stderr,
         )
     (out / "account.txt").write_text("\n".join(note) + "\n")
@@ -728,11 +795,12 @@ def batch(args) -> int:
                 "NAME lower-case letters, digits and -"
             )
         scenario, harness, name = found.groups()
-        folder = usability_dir() / "scenarios"
-        paths = [Path(scenario), folder / scenario, folder / f"{scenario}.json"]
-        path = next((p for p in paths if p.is_file()), None)
+        path = scenario_file(scenario)
         if not path:
-            raise Usage(f"{spec}: no scenario {scenario} here or in {folder}")
+            raise Usage(
+                f"{spec}: no scenario {scenario} here or in "
+                f"{usability_dir() / 'scenarios'}"
+            )
         runs.append((path, harness, name))
     names = [name for _, _, name in runs]
     twice = sorted({name for name in names if names.count(name) > 1})

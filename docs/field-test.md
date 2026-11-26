@@ -54,9 +54,11 @@ The test agents of a scripted usability run can't: drive-agent runs each as a us
 
 A usability run has Claude Code or Codex, in its own TUI, follow a scripted human through a scenario, such as installing the skills, then dropping a direction whose null result the submit skill should offer to post.
 `ops/usability-run SCENARIO HARNESS NAME` runs one (`-h`), through llm-toolbox's `drive-agent`, which types each human turn once the agent's turn ends and has a simulated human answer what the script leaves open.
+SCENARIO is a path, or a name in the usability folder's `scenarios/`, with or without `.json`.
 
 - Each run gets a fresh staging account, signed up as a person would, with the usability mailbox and invite code in `keep/filedrawer/usability/mail.env`, and deleted at the end; so no run finds another's entries.
   An entry that went public before the end stays up; `ops/remove-entries` (`-h`) takes down the ones the run listed, as the owner, who runs it.
+- The runner's own requests to the site are sent once more, a second later, when the connection fails, as staging's TLS did once on the first request; a second failure names both.
 - The scenarios, the persona and the synthetic projects live in `keep/filedrawer/usability/`, not the repo, which agents under test may browse.
 - The agent runs as a system user named NAME in bwrap: it sees only its home, its network goes through a proxy that refuses GitHub and loopback, and nothing tells it it is tested.
   Use persona-like names (`jason7`), since the agent sees its user's name.

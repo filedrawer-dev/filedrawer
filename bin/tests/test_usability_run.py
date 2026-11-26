@@ -133,6 +133,22 @@ def test_a_key_that_wont_last_is_refused_before_the_run(setting, server, key_fil
     assert not setting["log"].exists()
 
 
+def test_a_bare_scenario_name_finds_its_file_in_scenarios(setting, server):
+    scenario(setting, "s14-no-account.json", turns=["hi"])
+    done = usability_run(
+        setting, "s14-no-account", "claude", "jason3", "--base", server
+    )
+    assert done.returncode == 0, done.stderr
+    argv = json.loads(setting["log"].read_text())["argv"]
+    assert argv[1] == str(setting["folder"] / "scenarios" / "s14-no-account.json")
+
+
+def test_a_scenario_found_nowhere_is_named(setting, server):
+    done = usability_run(setting, "s15-missing", "claude", "jason4", "--base", server)
+    assert done.returncode == 2 and "no scenario s15-missing" in done.stderr
+    assert not setting["log"].exists()
+
+
 def test_a_scenario_without_gated_actions_is_refused(setting, server):
     path = setting["folder"] / "scenarios" / "bare.json"
     path.write_text(json.dumps({"turns": ["hi"], "token": "none"}))
@@ -459,11 +475,53 @@ def load_script():
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)
     module.RETRY_WAIT = 0
+    module.REQUEST_RETRY_WAIT = 0
     return module
 
 
+def dropping_site(drops):
+    """A stand-in site whose first DROPS requests of /staging/status drop the
+    connection without an answer, as staging's TLS did once mid-handshake."""
+    state = {"left": drops}
+
+    class DroppingSite(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            if state["left"] > 0:
+                state["left"] -= 1
+                self.close_connection = True
+                self.connection.close()
+                return
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    return DroppingSite
+
+
+def test_a_request_whose_connection_drops_is_sent_again_a_second_later(monkeypatch):
+    script = load_script()
+    script.REQUEST_RETRY_WAIT = 1
+    waits = []
+    monkeypatch.setattr(script.time, "sleep", waits.append)
+    with serving(dropping_site(1)) as base:
+        script.Site(base).check_staging()
+    assert waits == [1]
+
+
+def test_a_request_that_fails_twice_names_both_failures():
+    script = load_script()
+    with serving(dropping_site(2)) as base, pytest.raises(script.Failed) as failed:
+        script.Site(base).check_staging()
+    message = str(failed.value)
+    assert message.startswith("GET /staging/status: ")
+    assert message.count("closed connection") == 2, message
+
+
 def account_site(logins_to_fail):
-    """A stand-in site whose first LOGINS_TO_FAIL logins drop the connection."""
+    """A stand-in site whose first LOGINS_TO_FAIL logins drop the connection. Each
+    request is sent twice before it fails, so 2 fail one attempt at a deletion."""
     state = {"left": logins_to_fail}
 
     class AccountSite(http.server.BaseHTTPRequestHandler):
@@ -507,7 +565,7 @@ LOGIN = {
 
 def test_an_account_delete_that_fails_once_is_tried_again(tmp_path):
     script = load_script()
-    with serving(account_site(1)) as base:
+    with serving(account_site(2)) as base:
         deleted = script.finish_account(
             script.Site(base), dict(LOGIN), tmp_path / "out", tmp_path, "jason5-claude"
         )
@@ -520,7 +578,7 @@ def test_an_account_that_cant_be_deleted_keeps_its_login_for_delete_state(
     tmp_path, capsys
 ):
     script = load_script()
-    with serving(account_site(2)) as base:
+    with serving(account_site(4)) as base:
         deleted = script.finish_account(
             script.Site(base), dict(LOGIN), tmp_path / "out", tmp_path, "jason5-claude"
         )
@@ -536,18 +594,85 @@ def test_an_account_that_cant_be_deleted_keeps_its_login_for_delete_state(
         assert secret not in err + note
 
 
-def test_a_stop_while_the_deletion_waits_to_retry_keeps_the_login(tmp_path):
+def test_a_stop_while_a_deletion_waits_to_retry_keeps_the_login(tmp_path, monkeypatch):
+    # The first wait is the request's own, inside the first attempt.
     script = load_script()
 
     def stop(seconds):
         raise KeyboardInterrupt
 
-    script.time.sleep = stop
+    monkeypatch.setattr(script.time, "sleep", stop)
     with serving(account_site(1)) as base, pytest.raises(KeyboardInterrupt):
         script.finish_account(
             script.Site(base), dict(LOGIN), tmp_path / "out", tmp_path, "jason5-claude"
         )
     assert json.loads((tmp_path / "out" / "account-login.json").read_text()) == LOGIN
+
+
+def lost_answer_site():
+    """A stand-in site that deletes the account on POST /account/delete but drops
+    the connection before answering; once deleted, the token gets 401 and the
+    session nothing. Entry pub-1 is public, priv-1 isn't."""
+    state = {"deleted": False}
+
+    class LostAnswerSite(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path.startswith("/entries/mine"):
+                self.send_response(401 if state["deleted"] else 200)
+                self.end_headers()
+                if not state["deleted"]:
+                    self.wfile.write(
+                        b'{"entries": [{"id": "pub-1"}, {"id": "priv-1"}]}'
+                    )
+                return
+            up = self.path == "/e/pub-1" or not state["deleted"]
+            self.send_response(200 if up else 404)
+            self.end_headers()
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            if self.path == "/login" and not state["deleted"]:
+                self.send_response(303)
+                self.send_header("Set-Cookie", "__Host-fd_session=s; Path=/")
+            elif self.path == "/account/delete" and not state["deleted"]:
+                state["deleted"] = True
+                self.close_connection = True
+                self.connection.close()
+                return
+            else:
+                self.send_response(303)
+            self.send_header("Location", "/login")
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    return LostAnswerSite
+
+
+def test_a_deletion_whose_answer_was_lost_counts_once_the_token_is_refused(tmp_path):
+    script = load_script()
+    with serving(lost_answer_site()) as base:
+        deleted = script.finish_account(
+            script.Site(base), dict(LOGIN), tmp_path / "out", tmp_path, "jason5-claude"
+        )
+    assert deleted
+    note = (tmp_path / "out" / "account.txt").read_text()
+    assert "deleted: yes" in note and "public entries left: pub-1" in note
+    assert (tmp_path / "public-entries.txt").read_text() == "pub-1\tjason5-claude\n"
+    assert not (tmp_path / "out" / "account-login.json").exists()
+
+
+def test_a_login_that_cant_be_kept_still_lets_the_deletion_go_ahead(tmp_path):
+    script = load_script()
+    out = tmp_path / "out"
+    (out / "account-login.json").mkdir(parents=True)
+    with serving(account_site(0)) as base:
+        deleted = script.finish_account(
+            script.Site(base), dict(LOGIN), out, tmp_path, "jason5-claude"
+        )
+    assert deleted
+    assert "deleted: yes" in (out / "account.txt").read_text()
 
 
 def test_a_batch_shows_each_runs_line_about_a_kept_login(batch_setting, server):
