@@ -44,6 +44,10 @@
 # these rules, when git can't diff against it, and when bin/checks-needed is missing,
 # fails or runs past 60 s. agent-commit-gate keeps the record of passed trees; this
 # script keeps none.
+# --warm, which bin/new-worktree starts in a new tree, brings the folder to the index
+# under the lock, then, with the lock let go, builds there what the checks build, the
+# tests and clippy, and exits with the first failure's status. It checks nothing, so
+# it ignores CHECK_BASE and never asks for heavy's queue, which its caller is in.
 # --quick runs clippy alone, for bin/agent-quick-check and bin/agent-commit-check, and
 # --quick --routes, for the second, also the routes test when the router or a document
 # naming routes changed (bin/checks-needed's `routes`), so a new route nobody named
@@ -85,6 +89,7 @@
 # exit 0.
 set -e
 quick=
+warm=
 routes=
 rules=
 mods=
@@ -92,6 +97,7 @@ caddy=
 for arg in "$@"; do
   case "$arg" in
     --quick) quick=1 ;;
+    --warm) warm=1 ;;
     --routes) routes=1 ;;
     --rules) rules=1 ;;
     --mods) mods=1 ;;
@@ -115,6 +121,16 @@ if [ -z "${AGENT_PRE_COMMIT_LOCKED:-}" ]; then
     flock 9
   fi
   AGENT_PRE_COMMIT_LOCKED=1 sh "$0" "$@" 9>&-
+  # --warm's run above only brought the folder to the index. It builds with the lock
+  # let go, so a commit that needs no build passes meanwhile; cargo's lock on
+  # target/ holds back one that does.
+  if [ -n "$warm" ]; then
+    exec 9>&-
+    export CARGO_TARGET_DIR="$repo/target"
+    cd "$state/tree"
+    cargo nextest run --cargo-quiet --no-run || exit
+    cargo clippy --quiet --all-targets -- -D warnings || exit
+  fi
   exit
 fi
 unset AGENT_PRE_COMMIT_LOCKED
@@ -134,6 +150,10 @@ mkdir -p "$tree"
 rm -f "$state/index.lock"
 in_tree read-tree --reset -u "$staged"
 in_tree clean -ffdxq
+# --warm checks nothing: the outer run builds once the folder is brought to the index.
+if [ -n "$warm" ]; then
+  exit 0
+fi
 need_every_check() {
   for check in rust bin-tests skills routes py-rules sh-rules test-mods caddy; do
     echo "$check $1"

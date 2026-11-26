@@ -17,6 +17,12 @@ bgrun in the new tree, its log in the tree's target/warm.log. The script prints 
 build's PID and doesn't wait: heavy's queue has no time limit. `waitone --pid PID`
 waits for it.
 
+A second job, `heavy -- bin/agent-pre-commit --warm`, its log in target/warm-checks.log,
+then builds the tests and clippy in the folder the commit checks build in, which has
+a path of its own (bin/agent-pre-commit's header), so the first commit and landing
+find it built: built cold, clippy there took 86 to 198 s of a commit's check. A tree
+checked out with --at before --warm existed gets no second job.
+
 --no-build skips it, for a change that touches no build input (AGENTS.md, Checks),
 such as most of docs/, bin/ and ops/: its commits run no Rust check, so the build
 only helps a tool run by hand that builds the server, such as bin/live-preview.
@@ -77,6 +83,25 @@ def main_tree() -> Path:
     return Path(common).parent
 
 
+def background(
+    tree: Path, log: Path, command: list[str]
+) -> subprocess.CompletedProcess:
+    """Start `command` in heavy's queue through bgrun, in `tree`, its output in `log`."""
+    return subprocess.run(
+        ["bgrun", "-o", str(log), "-C", str(tree), "--", "heavy", "--", *command],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def warms_checks(tree: Path) -> bool:
+    """Whether the tree's bin/agent-pre-commit takes --warm: a copy that predates it
+    would take the unknown argument for the full check."""
+    check = tree / "bin/agent-pre-commit"
+    return check.is_file() and "--warm)" in check.read_text()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -133,12 +158,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     (tree / "target").mkdir(exist_ok=True)
     log = tree / "target/warm.log"
-    started = subprocess.run(
-        ["bgrun", "-o", str(log), "-C", str(tree), "--", "heavy", "--"]
-        + ["cargo", "nextest", "run", "--cargo-quiet", "--no-run"],
-        capture_output=True,
-        text=True,
-        check=False,
+    started = background(
+        tree, log, ["cargo", "nextest", "run", "--cargo-quiet", "--no-run"]
     )
     if started.returncode != 0:
         return fail(
@@ -151,6 +172,17 @@ def main(argv: list[str] | None = None) -> int:
         "as the first `heavy --few-seconds` test run should: otherwise that run builds "
         "first and overruns --few-seconds' 60 s"
     )
+    if warms_checks(tree):
+        checks_log = tree / "target/warm-checks.log"
+        checks = background(tree, checks_log, ["bin/agent-pre-commit", "--warm"])
+        if checks.returncode != 0:
+            print(
+                f"new-worktree: the commit checks' warm build didn't start "
+                f"({last_line(checks.stderr)}); the first commit builds them cold",
+                file=sys.stderr,
+            )
+        else:
+            print(f"the commit checks' warm build follows it, log {checks_log}")
     return 0
 
 

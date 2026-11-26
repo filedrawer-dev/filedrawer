@@ -144,7 +144,7 @@ The commit hook's `bin/sentence-lines` keeps it that way and leaves entries as t
 
 ## Checks
 
-Start a worktree with `bin/new-worktree TOPIC` (`-h`): it adds `../filedrawer-wt-TOPIC` beside the main tree and starts its warm build in the background, which sccache makes quick.
+Start a worktree with `bin/new-worktree TOPIC` (`-h`): it adds `../filedrawer-wt-TOPIC` beside the main tree and starts its warm build in the background, which sccache makes quick, then a second one of the folder the commit checks build in (`bin/agent-pre-commit --warm`), so the first commit doesn't build there cold.
 For a change with no build input (below), such as most of `docs/`, `bin/` and `ops/`, add `--no-build`, since its commits run no Rust check and so need no build.
 `bin/checks-needed --why PATH` says whether a path is a build input.
 

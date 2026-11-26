@@ -1357,6 +1357,46 @@ def test_the_check_folder_holds_exactly_what_is_staged(repo):
     assert (tree / "conf/settings.toml").read_text() == ""
 
 
+def test_warm_builds_the_check_folder_and_checks_nothing(repo):
+    # bin/new-worktree runs it, so a new tree's first commit and landing find the
+    # check folder built.
+    hook(
+        repo,
+        "--warm",
+        base=None,
+        env=logging_cargo('echo "$PWD $CARGO_TARGET_DIR $*"'),
+    )
+
+    tree = check_tree(repo).resolve()
+    target = repo / "target"
+    assert (repo.parent / "calls").read_text().splitlines() == [
+        f"{tree} {target} nextest run --cargo-quiet --no-run",
+        f"{tree} {target} clippy --quiet --all-targets -- -D warnings",
+    ]
+    assert (tree / "docs/notes.md").is_file()
+
+
+def test_warm_builds_with_the_check_folder_unlocked(repo):
+    # So a commit that needs no build passes while it runs; cargo's own lock on
+    # target/ keeps a Rust check from building beside it.
+    lock = check_state(repo) / "lock"
+    probe = f'flock -n "{lock}" true && echo free || echo held'
+
+    hook(repo, "--warm", base=None, env=logging_cargo(probe))
+
+    assert (repo.parent / "calls").read_text().splitlines() == ["free", "free"]
+
+
+def test_a_failed_warm_build_stops_with_cargos_status(repo):
+    failing = {"FAKE_CARGO": '#!/bin/sh\necho "cargo $*" >> "$FAKE_LOG"; exit 101\n'}
+
+    hook(repo, "--warm", base=None, env=failing, code=101)
+
+    assert (repo.parent / "calls").read_text().splitlines() == [
+        "cargo nextest run --cargo-quiet --no-run"
+    ]
+
+
 def test_git_in_the_check_folder_finds_no_repo(repo):
     # Else a check that runs git there would read the worktree, unstaged edits and all.
     change(repo, "crates/app/src/extra.rs")
