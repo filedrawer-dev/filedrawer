@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT r.id, r.account_id, a.display_name, r.series_id, r.title, r.description,\n                r.why, r.refused_at\n         FROM refused_series r JOIN authors a ON a.id = r.account_id\n         WHERE r.decision IS NULL ORDER BY r.refused_at, r.id",
+  "query": "SELECT r.id, r.account_id,\n                CASE WHEN a.deleted_at IS NULL THEN a.display_name END AS \"display_name?\",\n                r.series_id, r.title, r.description, r.why, r.refused_at\n         FROM refused_series r JOIN accounts a ON a.id = r.account_id\n         WHERE r.decision IS NULL ORDER BY r.refused_at, r.id",
   "describe": {
     "columns": [
       {
@@ -26,7 +26,7 @@
         }
       },
       {
-        "name": "display_name",
+        "name": "display_name?",
         "ordinal": 2,
         "type_info": "Text",
         "origin": "Expression"
@@ -101,5 +101,5 @@
       false
     ]
   },
-  "hash": "499e83b7fbfe46a4c78fc29ea37f832c93aa5e59871095a9717045b110aea7b0"
+  "hash": "227ca79a385736e6e4bb1ab46b56de033410a4ecd8ac5faa680e5dddde32250f"
 }

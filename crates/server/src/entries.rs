@@ -1714,8 +1714,10 @@ async fn owner_entries(
     sqlx::query_as!(
         OwnerEntry,
         r#"SELECT e.seq AS "seq!: i64", e.id, e.status, e.source, e.account_id,
-                  a.display_name, h.login AS "github_login?: String", e.submitted_at, b.id AS "batch_id?", e.review_reason
-           FROM entries e JOIN authors a ON a.id = e.account_id
+                  -- The stored name, screened or not: the owner judges it here.
+                  CASE WHEN a.deleted_at IS NULL THEN a.display_name END AS "display_name?",
+                  h.login AS "github_login?: String", e.submitted_at, b.id AS "batch_id?", e.review_reason
+           FROM entries e JOIN accounts a ON a.id = e.account_id
          LEFT JOIN github_handles h ON h.account_id = e.account_id
            LEFT JOIN batches b ON b.seq = e.batch_seq
            WHERE (?1 IS NULL AND e.status IN ('review', 'held', 'frozen')) OR e.id = ?1

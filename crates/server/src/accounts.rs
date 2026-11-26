@@ -490,8 +490,10 @@ pub struct Guarded {
 pub async fn guarded(pool: &SqlitePool) -> Result<Vec<Guarded>, sqlx::Error> {
     sqlx::query_as!(
         Guarded,
-        r#"SELECT a.id, w.display_name, a.review_guard_at AS "since!"
-           FROM accounts a JOIN authors w ON w.id = a.id
+        // The stored name, screened or not, for the owner.
+        r#"SELECT a.id, CASE WHEN a.deleted_at IS NULL THEN a.display_name END AS "display_name?",
+                  a.review_guard_at AS "since!"
+           FROM accounts a
            WHERE a.review_guard_at IS NOT NULL ORDER BY a.review_guard_at, a.id"#
     )
     .fetch_all(pool)
@@ -511,6 +513,39 @@ pub async fn guard(
         account_id
     )
     .execute(&mut *connection)
+    .await?;
+    Ok(())
+}
+
+/// The display name of `account_id` when no screen has passed with it yet, so the next
+/// one reads it (design.md, Accounts).
+pub async fn unscreened_display_name(
+    pool: &SqlitePool,
+    account_id: &str,
+) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar!(
+        "SELECT display_name FROM accounts
+         WHERE id = ? AND display_name_screened IS NOT display_name",
+        account_id
+    )
+    .fetch_optional(pool)
+    .await
+}
+
+/// Records that a screen passed with `name` as the display name of `account_id`,
+/// unless the name has changed since it was read.
+pub async fn display_name_screened(
+    pool: &SqlitePool,
+    account_id: &str,
+    name: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        "UPDATE accounts SET display_name_screened = display_name
+         WHERE id = ? AND display_name = ?",
+        account_id,
+        name
+    )
+    .execute(pool)
     .await?;
     Ok(())
 }

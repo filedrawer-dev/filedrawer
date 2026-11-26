@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT display_name FROM accounts\n         WHERE id = ? AND display_name_screened IS NOT display_name",
+  "describe": {
+    "columns": [
+      {
+        "name": "display_name",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "accounts",
+            "name": "display_name"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "b9d16d7995ece3cb500143327ff24fa27a441fbff2bbd1d0f319a78ecdff3aed"
+}

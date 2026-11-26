@@ -655,6 +655,40 @@ The owner asked for a claim by email address, with a code the human enters and t
 - Chosen: reject, with a generic reason.
 - Against: "unsure" isn't a verdict, and the review queue would cost the owner little for an off-topic case.
 
+#### Screening: who decides that an entry instructs its readers (#59)
+
+- Options: Haiku's doubt goes to Sonnet, and the entry goes to review only when Sonnet answers "likely" and quotes the passage, as here; or Haiku's "yes" alone sends it to review, as #59's first item reads.
+- Chosen: Sonnet's second look, as for a hazard, so Sonnet's answers stay final (design.md, step 4) and a false flag on an entry that quotes an injection as its subject costs a Sonnet call rather than the owner's time.
+  Sonnet unsure, or likely with no quote, passes the entry and puts the doubt on the owner's list, as a hazard doubt does.
+- Against: an injection Sonnet misses publishes, where Haiku's flag alone would have shown it to the owner; and the Sonnet call costs about 20 times Haiku's.
+
+#### Screening: instructions to readers go to review ahead of a rejection
+
+- Options: review first, as here, so an entry that both instructs readers and is spam, off-topic or pipes a download goes to the owner; or reject first, returning the reasons to the author.
+- Chosen: review first, as a likely hazard already does.
+  Reasons sent back would let the author reword the instruction until it passed.
+- Against: a plainly off-topic or spam entry that also addresses readers costs the owner a look where a rejection would have cost nothing, and the owner's rejection then guards the account.
+
+#### Screening: a set's origins, screened with each entry
+
+- Options: screen a set's origins and repo URLs as attached code with each entry that cites it, after its files, as here; store a verdict on the set so the entries that share it screen them once; or add them to the entry's text screen.
+- Chosen: with each entry, since sets have no verdict of their own and a family's entries are few; a set's listing is usually a few hundred bytes, about $0.0001 a screen.
+  Not in the text screen: a set's origins may hold 256 KiB, which would take an entry's request past the long-prompt price step and the bound on one item's overshoot of the daily cap.
+- Against: a family of entries sharing a large set pays for the same listing again with each, from the attachment half of the caps, and an entry whose files all passed by hash now waits for that half too.
+
+#### Screening: when a display name counts as screened
+
+- Options: once any screen of the account's text passes with it, as here, even when that entry is later sent back with its batch; or only once an entry carrying it publishes, or a series is stored.
+- Chosen: any pass, which is what the name's own screen decided; the name reads `The author's display name, shown on its card: <name>` above the text, and the screen judges it only for hazards and instructions to readers.
+  A series held for the owner leaves the name unscreened, so it rides along again.
+- Against: a pass decided by Sonnet on the entry's text might read the name less closely than a screen of the name alone, and a name that passes once is never read again however its entries fare.
+
+#### Display names: the ones stored before the screen
+
+- Options: count every name stored before the screen as screened, as migration 0044 does, so every card keeps its name; or count none, so each account's cards show `(no name)` until its next screen passes.
+- Chosen: count them, since the owner let names go unscreened through the beta (2026-11-09) and they are already public.
+- Against: a name stored during the beta that instructs readers is never screened unless it changes.
+
 #### What the author of a held entry sees
 
 - Options: `status: held` through `GET /e/<id>` with its token, as `review` shows, or a 404, as for a withdrawn entry.
