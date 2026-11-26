@@ -9,6 +9,7 @@ of bin/checks-needed directly, which is faster."""
 
 import fcntl
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -2006,9 +2007,12 @@ def real_check(root: Path) -> subprocess.CompletedProcess:
 
 def worktree_build(root: Path) -> Path:
     """The worktree's own build, as an agent's test run makes it, into its target;
-    the path of the integration-test binary it built."""
+    the path of the integration-test binary it built, as nextest names it. Cargo
+    1.100's new build-dir layout moved test binaries out of target/debug/deps (#146's
+    first CI run found none there); nextest reads cargo's JSON, which names them
+    wherever they are."""
     done = subprocess.run(
-        ["cargo", "nextest", "run", "--cargo-quiet", "--no-run"],
+        ["cargo", "nextest", "list", "--cargo-quiet", "--message-format", "json"],
         cwd=root,
         env=real_env(root),
         capture_output=True,
@@ -2016,9 +2020,7 @@ def worktree_build(root: Path) -> Path:
         check=False,
     )
     assert done.returncode == 0, done.stdout + done.stderr
-    deps = root / "target/debug/deps"
-    built = [p for p in deps.glob("it-*") if p.suffix != ".d" and os.access(p, os.X_OK)]
-    return max(built, key=lambda p: p.stat().st_mtime_ns)
+    return Path(json.loads(done.stdout)["rust-suites"]["app::it"]["binary-path"])
 
 
 def test_a_check_after_the_worktree_built_unstaged_code_checks_the_staged_code(real):
