@@ -3,8 +3,9 @@
 # operations). Writes:
 #   /etc/apt/apt.conf.d/52filedrawer-caddy  unattended-upgrades takes Caddy's apt
 #     repository too, keeps an edited conffile (caddy.sh rewrites the packaged
-#     Caddyfile) rather than skip the upgrade, and after each dpkg run starts
-#     caddy-upgrade-check.service, which waits for nothing;
+#     Caddyfile) rather than skip the upgrade, after each dpkg run starts
+#     caddy-upgrade-check.service, which waits for nothing, and marks a failed
+#     signature on any repository for the guard's daily run (#110);
 #   caddy-upgrade-check.service, caddy-upgrade-daily.service and its timer, which run
 #     /usr/local/sbin/caddy-upgrade-check (the wizard installs it);
 #   /etc/filedrawer/caddy-upgrades.env, from "<ALERT_TO><TAB><PING>" as the first
@@ -75,6 +76,18 @@ Dpkg::Options {
 // this dpkg run holds. A failure here must never fail apt.
 DPkg::Post-Invoke {
 	"[ -d /run/systemd/system ] && systemctl start --no-block caddy-upgrade-check.service >/dev/null 2>&1 || true";
+};
+// When a repository's signature fails (an expired or replaced key) but its old
+// lists are on disk, apt keeps them, counts the failure as transient, runs these,
+// and still exits 0, so apt's daily update-stamp moves while that repository's
+// upgrades stop. Each update clears the marker first, so it stands for the last
+// update only; caddy-upgrade-check --daily reads it. A failing hook would fail
+// apt-get update.
+APT::Update::Pre-Invoke {
+	"rm -f /var/lib/filedrawer/caddy-guard/auth-failure || true";
+};
+APT::Update::Auth-Failure {
+	"mkdir -p /var/lib/filedrawer/caddy-guard && touch /var/lib/filedrawer/caddy-guard/auth-failure || true";
 };
 CONF
 

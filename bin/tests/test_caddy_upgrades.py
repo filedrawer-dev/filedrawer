@@ -37,6 +37,7 @@ NOW = 1_800_000_000
 DAY = 86400
 OLD, NEW = "2.11.9", "2.12.0"
 STAMP = "var/lib/apt/periodic/update-stamp"
+AUTH_FAILURE = "var/lib/filedrawer/caddy-guard/auth-failure"
 
 
 def executable(path: Path, text: str) -> Path:
@@ -537,6 +538,16 @@ def test_apt_lists_never_updated_are_stuck(server):
     assert suffix == "/fail" and "never succeeded" in body
 
 
+def test_a_signature_failure_in_the_last_apt_update_is_stuck(server):
+    (server.root / AUTH_FAILURE).touch()
+    result = server.run("--daily")
+    assert result.returncode == 1
+    suffix, body = server.pings()[-1]
+    assert suffix == "/fail" and "signature" in body
+    [mail] = server.mails
+    assert "apt-get update" in mail
+
+
 def test_no_ping_url_mails_weekly(server):
     (server.root / "etc/filedrawer/caddy-upgrades.env").write_text(
         "ALERT_TO=ops@filedrawer.dev\n"
@@ -597,6 +608,39 @@ def test_the_installer_has_apt_follow_caddy_and_start_the_guard_after_dpkg(insta
     assert "systemctl start --no-block caddy-upgrade-check.service" in apt
     assert "|| true" in apt
     assert 'APT::Periodic::Unattended-Upgrade "1";' in apt
+
+
+def test_the_installers_update_hooks_mark_only_the_last_updates_signature_failure(
+    install, tmp_path
+):
+    install.run(f"ops@filedrawer.dev\t{PING}")
+    conf = install.root / "etc/apt/apt.conf.d/52filedrawer-caddy"
+    fake = tmp_path / "server"
+
+    def hook(name: str) -> None:
+        """Runs the hook as apt would, read through apt's own parser so a syntax
+        slip in the file fails here, with its paths moved under `fake`."""
+        key = f"APT::Update::{name}"
+        dump = subprocess.run(
+            ["apt-config", "-c", str(conf), "dump", key],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        [command] = [
+            line.removeprefix(f'{key}:: "').removesuffix('";')
+            for line in dump.splitlines()
+            if line.startswith(f"{key}:: ")
+        ]
+        assert command.endswith("|| true"), "a failing hook would fail apt-get update"
+        command = command.replace("/var/lib/filedrawer", f"{fake}/var/lib/filedrawer")
+        subprocess.run(["sh", "-c", command], check=True, cwd="/tmp")
+
+    hook("Pre-Invoke")
+    hook("Auth-Failure")
+    assert (fake / AUTH_FAILURE).is_file()
+    hook("Pre-Invoke")
+    assert not (fake / AUTH_FAILURE).exists()
 
 
 def test_the_installer_writes_the_units_and_enables_the_timer(install):

@@ -233,11 +233,18 @@ daily() {
     # exits 0. (Ubuntu's update-success-stamp comes from update-notifier, which
     # Debian lacks.) apt counts a failed download, or a failed signature on a list
     # it fetched before, as transient and still exits 0, so an expired key on
-    # Caddy's repository doesn't stop the stamp.
+    # Caddy's repository doesn't stop the stamp. For the signature, apt runs
+    # APT::Update::Auth-Failure, whose hook (caddy-upgrades.sh) touches
+    # caddy-guard/auth-failure; each update removes it first (Pre-Invoke), so it
+    # stands for the last update only.
     if ! stamp=$(stat -c %Y "$root/var/lib/apt/periodic/update-stamp" 2>/dev/null); then
       notes+=("apt's daily update has never succeeded here (no /var/lib/apt/periodic/update-stamp): check that apt-daily.timer runs and what apt-get update says, or no Caddy upgrade can arrive.")
     elif (( now - stamp >= 3 * day )); then
       notes+=("apt's daily update hasn't succeeded for over 3 days, so no Caddy upgrade can arrive: run apt-get update and read its errors.")
+    fi
+    local failed
+    if failed=$(stat -c %Y "$guard/auth-failure" 2>/dev/null); then
+      notes+=("apt's last update, on $(date -u -d "@$failed" +%F), couldn't verify the signature of a repository (maybe Caddy's; an expired or replaced key?) and kept its old lists, so that repository's upgrades can't arrive. apt-get update's warnings name it.")
     fi
   fi
   [[ -n "$ping_url" ]] || notes+=("No healthchecks.io ping URL is set; run ops/provision-vps caddy-upgrades.")
