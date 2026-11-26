@@ -21,7 +21,7 @@ use crate::link_checks::{self, CheckedLink, LinkFlags};
 use crate::links::{self, Linked, SlugRule};
 use crate::provenance::Provenance;
 use crate::queue;
-use crate::respond::{DELIMITER, Format, card_and_warnings};
+use crate::respond::{DELIMITER, Format, card_and_warnings, issue_form, issue_form_line};
 use crate::routes::submit::{Accepted, accept, cited_series, cited_set};
 use crate::series::Cited;
 use crate::{AppState, allowance, duplicates, time, warnings};
@@ -434,9 +434,17 @@ pub async fn publish_batch(
     for (member, status) in &statuses {
         text.push_str(&format!("entry: {member} {status}\n"));
     }
+    // A batch publishes as one, so its members are public together or not at all.
+    let form = statuses
+        .iter()
+        .any(|(_, status)| status == "public")
+        .then(|| issue_form(state.environment))
+        .flatten();
+    text.push_str(&issue_form_line(form));
     let json = json!({
         "id": id,
         "screen_from": screen_from.map(allowance::day_text),
+        "public_feedback": form,
         "entries": statuses.iter().map(|(member, status)| json!({"id": member, "status": status})).collect::<Vec<_>>(),
     });
     Ok(format.reply(StatusCode::OK, text, json))

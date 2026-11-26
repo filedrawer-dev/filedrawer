@@ -109,6 +109,7 @@ const SINGLE_KEYS: &[&str] = &[
     "account",
     "entries",
     "deleted",
+    "public_feedback",
 ];
 
 /// Keys a reply may repeat, one line per item: slug links, runs and batch members.

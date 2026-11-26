@@ -18,7 +18,7 @@ use crate::jobs::{end_hold, hold_until};
 use crate::link_checks::{self, CheckedLink, LinkFlags};
 use crate::links::{self, Linked, SlugRule};
 use crate::provenance::Provenance;
-use crate::respond::{DELIMITER, Format, card_and_warnings};
+use crate::respond::{DELIMITER, Format, card_and_warnings, issue_form, issue_form_line};
 use crate::series::{self, Cited};
 use crate::{AppState, allowance, attachments, duplicates, removed_files, time, warnings};
 use ::time::Date;
@@ -562,16 +562,21 @@ pub async fn publish(
     };
     // Ending the hold early doesn't skip the account's queue.
     let screen_from = allowance::screen_from(&state.pool, entry.seq, now.date()).await?;
+    let form = (status == "public")
+        .then(|| issue_form(state.environment))
+        .flatten();
     let text = format!(
-        "id: {id}\nstatus: {status}\nurl: {}/e/{id}\n{}",
+        "id: {id}\nstatus: {status}\nurl: {}/e/{id}\n{}{}",
         state.public_url,
-        allowance::screen_from_lines(screen_from)
+        allowance::screen_from_lines(screen_from),
+        issue_form_line(form)
     );
     let json = json!({
         "id": id,
         "status": status,
         "screen_from": screen_from.map(allowance::day_text),
         "url": format!("{}/e/{id}", state.public_url),
+        "public_feedback": form,
     });
     Ok(format.reply(StatusCode::OK, text, json))
 }
