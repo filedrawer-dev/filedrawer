@@ -152,6 +152,7 @@ The commit hook's `bin/sentence-lines` keeps it that way and leaves entries as t
 ## Checks
 
 Start a worktree with `bin/new-worktree TOPIC` (`-h`): it adds `../filedrawer-wt-TOPIC` beside the main tree and starts its warm build in the background, which sccache makes quick, then, while the commit checks' slot (below) holds no build, a second one there (`bin/agent-pre-commit --warm`), so the first commit doesn't build cold.
+It starts at the main tree's HEAD, which may hold landings not yet pushed; for a pull request's branch, `git fetch` first and add `--at origin/main`, so the branch holds only its own commits.
 For a change with no build input (below), such as most of `docs/`, `bin/` and `ops/`, add `--no-build`, since its commits run no Rust check and so need no build.
 `bin/checks-needed --why PATH` says whether a path is a build input.
 

@@ -4,13 +4,17 @@
     bin/new-worktree TOPIC              ../filedrawer-wt-TOPIC, detached at the main
                                         tree's HEAD
     bin/new-worktree TOPIC --at REV     detached at REV instead, as the main tree
-                                        reads it
+                                        reads it, such as origin/main
     bin/new-worktree TOPIC --no-build   without the warm build, for a change with
                                         no build input
 
 Run the copy in the main tree or in any worktree: it finds its repo from its own path,
 and the new tree always goes beside the main tree, named for it and TOPIC (letters,
 digits, `-`, `_` and `.`). An existing path is refused, and nothing is made.
+
+The main tree's HEAD can hold landings that aren't pushed yet. For a tree whose branch
+goes to a pull request, which should hold only its own commits, run `git fetch` and
+then `bin/new-worktree TOPIC --at origin/main`.
 
 The warm build is `heavy -- cargo nextest run --cargo-quiet --no-run`, started with
 bgrun in the new tree, its log in the tree's target/warm.log. The script prints the
