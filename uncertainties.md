@@ -1312,6 +1312,17 @@ An agent added this on 2026-11-20, with the owner away; deleting `.github/workfl
 - Against: an unsound or unmaintained dependency is never reported; an advisory accepted by closing the issue leaves no trace in the repo, and stays accepted if it goes away and comes back.
   A run that fails (RustSec or GitHub down, a cargo-audit too old to read the database) shows only as a red run of a scheduled workflow, which GitHub mails to whoever last changed its schedule; and GitHub stops scheduled workflows in a repo with no activity for 60 days.
 
+#### How the versions.txt merge driver learns the merged skills (#140)
+
+An agent built this on 2026-11-25, with the owner away.
+#140 planned a driver that hashes the skill folders in the working tree, but git 2.53 calls a merge driver before it writes any merged file there, so the tree still holds ours.
+
+- Options: redo the merge in the driver, with `git merge-tree` on the commits git's conflict labels (`%S`, `%Y`) name; write a placeholder hash and leave it for a later `bin/skills sync`, which leaves every rebased commit's record wrong and the landing's check failing; or resolve only a skill changed on one side and leave a conflict for one changed on both, the case #130's fold met.
+- Chosen: redo the merge, after checking that the commits the labels name hold the three versions git passed, and fall back to taking each skill's line from the side that changed it, and else to git's own conflict.
+  Each commit a rebase, cherry-pick or merge makes then holds the record sync would write for it.
+- Against: the labels' wording (`SHA (subject)`, `parent of SHA (subject)`) is what git prints in conflict markers, not a documented interface; if a git release changes it, the driver falls back to taking lines by side, and to the conflict.
+  A revert, or a merge with a virtual merge base, of commits that both changed one skill still conflicts there.
+
 ### Production deploys
 
 #### A deploy after the tip's CI failed (#118)

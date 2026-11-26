@@ -4,6 +4,8 @@
     bin/skills sync                  after changing a skill or docs/entry-format.md
     bin/skills sync --check          exit 1, writing nothing, when sync would change a file
     bin/skills release --push-url U  in CI: tag each new version, pushing to U
+    bin/skills merge BASE OURS THEIRS BASE_LABEL THEIRS_LABEL
+                                     git's merge driver for skills/versions.txt
 
 sync copies docs/entry-format.md into each skill's references/ and records each
 skill's version and folder hash in skills/versions.txt. A version is frozen once
@@ -26,10 +28,27 @@ fetches the tag and fails unless the tag's folder equals this commit's; when ori
 hasn't, it tags this commit and pushes the tag to U. Run it from the repo, on the
 commit to tag.
 
+merge is the merge driver .gitattributes names for skills/versions.txt, which
+install.py registers as `skills-versions` in the clone's config, given git's %O %A
+%B %S %Y. git calls it while the working tree still holds ours, so it can't hash the
+folders there. Instead it finds the commits git's labels %S and %Y name (in a rebase
+or cherry-pick, the picked commit and its parent; in a merge, the merge base and
+the branch), checks that their records are the versions git passed, redoes the
+merge with `git merge-tree`, and writes each skill's line as sync would for the
+merged tree, without a bump, which the commit checks' --check still asks for. When
+that fails it takes each skill's line from the side that changed it. When both
+sides changed one and the merged tree is out of reach, or another file in skills/
+conflicts too, it exits 1, writing nothing, and the driver's line in the config
+runs `git merge-file`, which leaves git's ordinary conflict, as it does when this
+script fails to run at all. Resolve one by taking either side and running sync.
+
 Exit status: 0 in step, written or tagged; 1 a file sync would change (--check), or a
 tag that holds another folder (release); 2 something it couldn't read or run, such as
-a record that isn't NAME VERSION SHA256, or a usage error.
+a record that isn't NAME VERSION SHA256, or a usage error. merge exits 0 with the
+merged file in OURS, or 1 leaving OURS as it was.
 """
+
+from __future__ import annotations
 
 import argparse
 import hashlib
@@ -52,6 +71,10 @@ FETCHED = (
     "+refs/tags/skill-*:refs/tags/skill-*",
 )
 TAG = re.compile(r"^skill-(.+)-v(\d+)$")
+RECORD = "skills/versions.txt"
+# The merge driver's name in .gitattributes and the git config.
+DRIVER = "skills-versions"
+Record = dict[str, tuple[int, str]]
 
 
 class Unreadable(Exception):
@@ -79,15 +102,25 @@ def skill_names(root: Path) -> list[str]:
 
 
 def version(skill_md: Path) -> int:
-    match = re.search(r'^  version: "(\d+)"$', skill_md.read_text(), re.MULTILINE)
+    return version_in(skill_md.read_text(), str(skill_md))
+
+
+def version_in(text: str, source: str) -> int:
+    match = re.search(r'^  version: "(\d+)"$', text, re.MULTILINE)
     if not match:
         raise Unreadable(
-            f'{skill_md}: no metadata.version line, such as `  version: "1"`'
+            f'{source}: no metadata.version line, such as `  version: "1"`'
         )
     return int(match.group(1))
 
 
-def parse_record(text: str, source: str) -> dict[str, tuple[int, str]]:
+def record_text(record: Record) -> str:
+    return RECORD_HEADER + "".join(
+        f"{name} {n} {digest}\n" for name, (n, digest) in sorted(record.items())
+    )
+
+
+def parse_record(text: str, source: str) -> Record:
     record = {}
     for line in text.splitlines():
         if line and not line.startswith("#"):
@@ -196,11 +229,23 @@ def folder_files(tree: Path, name: str, in_git: bool) -> set[str]:
 def folder_hash(folder: Path, files: set[str], planned: dict[Path, bytes]) -> str:
     """The hash versions.txt's header defines, over `files` as `planned` would leave
     them."""
-    listing = ""
-    for name in sorted("./" + f for f in files):
-        path = folder / name[2:]
-        data = planned[path] if path in planned else path.read_bytes()
-        listing += f"{hashlib.sha256(data).hexdigest()}  {name}\n"
+    return contents_hash(
+        {
+            name: planned[folder / name]
+            if folder / name in planned
+            else (folder / name).read_bytes()
+            for name in files
+        }
+    )
+
+
+def contents_hash(contents: dict[str, bytes]) -> str:
+    """The hash versions.txt's header defines, of a folder holding `contents`, each
+    file's bytes by its path in the folder."""
+    listing = "".join(
+        f"{hashlib.sha256(contents[name]).hexdigest()}  ./{name}\n"
+        for name in sorted(contents)
+    )
     return hashlib.sha256(listing.encode()).hexdigest()
 
 
@@ -251,11 +296,9 @@ def plan(tree: Path, known: dict[str, dict[int, str]], in_git: bool) -> Plan:
             number = new
             digest = folder_hash(folder, files, planned)
         record[name] = (number, digest)
-    lines = "".join(
-        f"{name} {n} {digest}\n" for name, (n, digest) in sorted(record.items())
-    )
-    if not record_file.exists() or record_file.read_text() != RECORD_HEADER + lines:
-        planned[record_file] = (RECORD_HEADER + lines).encode()
+    text = record_text(record)
+    if not record_file.exists() or record_file.read_text() != text:
+        planned[record_file] = text.encode()
         stale = [name for name in record if on_record.get(name) != record[name]]
         said.extend(
             f"skills/versions.txt: {name}'s line doesn't match its folder (a file there "
@@ -345,6 +388,129 @@ def release(root: Path, push_url: str) -> int:
     return 1 if failed else 0
 
 
+def merge(repo: Path, files: list[Path], base_label: str, theirs_label: str) -> int:
+    """The merge driver: the merged record in OURS and 0, or 1 with OURS untouched."""
+    ours = files[1]
+    try:
+        texts = [path.read_text() for path in files]
+        merged = merged_tree(repo, texts, base_label, theirs_label)
+        if merged is None:
+            merged = merged_by_line(*(parse_record(text, RECORD) for text in texts))
+    except Exception as error:  # noqa: BLE001
+        # Whatever went wrong, the driver's line falls back to git merge-file.
+        print(f"skills: couldn't merge {RECORD} ({error!r})", file=sys.stderr)
+        return 1
+    if merged is None:
+        return 1
+    ours.write_text(record_text(merged))
+    return 0
+
+
+def merged_tree(
+    repo: Path, texts: list[str], base_label: str, theirs_label: str
+) -> Record | None:
+    """The record sync would write for the tree the merge is making, or None when
+    the labels git passed don't name commits whose records are the three `texts`, or
+    that tree has another conflict in skills/.
+
+    A rebase or cherry-pick labels theirs `SHA (subject)` and the base `parent of SHA
+    (subject)`; a merge labels the base with its commit, and theirs as the command
+    line named it."""
+    commit = resolved(repo, theirs_label.split(" ", 1)[0])
+    if commit is None:
+        return None
+    if base_label.startswith("parent of "):
+        parent = resolved(repo, f"{commit}^")
+    else:
+        parent = resolved(repo, base_label.split(" ", 1)[0])
+    if parent is None:
+        return None
+    for rev, text in zip((parent, "HEAD", commit), texts):
+        shown = git(repo, "show", f"{rev}:{RECORD}", check=False)
+        if shown.returncode != 0 or shown.stdout != text:
+            return None
+    done = git(
+        repo,
+        # The driver itself, called again for this file, would recurse.
+        "-c",
+        f"merge.{DRIVER}.driver=false",
+        "merge-tree",
+        "--write-tree",
+        "-z",
+        "--name-only",
+        "--no-messages",
+        f"--merge-base={parent}",
+        "HEAD",
+        commit,
+        check=False,
+    )
+    if done.returncode not in (0, 1):
+        return None
+    tree, *conflicted = filter(None, done.stdout.split("\0"))
+    if any(path.startswith("skills/") and path != RECORD for path in conflicted):
+        return None
+    return tree_record(repo, tree)
+
+
+def resolved(repo: Path, rev: str) -> str | None:
+    """The commit `rev` names, or None."""
+    if not rev or rev.startswith("-"):
+        return None
+    found = git(repo, "rev-parse", "-q", "--verify", f"{rev}^{{commit}}", check=False)
+    return found.stdout.strip() if found.returncode == 0 else None
+
+
+def tree_record(repo: Path, tree: str) -> Record:
+    """Each skill's version and folder hash in `tree`, with no version bumped and no
+    copy of the entry format brought up to date, which --check still asks for."""
+    listed = git(repo, "ls-tree", "-r", "-z", tree, "--", "skills").stdout
+    blobs = {}
+    for item in filter(None, listed.split("\0")):
+        meta, path = item.split("\t", 1)
+        mode, kind, oid = meta.split()
+        # `find . -type f` in the header counts no symbolic link.
+        if kind == "blob" and mode != "120000":
+            blobs[path] = oid
+    record = {}
+    for path in sorted(blobs):
+        parts = path.split("/")
+        if len(parts) != 3 or parts[2] != "SKILL.md":
+            continue
+        name = parts[1]
+        prefix = f"skills/{name}/"
+        contents = {
+            p.removeprefix(prefix): read_blob(repo, oid)
+            for p, oid in blobs.items()
+            if p.startswith(prefix)
+        }
+        number = version_in(contents["SKILL.md"].decode(), f"{tree}:{path}")
+        record[name] = (number, contents_hash(contents))
+    return record
+
+
+def read_blob(repo: Path, oid: str) -> bytes:
+    return subprocess.run(
+        ["git", "cat-file", "blob", oid], cwd=repo, capture_output=True, check=True
+    ).stdout
+
+
+def merged_by_line(base: Record, ours: Record, theirs: Record) -> Record | None:
+    """Each skill's line from the side that changed it, or None when both changed
+    one differently."""
+    merged = {}
+    for name in sorted(base.keys() | ours.keys() | theirs.keys()):
+        was, mine, other = base.get(name), ours.get(name), theirs.get(name)
+        if mine == other or other == was:
+            line = mine
+        elif mine == was:
+            line = other
+        else:
+            return None
+        if line is not None:
+            merged[name] = line
+    return merged
+
+
 def tag_on_origin(root: Path, tag: str) -> bool:
     return bool(
         git(root, "ls-remote", "--tags", "origin", f"refs/tags/{tag}").stdout.strip()
@@ -371,11 +537,26 @@ def main() -> int:
     )
     rel = commands.add_parser("release", help="tag each new skill version")
     rel.add_argument("--push-url", required=True, help="where to push new tags")
+    merger = commands.add_parser(
+        "merge", help="git's merge driver for skills/versions.txt (.gitattributes)"
+    )
+    for name, placeholder in (("base", "O"), ("ours", "A"), ("theirs", "B")):
+        merger.add_argument(
+            name,
+            type=Path,
+            help=f"git's %%{placeholder}: the file's {name} version"
+            + (", where the result goes" if name == "ours" else ""),
+        )
+    merger.add_argument("base_label", help="git's %%S: the base's label")
+    merger.add_argument("theirs_label", help="git's %%Y: theirs' label")
     args = parser.parse_args()
     try:
         repo = repo_root()
         if args.command == "release":
             return release(repo, args.push_url)
+        if args.command == "merge":
+            files = [args.base, args.ours, args.theirs]
+            return merge(repo, files, args.base_label, args.theirs_label)
         tree = args.root.resolve() if args.root else repo
         return check(repo, tree) if args.check else sync(repo, tree)
     except (Unreadable, OSError) as error:

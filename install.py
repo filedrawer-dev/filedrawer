@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Set up a machine to work on File Drawer: point git at the hooks in .githooks and
-install the cargo tools the checks and the SQL workflow need. sandbox-setup/setup.py
-runs it after a sandbox recreate, after rustup is in place.
+"""Set up a machine to work on File Drawer: point git at the hooks in .githooks,
+register the merge driver for skills/versions.txt, and install the cargo tools the
+checks and the SQL workflow need. sandbox-setup/setup.py runs it after a sandbox
+recreate, after rustup is in place.
 
-    python3 install.py        enable the hooks; install what's missing
+    python3 install.py        enable the hooks and the driver; install what's missing
     python3 install.py -h     this text
 
 The hooks: .githooks holds a link to a script in bin/ for each hook git runs
@@ -19,11 +20,22 @@ every worktree shares, so running this from any of them enables the hooks for al
 It also removes the links an older install.py put in the shared .git/hooks, which git
 no longer reads, and names any other hook left there.
 
+The merge driver: .gitattributes names `skills-versions` for skills/versions.txt, and
+git runs a driver only when the config defines it too, so this sets
+merge.skills-versions.driver to run `bin/skills merge` (bin/skills -h), and
+`git merge-file`, for git's ordinary conflict, when that exits non-zero or can't
+run. It runs the bin/skills at the top of the tree that is merging, so, like the
+hooks, each worktree runs its own copy. A tree whose .gitattributes doesn't name it,
+such as one checked out before it, ignores the setting, and a clone without the
+setting gets git's ordinary conflict in that file. The main clone's config is the
+host's too, so the host's rebases run the driver with the host's python3.
+
 The tools (cargo install --locked, so they build from their locked dependencies):
   cargo-nextest  runs the Rust tests in bin/agent-pre-commit and CI
   sqlx-cli       `sqlx` and `cargo sqlx prepare`, for changing a query (AGENTS.md, SQL)
 
-Safe to rerun: hooks already enabled and a tool already on PATH are left alone.
+Safe to rerun: hooks and a driver already set up and a tool already on PATH are left
+alone.
 """
 
 import shutil
@@ -33,6 +45,14 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent
 HOOKS_PATH = ".githooks"
+# The git config that defines the merge driver .gitattributes names.
+MERGE_DRIVER = {
+    "merge.skills-versions.name": "recompute skills/versions.txt (bin/skills merge)",
+    # When bin/skills can't merge, or fails to run at all, git merge-file leaves the
+    # conflict git's own merge would.
+    "merge.skills-versions.driver": '"$(git rev-parse --show-toplevel)/bin/skills"'
+    " merge %O %A %B %S %Y || git merge-file -L %X -L %S -L %Y %A %O %B",
+}
 # (command that shows it is installed, cargo install arguments)
 CARGO_TOOLS = [
     ("cargo-nextest", ["cargo-nextest"]),
@@ -73,6 +93,16 @@ def enable_hooks(repo: Path = REPO) -> None:
             )
 
 
+def register_merge_driver(repo: Path = REPO) -> None:
+    """Define the skills/versions.txt merge driver in the config `repo` shares with
+    its other worktrees."""
+    for key, value in MERGE_DRIVER.items():
+        current = git(repo, "config", "--local", key, check=False)
+        if current.stdout.strip() != value:
+            git(repo, "config", "--local", key, value)
+            print(f"set {key}")
+
+
 def install_tools() -> bool:
     if shutil.which("cargo") is None:
         print("cargo isn't on PATH: install Rust first (sandbox-setup's rustup step)")
@@ -98,6 +128,7 @@ def main() -> int:
         print(__doc__)
         return 0
     enable_hooks()
+    register_merge_driver()
     return 0 if install_tools() else 1
 
 
