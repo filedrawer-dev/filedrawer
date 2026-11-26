@@ -159,7 +159,7 @@ struct Report {
     now: OffsetDateTime,
     /// When the server started, if after `start`: the in-memory counts run from then.
     started_at: Option<OffsetDateTime>,
-    published: Vec<String>,
+    published: Vec<Published>,
     /// The accounts agents made in the period, and the accounts claimed in it,
     /// whenever they were made (#130).
     agent_made: i64,
@@ -195,6 +195,15 @@ struct CapDay {
     cap: i64,
     /// Reads or searches past the cap, which went uncounted.
     dropped: i64,
+}
+
+/// An entry published in the period, and how it carries its code (#93).
+struct Published {
+    id: String,
+    /// It names a `code` link.
+    code_linked: bool,
+    /// It cites an attachment set.
+    code_attached: bool,
 }
 
 /// An entry waiting for the owner: in review or held.
@@ -314,15 +323,23 @@ impl Report {
     ) -> Result<Report, sqlx::Error> {
         let pool = &state.pool;
         let (from, to) = (stamp(start), stamp(now));
-        let published = sqlx::query_scalar!(
-            r#"SELECT id FROM entries
+        let published = sqlx::query!(
+            r#"SELECT id, source, attachment_set_seq IS NOT NULL AS "code_attached!: bool"
+               FROM entries
                WHERE status = 'public' AND published_at > ?1 AND published_at <= ?2
                ORDER BY published_at, seq"#,
             from,
             to
         )
         .fetch_all(pool)
-        .await?;
+        .await?
+        .into_iter()
+        .map(|row| Published {
+            code_linked: analyzer::analyze(&row.source).fields.code.is_some(),
+            id: row.id,
+            code_attached: row.code_attached,
+        })
+        .collect();
         let agents = sqlx::query!(
             r#"SELECT COALESCE(SUM(made_by_agent_at > ?1 AND made_by_agent_at <= ?2), 0)
                           AS "made!: i64",
@@ -444,9 +461,10 @@ impl Report {
         }
         if !self.published.is_empty() {
             let _ = writeln!(text, "\nPublished ({}):", self.published.len());
-            for id in &self.published {
+            for Published { id, .. } in &self.published {
                 let _ = writeln!(text, "- {id} {url}/admin/e/{id}");
             }
+            self.code_line(&mut text);
         }
         if self.agent_made > 0 || self.agent_claimed > 0 {
             let _ = writeln!(
@@ -479,6 +497,23 @@ impl Report {
         let _ = writeln!(text, "\nNightly copy: {}", self.backup_line());
         self.feedback_lines(&mut text, url);
         text
+    }
+
+    /// How many of the published entries link their code, attach it, or do neither,
+    /// so the owner sees whether asking about code only after the post leaves most
+    /// entries without it (#93). An entry that does both counts in both.
+    fn code_line(&self, text: &mut String) {
+        let linked = self.published.iter().filter(|e| e.code_linked).count();
+        let attached = self.published.iter().filter(|e| e.code_attached).count();
+        let neither = self
+            .published
+            .iter()
+            .filter(|e| !e.code_linked && !e.code_attached)
+            .count();
+        let _ = writeln!(
+            text,
+            "Code: {linked} linked, {attached} attached, {neither} with neither."
+        );
     }
 
     fn screening_lines(&self, text: &mut String, url: &str) {

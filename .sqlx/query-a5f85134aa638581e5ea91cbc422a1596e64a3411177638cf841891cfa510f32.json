@@ -1,0 +1,45 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id, source, attachment_set_seq IS NOT NULL AS \"code_attached!: bool\"\n               FROM entries\n               WHERE status = 'public' AND published_at > ?1 AND published_at <= ?2\n               ORDER BY published_at, seq",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "source",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "source"
+          }
+        }
+      },
+      {
+        "name": "code_attached!: bool",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "a5f85134aa638581e5ea91cbc422a1596e64a3411177638cf841891cfa510f32"
+}

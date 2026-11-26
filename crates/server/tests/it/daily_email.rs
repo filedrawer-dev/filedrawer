@@ -4,6 +4,7 @@
 
 use crate::common;
 use crate::invites::{create_code, invited_account, revoke};
+use common::attachments::{COMMIT, citing, set_with};
 
 use std::sync::{Arc, Mutex};
 
@@ -200,6 +201,44 @@ async fn production_lists_what_screening_published_each_by_an_admin_link() {
         "author text stays out of the server's sections:\n{}",
         email.body
     );
+}
+
+#[tokio::test]
+async fn it_counts_the_published_entries_that_link_code_attach_it_or_have_neither() {
+    let (app, _) = app_in(Environment::Production, true).await;
+    let link = format!("code: https://gitlab.com/ada/steering/-/tree/{COMMIT}\n");
+    submit(&app, &entry("Linked one", &link)).await;
+    submit(&app, &entry("Linked two", &link)).await;
+    let set = set_with(&app, &app.token, "run.py", "print('ran')\n").await;
+    submit(&app, &citing("Attached", &set)).await;
+    let both = set_with(&app, &app.token, "both.py", "print('both')\n").await;
+    let linked_and_attached = format!("{link}attachments: {both}\n");
+    submit(&app, &entry("Both", &linked_and_attached)).await;
+    submit(&app, &entry("Neither", "")).await;
+    // Ending the hold leaves an entry that cites a set to the worker to screen.
+    filedrawer_server::jobs::publish_due(&app.state, OffsetDateTime::now_utc())
+        .await
+        .unwrap();
+
+    send_daily_email(&app.state, soon()).await.unwrap();
+
+    let body = the_report(&app).body;
+    assert!(body.contains("Published (5):"), "{body}");
+    assert!(
+        body.contains("Code: 3 linked, 2 attached, 1 with neither.\n"),
+        "{body}"
+    );
+}
+
+#[tokio::test]
+async fn the_code_line_is_left_out_when_nothing_published() {
+    let (app, _) = app_in(Environment::Production, true).await;
+    app.post("/entries", entry("Still held", "")).await;
+
+    send_daily_email(&app.state, soon()).await.unwrap();
+
+    let body = the_report(&app).body;
+    assert!(!body.contains("Code:"), "{body}");
 }
 
 #[tokio::test]
