@@ -5,6 +5,8 @@ drive-agent, each as a fresh staging account.
     ops/usability-run SCENARIO HARNESS NAME     one run (HARNESS: claude or codex)
     ops/usability-run batch SCENARIO:HARNESS:NAME...   several runs at once
     ops/usability-run report RUN_DIR...         a few lines on what each run did
+    ops/usability-run sessions RUN_DIR...       a line a session, and how often the
+                                                search skill loaded
     ops/usability-run account --state FILE      make an account; FILE keeps its login
     ops/usability-run delete --state FILE       delete it; list its public entries
     ops/usability-run headers RUN_DIR           each fetch of the site in a run
@@ -34,6 +36,16 @@ is moved aside to NAME.log.<its mtime>), waits for all, and prints one line a ru
 NAME given twice, since each is a system user, or a run folder that exists, before
 starting any run. Stopped, it
 stops each run, which deletes its account. Its exit status is 0 when every run's is.
+
+`sessions` prints a line for each session of each run, in the order they ran: the
+run, the session's number, the first 40 characters of its first human message,
+whether it loaded the search skill (the Skill tool, or a read of its SKILL.md), and
+how many requests it made of File Drawer's /search or /cards.txt, of a web search
+tool, and of other pages (a fetch tool, or a curl or wget elsewhere). Then, for each
+scenario and installed filedrawer-search version, in how many sessions the skill
+loaded, overall and per prompt; the version keeps a pinned arm of an A/B apart from
+the current one, since both run the same turns. A folder with no run gets one line,
+and exit status 1.
 
 `report` reads each run folder, with no model, and prints at most 15 lines a run,
 or one line for a folder with no run.json, as a run that died before its agent
@@ -797,8 +809,8 @@ PRODUCTION = re.compile(r"https?://(?:www\.)?filedrawer\.dev(?![\w.-])")
 TOUCHES = ("filedrawer.dev/", "install.sh", ".config/filedrawer")
 REPORT_COMMANDS = 6
 REPORT_WRITES = 4
-# A shell command that sends a request.
-REQUEST = re.compile(r"\s*(?:\w+=\S*\s+)*(?:curl|wget)\b")
+# A shell command that sends a request, also as the body of a loop or a branch.
+REQUEST = re.compile(r"\s*(?:(?:do|then|else)\s+)?(?:\w+=\S*\s+)*(?:curl|wget)\b")
 
 
 def blank(text: str) -> str:
@@ -921,17 +933,22 @@ class NoRun(Exception):
     """Why a folder holds no run to report, in a few words."""
 
 
-def report_run(folder: Path) -> list[str]:
-    """The report's lines for the run in `folder`; NoRun when it holds none, as a
-    run that died before its agent started leaves it."""
+def run_record(folder: Path) -> dict:
+    """The run's run.json; NoRun when the folder holds no run, as a run that died
+    before its agent started leaves it."""
     if not folder.is_dir():
         raise NoRun("no such folder")
     try:
-        record = json.loads((folder / "run.json").read_text())
+        return json.loads((folder / "run.json").read_text())
     except FileNotFoundError:
         raise NoRun("no run.json, so no run to report") from None
     except (OSError, ValueError):
         raise NoRun("its run.json can't be read as JSON") from None
+
+
+def report_run(folder: Path) -> list[str]:
+    """The report's lines for the run in `folder`; NoRun when it holds none."""
+    record = run_record(folder)
     number = re.search(r"\d+(?:\.\d+)+", record.get("version") or "")
     version = number.group(0) if number else "?"
     lines = [
@@ -1017,6 +1034,130 @@ def report(args) -> int:
     return 1 if missing else 0
 
 
+# A request a session made of the archive's search: a query or the whole file.
+SITE_SEARCH = re.compile(r"filedrawer\.dev/(?:search\b|cards\.txt\b)")
+LEAD = 40
+
+
+def first_human(path: Path) -> str:
+    """The text of a session's first human message, as one line, or ""."""
+    for line in path.read_text().splitlines():
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        content = None
+        if rec.get("type") == "user":
+            content = (rec.get("message") or {}).get("content")
+        payload = rec.get("payload") or {}
+        if payload.get("type") == "message" and payload.get("role") == "user":
+            content = payload.get("content")
+        if isinstance(content, list):
+            content = " ".join(
+                p.get("text", "")
+                for p in content
+                if isinstance(p, dict) and p.get("type") in ("text", "input_text")
+            )
+        # Codex opens a session with messages of its own in the user's role.
+        if (
+            isinstance(content, str)
+            and content.strip()
+            and not content.lstrip().startswith(INJECTED)
+        ):
+            return " ".join(content.split())
+    return ""
+
+
+INJECTED = ("<environment_context>", "<user_instructions>", "# AGENTS.md instructions")
+# A shell command that reads the skill's SKILL.md, as an agent loads it.
+READS_SKILL = re.compile(
+    r"^\s*(?:cat|sed|head|tail|less|more|nl|awk|bat)\b[^>]*filedrawer-search/SKILL\.md"
+)
+
+
+def loads_skill(name: str, given: str) -> bool:
+    if name == "Skill":
+        return "filedrawer-search" in given
+    if name == "Read":
+        return "filedrawer-search/SKILL.md" in given
+    if name in SHELL_TOOLS:
+        return any(
+            READS_SKILL.search(s) and ">" not in s
+            for s in shell_segments(shell_text(given))
+        )
+    return False
+
+
+def lead(text: str) -> str:
+    text = blank(text)
+    return f'"{text[:LEAD]}…"' if len(text) > LEAD else f'"{text}"'
+
+
+def session_counts(path: Path) -> dict:
+    """Whether a session loaded the search skill, and how many requests it made of
+    File Drawer's search, of a web search tool and of other pages."""
+    counts = {"skill": False, "file drawer": 0, "web": 0, "fetch": 0}
+    for name, given in commands(path):
+        name, given = str(name), str(given)
+        if loads_skill(name, given):
+            counts["skill"] = True
+        if name in SHELL_TOOLS:
+            requests = [
+                s for s in shell_segments(shell_text(given)) if REQUEST.match(s)
+            ]
+            for request in requests:
+                if SITE_SEARCH.search(request):
+                    counts["file drawer"] += 1
+                elif re.search(r"https?://", request) and not SITE_URL.search(request):
+                    counts["fetch"] += 1
+        elif name in ("WebSearch", "web", "web_search"):
+            counts["web"] += 1
+        elif "fetch" in name.lower():
+            if SITE_SEARCH.search(given):
+                counts["file drawer"] += 1
+            elif not SITE_URL.search(given):
+                counts["fetch"] += 1
+    return counts
+
+
+def sessions(args) -> int:
+    missing = False
+    groups: dict[str, dict[str, list[bool]]] = {}
+    for run_dir in map(Path, args.run_dirs):
+        try:
+            run_record(run_dir)
+        except NoRun as why:
+            missing = True
+            print(f"{run_dir.name}: {why}")
+            continue
+        version = next(
+            (
+                v.split()[1]
+                for v in skill_versions(run_dir / "files")
+                if v.startswith("filedrawer-search ")
+            ),
+            "none",
+        )
+        group = groups.setdefault(
+            f"{scenario_name(run_dir)}, filedrawer-search {version}", {}
+        )
+        for n, path in enumerate(transcripts(run_dir), 1):
+            counts = session_counts(path)
+            prompt = lead(first_human(path))
+            group.setdefault(prompt, []).append(counts["skill"])
+            print(
+                f"{run_dir.name} {n} {prompt} skill {'yes' if counts['skill'] else 'no'}"
+                f", file drawer {counts['file drawer']}, web {counts['web']}"
+                f", fetch {counts['fetch']}"
+            )
+    for name, prompts in groups.items():
+        loaded = [x for runs in prompts.values() for x in runs]
+        print(f"{name}: skill loaded in {sum(loaded)} of {len(loaded)} sessions")
+        for prompt, runs in prompts.items():
+            print(f"  {prompt} {sum(runs)}/{len(runs)}")
+    return 1 if missing else 0
+
+
 # ---------------------------------------------------------------- main
 
 
@@ -1058,6 +1199,9 @@ def main() -> int:
         if command == "report":
             parser.add_argument("run_dirs", nargs="+")
             return report(parser.parse_args(sys.argv[2:]))
+        if command == "sessions":
+            parser.add_argument("run_dirs", nargs="+")
+            return sessions(parser.parse_args(sys.argv[2:]))
         if command == "batch":
             parser.add_argument("runs", nargs="+")
             parser.add_argument("--base", default=STAGING)
