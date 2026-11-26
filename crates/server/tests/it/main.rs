@@ -44,6 +44,7 @@ mod migrations;
 mod pages;
 mod passwords;
 mod provenance;
+mod publication_notice;
 mod read;
 mod reader_warnings;
 mod reads;

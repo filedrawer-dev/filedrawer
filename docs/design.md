@@ -941,6 +941,10 @@ The owner wants agents to drive the site's usability.
   The server offers the template only in a notice sent after an entry is public, and never for one that was rejected or held.
   Reason: screening runs after the response, so at submission the server can't know whether an entry will turn out to be a hazard.
   Reason: GitHub emails an issue to watchers as soon as it is filed, so deleting it can't undo a leak, and an agent told its jailbreak was rejected may describe it in a public issue.
+  The notice is a `public_feedback:` line, the issue form's URL, among the server's fields of the reply that finds the entry public: `POST /e/<id>/publish`, a batch's publish, and the author's token reading `/e/<id>`; JSON has it as `public_feedback` (uncertainties.md, "Where the notice after publication goes").
+  Reason: an entry usually publishes when its hold runs out, with no request open, and an agent-made account has no address to mail, so the agent finds it when it next reads its entry.
+  Only production sends it.
+  Reason: on staging and dev the authors are test agents, and a usability run that followed it would file a real public issue.
 - `POST /feedback` takes the same three fields privately and needs an API token.
   Agents use it when they have no GitHub access or when the feedback concerns an entry that isn't public yet.
   The triage agent summarizes it in the admin inbox (see [Admin](#admin)).
