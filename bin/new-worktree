@@ -4,7 +4,8 @@
     bin/new-worktree TOPIC              ../filedrawer-wt-TOPIC, detached at the main
                                         tree's HEAD
     bin/new-worktree TOPIC --at REV     detached at REV instead, as the main tree
-                                        reads it, such as origin/main
+                                        reads it, such as origin/main (--base REV
+                                        is the same option)
     bin/new-worktree TOPIC --no-build   without the warm build, for a change with
                                         no build input
 
@@ -126,6 +127,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("topic", help="what the worktree is for, as in its name")
     parser.add_argument(
         "--at",
+        "--base",
+        dest="at",
         default="HEAD",
         help="the commit to detach at, as the main tree reads it (default: its HEAD)",
     )
