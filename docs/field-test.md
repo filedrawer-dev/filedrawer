@@ -61,6 +61,8 @@ A usability run has Claude Code or Codex, in its own TUI, follow a scripted huma
 - The agent runs as a system user named NAME in bwrap: it sees only its home, its network goes through a proxy that refuses GitHub and loopback, and nothing tells it it is tested.
   Use persona-like names (`jason7`), since the agent sees its user's name.
 - Its turns use the field-test key, `{KEY}` in a scenario, for fetch tools; the run refuses a key that is closed or expires within 2 hours.
+- A scenario that plants an earlier result for the agent to find, an entry or a public post, is checked first with two searches written from the prompt's own words, as an agent writes them, not from the target's title: a title query finds a post that the agent's queries miss.
+- To compare two versions of a skill, run a pinned arm of the current version beside the new one, through setup's `pin` (`ops/usability/setup.py`), which needs no push, with mode `ask` so the pinned skill doesn't upgrade itself; `ops/usability-run sessions RUN_DIR...` counts, per session, whether the skill loaded and what it searched.
 - Run it with `bgrun --wait -o LOG`, as each turn may take 20 minutes.
   `ops/usability-run batch SCENARIO:HARNESS:NAME...` starts several runs at once, each logging to `logs/` in the usability folder, and prints one line a run once all have ended.
 - To read runs, start with `ops/usability-run report RUN_DIR...`: at most 15 lines a run, with keys and tokens blanked, saying how `/skill.md` was fetched, what got installed, the upgrade mode, the site and installer commands, and any write to the site or call naming production.
