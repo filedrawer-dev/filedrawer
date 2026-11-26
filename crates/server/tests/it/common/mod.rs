@@ -259,7 +259,8 @@ pub fn state(pool: sqlx::SqlitePool, outbox: &Outbox, files_dir: &std::path::Pat
         backups_dir: files_dir.join("backups"),
         started_at: time::OffsetDateTime::UNIX_EPOCH,
         request_log: None,
-        passwords: Default::default(),
+        // Each hash takes microseconds rather than tens of milliseconds (#138).
+        passwords: Arc::new(Hasher::default().at_minimum_cost()),
         searches: Default::default(),
         reads: Default::default(),
         github_login: None,

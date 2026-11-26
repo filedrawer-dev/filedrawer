@@ -3,24 +3,20 @@
 //! places, and a request that gets none in time is refused (uncertainties.md, The
 //! server's own bounds).
 
-use std::sync::{Arc, LazyLock};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::error::AppError;
 
-use argon2::Argon2;
 use argon2::password_hash::phc::PasswordHash;
 use argon2::password_hash::{PasswordHasher, PasswordVerifier};
+use argon2::{Algorithm, Argon2, Params, Version};
 
 /// The shortest and longest password the server takes. No rules on what's in it.
 pub const MIN_CHARS: usize = 12;
 pub const MAX_CHARS: usize = 1024;
-
-/// A hash of a random password nobody knows, checked when the email is unknown so a
-/// login takes as long either way. Made once, on first use.
-static DECOY: LazyLock<String> = LazyLock::new(|| hash(&crate::ids::new_secret()));
 
 /// Why a password isn't accepted, or `None`.
 pub fn problem(password: &str) -> Option<String> {
@@ -43,11 +39,22 @@ const MOST_AT_ONCE: usize = 4;
 /// of that refusal.
 const SITE_WAIT: Duration = Duration::from_secs(5);
 
-/// Runs every password hash and check, at most so many at once.
+/// Runs every password hash and check, at most so many at once, at its cost: the
+/// site's, or the least argon2 allows ([`Hasher::at_minimum_cost`]).
 #[derive(Debug)]
 pub struct Hasher {
     places: Arc<Semaphore>,
     wait: Duration,
+    cost: Arc<Cost>,
+}
+
+/// What a hasher's hashes cost: argon2id's parameters, and a decoy made with them.
+#[derive(Debug)]
+struct Cost {
+    params: Params,
+    /// A hash of a random password nobody knows, checked when the email is unknown
+    /// so a login takes as long either way. Made once, on first use.
+    decoy: OnceLock<String>,
 }
 
 /// No place came free within the hasher's wait.
@@ -71,6 +78,7 @@ impl From<Busy> for AppError {
 pub struct Place {
     /// Free again when this is dropped.
     _held: OwnedSemaphorePermit,
+    cost: Arc<Cost>,
 }
 
 impl Hasher {
@@ -80,6 +88,25 @@ impl Hasher {
         Hasher {
             places: Arc::new(Semaphore::new(at_once)),
             wait,
+            cost: Arc::new(Cost::new(Params::default())),
+        }
+    }
+
+    /// This hasher at argon2's minimum cost (8 KiB, 1 pass, 1 lane), for tests: a
+    /// hash takes microseconds rather than tens of milliseconds. No deployment builds
+    /// one; it checks any stored hash as the site's does, since a check follows the
+    /// parameters the hash records.
+    pub fn at_minimum_cost(self) -> Hasher {
+        let least = Params::new(
+            Params::MIN_M_COST,
+            Params::MIN_T_COST,
+            Params::MIN_P_COST,
+            None,
+        )
+        .expect("argon2's own minimums are valid parameters");
+        Hasher {
+            cost: Arc::new(Cost::new(least)),
+            ..self
         }
     }
 
@@ -89,7 +116,10 @@ impl Hasher {
     pub async fn place(&self) -> Result<Place, Busy> {
         let places = self.places.clone();
         match tokio::time::timeout(self.wait, places.acquire_owned()).await {
-            Ok(Ok(permit)) => Ok(Place { _held: permit }),
+            Ok(Ok(permit)) => Ok(Place {
+                _held: permit,
+                cost: self.cost.clone(),
+            }),
             // The semaphore is never closed, so only the wait ends without a place.
             Ok(Err(_)) | Err(_) => Err(Busy {
                 retry_after_secs: self.wait.as_secs().max(1),
@@ -110,13 +140,15 @@ impl Default for Hasher {
 impl Place {
     /// The PHC string for `password`.
     pub async fn hash(self, password: String) -> String {
-        self.run(move || hash(&password)).await
+        let cost = self.cost.clone();
+        self.run(move || cost.hash(&password)).await
     }
 
     /// Whether `password` matches `stored`. With no stored hash it checks a decoy
     /// and returns false, taking the same time.
     pub async fn matches(self, password: String, stored: Option<String>) -> bool {
-        self.run(move || matches(&password, stored.as_deref()))
+        let cost = self.cost.clone();
+        self.run(move || cost.matches(&password, stored.as_deref()))
             .await
     }
 
@@ -133,27 +165,47 @@ impl Place {
     }
 }
 
-/// The PHC string for `password`, with a random salt and the crate's argon2id
-/// defaults (19 MiB, 2 passes, 1 lane).
-fn hash(password: &str) -> String {
-    Argon2::default()
-        .hash_password(password.as_bytes())
-        .expect("argon2id with default parameters hashes any input")
-        .to_string()
-}
+impl Cost {
+    fn new(params: Params) -> Cost {
+        Cost {
+            params,
+            decoy: OnceLock::new(),
+        }
+    }
 
-/// Whether `password` matches `stored`. With no stored hash it checks a decoy and
-/// returns false, taking the same time.
-fn matches(password: &str, stored: Option<&str>) -> bool {
-    let (phc, real) = match stored {
-        Some(stored) => (stored, true),
-        None => (DECOY.as_str(), false),
-    };
-    let Ok(parsed) = PasswordHash::new(phc) else {
-        return false;
-    };
-    let ok = Argon2::default()
-        .verify_password(password.as_bytes(), &parsed)
-        .is_ok();
-    ok && real
+    /// argon2id at this cost; the site's is the crate's defaults (19 MiB, 2 passes,
+    /// 1 lane).
+    fn argon2(&self) -> Argon2<'static> {
+        Argon2::new(Algorithm::Argon2id, Version::V0x13, self.params.clone())
+    }
+
+    /// The PHC string for `password`, with a random salt.
+    fn hash(&self, password: &str) -> String {
+        self.argon2()
+            .hash_password(password.as_bytes())
+            .expect("argon2id with valid parameters hashes any input")
+            .to_string()
+    }
+
+    /// Whether `password` matches `stored`, at the parameters `stored` records. With
+    /// no stored hash it checks the decoy and returns false, taking the same time.
+    fn matches(&self, password: &str, stored: Option<&str>) -> bool {
+        let (phc, real) = match stored {
+            Some(stored) => (stored, true),
+            None => (
+                self.decoy
+                    .get_or_init(|| self.hash(&crate::ids::new_secret()))
+                    .as_str(),
+                false,
+            ),
+        };
+        let Ok(parsed) = PasswordHash::new(phc) else {
+            return false;
+        };
+        let ok = self
+            .argon2()
+            .verify_password(password.as_bytes(), &parsed)
+            .is_ok();
+        ok && real
+    }
 }
