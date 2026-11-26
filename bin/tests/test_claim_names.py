@@ -470,8 +470,7 @@ def test_without_cargo_it_says_how_to_get_it(box):
     fakes = next(d for d in path if d.endswith("fakes"))
     (Path(fakes) / "cargo").unlink()
     assert shutil.which("cargo", path=os.pathsep.join(path)) is None
-    # BASH_ENV would source the sandbox's profile, which puts cargo back on PATH.
-    done = box.run(env={"PATH": os.pathsep.join(path), "BASH_ENV": ""})
+    done = box.run(env={"PATH": os.pathsep.join(path)})
     assert done.returncode == 1
     assert "https://rustup.rs" in done.stdout
     assert box.calls("gh") == ["auth status"]

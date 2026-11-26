@@ -41,6 +41,14 @@ settings.register_profile("dev", max_examples=20, **_UNTIMED)
 settings.register_profile("deep", max_examples=3000, **_UNTIMED)
 settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "default"))
 
+# No bash the tests start sources a startup file first: the sandbox's BASH_ENV names
+# /etc/sandbox-persistent.sh, which cost each of the run's 1,500 or more bashes 10 ms
+# of CPU (#168), and puts back on PATH what a test took off it. CI and the owner's
+# host set none. Dropped here, not by monkeypatch, so the session's and each module's
+# fixtures start their bashes without it too; this process holds everything the file
+# exports already.
+os.environ.pop("BASH_ENV", None)
+
 OPENERS = ("wslview", "explorer.exe", "xdg-open", "open")
 # Tools that reach other machines. A test that needs one uses fake_host.
 NETWORK_TOOLS = ("gh", "ssh", "scp", "sftp", "curl")
@@ -103,9 +111,9 @@ def no_network_tools(tmp_path_factory, monkeypatch):
 def no_shared_sccache(monkeypatch):
     """No test's build goes through sccache: sandbox-setup sets RUSTC_WRAPPER=sccache,
     and when the server has gone idle a build starts it again, a server every session
-    on the machine shares, which the test would leave running. Empty, not unset: a bash
-    sources /etc/sandbox-persistent.sh, which sets an unset one again; cargo takes an
-    empty one as none."""
+    on the machine shares, which the test would leave running. Empty, not unset: a
+    login or interactive bash sources /etc/sandbox-persistent.sh, which sets an unset
+    one again; cargo takes an empty one as none."""
     monkeypatch.setenv("RUSTC_WRAPPER", "")
 
 

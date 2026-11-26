@@ -1,6 +1,6 @@
 """bin/tests/conftest.py's guard: no test's build reaches sccache, whose server every
-session on the machine shares and a build starts again once it has gone idle. A bash
-the test starts sources /etc/sandbox-persistent.sh, which sets RUSTC_WRAPPER=sccache
+session on the machine shares and a build starts again once it has gone idle. A login
+or interactive bash sources /etc/sandbox-persistent.sh, which sets RUSTC_WRAPPER=sccache
 again when it is unset but keeps an empty one."""
 
 import subprocess
