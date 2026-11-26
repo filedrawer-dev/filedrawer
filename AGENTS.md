@@ -197,7 +197,7 @@ The property tests (hypothesis) run 100 examples each; `HYPOTHESIS_PROFILE=dev` 
 A whole file such as `test_provision_vps.py` run with `-n0` takes past a minute, which overruns `--few-seconds`; in parallel, six such files take about 16 s.
 Run a targeted run like that, a few tests that take seconds, through `heavy --few-seconds -- CMD`, which starts it at once on quiet cores and otherwise next in heavy's queue (`heavy -h`); a whole suite goes through plain `heavy`.
 After an edit to a crate, that run first rebuilds the test binary, a minute or more, which overruns `--few-seconds`: build it first as a background call, `bgrun --wait -o LOG -- heavy --share -- cargo nextest run --cargo-quiet --no-run`, then run the tests with `--few-seconds`.
-A `mutate-check` rebuilds for each mutant, so it goes through plain `heavy` the same way.
+A `mutate-check --diff` run rebuilds for each mutant, so it goes through `heavy --long`, as a background call: `bgrun --wait -o LOG -- heavy --long -- mutate-check --diff ...`; llm-toolbox's heavy-gate refuses it in another lane.
 Give a foreground `heavy --few-seconds` call a Bash timeout of 600000 ms, since it may wait behind a running job; llm-toolbox's heavy-gate refuses one without it.
 Install nextest once per machine: `cargo install cargo-nextest --locked`, or the prebuilt binary from https://get.nexte.st/latest/linux.
 
