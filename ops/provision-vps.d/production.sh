@@ -11,7 +11,7 @@ PRODUCTION_NEEDS=(
   "/etc/filedrawer/production-mail.env:mail"
   "/etc/filedrawer/production-screening.env:screening"
   "/etc/filedrawer/production-ping.env:healthchecks.io"
-  "/etc/filedrawer/github.env:GitHub token"
+  "/etc/filedrawer/production-github.env:GitHub token"
 )
 production_preflight_stage() {
   stage "Preflight: reach the server"
@@ -162,15 +162,12 @@ production_screening_stage() {
   pause
 }
 
+# production_github_stage: production's own GitHub token for the link checks (#123);
+# production refuses to start without one.
 production_github_stage() {
-  stage "The GitHub token for the link checks"
-  if remote_has /etc/filedrawer/github.env; then
-    say "The server has the GitHub token already, shared with staging; production's"
-    say "unit reads the same file. ✓ To replace it: ops/provision-vps --ask-all github"
-    pause
-    return 0
-  fi
-  github_stage_body
+  stage "Production's GitHub token for the link checks"
+  github_token_setup production "production github"
+  pause
 }
 
 # production_github_oauth_stage: production's own GitHub OAuth App, for GitHub
@@ -421,7 +418,7 @@ production_account_stage() {
   pause
 }
 
-# production [STAGE]: production's stages; or one alone, mail, screening,
+# production [STAGE]: production's stages; or one alone, mail, screening, github,
 # github-oauth or pings;
 # or account, the one after the first deploy.
 production() {
@@ -448,7 +445,7 @@ production() {
       TOTAL_STAGES=1
       production_account_stage
       ;;
-    mail | screening | github-oauth | pings)
+    mail | screening | github | github-oauth | pings)
       TOTAL_STAGES=1
       need_vps_host
       "production_${1//-/_}_stage"
@@ -456,7 +453,7 @@ production() {
       ;;
     *)
       warn "ops/provision-vps production takes no stage, or one of account, mail, screening,"
-      warn "github-oauth and pings, as in: ops/provision-vps production account"
+      warn "github, github-oauth and pings, as in: ops/provision-vps production account"
       exit 2
       ;;
   esac

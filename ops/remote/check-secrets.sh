@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Checks each secret the server holds with the service that takes it, unattended,
 # so a rerun of ops/provision-vps that keeps a secret still shows whether it works
-# (#112): the Anthropic API keys (a free list of models), the GitHub token (its rate
-# limit, which names its expiry), each environment's GitHub OAuth client secret (a
+# (#112): the Anthropic API keys (a free list of models), each environment's GitHub
+# token (its rate limit, which names its expiry), its GitHub OAuth client secret (a
 # code exchange with a made-up code, which GitHub refuses after checking the app's
 # credentials), and the healthchecks.io ping URLs (their /log endpoint, which
 # records an event and leaves the check's state alone). The SMTP
@@ -12,7 +12,9 @@
 # Prints a line per secret held: "ok: WHAT: ...", "accepted: WHAT: ..." (an
 # Anthropic key, which a workspace out of credit would pass too), "expiring:
 # WHAT: ...", "failed: WHAT: ..." or "unchecked: WHAT: ...", the last when the
-# service didn't say. The lines speak of the secret alone, never of the way out,
+# service didn't say; and "missing: WHAT: ..." for an environment set up without
+# its GitHub token (#123), which counts as failed for production, since it won't
+# start without one. The lines speak of the secret alone, never of the way out,
 # since root's curl can get out where a service can't. A failed or expiring line
 # names the wizard stage that replaces it. No secret is shown or put in a command
 # line: each reaches curl in its config, on stdin. Runs as root; writes nothing.
@@ -91,10 +93,20 @@ header = $(quoted "anthropic-version: 2023-06-01")")
   esac
 }
 
+# github ENV STAGE: ENV's GitHub token (#123), through its rate limit, which costs no
+# call.
 github() {
-  local token status limit expires left
-  token=$(value github.env FILEDRAWER_GITHUB_TOKEN)
-  [[ -n "$token" ]] || return 0
+  local what="$1's GitHub token" stage="$2" token status limit expires left
+  token=$(value "$1-github.env" FILEDRAWER_GITHUB_TOKEN)
+  if [[ -z "$token" ]]; then
+    # A server that ran on the token both environments shared before #123 has none
+    # for staging until the github stage runs again.
+    if [[ -e "$root/etc/systemd/system/filedrawer-$1.service" ]]; then
+      report missing "$what" "the server has none; to set one: ops/provision-vps $stage"
+      [[ "$1" != production ]] || failed=1
+    fi
+    return 0
+  fi
   status=$(call "url = $(quoted https://api.github.com/rate_limit)
 header = $(quoted "Authorization: Bearer $token")
 header = $(quoted "User-Agent: filedrawer-check-secrets")")
@@ -104,19 +116,19 @@ header = $(quoted "User-Agent: filedrawer-check-secrets")")
       # GitHub answers 200 without a token too, allowing 60 calls an hour, so such
       # an answer, or one without the header, says nothing of the token.
       if [[ ! "$limit" =~ ^[0-9]+$ ]] || (( limit <= 60 )); then
-        report unchecked "the GitHub token" "GitHub answered as to a call without a token"
+        report unchecked "$what" "GitHub answered as to a call without a token"
         return 0
       fi
       expires=$(header github-authentication-token-expiration)
       if [[ -n "$expires" ]] && left=$(date -d "$expires" +%s 2>/dev/null) &&
         (( left - now < 14 * 86400 )); then
-        report expiring "the GitHub token" "it expires on ${expires%% *}; make a new one" github
+        report expiring "$what" "it expires on ${expires%% *}; make a new one" "$stage"
       else
-        report ok "the GitHub token" "accepted, ${limit} calls an hour"
+        report ok "$what" "accepted, ${limit} calls an hour"
       fi
       ;;
-    401) report failed "the GitHub token" "GitHub refused it (expired or revoked)" github ;;
-    *) unanswered "the GitHub token" GitHub "$status" ;;
+    401) report failed "$what" "GitHub refused it (expired or revoked)" "$stage" ;;
+    *) unanswered "$what" GitHub "$status" ;;
   esac
 }
 
@@ -170,7 +182,8 @@ data = $(quoted "ops/provision-vps: checking the URL")")
 
 anthropic staging "staging's Anthropic API key" screening
 anthropic production "production's Anthropic API key" "production screening"
-github
+github staging github
+github production "production github"
 github_oauth staging "staging's GitHub OAuth client secret" github-oauth
 github_oauth production "production's GitHub OAuth client secret" "production github-oauth"
 ping_check production-ping.env FILEDRAWER_DAILY_EMAIL_PING "the daily email's ping URL" "production pings"

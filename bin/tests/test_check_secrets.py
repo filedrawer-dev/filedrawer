@@ -65,7 +65,12 @@ def box(tmp_path):
             return []
         return [json.loads(line) for line in log.read_text().splitlines()]
 
-    return SimpleNamespace(answer=answer, put=put, run=run, calls=calls)
+    def unit(environment):
+        units = root / "etc/systemd/system"
+        units.mkdir(parents=True, exist_ok=True)
+        (units / f"filedrawer-{environment}.service").write_text("")
+
+    return SimpleNamespace(answer=answer, put=put, run=run, calls=calls, unit=unit)
 
 
 def secrets_shown(box, result):
@@ -136,34 +141,64 @@ def expiry(days: int) -> str:
 
 
 @pytest.mark.parametrize(
-    ("status", "headers", "start", "code"),
+    ("environment", "stage"),
+    [("staging", "github"), ("production", "production github")],
+)
+@pytest.mark.parametrize(
+    ("status", "headers", "verdict", "code"),
     [
-        (200, "x-ratelimit-limit: 5000\r\n" + expiry(90), "ok: the GitHub token", 0),
-        (
-            200,
-            "x-ratelimit-limit: 5000\r\n" + expiry(5),
-            "expiring: the GitHub token",
-            0,
-        ),
+        (200, "x-ratelimit-limit: 5000\r\n" + expiry(90), "ok", 0),
+        (200, "x-ratelimit-limit: 5000\r\n" + expiry(5), "expiring", 0),
         # Without a token GitHub answers 200 too, with 60 calls an hour: a token
         # that never reached it, so nothing to say of the token itself.
-        (200, "x-ratelimit-limit: 60\r\n", "unchecked: the GitHub token", 0),
-        (200, "", "unchecked: the GitHub token", 0),
-        (401, "", "failed: the GitHub token", 1),
-        (403, "", "unchecked: the GitHub token", 0),
+        (200, "x-ratelimit-limit: 60\r\n", "unchecked", 0),
+        (200, "", "unchecked", 0),
+        (401, "", "failed", 1),
+        (403, "", "unchecked", 0),
     ],
 )
-def test_the_github_token(box, status, headers, start, code):
-    box.put("github.env", f"FILEDRAWER_GITHUB_TOKEN='{TOKEN}'\n")
+def test_each_environments_github_token(
+    box, environment, stage, status, headers, verdict, code
+):
+    box.put(f"{environment}-github.env", f"FILEDRAWER_GITHUB_TOKEN='{TOKEN}'\n")
     box.answer("api.github.com/rate_limit", status, "{}", headers)
     result = box.run()
     assert result.returncode == code
-    assert result.stdout.startswith(start), result.stdout
-    if start.startswith(("failed", "expiring")):
-        assert "ops/provision-vps --ask-all github" in result.stdout
+    assert result.stdout.startswith(f"{verdict}: {environment}'s GitHub token"), (
+        result.stdout
+    )
+    if verdict in ("failed", "expiring"):
+        assert f"ops/provision-vps --ask-all {stage}" in result.stdout
     [call] = box.calls()
     assert f'header = "Authorization: Bearer {TOKEN}"' in call["config"]
     assert secrets_shown(box, result) == []
+
+
+@pytest.mark.parametrize(
+    ("environment", "stage"),
+    [("staging", "github"), ("production", "production github")],
+)
+def test_an_environment_set_up_without_its_github_token_is_named(
+    box, environment, stage
+):
+    """Since #123 a server whose staging ran on the shared token has none for
+    staging until the github stage runs again; the run's list says so."""
+    box.unit(environment)
+    result = box.run()
+    assert result.stdout.splitlines() == [
+        f"missing: {environment}'s GitHub token: the server has none;"
+        f" to set one: ops/provision-vps {stage}"
+    ]
+    # Production won't start without one, which is a failure; staging runs on 60
+    # calls an hour.
+    assert result.returncode == (1 if environment == "production" else 0)
+    assert box.calls() == []
+
+
+def test_an_environment_not_set_up_needs_no_github_token(box):
+    result = box.run()
+    assert result.returncode == 0
+    assert result.stdout == ""
 
 
 @pytest.mark.parametrize(
@@ -243,7 +278,8 @@ def test_each_environments_oauth_secret_is_checked_with_a_code_github_refuses(
 def test_every_secret_held_gets_a_line(box):
     box.put("staging-screening.env", f"FILEDRAWER_ANTHROPIC_API_KEY='{KEY}'\n")
     box.put("production-screening.env", f"FILEDRAWER_ANTHROPIC_API_KEY='{KEY}'\n")
-    box.put("github.env", f"FILEDRAWER_GITHUB_TOKEN='{TOKEN}'\n")
+    box.put("staging-github.env", f"FILEDRAWER_GITHUB_TOKEN='{TOKEN}'\n")
+    box.put("production-github.env", f"FILEDRAWER_GITHUB_TOKEN='{TOKEN}'\n")
     box.put("production-ping.env", f"FILEDRAWER_DAILY_EMAIL_PING={DAILY}\n")
     box.put("production-backup.env", f"BACKUP_PING={DAILY}\n")
     box.put("caddy-upgrades.env", f"ALERT_TO=a@b.dev\nPING={GUARD}\n")
@@ -255,18 +291,18 @@ def test_every_secret_held_gets_a_line(box):
     box.answer("hc-ping.com", 200, "OK", "")
     result = box.run()
     assert result.returncode == 0, result.stdout + result.stderr
-    assert len(result.stdout.splitlines()) == 8
+    assert len(result.stdout.splitlines()) == 9
     assert all(
         line.startswith(("ok: ", "accepted: ")) for line in result.stdout.splitlines()
     )
 
 
 def test_a_server_that_cant_get_out_says_nothing_answered(box):
-    box.put("github.env", f"FILEDRAWER_GITHUB_TOKEN='{TOKEN}'\n")
+    box.put("staging-github.env", f"FILEDRAWER_GITHUB_TOKEN='{TOKEN}'\n")
     box.put("caddy-upgrades.env", f"ALERT_TO=a@b.dev\nPING={GUARD}\n")
     result = box.run()
     assert result.returncode == 0
     assert result.stdout.splitlines() == [
-        "unchecked: the GitHub token: GitHub didn't answer",
+        "unchecked: staging's GitHub token: GitHub didn't answer",
         "unchecked: the Caddy guard's ping URL: healthchecks.io didn't answer",
     ]

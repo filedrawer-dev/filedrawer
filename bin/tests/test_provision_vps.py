@@ -342,15 +342,29 @@ def test_screening_sends_the_key_on_stdin_and_saves_only_the_cap(stage):
 GITHUB_TOKEN = "github_pat_" + "g" * 70
 
 
-def test_github_sends_the_token_on_stdin_and_saves_nothing(stage):
-    result = stage.run("github", f"{GITHUB_TOKEN}\n{GITHUB_TOKEN}\n\n")
+@pytest.mark.parametrize(
+    ("args", "environment"),
+    [(["github"], "staging"), (["production", "github"], "production")],
+)
+def test_github_sends_the_token_on_stdin_and_saves_nothing(stage, args, environment):
+    result = stage.run(*args, f"{GITHUB_TOKEN}\n{GITHUB_TOKEN}\n\n")
     assert result.returncode == 0, result.stdout + result.stderr
     # The unit first, so it reads the new file, then the token.
     assert stage.scripts()[:2] == [
         script("service.sh"),
         f"{GITHUB_TOKEN}\n" + script("github-token.sh"),
     ]
-    assert "read -r TOKEN" in stage.log.read_text()
+    calls = stage.host.calls()
+    assert f"env ENVIRONMENT={environment} bash -s" in calls
+    assert (
+        f"IFS= read -r TOKEN; export TOKEN; env ENVIRONMENT={environment} bash -s"
+        in calls
+    )
+    other = "staging" if environment == "production" else "production"
+    assert f"ENVIRONMENT={other}" not in " ".join(calls)
+    # Each environment's token is its own, and GitHub's hourly limit is the
+    # account's, so the stage says to make it on another account if one can.
+    assert "own hourly limit" in result.stdout
     assert (
         stage.opened.read_text()
         == "https://github.com/settings/personal-access-tokens/new\n"
@@ -532,7 +546,7 @@ def rerun(tmp_path, fake_host):
     present(
         "/etc/filedrawer/staging-mail.env",
         "/etc/filedrawer/staging-screening.env",
-        "/etc/filedrawer/github.env",
+        "/etc/filedrawer/staging-github.env",
         "/etc/filedrawer/staging-github-oauth.env",
         BASE_MARKER,
         "/etc/caddy/sites/staging.caddy",
@@ -740,7 +754,7 @@ def test_production_sends_each_script_for_production_in_order(production):
         at("caddy.sh", "ENVIRONMENT=production"),
         at("mail.sh", "ENVIRONMENT=production"),
         at("screening.sh", "ENVIRONMENT=production"),
-        at("github-token.sh"),
+        at("github-token.sh", "ENVIRONMENT=production"),
         at("github-oauth.sh", "ENVIRONMENT=production"),
         at("ping.sh"),
         at("backup.sh"),
@@ -867,14 +881,15 @@ def test_a_ping_url_that_isnt_one_stops_before_it_reaches_the_server(production)
     assert not any(s.endswith(script("ping.sh")) for s in production.sent())
 
 
-def test_production_keeps_the_shared_github_token_the_server_has(production):
-    production.host.answer("test -f /etc/filedrawer/github.env")
+def test_production_keeps_its_github_token_the_server_has(production):
+    production.host.answer("test -f /etc/filedrawer/production-github.env")
     # The stage asks nothing, so it doesn't pause either.
     answers = FULL_RUN.replace(f"{GITHUB_TOKEN}\n{GITHUB_TOKEN}\n\n", "")
     result = production.run(answers=answers)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert not any(s.endswith(script("github-token.sh")) for s in production.sent())
-    assert "shared with staging" in result.stdout
+    # Sent empty, so the script keeps the server's copy and still brings its logic.
+    assert "\n" + script("github-token.sh") in production.sent()
+    assert "GitHub token for production is set; kept" in result.stdout
 
 
 def test_production_ends_listing_the_settings_the_server_still_lacks(production):
@@ -885,7 +900,7 @@ def test_production_ends_listing_the_settings_the_server_still_lacks(production)
         "/etc/filedrawer/production-mail.env",
         "/etc/filedrawer/production-screening.env",
         "/etc/filedrawer/production-ping.env",
-        "/etc/filedrawer/github.env",
+        "/etc/filedrawer/production-github.env",
     ):
         assert path in result.stdout, path
     assert "won't start" in result.stdout
@@ -923,7 +938,7 @@ def rerun_production(production) -> subprocess.CompletedProcess:
         "production-screening.env",
         "production-ping.env",
         "production-backup.env",
-        "github.env",
+        "production-github.env",
         "production-github-oauth.env",
         "caddy-upgrades.env",
     ):
@@ -949,10 +964,9 @@ def test_a_production_rerun_asks_for_nothing_the_server_has(production):
     assert any(s.endswith(script("service.sh")) for s in sent)
     assert any(s.endswith(script("caddy.sh")) for s in sent)
     # Each secret is kept: its script goes, with the secret empty.
-    for kept in ("mail.sh", "screening.sh", "github-oauth.sh"):
+    for kept in ("mail.sh", "screening.sh", "github-token.sh", "github-oauth.sh"):
         assert "\n" + script(kept) in sent, kept
     assert "\t\n" + script("ping.sh") in sent
-    assert not any(s.endswith(script("github-token.sh")) for s in sent)
     assert "won't start" not in result.stdout
     # The guard's program, apt file and units still go; its settings stay.
     assert script("caddy-upgrade-check") in sent
@@ -1165,8 +1179,6 @@ PRODUCTION_RERUN_EXEMPT = {
     "smoke-env.sh": "Staging's wizard sends it: the smoke test runs on staging.",
     "admin-grant.sh": "ops/provision-vps production account sends it, after the "
     "first deploy.",
-    "github-token.sh": "Sent only when /etc/filedrawer/github.env, which staging "
-    "shares, is missing, or by staging's wizard (see its exemption).",
     "field-test-key.sh": FIELD_TEST_KEY,
 }
 
@@ -1287,6 +1299,14 @@ def test_a_stage_alone_probes_staging_when_it_restarts_it(stage, name, answers, 
     assert (PROBE_STAGING in stage.host.calls()) == probes
 
 
+def test_productions_github_stage_alone_probes_production(production):
+    result = production.run("github", answers=f"{GITHUB_TOKEN}\n{GITHUB_TOKEN}\n\n")
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = production.host.calls()
+    assert PROBE_PRODUCTION in calls
+    assert PROBE_STAGING not in calls
+
+
 def test_production_probes_its_way_out_with_the_current_install(production):
     result = production.run(answers=FULL_RUN)
     assert result.returncode == 0, result.stdout + result.stderr
@@ -1390,6 +1410,8 @@ def test_an_ssh_failure_stops_the_wizard_rather_than_ask_again(held):
         (["mail"], "mail.sh", ""),
         (["production", "mail"], "mail.sh", ""),
         (["production", "screening"], "screening.sh", ""),
+        (["github"], "github-token.sh", ""),
+        (["production", "github"], "github-token.sh", ""),
         (["production", "pings"], "ping.sh", "\t"),
         (["github-oauth"], "github-oauth.sh", ""),
         (["production", "github-oauth"], "github-oauth.sh", ""),
@@ -1444,7 +1466,7 @@ def test_a_first_run_still_asks_before_the_base_system(rerun):
     rerun.present(
         "/etc/filedrawer/staging-mail.env",
         "/etc/filedrawer/staging-screening.env",
-        "/etc/filedrawer/github.env",
+        "/etc/filedrawer/staging-github.env",
     )
     result = rerun.run()
     assert "Run it on" in result.stdout

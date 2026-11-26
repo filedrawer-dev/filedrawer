@@ -1256,6 +1256,12 @@ The owner settled the email's sections and the rules in design.md's Admin sectio
 - Chosen: it starts, with the warning, so a deploy before `ops/provision-vps github` has run doesn't fail.
 - Against: staging can run for days at 60 calls an hour, and when GitHub's commit page doesn't answer, most GitHub links get "pin not verified", which only `/staging/status` ("github allowance: 60 calls an hour") and the log say.
 
+#### Whose account staging's GitHub token is on
+
+- Options (#123): staging's token on the same GitHub account as production's, which separates the two tokens but not their hourly limit, since GitHub counts every token of one account against one limit; on another account, such as a machine account of the owner's, which separates both; or the same account, with staging spending a smaller share of the limit than production's half.
+- Chosen: the code takes any token, and the wizard says that only another account gives staging its own limit, leaving the account to the owner; the token both environments shared stays production's.
+- Against: on one account, a staging binary that spends its half still leaves production nothing, the starvation #123 names; a smaller share for staging would fix that without a second account, but is a server change of its own.
+
 #### agent-pre-commit without `CHECK_BASE`
 
 - Options: drop the hook's own record of passed trees (`checks-passed` in the git dir) and run every check whenever `CHECK_BASE` is unset, or keep the record as a fallback for when llm-toolbox's `agent-commit-gate` isn't on PATH.

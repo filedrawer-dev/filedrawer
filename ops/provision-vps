@@ -9,7 +9,7 @@
 # `ops/provision-vps smoke` runs only the last stage, CI's two accounts (the smoke
 # test's and the screen check's) and their secrets, on a server the full wizard has
 # set up; `ops/provision-vps screening` only staging's API key and cap;
-# `ops/provision-vps github` only the GitHub token the link checks use;
+# `ops/provision-vps github` only staging's GitHub token, which the link checks use;
 # `ops/provision-vps github-oauth` only staging's GitHub OAuth App, for GitHub
 # sign-in, which is optional (#119);
 # `ops/provision-vps caddy-upgrades` only the guard on the server's Caddy (#100),
@@ -25,11 +25,12 @@
 # `--only-new`, the old name for a rerun, is still taken.
 # `ops/provision-vps production` sets up production beside staging, on a server the
 # staging wizard has set up; `production mail`, `production screening`,
-# `production github-oauth` and `production pings` run one of its stages alone; and
+# `production github`, `production github-oauth` and `production pings` run one of
+# its stages alone; and
 # `ops/provision-vps production account`, after the first production deploy (#42),
 # makes your production account the admin and sets up the uptime check.
 # A run that restarts a service (the whole wizard, production's and its mail,
-# screening, github-oauth and pings stages, and the smoke, screening, github,
+# screening, github, github-oauth and pings stages, and the smoke, screening, github,
 # github-oauth and mail stages) ends
 # by probing that environment's way out as its server would (#102), and lists what
 # it couldn't reach.
@@ -112,7 +113,7 @@ case "${1:-}" in
   *)
     # A typo would otherwise run the whole staging setup.
     warn "ops/provision-vps doesn't know '$1'. It takes, after an optional --ask-all:"
-    warn "  nothing (staging's setup), production [account, mail, screening,"
+    warn "  nothing (staging's setup), production [account, mail, screening, github,"
     warn "  github-oauth or pings], or one stage alone: smoke, screening, admin, github,"
     warn "  github-oauth, caddy-upgrades, reboots or mail."
     exit 2 ;;

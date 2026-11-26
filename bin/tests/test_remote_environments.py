@@ -294,7 +294,7 @@ def test_production_gets_its_own_settings_and_unit(box):
         "EnvironmentFile=-/etc/filedrawer/production-mail.env",
         "EnvironmentFile=-/etc/filedrawer/production-screening.env",
         "EnvironmentFile=-/etc/filedrawer/production-ping.env",
-        "EnvironmentFile=-/etc/filedrawer/github.env",
+        "EnvironmentFile=-/etc/filedrawer/production-github.env",
         "EnvironmentFile=-/etc/filedrawer/production-github-oauth.env",
         "ExecStart=/srv/filedrawer/production/bin/filedrawer serve",
         "ConditionPathIsExecutable=/srv/filedrawer/production/bin/filedrawer",
@@ -306,6 +306,7 @@ def test_production_gets_its_own_settings_and_unit(box):
     ):
         assert f"\n{line}\n" in text, line
     assert "smoke" not in text
+    assert "staging-github" not in text
     assert "systemctl enable filedrawer-production.service" in box.log.read_text()
 
 
@@ -325,6 +326,7 @@ def test_staging_keeps_its_settings_and_unit_and_may_bind_only_its_tcp_port(box)
     for line in (
         "User=filedrawer",
         "EnvironmentFile=-/etc/filedrawer/staging-smoke.env",
+        "EnvironmentFile=-/etc/filedrawer/staging-github.env",
         "EnvironmentFile=-/etc/filedrawer/staging-github-oauth.env",
         "SocketBindAllow=tcp:8081",
         "SocketBindAllow=udp",
@@ -333,9 +335,10 @@ def test_staging_keeps_its_settings_and_unit_and_may_bind_only_its_tcp_port(box)
     ):
         assert f"\n{line}\n" in text, line
     assert "loopback" not in text
-    # Each environment's OAuth App is its own: production's secret never reaches
-    # staging's binary (design.md, Hosting and operations).
-    assert "production-github-oauth" not in text
+    # Each environment's GitHub token and OAuth App are its own: production's
+    # secrets never reach staging's binary (design.md, Hosting and operations).
+    assert "production-github" not in text
+    assert "/etc/filedrawer/github.env" not in text
     # Screening's settings are read after the unit's own, so they replace pass-all.
     assert text.index("staging.env\n") < text.index("staging-screening.env\n")
 
@@ -355,6 +358,79 @@ def test_service_for_one_environment_leaves_the_others_files_alone(box):
     assert run(box, SERVICE, ENVIRONMENT="staging").returncode == 0
     for path, content in before.items():
         assert path.read_bytes() == content, path
+
+
+LEGACY_TOKEN = "FILEDRAWER_GITHUB_TOKEN='github_pat_shared'\n"
+
+
+def old_unit(box, environment) -> None:
+    """A unit as service.sh wrote it before #123, reading the shared token file."""
+    units = box.root / "etc/systemd/system"
+    units.mkdir(parents=True, exist_ok=True)
+    (units / f"filedrawer-{environment}.service").write_text(
+        "[Service]\nEnvironmentFile=-/etc/filedrawer/github.env\n"
+    )
+
+
+def put_legacy_token(box) -> Path:
+    path = box.root / "etc/filedrawer/github.env"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(LEGACY_TOKEN)
+    path.chmod(0o600)
+    return path
+
+
+@pytest.mark.parametrize("first", ["staging", "production"])
+def test_the_shared_token_becomes_productions_and_goes_once_no_unit_reads_it(
+    box, first
+):
+    """Before #123 both units read /etc/filedrawer/github.env. Production keeps that
+    token, in its own file, before any rewritten unit of its restarts without it;
+    the shared file goes once neither unit names it."""
+    legacy = put_legacy_token(box)
+    old_unit(box, "staging")
+    old_unit(box, "production")
+    second = "production" if first == "staging" else "staging"
+    assert run(box, SERVICE, ENVIRONMENT=first).returncode == 0
+    own = box.root / "etc/filedrawer/production-github.env"
+    assert own.read_text() == LEGACY_TOKEN
+    assert mode(own) == 0o600
+    # The other unit still reads the shared file, so it stays.
+    assert legacy.exists()
+    result = run(box, SERVICE, ENVIRONMENT=second)
+    assert result.returncode == 0, result.stderr
+    assert not legacy.exists()
+    assert own.read_text() == LEGACY_TOKEN
+    # Staging gets no copy: it needs a token of its own.
+    assert not (box.root / "etc/filedrawer/staging-github.env").exists()
+    assert "github_pat_shared" not in result.stdout + result.stderr
+
+
+def test_the_shared_token_goes_on_a_server_without_production_yet(box):
+    legacy = put_legacy_token(box)
+    old_unit(box, "staging")
+    assert run(box, SERVICE, ENVIRONMENT="staging").returncode == 0
+    assert not legacy.exists()
+    assert stored(box, "production-github.env") == LEGACY_TOKEN
+
+
+def test_a_half_copy_from_an_interrupted_run_is_never_taken_as_productions(box):
+    put_legacy_token(box)
+    old_unit(box, "staging")
+    half = box.root / "etc/filedrawer/production-github.env.new"
+    half.write_text("FILEDRAWER_GITHUB_TO")
+    assert run(box, SERVICE, ENVIRONMENT="staging").returncode == 0
+    assert stored(box, "production-github.env") == LEGACY_TOKEN
+    assert not half.exists()
+
+
+def test_productions_own_token_is_never_replaced_by_the_shared_one(box):
+    put_legacy_token(box)
+    old_unit(box, "staging")
+    own = box.root / "etc/filedrawer/production-github.env"
+    own.write_text("FILEDRAWER_GITHUB_TOKEN='github_pat_own'\n")
+    assert run(box, SERVICE, ENVIRONMENT="production").returncode == 0
+    assert own.read_text() == "FILEDRAWER_GITHUB_TOKEN='github_pat_own'\n"
 
 
 def restarts(box, environment) -> list[str]:
@@ -465,24 +541,78 @@ def test_mail_and_screening_refuse_another_environment(box, script):
 GITHUB = REPO / "ops/remote/github-token.sh"
 
 
-def test_the_github_token_restarts_every_unit_set_up_and_only_those(box):
+def token(box, environment, value, **env) -> subprocess.CompletedProcess:
+    return run(box, GITHUB, ENVIRONMENT=environment, TOKEN=value, **env)
+
+
+@pytest.mark.parametrize(
+    ("environment", "other"), [("staging", "production"), ("production", "staging")]
+)
+def test_each_environments_token_is_its_own_and_restarts_only_its_unit(
+    box, environment, other
+):
     units = box.root / "etc/systemd/system"
     units.mkdir(parents=True)
-    (units / "filedrawer-staging.service").write_text("")
-    result = run(box, GITHUB, TOKEN="github_pat_x")
+    for name in (environment, other):
+        (units / f"filedrawer-{name}.service").write_text("")
+    result = token(box, environment, "github_pat_x")
     assert result.returncode == 0, result.stderr
-    log = box.log.read_text()
-    assert "try-restart filedrawer-staging.service" in log
-    assert "filedrawer-production" not in log
-    (units / "filedrawer-production.service").write_text("")
-    box.log.write_text("")
-    assert run(box, GITHUB, TOKEN="github_pat_y").returncode == 0
-    log = box.log.read_text()
-    assert "try-restart filedrawer-staging.service" in log
-    assert "try-restart filedrawer-production.service" in log
-    path = box.root / "etc/filedrawer/github.env"
+    path = box.root / f"etc/filedrawer/{environment}-github.env"
+    assert path.read_text() == "FILEDRAWER_GITHUB_TOKEN='github_pat_x'\n"
     assert mode(path) == 0o600
     assert f"chown root:root {path}" in chowns(box)
+    assert restarts(box, environment) == [
+        f"systemctl try-restart filedrawer-{environment}.service"
+    ]
+    assert restarts(box, other) == []
+    assert not (box.root / f"etc/filedrawer/{other}-github.env").exists()
+    assert not (box.root / "etc/filedrawer/github.env").exists()
+    assert "github_pat_x" not in result.stdout + result.stderr
+
+
+def test_the_github_token_restarts_no_unit_not_set_up(box):
+    result = token(box, "production", "github_pat_x")
+    assert result.returncode == 0, result.stderr
+    assert "try-restart" not in box.log.read_text()
+
+
+@pytest.mark.parametrize(
+    ("environment", "other", "stage"),
+    [
+        ("staging", "production", "--ask-all github"),
+        ("production", "staging", "--ask-all production github"),
+    ],
+)
+def test_one_environments_token_is_refused_for_the_other(
+    box, environment, other, stage
+):
+    assert token(box, other, "github_pat_same").returncode == 0
+    result = token(box, environment, "github_pat_same")
+    assert result.returncode == 1
+    assert f"{other}'s token" in result.stderr
+    assert stage in result.stderr
+    assert not (box.root / f"etc/filedrawer/{environment}-github.env").exists()
+    assert "github_pat_same" not in result.stdout + result.stderr
+
+
+def test_a_kept_token_that_is_the_other_environments_is_refused_too(box):
+    """A token kept from before the check, say copied by hand, still has to differ."""
+    settings_dir = box.root / "etc/filedrawer"
+    settings_dir.mkdir(parents=True)
+    for name in ("staging", "production"):
+        (settings_dir / f"{name}-github.env").write_text(
+            "FILEDRAWER_GITHUB_TOKEN='github_pat_same'\n"
+        )
+    result = token(box, "staging", "")
+    assert result.returncode == 1
+    assert "production's token" in result.stderr
+
+
+@pytest.mark.parametrize("environment", ["", "dev", "../staging"])
+def test_the_github_token_refuses_another_environment(box, environment):
+    result = token(box, environment, "github_pat_x")
+    assert result.returncode == 2
+    assert not list(box.root.rglob("*.env"))
 
 
 # ping.sh: production's healthchecks.io URLs
@@ -1162,19 +1292,31 @@ def test_mail_names_productions_stage_when_it_has_nothing_to_keep(box):
     assert not (box.root / "etc/filedrawer/production-mail.env").exists()
 
 
-def test_the_github_token_keeps_the_stored_one(box):
-    run(box, GITHUB, TOKEN="github_pat_kept")
-    result = run(box, GITHUB, TOKEN="")
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_the_github_token_keeps_the_stored_one(box, environment):
+    token(box, environment, "github_pat_kept")
+    result = token(box, environment, "")
     assert result.returncode == 0, result.stderr
-    assert stored(box, "github.env") == "FILEDRAWER_GITHUB_TOKEN='github_pat_kept'\n"
+    assert (
+        stored(box, f"{environment}-github.env")
+        == "FILEDRAWER_GITHUB_TOKEN='github_pat_kept'\n"
+    )
     assert "github_pat_kept" not in result.stdout + result.stderr
 
 
-def test_the_github_token_refuses_an_empty_one_with_none_stored(box):
-    result = run(box, GITHUB, TOKEN="")
+@pytest.mark.parametrize(
+    ("environment", "stage"),
+    [("staging", "--ask-all github"), ("production", "--ask-all production github")],
+)
+def test_the_github_token_refuses_an_empty_one_with_none_stored(
+    box, environment, stage
+):
+    # Not even the shared file of before #123: service.sh moves that one.
+    put_legacy_token(box)
+    result = token(box, environment, "")
     assert result.returncode == 1
-    assert "--ask-all github" in result.stderr
-    assert not (box.root / "etc/filedrawer/github.env").exists()
+    assert stage in result.stderr
+    assert not (box.root / f"etc/filedrawer/{environment}-github.env").exists()
 
 
 NEW_BACKUP = "https://hc-ping.com/1f6a0b2c-0000-4000-8000-000000000009"
@@ -1220,7 +1362,7 @@ def test_ping_refuses_to_keep_a_url_it_doesnt_have(box, pings):
                 "SMTP_PASSWORD": "",
             },
         ),
-        (GITHUB, {"TOKEN": ""}),
+        (GITHUB, {"ENVIRONMENT": "production", "TOKEN": ""}),
         (PING, {"PINGS": "\t"}),
     ],
 )
@@ -1301,8 +1443,8 @@ def test_github_oauth_writes_the_environments_own_file_and_restarts_only_it(
     assert restarts(box, environment) == [
         f"systemctl try-restart filedrawer-{environment}.service"
     ]
-    # Never the file both environments read.
-    assert not (box.root / "etc/filedrawer/github.env").exists()
+    # Never the environment's GitHub token file.
+    assert not (box.root / f"etc/filedrawer/{environment}-github.env").exists()
     assert CLIENT_SECRET not in result.stdout + result.stderr
 
 

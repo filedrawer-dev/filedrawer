@@ -293,39 +293,13 @@ screening_stage() {
   pause
 }
 
-# github_stage: the GitHub token the link checks call GitHub's API with (design.md,
-# Submission and screening, step 2), in one file that staging reads now and
-# production will at launch. Until it runs, staging gets 60 API calls an hour, which
-# the check spends when GitHub's commit page lists no branch or doesn't answer.
+# github_stage: staging's GitHub token, which the link checks call GitHub's API with
+# (design.md, Submission and screening, step 2). Until it runs, staging gets 60 API
+# calls an hour, which the check spends when GitHub's commit page lists no branch or
+# doesn't answer.
 github_stage() {
-  stage "A GitHub token for the link checks"
-  # The unit first, so it reads the file github-token.sh writes.
-  remote service.sh ENVIRONMENT=staging
-  if keep_secret "GitHub token" /etc/filedrawer/github.env github; then
-    remote_with_secret github-token.sh TOKEN ""
-    pause
-    return 0
-  fi
-  github_stage_body
-}
-
-# github_stage_body: asks for the GitHub token and sends it to the server, which
-# restarts every unit that reads it.
-github_stage_body() {
-  say "Submissions ask GitHub whether a code link's commit is on one of the repository's"
-  say "own branches or tags: its commit page first, then its API when the page lists"
-  say "none or doesn't answer. Without a token the API allows 60 calls an hour; with"
-  say "one, 5,000. The server spends at most half, and leaves the rest to you."
-  open_url "https://github.com/settings/personal-access-tokens/new"
-  step "Make a fine-grained token named such as 'filedrawer link checks'."
-  step "Repository access: 'Public repositories'. Add no permissions: it only reads."
-  step "Expiration: the longest offered. Put the date in your calendar to renew it."
-  ask_new_secret TOKEN "The token (github_pat_...):"
-  remote_with_secret github-token.sh TOKEN "$TOKEN"
-  unset TOKEN
-  note "The token is on the server only, in one file staging and production both read."
-  note "Until it is there, staging logs 'no FILEDRAWER_GITHUB_TOKEN' at each start, and"
-  note "production won't start."
+  stage "Staging's GitHub token for the link checks"
+  github_token_setup staging github
   pause
 }
 

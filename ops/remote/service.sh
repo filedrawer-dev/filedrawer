@@ -42,6 +42,19 @@ chown root:root "$settings"
 chmod 0600 "$settings"
 umask 022
 
+# Before #123 both units read one GitHub token, in /etc/filedrawer/github.env.
+# Production keeps it, in a file of its own, before its rewritten unit restarts
+# below, since production won't start without a token; staging gets one of its own
+# from ops/provision-vps github. The shared file goes once no unit reads it. The
+# copy goes through a new file, so an interrupted run leaves no half a token that a
+# rerun would take as production's.
+legacy="$root/etc/filedrawer/github.env"
+moved="$root/etc/filedrawer/production-github.env"
+if [[ -f "$legacy" && ! -e "$moved" ]]; then
+  cp -p "$legacy" "$moved.new"
+  mv -f "$moved.new" "$moved"
+fi
+
 if [[ $env == staging ]]; then
   needs=""
   extra_settings="# The smoke-test account, which ops/remote/smoke-env.sh names: its entries aren't
@@ -77,9 +90,9 @@ EnvironmentFile=-/etc/filedrawer/$env-mail.env
 # so its FILEDRAWER_SCREENER replaces staging's pass-all.
 EnvironmentFile=-/etc/filedrawer/$env-screening.env
 $extra_settings
-# The GitHub token for the link checks, which ops/remote/github-token.sh writes, one
-# file for both environments. Without it, 60 API calls an hour.
-EnvironmentFile=-/etc/filedrawer/github.env
+# This environment's own GitHub token for the link checks, which
+# ops/remote/github-token.sh writes. Without it, 60 API calls an hour.
+EnvironmentFile=-/etc/filedrawer/$env-github.env
 # This environment's own GitHub OAuth App, for GitHub sign-in, which
 # ops/remote/github-oauth.sh writes. Without it, sign-in with GitHub is off.
 EnvironmentFile=-/etc/filedrawer/$env-github-oauth.env
@@ -113,6 +126,10 @@ WantedBy=multi-user.target
 CONF
 systemctl daemon-reload
 systemctl enable "filedrawer-$env.service"
+if [[ -f "$legacy" ]] &&
+  ! grep -qsF /etc/filedrawer/github.env "$root"/etc/systemd/system/filedrawer-*.service; then
+  rm -f "$legacy"
+fi
 if [[ -n "$before" && "$(cat "$settings" "$unit")" != "$before" ]]; then
   systemctl try-restart "filedrawer-$env.service"
   echo "$env service: changed; restarted if it was running"
