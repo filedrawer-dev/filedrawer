@@ -10,6 +10,8 @@
 # no commit known to pass, every check runs, so it says yes. The
 # commit check waits in the queue for clippy (rust) and the real-Caddy tests (caddy),
 # and every check runs, so clippy too, for a change to the check rules themselves.
+# A check that bin/agent-pre-commit says takes seconds still counts as one that
+# waits: on busy cores its --few-seconds run waits for the running job.
 # Anything going wrong answers no, so it never blocks a commit by mistake.
 # Run by hand, outside the gate, CHECK_BASE is unset, so it always answers yes: the
 # gate itself says when a commit must run in the background.

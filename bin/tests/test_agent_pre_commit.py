@@ -244,7 +244,8 @@ def hook_env(repo: Path, env: dict | None, base: str | None) -> dict:
     out = {
         k: v
         for k, v in os.environ.items()
-        if not k.startswith("GIT_") and k not in ("CHECK_BASE", "CHECK_QUEUE_EXIT")
+        if not k.startswith("GIT_")
+        and k not in ("CHECK_BASE", "CHECK_QUEUE_EXIT", "CHECK_SECONDS_EXIT")
     }
     out |= {
         "PATH": f"{fakes}{os.pathsep}{os.environ['PATH']}",
@@ -1069,6 +1070,100 @@ def test_a_check_queue_exit_that_is_no_exit_status_from_1_to_255_is_ignored(
     assert "saw-CHECK_QUEUE_EXIT" not in (repo.parent / "calls").read_text()
 
 
+# The gate also sets CHECK_SECONDS_EXIT in that first run: a check exits with it when
+# what it would queue takes seconds, and runs again as a --few-seconds job (#155).
+SECONDS_EXIT = QUEUE_EXIT | {"CHECK_SECONDS_EXIT": "76"}
+
+
+def built_in_the_slot(repo: Path) -> None:
+    """Run the commit check in the queue, as the gate runs it there, so the slot has
+    built clippy for the tree's (rust-toolchain.toml, Cargo.lock) pair. The fake
+    cargo makes no target, which a real one would."""
+    (slot(repo) / "target").mkdir(parents=True, exist_ok=True)
+    hook(repo, script="agent-commit-check")
+
+
+def test_a_clippy_on_a_pair_the_slot_built_takes_seconds(repo):
+    change(repo, "crates/app/src/lib.rs", "pub fn f() {}\n")
+    built_in_the_slot(repo)
+    change(repo, "crates/app/src/lib.rs", "pub fn g() {}\n")
+
+    _, done = hook(repo, env=SECONDS_EXIT, script="agent-commit-check", code=76)
+
+    assert (repo.parent / "calls").read_text() == ""  # no cargo or uvx call at all
+    assert (
+        "agent-pre-commit: needs heavy's queue, for seconds, for rust"
+        " crates/app/src/lib.rs" in done.stderr
+    )
+
+
+def test_a_clippy_on_a_pair_the_slot_never_built_queues(repo):
+    change(repo, "crates/app/src/lib.rs", "pub fn f() {}\n")
+    hook(repo, env=SECONDS_EXIT, script="agent-commit-check", code=75)
+    built_in_the_slot(repo)
+    for name in ("rust-toolchain.toml", "Cargo.lock"):
+        change(repo, name, f"# a new {name}\n")
+        hook(repo, env=SECONDS_EXIT, script="agent-commit-check", code=75)
+        built_in_the_slot(repo)
+        hook(repo, env=SECONDS_EXIT, script="agent-commit-check", code=76)
+
+
+def test_a_failing_clippy_builds_no_pair(repo):
+    change(repo, "crates/app/src/lib.rs", "pub fn f() {}\n")
+    hook(
+        repo,
+        script="agent-commit-check",
+        env={"FAKE_CARGO": FAKE + "exit 1\n"},
+        code=1,
+    )
+    hook(repo, env=SECONDS_EXIT, script="agent-commit-check", code=75)
+
+
+def test_an_emptied_slot_forgets_the_pairs_it_built(repo):
+    change(repo, "crates/app/src/lib.rs", "pub fn f() {}\n")
+    built_in_the_slot(repo)
+    hook(repo, "--reset-slot")
+    hook(repo, env=SECONDS_EXIT, script="agent-commit-check", code=75)
+
+
+def test_the_routes_test_never_takes_seconds(repo):
+    change(repo, "crates/server/Cargo.toml", '[package]\nname = "filedrawer-server"\n')
+    git(repo, "commit", "-qm", "the server crate")
+    change(repo, "crates/server/src/lib.rs", "pub fn f() {}\n")
+    built_in_the_slot(repo)
+    hook(repo, env=SECONDS_EXIT, script="agent-commit-check", code=75)
+    # The small-fix check runs no routes test.
+    hook(repo, env=SECONDS_EXIT, script="agent-quick-check", code=76)
+
+
+def test_the_full_check_never_takes_seconds(repo):
+    change(repo, "crates/app/src/lib.rs", "pub fn f() {}\n")
+    built_in_the_slot(repo)
+    hook(repo, env=SECONDS_EXIT, code=75)
+
+
+def test_the_real_caddy_tests_alone_take_seconds(repo):
+    change(repo, "bin/caddy")
+
+    _, done = hook(repo, env=SECONDS_EXIT, script="agent-commit-check", code=76)
+
+    assert "needs heavy's queue, for seconds, for caddy bin/caddy" in done.stderr
+
+
+def test_the_real_caddy_tests_beside_clippy_queue(repo):
+    change(repo, "crates/app/src/lib.rs", "pub fn f() {}\n")
+    built_in_the_slot(repo)
+    change(repo, "bin/caddy")
+    hook(repo, env=SECONDS_EXIT, script="agent-commit-check", code=75)
+
+
+@pytest.mark.parametrize("value", ["", "0", "256", "seventy-six"])
+def test_a_check_seconds_exit_that_is_no_exit_status_queues_instead(repo, value):
+    change(repo, "bin/caddy")
+    env = QUEUE_EXIT | {"CHECK_SECONDS_EXIT": value}
+    hook(repo, env=env, script="agent-commit-check", code=75)
+
+
 @pytest.mark.parametrize(
     "script", ["agent-pre-commit", "agent-quick-check", "agent-commit-check"]
 )
@@ -1621,11 +1716,14 @@ def test_a_check_that_measured_the_slot_waits_a_day_to_again(repo):
 
 def test_warm_builds_the_slot_and_checks_nothing(repo):
     # bin/new-worktree runs it when the slot has no build, so a new tree's first
-    # commit and landing don't build cold.
+    # commit and landing don't build cold. The target, as cargo would make it.
+    (slot(repo) / "target").mkdir(parents=True)
     hook(repo, "--warm", base=None, env=WHERE)
 
     assert where(repo) == [in_slot(repo, "nextest"), in_slot(repo, "clippy")]
     assert (slot(repo) / "tree/docs/notes.md").is_file()
+    # Its clippy counts for the seconds a later commit's check may take.
+    assert (slot(repo) / "target/check-pairs").read_text().count("\n") == 1
     pid, holder = (slot(repo) / "holder").read_text().split()
     assert pid.isdigit() and holder == str(repo)
 

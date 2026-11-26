@@ -109,9 +109,18 @@
 # here, with that variable set (`agent-commit-gate -h`). Each check's block then starts
 # with queue_first, which says why and exits with that code, and the gate runs the
 # script again in the queue. A change that needs no check, such as a docs-only one,
-# passes without waiting behind other sessions' builds. A value other than an exit
-# status from 1 to 255 counts as unset: sh keeps only the low 8 bits, so 256 would
-# exit 0.
+# passes without waiting behind other sessions' builds. When what it would queue takes
+# seconds, it exits with $CHECK_SECONDS_EXIT instead, which the gate sets beside it,
+# and the gate runs it again as heavy runs a --few-seconds job: at once beside the
+# lane's holder, niced, on quiet cores, else from the queue's front (#155). Seconds,
+# under 40 s in #148's record, means a commit's or a small fix's check (--quick) that
+# runs the real-Caddy tests alone, or clippy alone, without the routes test, on a
+# (rust-toolchain.toml, Cargo.lock) pair the slot has built clippy for: a list in the
+# slot's target, which a passing clippy there adds to, and which goes when the target
+# starts over. A first build under a new toolchain or lock took 44 to 77 s; any other
+# clippy since the slot, 7 to 34 s, whatever else differed. A value of either variable
+# other than an exit status from 1 to 255 counts as unset: sh keeps only the low 8
+# bits, so 256 would exit 0.
 set -e
 quick=
 warm=
@@ -173,6 +182,28 @@ enter_slot() {
   export CARGO_TARGET_DIR="$slot/target"
   cd "$slot/tree"
 }
+# The (rust-toolchain.toml, Cargo.lock) pair of the tree in the current folder, as the
+# slot's list of the pairs it built clippy for keeps it: the start of each file's
+# hash, or `none`. The list lives in the slot's target, so a target that starts over
+# forgets it.
+build_pair() {
+  for file in rust-toolchain.toml Cargo.lock; do
+    if [ -f "$file" ]; then
+      sha256sum <"$file" | cut -c1-16
+    else
+      echo none
+    fi
+  done | tr '\n' ' '
+}
+built_pairs() { echo "$slot/target/check-pairs"; }
+# Add this tree's pair to the list, once clippy passed on it in the slot, which made
+# the target. A list that can't be written only costs a later check its seconds.
+remember_pair() {
+  [ -d "$slot/target" ] || return 0
+  pair=$(build_pair)
+  grep -qxF "$pair" "$(built_pairs)" 2>/dev/null ||
+    printf '%s\n' "$pair" >>"$(built_pairs)" || :
+}
 # --reset-slot empties the slot, once no check holds it; its lock file stays, so a
 # check that waits for it keeps the same lock.
 if [ -n "$reset_slot" ]; then
@@ -208,6 +239,7 @@ if [ -n "$warm" ]; then
   enter_slot "$(git -C "$repo" write-tree)"
   slot_cargo nextest run --cargo-quiet --no-run || exit
   slot_cargo clippy --quiet --all-targets -- -D warnings || exit
+  remember_pair
   exit 0
 fi
 if [ -z "${AGENT_PRE_COMMIT_LOCKED:-}" ]; then
@@ -266,11 +298,39 @@ elif ! timeout 60 "$tree/bin/checks-needed" --bin-tests "$logs/bin-tests" "$tree
 fi
 needs() { grep -q "^$1 " "$logs/needed"; }
 queue_exit=${CHECK_QUEUE_EXIT:-}
+seconds_exit=${CHECK_SECONDS_EXIT:-}
+# Whether $1 is an exit status from 1 to 255.
+exit_status() {
+  case "$1" in '' | *[!0-9]* | 0*) return 1 ;; esac
+  [ "$1" -le 255 ]
+}
 queue_first() {
-  case "$queue_exit" in '' | *[!0-9]* | 0*) return ;; esac
-  [ "$queue_exit" -le 255 ] || return 0
+  exit_status "$queue_exit" || return 0
+  if exit_status "$seconds_exit" && queued_seconds; then
+    echo "agent-pre-commit: needs heavy's queue, for seconds, for $(grep "^$1 " "$logs/needed")" >&2
+    exit "$seconds_exit"
+  fi
   echo "agent-pre-commit: needs heavy's queue for $(grep "^$1 " "$logs/needed")" >&2
   exit "$queue_exit"
+}
+# Whether what this run would queue takes seconds, under 40 s in #148's record: at a
+# commit (--quick), the real-Caddy tests alone (21 to 29 s), or clippy alone without
+# the routes test (12 to 73 s on its own) on a pair the slot has built clippy for. A
+# first build under a new toolchain or lock took 44 to 77 s; every other clippy since
+# the slot took 7 to 34 s, `.sqlx/` and other build inputs changed or not.
+queued_seconds() {
+  [ -n "$quick" ] || return 1
+  will_caddy=
+  if [ -n "$caddy" ] && needs caddy && [ -x bin/pytest ]; then will_caddy=1; fi
+  if [ -f Cargo.toml ] && needs rust; then
+    [ -z "$will_caddy" ] || return 1
+    if [ -n "$routes" ] && needs routes && [ -f crates/server/Cargo.toml ]; then
+      return 1
+    fi
+    grep -qxF "$(build_pair)" "$(built_pairs)" 2>/dev/null
+    return
+  fi
+  [ -n "$will_caddy" ]
 }
 cd "$tree"
 # The hook's git variables, and CHECK_BASE, name the repo being committed; no check
@@ -278,7 +338,7 @@ cd "$tree"
 # The timings file is this run's alone: a check it starts, such as the bin tests that
 # run this hook on fakes, would write its own there.
 timings_file=${CHECK_TIMINGS:-}
-unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_OBJECT_DIRECTORY GIT_PREFIX CHECK_BASE CHECK_QUEUE_EXIT CHECK_TIMINGS FILEDRAWER_CHECK_SLOT
+unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_OBJECT_DIRECTORY GIT_PREFIX CHECK_BASE CHECK_QUEUE_EXIT CHECK_SECONDS_EXIT CHECK_TIMINGS FILEDRAWER_CHECK_SLOT
 failed=0
 # Run CMD, then write its seconds, to the millisecond, as `NAME SECONDS` to the file
 # CHECK_TIMINGS names, which agent-commit-gate hands each check, shows in its pass line
@@ -406,7 +466,12 @@ if [ -f Cargo.toml ] && needs rust; then
     fi
     timed doctest slot_cargo test --doc --quiet >"$logs/doc" 2>&1 || { cat "$logs/doc"; cargo_failed=1; }
   fi
-  timed clippy slot_cargo clippy --quiet --all-targets -- -D warnings >"$logs/clippy" 2>&1 || { cat "$logs/clippy"; cargo_failed=1; }
+  if timed clippy slot_cargo clippy --quiet --all-targets -- -D warnings >"$logs/clippy" 2>&1; then
+    remember_pair
+  else
+    cat "$logs/clippy"
+    cargo_failed=1
+  fi
   # sqlx's own message names `cargo sqlx prepare`, which skips the database rebuild
   # this repo's refresh does. Its online and SQLX_OFFLINE messages both end so.
   if grep -q 'to update the query cache' "$logs/clippy"; then
