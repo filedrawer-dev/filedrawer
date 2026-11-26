@@ -23,7 +23,9 @@ use crate::pages::{
 use crate::time::now_utc;
 use crate::{AppState, admin, deletion, github_accounts, invites, passwords, series, withdraw};
 
-const COOKIE: &str = "fd_session";
+/// `__Host-`, so a browser takes it only from this host, Secure, at Path=/ and with no
+/// Domain: no subdomain can log a visitor into its own account (design.md, Accounts).
+const COOKIE: &str = "__Host-fd_session";
 
 /// The account whose session cookie came with the request. Without a current session
 /// the request is sent to the login page.

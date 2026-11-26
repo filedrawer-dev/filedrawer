@@ -48,7 +48,7 @@ async fn signup_verify_login_and_submit_with_a_new_token() {
 }
 
 #[tokio::test]
-async fn the_session_cookie_is_http_only_secure_and_lax() {
+async fn the_session_cookie_is_host_only_http_only_secure_and_lax() {
     let app = test_app().await;
     signed_up_and_verified(&app, "grace@example.com").await;
     let reply = app
@@ -59,8 +59,13 @@ async fn the_session_cookie_is_http_only_secure_and_lax() {
         )
         .await;
     let header = reply.headers["set-cookie"].to_str().unwrap();
+    // `__Host-`, so a browser takes it only from this host, Secure, at Path=/ and
+    // with no Domain: a subdomain such as staging can't plant its own session here.
+    assert!(header.starts_with("__Host-fd_session="), "{header}");
+    assert!(header.contains("; Path=/;"), "{header}");
+    assert!(!header.to_ascii_lowercase().contains("domain="), "{header}");
     // Lax, so a link from an email to an admin or account page keeps the session.
-    for attribute in ["HttpOnly", "Secure", "SameSite=Lax", "Path=/"] {
+    for attribute in ["HttpOnly", "Secure", "SameSite=Lax"] {
         assert!(header.contains(attribute), "{header}");
     }
 }
@@ -369,8 +374,26 @@ async fn the_account_page_needs_a_session() {
     let reply = app.page("/account", None).await;
     assert_eq!(reply.status, StatusCode::SEE_OTHER);
     assert_eq!(reply.location(), Some("/login?next=%2Faccount"));
-    let forged = app.page("/account", Some("fd_session=forged")).await;
+    let forged = app.page("/account", Some("__Host-fd_session=forged")).await;
     assert_eq!(forged.location(), Some("/login?next=%2Faccount"));
+}
+
+#[tokio::test]
+async fn a_live_session_under_the_old_cookie_name_is_not_read() {
+    let app = test_app().await;
+    signed_up_and_verified(&app, "grace@example.com").await;
+    let cookie = logged_in(&app, "grace@example.com", PASSWORD).await;
+    assert_eq!(
+        app.page("/account", Some(&cookie)).await.status,
+        StatusCode::OK
+    );
+    let secret = cookie.strip_prefix("__Host-fd_session=").unwrap();
+    // A subdomain can still plant `fd_session`, so the server must not read it.
+    let old = format!("fd_session={secret}");
+    assert_eq!(
+        app.page("/account", Some(&old)).await.location(),
+        Some("/login?next=%2Faccount")
+    );
 }
 
 #[tokio::test]

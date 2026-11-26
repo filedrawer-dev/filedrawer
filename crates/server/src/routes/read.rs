@@ -521,7 +521,7 @@ pub async fn search(
     State(state): State<AppState>,
     Query(mut query): Query<SearchQuery>,
     headers: HeaderMap,
-    ClientIp(client): ClientIp,
+    ClientIp(client, _): ClientIp,
     format: Format,
 ) -> Result<Response, AppError> {
     let as_page = wants_page(&headers);

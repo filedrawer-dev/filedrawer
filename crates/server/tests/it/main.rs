@@ -47,6 +47,7 @@ mod provenance;
 mod read;
 mod reader_warnings;
 mod reads;
+mod rejected_expiry;
 mod removed_files;
 mod request_log;
 mod review;

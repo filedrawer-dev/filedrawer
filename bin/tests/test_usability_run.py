@@ -482,7 +482,7 @@ def account_site(logins_to_fail):
                 return
             if self.path == "/login":
                 self.send_response(303)
-                self.send_header("Set-Cookie", "fd_session=s; Path=/")
+                self.send_header("Set-Cookie", "__Host-fd_session=s; Path=/")
                 self.send_header("Location", "/")
                 self.end_headers()
                 return

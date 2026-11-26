@@ -123,3 +123,16 @@ def test_every_hook_the_tools_look_for_links_to_a_script_in_bin():
         script = link.resolve()
         assert script.parent == REPO / "bin", name
         assert script.is_file() and os.access(script, os.X_OK), name
+
+
+def test_the_merge_driver_is_registered_once_in_the_shared_config(trees, capsys):
+    main, worktree = trees
+    install = install_module()
+    install.register_merge_driver(worktree)
+    assert "set merge.skills-versions.driver" in capsys.readouterr().out
+    install.register_merge_driver(main)
+    assert capsys.readouterr().out == ""
+    driver = git(main, "config", "--local", "merge.skills-versions.driver")
+    assert driver == install.MERGE_DRIVER["merge.skills-versions.driver"]
+    attributes = (REPO / ".gitattributes").read_text().splitlines()
+    assert "skills/versions.txt merge=skills-versions" in attributes

@@ -4,7 +4,7 @@
 use time::{Duration, OffsetDateTime};
 
 use crate::attachments::{self, StoreError};
-use crate::{AppState, entries, queue, time::stamp};
+use crate::{AppState, deletion, entries, queue, time::stamp};
 
 /// How long an accepted submission is held so its author can fix it. Each
 /// resubmission starts it again.
@@ -73,6 +73,12 @@ pub async fn tidy_files(state: &AppState, now: OffsetDateTime) -> Result<(), Sto
     expired.map_err(StoreError::from).and(swept)
 }
 
+/// Deletes the entries rejected more than [`deletion::REJECTED_KEPT_DAYS`] before
+/// `now` (`deletion::expire_rejected`).
+pub async fn expire_rejected(state: &AppState, now: OffsetDateTime) -> Result<(), sqlx::Error> {
+    deletion::expire_rejected(state, now).await
+}
+
 /// Refreshes the linked GitHub accounts' logins every hour, for `filedrawer-server
 /// serve` (`github_accounts::refresh_logins`). An error is logged and the loop goes
 /// on.
@@ -90,18 +96,20 @@ pub async fn run_github_refresh(state: AppState) {
     }
 }
 
-/// Runs `tidy_files`, deletes the rate limits' expired counts, the search log's old
-/// rows and GitHub sign-ins that expired, closes the read counter's finished days,
-/// drops and deletes the mail queue's old rows, and deletes the changes of address
-/// that expired, every hour, for
-/// `filedrawer-server serve`. An error is logged
-/// and the loop goes on.
+/// Runs `tidy_files`, deletes the rejected entries kept long enough, the rate
+/// limits' expired counts, the search log's old rows and GitHub sign-ins that
+/// expired, closes the read counter's finished days, drops and deletes the mail
+/// queue's old rows, and deletes the changes of address that expired, every hour,
+/// for `filedrawer-server serve`. An error is logged and the loop goes on.
 pub async fn run_tidier(state: AppState) {
     let mut ticks = tokio::time::interval(std::time::Duration::from_secs(60 * 60));
     loop {
         ticks.tick().await;
         if let Err(error) = tidy_files(&state, OffsetDateTime::now_utc()).await {
             tracing::error!(%error, "tidying attached files failed");
+        }
+        if let Err(error) = expire_rejected(&state, OffsetDateTime::now_utc()).await {
+            tracing::error!(%error, "deleting expired rejected entries failed");
         }
         if let Err(error) = crate::limits::tidy(&state.pool, OffsetDateTime::now_utc()).await {
             tracing::error!(%error, "tidying rate-limit counts failed");

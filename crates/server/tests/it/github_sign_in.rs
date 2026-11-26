@@ -467,7 +467,7 @@ async fn an_address_with_an_account_gets_the_taken_email_and_nothing_is_made() {
         done.headers
             .get_all("set-cookie")
             .iter()
-            .all(|cookie| !cookie.to_str().unwrap().starts_with("fd_session="))
+            .all(|cookie| !cookie.to_str().unwrap().starts_with("__Host-fd_session="))
     );
     let after: i64 = sqlx::query_scalar("SELECT count(*) FROM accounts")
         .fetch_one(&app.pool)

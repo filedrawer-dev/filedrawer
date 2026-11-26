@@ -25,6 +25,7 @@ after its `uses:` up to the next step.
 """
 
 import re
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -146,15 +147,22 @@ def test_every_action_is_pinned_to_a_commit(path):
     )
 
 
-def test_the_rust_toolchain_action_is_told_its_toolchain():
+def test_the_rust_toolchain_action_is_told_rust_toolchain_tomls_version():
+    # Each step, not the day's stable: CI took 1.100 alone while the sandbox had
+    # 1.98, and tests that passed at commit failed only there (#146's CI run).
+    channel = tomllib.loads((REPO / "rust-toolchain.toml").read_text())["toolchain"][
+        "channel"
+    ]
     steps = [s for s in every_step() if s[1] == "dtolnay/rust-toolchain"]
     assert steps, "no workflow uses dtolnay/rust-toolchain; drop this test"
-    missing = [
-        name
+    told = [
+        (name, [line for line in settings if line.startswith("toolchain: ")])
         for name, _, settings in steps
-        if not any(line.startswith("toolchain: ") for line in settings)
     ]
-    assert missing == [], "dtolnay/rust-toolchain without `toolchain:`"
+    wrong = [
+        (name, lines) for name, lines in told if lines != [f"toolchain: {channel}"]
+    ]
+    assert wrong == [], f"dtolnay/rust-toolchain not told {channel}"
 
 
 def test_install_action_installs_each_tool_at_a_version_and_builds_none():

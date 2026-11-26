@@ -1,7 +1,8 @@
 """Tests for ops/remote/ci-account.sh, which ops/provision-vps runs as root on the VPS
 to make a CI account and token: the smoke test's, or the screen check's. It runs as a
-process against a temp root, with a fake runuser first on PATH and a fake filedrawer
-binary that keeps its accounts in a file. bin/agent-pre-commit runs them with pytest.
+process against a temp root, with a fake systemd-run first on PATH and a fake
+filedrawer binary that keeps its accounts in a file. bin/agent-pre-commit runs them
+with pytest. test_admin_units checks the unit each call runs in.
 """
 
 import os
@@ -10,6 +11,7 @@ import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
+import fake_systemd_run
 import pytest
 
 REPO = Path(__file__).resolve().parents[2]
@@ -56,11 +58,7 @@ def box(tmp_path):
     fakes.mkdir()
     log = tmp_path / "log"
     log.touch()
-    # runuser records the user, then runs the command as the caller.
-    executable(
-        fakes / "runuser",
-        f'#!/bin/sh\necho "runuser $*" >> {log}\nshift 3\nexec "$@"\n',
-    )
+    fake_systemd_run.install(fakes, log)
     env = {
         "PATH": f"{fakes}:{os.environ['PATH']}",
         "FILEDRAWER_ROOT": str(root),
@@ -87,8 +85,9 @@ def test_a_first_run_makes_the_account_and_a_token_as_the_service_user(box):
     result = run(box)
     assert result.returncode == 0, result.stderr
     assert result.stdout == "a-1\tfdt_1\n"
+    for call in fake_systemd_run.calls(box.log):
+        assert "User=filedrawer" in fake_systemd_run.properties(call)
     log = box.log.read_text()
-    assert "runuser -u filedrawer -- env" in log
     database = box.root / "srv/filedrawer/staging/data/filedrawer.db"
     assert f"db={database}" in log
 

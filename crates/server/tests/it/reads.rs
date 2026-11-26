@@ -421,3 +421,84 @@ async fn past_the_daily_cap_reads_go_uncounted_and_are_counted_as_dropped() {
             .unwrap();
     assert_eq!(day, (2, 2));
 }
+
+#[tokio::test]
+async fn an_anonymous_ipv6_reader_counts_once_per_48() {
+    let app = test_app().await;
+    let id = app.submit(&entry("Read from one /48", "")).await;
+    let path = format!("/e/{id}");
+    // Three /64s of one /48, as a tunnel broker or a VPS hands out.
+    for ip in ["2001:db8:1:1::1", "2001:db8:1:2::1", "2001:db8:1:ffff::9"] {
+        send(&app, skill_get(&path, ip, None)).await;
+    }
+    assert_eq!(most_read(&app).await, [(id.clone(), 1)]);
+    send(&app, skill_get(&path, "2001:db8:2::1", None)).await;
+    assert_eq!(most_read(&app).await, [(id.clone(), 2)]);
+    // Accounts behind that /48 still count apart.
+    let one = app.other_token().await;
+    let two = app.other_token().await;
+    send(&app, skill_get(&path, "2001:db8:1:1::1", Some(&one))).await;
+    send(&app, skill_get(&path, "2001:db8:1:1::1", Some(&two))).await;
+    assert_eq!(most_read(&app).await, [(id, 4)]);
+}
+
+#[tokio::test]
+async fn an_ipv4_mapped_reader_counts_as_its_ipv4_address() {
+    let app = test_app().await;
+    let id = app.submit(&entry("Read over a dual stack", "")).await;
+    let path = format!("/e/{id}");
+    send(&app, skill_get(&path, "203.0.113.1", None)).await;
+    send(&app, skill_get(&path, "::ffff:203.0.113.1", None)).await;
+    assert_eq!(most_read(&app).await, [(id.clone(), 1)]);
+    // Mapped addresses share their first 48 bits, but each counts as its own IPv4.
+    send(&app, skill_get(&path, "::ffff:203.0.113.2", None)).await;
+    assert_eq!(most_read(&app).await, [(id, 2)]);
+}
+
+#[tokio::test]
+async fn past_an_entrys_daily_cap_its_reads_go_uncounted_while_others_still_count() {
+    let app = test_app().await;
+    let flooded = seq_of(&app, &app.submit(&entry("Read by a flood", "")).await).await;
+    let other = seq_of(&app, &app.submit(&entry("Read once", "")).await).await;
+    let counter = ReadCounter::with_entry_cap(10, 2);
+    let at = datetime!(2026-11-19 12:00 UTC);
+    // Both kinds count toward the entry's cap.
+    reads::record(&app.pool, &counter, flooded, Kind::Page, "a", at)
+        .await
+        .unwrap();
+    for reader in ["a", "b", "c"] {
+        reads::record(&app.pool, &counter, flooded, Kind::Agent, reader, at)
+            .await
+            .unwrap();
+    }
+    reads::record(&app.pool, &counter, other, Kind::Agent, "a", at)
+        .await
+        .unwrap();
+    // The next day the entry counts again.
+    let next = datetime!(2026-11-20 12:00 UTC);
+    reads::record(&app.pool, &counter, flooded, Kind::Agent, "d", next)
+        .await
+        .unwrap();
+    reads::tidy(&app.pool, datetime!(2026-11-21 01:00 UTC))
+        .await
+        .unwrap();
+    assert_eq!(
+        daily(&app, flooded).await,
+        [
+            ("2026-11-19".to_string(), "agent".to_string(), 1),
+            ("2026-11-19".to_string(), "page".to_string(), 1),
+            ("2026-11-20".to_string(), "agent".to_string(), 1),
+        ]
+    );
+    assert_eq!(
+        daily(&app, other).await,
+        [("2026-11-19".to_string(), "agent".to_string(), 1)]
+    );
+    // The day's `dropped` counts only reads past the site-wide cap.
+    let day: (i64, i64) =
+        sqlx::query_as("SELECT readers, dropped FROM read_days WHERE day = '2026-11-19'")
+            .fetch_one(&app.pool)
+            .await
+            .unwrap();
+    assert_eq!(day, (3, 0));
+}

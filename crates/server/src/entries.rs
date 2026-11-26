@@ -1494,10 +1494,12 @@ pub async fn store_verdict(
 
 /// Rejects an entry in screening, review, held or frozen, with `reasons` (a JSON
 /// array) when it has none of its own, and gives back the slug it took, so its
-/// author can submit again with it. An entry rejected before it was screened, as its
+/// author can submit again with it, and stamps when, for the tidy that deletes it
+/// (`deletion::expire_rejected`). An entry rejected before it was screened, as its
 /// batch's other members are, frozen ones included, also gives back its allowance
 /// (design.md, Agent interface).
 pub async fn reject(pool: &SqlitePool, seq: i64, reasons: Option<&str>) -> Result<(), sqlx::Error> {
+    let rejected_at = now();
     let mut transaction = crate::db::write_tx(pool).await?;
     let unscreened = sqlx::query_scalar!(
         r#"SELECT 1 AS "one!: i64" FROM entries
@@ -1512,9 +1514,10 @@ pub async fn reject(pool: &SqlitePool, seq: i64, reasons: Option<&str>) -> Resul
     }
     sqlx::query!(
         "UPDATE entries SET status = 'rejected', screen_verdict = 'reject',
-             rejection_reasons = COALESCE(?, rejection_reasons)
+             rejection_reasons = COALESCE(?, rejection_reasons), rejected_at = ?
          WHERE seq = ? AND status IN ('screening', 'review', 'held', 'frozen')",
         reasons,
+        rejected_at,
         seq
     )
     .execute(&mut *transaction)

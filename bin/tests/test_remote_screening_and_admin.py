@@ -2,7 +2,8 @@
 ops/remote/admin-grant.sh, which ops/provision-vps runs as root on the VPS:
 staging's screening settings, the GitHub token the link checks call GitHub's API
 with, and making the owner's staging account the admin. Each runs as a process
-against a temp root, with fake systemctl and runuser first on PATH.
+against a temp root, with fake systemctl, chown and systemd-run first on PATH;
+test_admin_units checks the unit admin-grant.sh's call runs in.
 """
 
 import os
@@ -11,6 +12,7 @@ import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
+import fake_systemd_run
 import pytest
 
 REPO = Path(__file__).resolve().parents[2]
@@ -36,10 +38,7 @@ def box(tmp_path):
     log.touch()
     for tool in ("systemctl", "chown"):
         executable(fakes / tool, f'#!/bin/sh\necho "{tool} $*" >> {log}\n')
-    executable(
-        fakes / "runuser",
-        f'#!/bin/sh\necho "runuser $*" >> {log}\nshift 3\nexec "$@"\n',
-    )
+    fake_systemd_run.install(fakes, log)
     env = {
         "PATH": f"{fakes}:{os.environ['PATH']}",
         "FILEDRAWER_ROOT": str(root),
@@ -164,8 +163,9 @@ def staged(box):
 def test_admin_grant_runs_grant_as_the_service_user_on_stagings_database(staged):
     result = run(staged, ADMIN_GRANT, ADMIN_ACCOUNT="a-known")
     assert result.returncode == 0, result.stderr
+    [call] = fake_systemd_run.calls(staged.log)
+    assert "User=filedrawer" in fake_systemd_run.properties(call)
     log = staged.log.read_text()
-    assert "runuser -u filedrawer --" in log
     database = staged.root / "srv/filedrawer/staging/data/filedrawer.db"
     assert f"filedrawer admin grant --account a-known db={database}" in log
 
@@ -176,8 +176,9 @@ def test_admin_grant_on_production_runs_as_its_user_on_its_database(staged):
     executable(bin_dir / "filedrawer", FAKE_FILEDRAWER)
     result = run(staged, ADMIN_GRANT, ENVIRONMENT="production", ADMIN_ACCOUNT="a-known")
     assert result.returncode == 0, result.stderr
+    [call] = fake_systemd_run.calls(staged.log)
+    assert "User=filedrawer-prod" in fake_systemd_run.properties(call)
     log = staged.log.read_text()
-    assert "runuser -u filedrawer-prod --" in log
     database = staged.root / "srv/filedrawer/production/data/filedrawer.db"
     assert f"filedrawer admin grant --account a-known db={database}" in log
 

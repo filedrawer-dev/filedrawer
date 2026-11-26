@@ -125,7 +125,7 @@ class Site:
         finally:
             conn.close()
         for name, value in response.getheaders():
-            if name.lower() == "set-cookie" and value.startswith("fd_session="):
+            if name.lower() == "set-cookie" and value.startswith("__Host-fd_session="):
                 self.cookie = value.split(";", 1)[0]
         return response.status, text
 

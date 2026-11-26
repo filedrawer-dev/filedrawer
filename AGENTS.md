@@ -93,6 +93,8 @@ The field test's entries and logs are in `field-test/`, git-excluded and local o
   They aren't skills for working on this repo, which live in `.claude/skills/`.
   They describe only what the server does, plus where else the search skill has the agent look and the Alignment Forum tags the submit skill has it check (design.md, Skills and Agent interface), so update them with each change to a route.
   Then run `bin/skills sync`, which also follows a change to `docs/entry-format.md`: it copies the format into each skill and records each version in `skills/versions.txt`, bumping past every version origin's tags or origin/main already hold; a test refuses a skill changed without it.
+  A rebase, merge or cherry-pick recomputes `skills/versions.txt` rather than stopping on it: `.gitattributes` names `bin/skills merge` as its merge driver, which `python3 install.py` registers in the clone's config, so every worktree gets it (`bin/skills -h` says when it still leaves a conflict).
+  To resolve a conflict there by hand, as in a clone set up before the driver, take either side, run `bin/skills sync`, and stage what it writes.
   Commits and landings run `bin/skills sync --check`, which fetches origin's tags first and refuses a version tagged with other contents; so does a push to main, through the pre-push hook (`bin/git-pre-push`).
   CI's `release-skills` job tags each new version before staging deploys, with a deploy key `ops/protect-skill-tags` sets up (`-h`).
 - `ops/smoke-staging` follows the submit skill against staging as an agent would, and checks that each skill's tag holds what the site serves; `screen` checks staging's real screen and `eval` its labeled cases (`ops/screen-eval/`); `read` runs only the checks that write nothing, which `ops/deploy-production` runs against production.
@@ -176,10 +178,14 @@ So each worktree runs its own copies, and a commit that changes a hook script is
 A tree checked out at a commit older than `.githooks/` runs no hooks: rebase it onto main before you commit there.
 A clone set up by an older `install.py` keeps its links in `.git/hooks` to the main tree's scripts, which still work, until its next `python3 install.py` removes them.
 
+`rust-toolchain.toml` pins Rust to the version that built production's binary, so the sandbox, the owner's host and CI build with one compiler; a bump changes it and every workflow's `toolchain:` input together (`bin/tests/test_rust_toolchain.py`), and rebuilds every target once.
+
 The Rust tests run under cargo-nextest, set in `.config/nextest.toml` to print only the tests that fail, with their output, and a summary line.
 To run them that way, run `cargo nextest run --cargo-quiet`. nextest skips doctests, so the full check also runs `cargo test --doc`.
 Each crate's integration tests build as one binary, `tests/it/main.rs`, with each file in `tests/it/` a module of it, so a new test file needs a `mod` line there; a test in `main.rs` fails without one.
 To run one file's tests, filter on its module: `cargo nextest run --cargo-quiet -p filedrawer-server -E 'test(/^read::/)'`.
+To see what each test took, run `NEXTEST_EXPERIMENTAL_LIBTEST_JSON=1 cargo nextest run --cargo-quiet --message-format libtest-json-plus`, whose lines give each test's `exec_time`; a profile with a `junit` table also gives when each test started.
+The run is bound by its total CPU, not by its slowest test (#138): to shorten it, profile the whole run (`profile-top`) rather than reorder tests, though nextest's `priority` overrides can start chosen tests first.
 The Python tests in `bin/tests` run through `bin/pytest`, the pinned pytest with pytest.ini's plugins: `heavy --few-seconds -- bin/pytest bin/tests/test_x.py`, in parallel, or `-n0 -k NAME` for a few tests, where starting the workers costs more than they save; plain `uv run pytest` lacks pytest-xdist, which pytest.ini's `-n` needs.
 The property tests (hypothesis) run 100 examples each; `HYPOTHESIS_PROFILE=dev` runs 20 while you write one, and `deep` 3000 before you trust a change (`bin/tests/conftest.py`).
 A whole file such as `test_provision_vps.py` run with `-n0` takes past a minute, which overruns `--few-seconds`; in parallel, six such files take about 16 s.

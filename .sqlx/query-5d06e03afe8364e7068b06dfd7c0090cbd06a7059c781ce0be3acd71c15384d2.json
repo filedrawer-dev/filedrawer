@@ -1,0 +1,62 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT e.seq AS \"seq!: i64\", e.id, e.account_id, b.id AS \"batch_id?\"\n           FROM entries e LEFT JOIN batches b ON b.seq = e.batch_seq\n           WHERE e.status = 'rejected' AND COALESCE(e.rejected_at, e.submitted_at) < ?\n             AND NOT EXISTS (\n                 SELECT 1 FROM entries m\n                 WHERE m.batch_seq = e.batch_seq\n                   AND m.status NOT IN ('rejected', 'withdrawn', 'removed'))\n           ORDER BY e.seq",
+  "describe": {
+    "columns": [
+      {
+        "name": "seq!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "id",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "account_id",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "account_id"
+          }
+        }
+      },
+      {
+        "name": "batch_id?",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "batches",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "5d06e03afe8364e7068b06dfd7c0090cbd06a7059c781ce0be3acd71c15384d2"
+}

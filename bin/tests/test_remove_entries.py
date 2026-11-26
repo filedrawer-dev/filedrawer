@@ -1,9 +1,11 @@
 """Tests for ops/remove-entries' memory of the admin email (#112): offered on Enter,
 saved in ops/.vps.env per site once typed, never the password."""
 
+import http.server
 import importlib.machinery
 import importlib.util
 import stat
+import threading
 from pathlib import Path
 
 import pytest
@@ -94,3 +96,37 @@ def test_the_email_is_saved_only_once_a_login_with_it_works(
     text = remove_entries.env.read_text() if remove_entries.env.exists() else ""
     assert ("STAGING_ADMIN_EMAIL='typed@x.dev'" in text) == saved
     assert "pw" not in text
+
+
+class SessionSite(http.server.BaseHTTPRequestHandler):
+    """Logs in on /login with the server's session cookie, then echoes the Cookie
+    header each later POST sends."""
+
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        self.send_response(200)
+        if self.path == "/login":
+            self.send_header(
+                "Set-Cookie", "__Host-fd_session=s3cret; Path=/; HttpOnly; Secure"
+            )
+        self.end_headers()
+        self.wfile.write((self.headers.get("Cookie") or "").encode())
+
+    def log_message(self, *args):
+        pass
+
+
+def test_a_post_after_the_login_sends_the_session_cookie_back(
+    remove_entries, monkeypatch
+):
+    monkeypatch.delenv("FILEDRAWER_STAGING_KEY", raising=False)
+    httpd = http.server.HTTPServer(("127.0.0.1", 0), SessionSite)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        site = remove_entries.Site(f"http://127.0.0.1:{httpd.server_port}")
+        site.post("/login", {"email": "a@x.dev", "password": "pw"})
+        _, sent = site.post("/admin/e/x/remove", {})
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+    assert sent == "__Host-fd_session=s3cret"
