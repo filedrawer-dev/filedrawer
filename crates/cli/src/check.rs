@@ -74,16 +74,32 @@ pub fn run(command: &str, paths: &[OsString]) -> ExitCode {
 /// FILEDRAWER_SOURCE_ROOT, for the tests, names the sources to compare with instead.
 #[cfg(debug_assertions)]
 fn stale(command: &str) -> Option<String> {
+    stale_against(
+        command,
+        include_str!(concat!(env!("OUT_DIR"), "/source-stamp")),
+        std::env::var_os("FILEDRAWER_SOURCE_ROOT"),
+        std::env::current_exe().ok().as_deref(),
+    )
+}
+
+/// `stale`, given the build's stamp (the sources' hash, then the folder they were in;
+/// empty outside the repository), FILEDRAWER_SOURCE_ROOT's value and the binary's path.
+#[cfg(debug_assertions)]
+fn stale_against(
+    command: &str,
+    stamp: &str,
+    given: Option<OsString>,
+    exe: Option<&std::path::Path>,
+) -> Option<String> {
     use crate::source_stamp::{has_sources, hash};
     use std::path::{Path, PathBuf};
 
-    let stamp = include_str!(concat!(env!("OUT_DIR"), "/source-stamp"));
     let (built, root) = stamp.trim_end().split_once('\n')?;
-    let root = match std::env::var_os("FILEDRAWER_SOURCE_ROOT") {
+    let root = match given {
         // The tests' copy: with no sources there, refuse, so it can't turn the check off.
         Some(given) => PathBuf::from(given),
         None if has_sources(Path::new(root)) => PathBuf::from(root),
-        None => root_beside_binary()?,
+        None => root_beside(exe?)?,
     };
     if !has_sources(&root) {
         return Some(format!(
@@ -104,10 +120,10 @@ fn stale(command: &str) -> Option<String> {
 }
 
 /// For a stamp naming a tree that's gone (it moved, or another machine built it at
-/// another path): the sources beside the binary, when it sits in their target/debug/.
+/// another path): the sources beside the binary at `exe`, when it sits in their
+/// target/debug/.
 #[cfg(debug_assertions)]
-fn root_beside_binary() -> Option<std::path::PathBuf> {
-    let exe = std::env::current_exe().ok()?;
+fn root_beside(exe: &std::path::Path) -> Option<std::path::PathBuf> {
     let debug = exe.parent()?;
     let target = debug.parent()?;
     let beside = target.parent()?;
@@ -142,4 +158,97 @@ fn report(path: &str, analysis: &Analysis) -> String {
         out.push_str(&format!("warning: {warning}\n"));
     }
     out
+}
+
+/// Which sources a debug build compares itself with when FILEDRAWER_SOURCE_ROOT is
+/// unset. The stamp and the binary's path come in as arguments here: the process tests
+/// (tests/it/stale.rs) can't remove the tree their binaries were stamped with.
+#[cfg(all(test, debug_assertions))]
+mod tests {
+    use super::{root_beside, stale_against};
+    use crate::source_stamp::{FOLDERS, hash};
+    use std::path::{Path, PathBuf};
+
+    /// A tree holding the sources' folders, its one source file reading `text`.
+    fn tree(text: &str) -> tempfile::TempDir {
+        let tree = tempfile::tempdir().unwrap();
+        for folder in FOLDERS {
+            std::fs::create_dir_all(tree.path().join(folder)).unwrap();
+        }
+        std::fs::write(tree.path().join("crates/cli/src/main.rs"), text).unwrap();
+        tree
+    }
+
+    /// The stamp of a build of the sources in `built`, made in `root`.
+    fn stamp(built: &Path, root: &Path) -> String {
+        format!("{}\n{}\n", hash(built), root.display())
+    }
+
+    fn exe_in(root: &Path) -> PathBuf {
+        root.join("target/debug/entry-check")
+    }
+
+    #[test]
+    fn root_beside_finds_the_sources_whose_target_debug_holds_the_binary() {
+        let sources = tree("");
+        assert_eq!(
+            root_beside(&exe_in(sources.path())).as_deref(),
+            Some(sources.path())
+        );
+
+        let bare = tempfile::tempdir().unwrap();
+        assert_eq!(root_beside(&exe_in(bare.path())), None);
+        let release = sources.path().join("target/release/entry-check");
+        assert_eq!(root_beside(&release), None);
+        let not_target = sources.path().join("build/debug/entry-check");
+        assert_eq!(root_beside(&not_target), None);
+    }
+
+    #[test]
+    fn a_stamped_tree_holding_the_sources_is_the_one_compared() {
+        let stamped = tree("");
+        let beside = tree("// edited\n");
+        let stamp = stamp(stamped.path(), stamped.path());
+        let exe = exe_in(beside.path());
+        assert_eq!(stale_against("entry-check", &stamp, None, Some(&exe)), None);
+    }
+
+    #[test]
+    fn with_the_stamped_tree_gone_the_sources_beside_the_binary_are_compared() {
+        let gone = tempfile::tempdir().unwrap().path().join("moved");
+        let built = tree("");
+        let beside = tree("// edited\n");
+        let exe = exe_in(beside.path());
+        let refusal = stale_against("entry-check", &stamp(built.path(), &gone), None, Some(&exe))
+            .expect("a build older than the sources beside it refuses");
+        assert!(
+            refusal.contains(&format!(
+                "older than the sources in {}",
+                beside.path().display()
+            )),
+            "{refusal}"
+        );
+
+        let current = tree("");
+        let exe = exe_in(current.path());
+        let stamp = stamp(built.path(), &gone);
+        assert_eq!(stale_against("entry-check", &stamp, None, Some(&exe)), None);
+    }
+
+    #[test]
+    fn a_build_with_no_stamp_or_no_sources_to_find_checks_entries() {
+        // A published crate's build, whose stamp is empty.
+        let beside = tree("");
+        let exe = exe_in(beside.path());
+        assert_eq!(stale_against("entry-check", "", None, Some(&exe)), None);
+        // A stamped tree gone, and a binary that isn't in a tree's target/debug/.
+        let gone = tempfile::tempdir().unwrap().path().join("moved");
+        let stamp = stamp(beside.path(), &gone);
+        let elsewhere = tempfile::tempdir().unwrap().path().join("entry-check");
+        assert_eq!(
+            stale_against("entry-check", &stamp, None, Some(&elsewhere)),
+            None
+        );
+        assert_eq!(stale_against("entry-check", &stamp, None, None), None);
+    }
 }
