@@ -85,7 +85,8 @@ def server(tmp_path):
     fakes.mkdir()
     for tool in TOOLS:
         executable(
-            fakes / tool, f'#!/bin/sh\nexec python3 {FAKE} {world_dir} {tool} "$@"\n'
+            fakes / tool,
+            f'#!/bin/sh\nexec python3 -I -S {FAKE} {world_dir} {tool} "$@"\n',
         )
     state = SimpleNamespace(
         root=root,

@@ -8,14 +8,12 @@ reach a real one. Each fake notes the URL in NO_BROWSER_DIR/opened. A test may s
 put its own recording fakes ahead of these.
 """
 
-import json
 import os
 import re
 import shutil
 import socket
 import socketserver
 import subprocess
-import sys
 import threading
 from collections.abc import Iterable
 from pathlib import Path
@@ -242,7 +240,7 @@ def fake_host(tmp_path):
     return FakeHost(tmp_path / "fake-host")
 
 
-FAKE_TOOL = Path(__file__).with_name("fake_tool.py")
+FAKE_TOOL = Path(__file__).with_name("fake_tool.sh")
 FAKED = ("ssh", "gh", "getent", "curl", "ssh-keygen")
 
 
@@ -257,6 +255,9 @@ class FakeHost:
     a file is there says so with a rule.
     gh keeps what `gh secret set NAME --env staging` is given in `secrets/NAME` and
     lists them for `gh secret list`, unless a rule answers first.
+
+    The fakes are links to fake_tool.sh, and each tool's rules a shell file of
+    `case` statements, newest first, so a pattern takes `*` and `?` but not `[`.
     """
 
     def __init__(self, root: Path):
@@ -268,14 +269,11 @@ class FakeHost:
         self.secrets = root / "secrets"
         self.secrets.mkdir()
         (root / "sent").mkdir()
-        self._rules: list[dict] = []
-        self._save_rules()
+        (root / "rules").mkdir()
+        self._rules: dict[str, list[str]] = {tool: [] for tool in FAKED}
         for tool in FAKED:
-            fake = self.bin / tool
-            fake.write_text(
-                f'#!/bin/sh\nexec "{sys.executable}" -I "{FAKE_TOOL}" "{root}" {tool} "$@"\n'
-            )
-            fake.chmod(0o755)
+            self._save_rules(tool)
+            (self.bin / tool).symlink_to(FAKE_TOOL)
 
     @property
     def env(self) -> dict[str, str]:
@@ -303,17 +301,14 @@ class FakeHost:
     def _add_rule(
         self, tool, pattern, stdin, *, stdout="", status=0, run_locally=False
     ):
-        self._rules.append(
-            {
-                "tool": tool,
-                "pattern": pattern,
-                "stdin": stdin,
-                "stdout": stdout,
-                "status": status,
-                "run_locally": run_locally,
-            }
-        )
-        self._save_rules()
+        if run_locally:
+            act = 'exec bash -c "$line" <"$sent"'
+        else:
+            act = f"printf %s {sh_word(stdout)}; exit {int(status)}"
+        if stdin is not None:
+            act = f"case $stdin in *{sh_word(stdin)}*) {act};; esac"
+        self._rules[tool].append(f"case $line in {case_pattern(pattern)}) {act};; esac")
+        self._save_rules(tool)
 
     def calls(self, tool: str = "ssh") -> list[str]:
         """The command lines `tool` was called with, in order."""
@@ -328,5 +323,23 @@ class FakeHost:
         """The stdin of the nth ssh call, counting from 1."""
         return (self.root / "sent" / str(n)).read_text()
 
-    def _save_rules(self) -> None:
-        (self.root / "rules.json").write_text(json.dumps(self._rules))
+    def _save_rules(self, tool: str) -> None:
+        lines = reversed(self._rules[tool])
+        (self.root / "rules" / f"{tool}.sh").write_text(
+            "".join(f"{x}\n" for x in lines)
+        )
+
+
+def sh_word(text: str) -> str:
+    """`text` as one single-quoted shell word."""
+    return "'" + text.replace("'", "'\\''") + "'"
+
+
+def case_pattern(glob: str) -> str:
+    """The glob `glob`, as fnmatch reads it, as a `case` pattern: `*` and `?` bare,
+    the rest quoted. A `[`, which fnmatch reads as a set, is refused rather than
+    matched another way."""
+    if "[" in glob:
+        raise ValueError(f"FakeHost patterns take * and ? only: {glob!r}")
+    parts = re.split(r"([*?])", glob)
+    return "".join(p if p in ("*", "?") else sh_word(p) for p in parts if p) or "''"

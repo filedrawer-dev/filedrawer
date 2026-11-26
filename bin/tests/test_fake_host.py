@@ -1,7 +1,10 @@
 """Tests for conftest's fake_host: the fake ssh, gh, getent, curl and ssh-keygen the
 wizard tests run ops/provision-vps against."""
 
+import os
 import subprocess
+
+import pytest
 
 
 def call(fake_host, *argv, stdin=""):
@@ -94,3 +97,59 @@ def test_gh_keeps_the_staging_secrets_it_is_given(fake_host):
     assert (fake_host.secrets / "B_KEY").read_text() == "s3cret"
     assert call(fake_host, "gh", "secret", "list").stdout == "A_KEY\nB_KEY\n"
     assert "s3cret" not in fake_host.log.read_text()
+
+
+def test_patterns_and_answers_are_literal_but_for_star_and_question_mark(fake_host):
+    """The rules are shell code, so quotes, `$`, backslashes and newlines in them
+    must stay text."""
+    odd = 'it\'s "$HOME" `x` \\n;\nexit 9'
+    fake_host.answer(f"echo {odd} ?", stdout=odd + "\n", stdin="'$(")
+    result = call(fake_host, "ssh", "h", f"echo {odd} !", stdin="a '$( b")
+    assert (result.returncode, result.stdout) == (0, odd + "\n")
+    assert call(fake_host, "ssh", "h", "echo it's", stdin="'$(").stdout == ""
+    assert call(fake_host, "ssh", "h", f"echo {odd} !", stdin="$(").stdout == ""
+
+
+def test_a_pattern_with_a_set_is_refused(fake_host):
+    """fnmatch reads `[` as a set, and the fakes would read it another way."""
+    with pytest.raises(ValueError, match="take \\* and \\? only"):
+        fake_host.answer("test -f /etc/[ab]")
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["curl", "-sS", "-K", "-", "https://h/"],
+        ["curl", "--data-binary", "@-", "https://h/"],
+        ["gh", "api", "-X", "PUT", "x", "--input", "-"],
+        ["gh", "secret", "set", "A_KEY", "--env", "staging"],
+    ],
+)
+def test_a_call_that_names_stdin_reads_it_so_its_writer_lives(fake_host, argv):
+    """A writer still writing when the fake exits dies of SIGPIPE, which pipefail
+    makes the pipeline's failure, as deploy-production's `printf ... | curl -K -`
+    once did. A megabyte outlasts the pipe's buffer, so an unread one always does."""
+    fake_host.answer("*", stdout="ok", tool=argv[0])
+    pipeline = f"head -c 1000000 /dev/zero | {' '.join(argv)}"
+    result = call(fake_host, "bash", "-o", "pipefail", "-c", pipeline)
+    assert result.returncode == 0, result.stderr
+
+
+def test_a_call_that_doesnt_name_stdin_leaves_it_to_the_next(fake_host):
+    """Draining stdin always would swallow what a script feeds the calls after."""
+    result = call(fake_host, "sh", "-c", "curl -s https://h/; cat", stdin="answer\n")
+    assert result.stdout == "answer\n"
+
+
+def test_a_rule_can_match_on_what_curl_reads_from_its_config(fake_host):
+    fake_host.answer("*", stdout="200", tool="curl", stdin="X-Staging-Key: k")
+    config = 'header = "X-Staging-Key: k"\n'
+    assert call(fake_host, "curl", "-K", "-", "https://h/", stdin=config).stdout == (
+        "200"
+    )
+
+
+def test_a_fake_reached_by_a_relative_path_entry_still_logs(fake_host, tmp_path):
+    env = {**fake_host.env, "PATH": f"bin{os.pathsep}{os.environ['PATH']}"}
+    subprocess.run(["getent", "hosts", "x"], cwd=fake_host.root, env=env, check=True)
+    assert fake_host.calls("getent") == ["hosts x"]
