@@ -14,7 +14,10 @@
 # sign-in, which is optional (#119);
 # `ops/provision-vps caddy-upgrades` only the guard on the server's Caddy (#100),
 # which production's run also sets up; `ops/provision-vps reboots` only the reboots
-# for new kernels, with notice, which production's run also sets up; and
+# for new kernels, with notice, which production's run also sets up;
+# `ops/provision-vps memory` only the timer that pings healthchecks.io when
+# processes use more than half the RAM or the kernel swaps pages out (#64), which
+# production's run also sets up; and
 # `ops/provision-vps admin` only making your staging account the admin; and
 # `ops/provision-vps mail` only staging's Purelymail sender.
 # A rerun asks for nothing ops/.vps.env, the server or GitHub already holds (#112):
@@ -101,7 +104,7 @@ case "${1:-}" in
     shift
     production "$@"
     return 0 ;;
-  smoke | screening | admin | github | github-oauth | caddy-upgrades | reboots | mail)
+  smoke | screening | admin | github | github-oauth | caddy-upgrades | reboots | memory | mail)
     TOTAL_STAGES=1
     need_vps_host
     "${1//-/_}_stage"
@@ -114,7 +117,7 @@ case "${1:-}" in
     warn "ops/provision-vps doesn't know '$1'. It takes, after an optional --ask-all:"
     warn "  nothing (staging's setup), production [account, mail, screening,"
     warn "  github-oauth or pings], or one stage alone: smoke, screening, admin, github,"
-    warn "  github-oauth, caddy-upgrades, reboots or mail."
+    warn "  github-oauth, caddy-upgrades, reboots, memory or mail."
     exit 2 ;;
 esac
 

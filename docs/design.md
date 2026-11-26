@@ -1113,6 +1113,8 @@ Python is fine for scripts and internal tools.
 - Running processes stay under half the RAM, leaving the rest for the page cache.
   A small swapfile guards against the out-of-memory killer and is never part of the plan.
   A timer pings healthchecks.io as failed when processes use more than half the RAM or any swap is in use.
+  Processes' share is MemTotal less MemAvailable, which counts the page cache as free; the timer runs every 5 minutes, set up by `ops/provision-vps memory`, which production's run also runs (#64).
+  As built, swap counts as used when `/proc/vmstat`'s `pswpout` grew since the last run, not while swap is merely held, which at swappiness 60 would stay failed on a healthy server; the owner's ruling is pending on #64 (uncertainties.md, "What counts as swap in use").
   That is the signal to move up a size. journald is capped at 200 MB and at 14 days (`MaxRetentionSec=14d`), which keeps the privacy page's 14-day promise on IPs.
 - DNS is at Cloudflare, with every record "DNS only", not proxied.
   Reason: through the proxy the server would see Cloudflare's addresses instead of clients', which the per-IP limits need; Cloudflare would cache `.txt` routes such as `/cards.txt`; and Cloudflare would see every request, which makes it a processor the privacy page must name.
@@ -1265,6 +1267,7 @@ Python is fine for scripts and internal tools.
 - Monitoring: a free external uptime checker, UptimeRobot, checks `https://filedrawer.dev/tags` and emails the owner when the site is down (the owner's decision, 2026-11-10).
   Litestream, the restore test, the memory timer and the daily email ping healthchecks.io, which emails the owner when one goes quiet or reports a failure.
   The daily email's ping URL is in `/etc/filedrawer/production-ping.env`, and the nightly copy's, for #41's timer, in `production-backup.env` as `BACKUP_PING`.
+  The memory timer's is in `/etc/filedrawer/memory.env` as `MEMORY_PING`, a check of its own (#64).
 - Production's screening key comes from an Anthropic workspace of its own, whose monthly spend limit is about $40, above the most the $1 daily cap can spend in a month (the owner's decision, 2026-11-10).
 
 ## Checks

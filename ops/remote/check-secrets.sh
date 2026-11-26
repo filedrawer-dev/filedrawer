@@ -176,4 +176,5 @@ github_oauth production "production's GitHub OAuth client secret" "production gi
 ping_check production-ping.env FILEDRAWER_DAILY_EMAIL_PING "the daily email's ping URL" "production pings"
 ping_check production-backup.env BACKUP_PING "the nightly copy's ping URL" "production pings"
 ping_check caddy-upgrades.env PING "the Caddy guard's ping URL" caddy-upgrades
+ping_check memory.env MEMORY_PING "the memory check's ping URL" memory
 exit "$failed"

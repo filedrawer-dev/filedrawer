@@ -29,7 +29,8 @@ journal's size and settings.
 
 From this checkout, after `git fetch origin`: whether each script the server keeps
 a root-owned copy of (filedrawer-install, filedrawer-backup, caddy-upgrade-check,
-filedrawer-reboot-check, the filedrawer-alerts.sh both source, filedrawer-receive)
+filedrawer-reboot-check, the filedrawer-alerts.sh both source,
+filedrawer-memory-check, filedrawer-receive)
 is origin/main's (`current`), an older revision's (`behind`, with the commit), or
 no revision's (`MATCHES NO REVISION`: a hand edit, or tampering); the Caddy version
 bin/caddy pins; and the names and mode of what ops/.vps.env holds.
