@@ -3,10 +3,15 @@
 //! skills (`agent`) or as a page in a browser (`page`).
 //!
 //! A reader is an account, when the request carries a token or a session, or else
-//! the client's address with its User-Agent. It is stored only as a hash salted with
-//! a key that lives in memory, never in the database, so neither the database nor its
-//! backups can tell who read what; the hourly tidier keeps only counts once a day
-//! ends. A restart makes a new key, so a reader may count twice on that day.
+//! the client's address, an IPv6 one by its /48, with its User-Agent. It is stored
+//! only as a hash salted with a key that lives in memory, never in the database, so
+//! neither the database nor its backups can tell who read what; the hourly tidier
+//! keeps only counts once a day ends. A restart makes a new key, so a reader may
+//! count twice on that day.
+//!
+//! Each entry counts at most `ENTRY_DAILY_CAP` readers a day, which bounds what one
+//! client with many addresses or User-Agents adds to it; it doesn't stop that client
+//! ranking the entry first (#114).
 
 use std::collections::HashSet;
 use std::sync::Mutex;
@@ -25,6 +30,11 @@ use crate::search_log::SKILL_CLIENT;
 /// The most readers counted in one UTC day, across entries and kinds; reads past it
 /// go uncounted, and the day's `dropped` counts them.
 pub const DAILY_CAP: i64 = 10_000;
+
+/// The most readers counted for one entry in one UTC day, across kinds; reads past it
+/// go uncounted, and no total counts them, so the site-wide cap is only a backstop
+/// against many entries read at once (#114).
+pub const ENTRY_DAILY_CAP: i64 = 500;
 
 /// How many days Most read ranks by: today and the 29 before it.
 pub const WINDOW_DAYS: i64 = 30;
@@ -45,6 +55,7 @@ pub fn window_start(today: Date) -> Date {
 #[derive(Debug)]
 pub struct ReadCounter {
     cap: i64,
+    entry_cap: i64,
     today: Mutex<Option<Today>>,
 }
 
@@ -56,10 +67,18 @@ struct Today {
 }
 
 impl ReadCounter {
-    /// A counter that takes at most `cap` readers a day.
+    /// A counter that takes at most `cap` readers a day, and `ENTRY_DAILY_CAP` of them
+    /// for one entry.
     pub fn new(cap: i64) -> ReadCounter {
+        ReadCounter::with_entry_cap(cap, ENTRY_DAILY_CAP)
+    }
+
+    /// A counter that takes at most `cap` readers a day, and `entry_cap` of them for
+    /// one entry.
+    pub fn with_entry_cap(cap: i64, entry_cap: i64) -> ReadCounter {
         ReadCounter {
             cap,
+            entry_cap,
             today: Mutex::new(None),
         }
     }
@@ -135,12 +154,12 @@ impl Kind {
 }
 
 /// Who read, for counting: the account behind the request's token or session, or
-/// else the client's address and User-Agent, so people on one address with different
-/// tools count apart.
+/// else the client's address, an IPv6 one by its /48, and User-Agent, so people on
+/// one address with different tools count apart.
 pub fn reader(account: Option<&str>, ip: &ClientIp, headers: &HeaderMap) -> String {
     match account {
         Some(account) => format!("account {account}"),
-        None => format!("ip {} {}", ip.0, user_agent(headers)),
+        None => format!("ip {} {}", ip.reader_key(), user_agent(headers)),
     }
 }
 
@@ -166,7 +185,7 @@ pub async fn counts_as_reader(pool: &SqlitePool, account: &str) -> Result<bool, 
 
 /// Counts one read of `entry_seq` by `reader` at `now`, unless it was counted today
 /// already. Past the day's cap the read goes uncounted, and the day's `dropped`
-/// counts it.
+/// counts it; past the entry's, it goes uncounted and nothing counts it.
 pub async fn record(
     pool: &SqlitePool,
     counter: &ReadCounter,
@@ -183,13 +202,24 @@ pub async fn record(
     let day = day.to_string();
     let hash = hash.to_vec();
     let mut tx = db::write_tx(pool).await?;
-    let counted = sqlx::query_scalar!(
-        r#"SELECT COUNT(*) AS "n!: i64" FROM entry_readers WHERE day = ?"#,
-        day
+    let counted = sqlx::query!(
+        r#"SELECT COUNT(*) AS "day!: i64",
+                  IFNULL(SUM(entry_seq = ?2), 0) AS "entry!: i64"
+           FROM entry_readers WHERE day = ?1"#,
+        day,
+        entry_seq
     )
     .fetch_one(&mut *tx)
     .await?;
-    if counted < counter.cap {
+    if counted.day >= counter.cap {
+        sqlx::query!(
+            "INSERT INTO read_days (day, dropped) VALUES (?, 1)
+             ON CONFLICT (day) DO UPDATE SET dropped = dropped + 1",
+            day
+        )
+        .execute(&mut *tx)
+        .await?;
+    } else if counted.entry < counter.entry_cap {
         sqlx::query!(
             "INSERT OR IGNORE INTO entry_readers (entry_seq, day, kind, reader)
              VALUES (?, ?, ?, ?)",
@@ -197,14 +227,6 @@ pub async fn record(
             day,
             kind,
             hash
-        )
-        .execute(&mut *tx)
-        .await?;
-    } else {
-        sqlx::query!(
-            "INSERT INTO read_days (day, dropped) VALUES (?, 1)
-             ON CONFLICT (day) DO UPDATE SET dropped = dropped + 1",
-            day
         )
         .execute(&mut *tx)
         .await?;

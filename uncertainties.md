@@ -269,6 +269,18 @@ Add a new entry at the end of the topic it belongs to, or start a topic when non
   The question #45 serves is which skill wrote the text that gets screened and read, and after a PUT that is the PUT's.
 - Against: a PUT from a different agent hides which one drafted the entry, and a table of every write would keep both.
 
+### Most read
+
+#### Reads past an entry's daily cap
+
+An agent chose this on 2026-11-25, building #114's per-entry cap of 500 readers a day.
+
+- Options: count them nowhere; add them to the day's `dropped`, which the daily email reports as past the site-wide cap; or count them in a column of their own, for the email to list by entry.
+- Chosen: nowhere.
+  `dropped` keeps meaning reads past the site-wide cap, which is what its email line says, and 500 different readers of one entry in a day is, in the beta, a flood rather than honest reads.
+  A column of its own needs a migration for a case that hasn't happened.
+- Against: the owner can't see that an entry hit its cap, or how many honest reads it cost, except by finding 500 in `entry_reads_daily` through SQL.
+
 ### Accounts
 
 #### API tokens

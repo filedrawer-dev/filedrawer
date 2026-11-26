@@ -642,7 +642,8 @@ Plain text first, since that is cheapest for an agent to read.
   Only the owner reads the log, through SQL.
 - The server counts the readers of each public entry, per UTC day, for the home page's Most read tab (#107; the owner's decisions, 2026-11-19).
   It counts a GET of `/e/<id>`, in any form, by the skills (`agent`, a User-Agent starting `filedrawer-skill`) or by a person's browser (`page`, `Sec-Fetch-Dest: document` with no token), kept apart; other clients, HEAD requests, and appearing among a search's cards don't count.
-  A reader counts once per entry and kind a day: the account, when the request carries a token or a session, else the client's address (as the rate limits key it) with its User-Agent, so people on one address with different tools count apart.
+  A reader counts once per entry and kind a day: the account, when the request carries a token or a session, else the client's address (as the rate limits key it, but an IPv6 address by its /48) with its User-Agent, so people on one address with different tools count apart.
+  Reason for the /48: tunnel brokers and many VPS providers give one host a /48, whose 65,536 /64s would count as as many readers (#114).
   The entry's author, an admin and a suspended account don't count, and a read of an older version counts for the latest public one.
   Most read ranks by both kinds together over today and the 29 days before, the most readers first, then the newest, 20 a page, and shows only entries with a reader.
   Reason: the owner, "that curiosity might be 'show me the most recent entries' or 'show me the entries with the most citations'"; reads are what the server can count now, while replications are too few to rank (#107).
@@ -650,8 +651,10 @@ Plain text first, since that is cheapest for an agent to read.
     A restart makes a new key, so a reader may count twice that day: unlike the rate limits, a deploy resets the day's dedup, and staging, which restarts on each deploy, double-counts the most; `ops/deploy-production` says so before it installs.
   - The hourly tidier's first run at least 10 minutes after a UTC day ends, so 10 to 70 minutes after midnight, adds the day's rows into per-entry daily counts and the day's total, and deletes them.
     Daily counts stay for Most read's 30 days, then add into per-entry counts for each calendar month, which the owner reads through SQL and which are kept.
+  - At most 500 readers count for one entry in a UTC day, both kinds together, which bounds what one client with many addresses or User-Agents adds to an entry at 500 a day, though not enough to keep it from ranking that entry first; reads past it go uncounted, and nothing counts them (#114).
   - At most 10,000 readers a day count, across entries; past that, reads go uncounted, and the day's total says how many.
-    Ways to inflate a count, such as many IPv6 /64s from one /48, wait in #114.
+    With the per-entry cap, filling it takes 20 entries read 500 times each, so it is a backstop for the disk rather than the limit a flood of one entry meets first (#114).
+    One address with many User-Agents, and many accounts within the signup limits, each counting once, wait in #114.
 - `replicates` and `reanalyzes` take a list, not only one item, since one audit can check five papers; and a plain URL, for work with no arXiv ID or DOI (the owner's decisions, 2026-11-08).
   There is no "reproduction" outcome: `outcome` says what an entry found, and a reproduction can find the effect or not.
 - `GET /e/<id>` returns the full entry as markdown.

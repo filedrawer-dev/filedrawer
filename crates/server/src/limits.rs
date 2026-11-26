@@ -278,9 +278,9 @@ fn too_many(what: &str, wait: Duration) -> AppError {
 /// The client a request comes from, as the limits key it: the TCP peer, or, when
 /// the peer is loopback (Caddy on the same host), the last X-Forwarded-For address,
 /// the one Caddy saw. IPv6 addresses are grouped by /64, which one host often has
-/// to itself.
+/// to itself. The second field is the address itself, when there is one.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ClientIp(pub String);
+pub struct ClientIp(pub String, pub Option<IpAddr>);
 
 impl ClientIp {
     pub fn of(peer: Option<SocketAddr>, headers: &HeaderMap) -> Self {
@@ -300,7 +300,20 @@ impl ClientIp {
             Some(peer) if !peer.is_loopback() => Some(peer),
             _ => forwarded().or(peer),
         };
-        ClientIp(ip.map_or_else(|| "unknown".to_string(), key_of))
+        let ip = ip.map(|ip| ip.to_canonical());
+        ClientIp(ip.map_or_else(|| "unknown".to_string(), key_of), ip)
+    }
+
+    /// The client as the read counter keys an anonymous reader: as the limits do, but
+    /// an IPv6 address by its /48, since one host can hold a /48's 65,536 /64s (#114).
+    pub fn reader_key(&self) -> String {
+        match self.1 {
+            Some(IpAddr::V6(ip)) => {
+                let s = ip.segments();
+                format!("{:x}:{:x}:{:x}::/48", s[0], s[1], s[2])
+            }
+            _ => self.0.clone(),
+        }
     }
 }
 
@@ -363,7 +376,7 @@ impl hyper::body::Body for CountedBody {
 /// A request refused for either takes nothing from the other.
 pub async fn per_ip(
     State(state): State<AppState>,
-    ClientIp(ip): ClientIp,
+    ClientIp(ip, _): ClientIp,
     request: Request,
     next: Next,
 ) -> Response {
