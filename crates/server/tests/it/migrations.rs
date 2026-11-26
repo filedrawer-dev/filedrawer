@@ -794,3 +794,52 @@ async fn migration_33_rebuilds_entries_without_embargoes_and_keeps_its_rules() {
     let error = insert("e-suspended", "a-2", "pending").await.unwrap_err();
     assert!(error.to_string().contains("suspended"), "{error}");
 }
+
+#[tokio::test]
+async fn migration_44_starts_the_60_days_of_every_entry_already_rejected_now() {
+    // So the first tidy after the deploy deletes none of them (#132).
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            SqliteConnectOptions::from_str("sqlite::memory:")
+                .unwrap()
+                .foreign_keys(true),
+        )
+        .await
+        .unwrap();
+    let mut before = sqlx::migrate!("./migrations");
+    before.migrations = Cow::Owned(before.migrations[..43].to_vec());
+    before.run(&pool).await.unwrap();
+    sqlx::query("INSERT INTO accounts (id, display_name, created_at) VALUES ('a-1', 'Ada', 't')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    for (seq, status) in [(1, "rejected"), (2, "public")] {
+        sqlx::query(
+            "INSERT INTO entries (seq, id, account_id, status, source, submitted_at,
+                 first_submitted_at, analyzer_version, outcome, kind)
+             VALUES (?1, 'e' || ?1, 'a-1', ?2, 'text', '2026-01-01T00:00:00Z',
+                 '2026-01-01T00:00:00Z', 2, 'no_effect', 'experiment')",
+        )
+        .bind(seq)
+        .bind(status)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let started = crate::common::stamp(time::OffsetDateTime::now_utc());
+
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+
+    let stamped: Vec<(String, Option<String>)> =
+        sqlx::query_as("SELECT status, rejected_at FROM entries ORDER BY seq")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    let rejected_at = stamped[0]
+        .1
+        .as_deref()
+        .expect("the rejected entry is stamped");
+    assert!(rejected_at >= started.as_str(), "{rejected_at} < {started}");
+    assert_eq!(stamped[1], ("public".to_string(), None));
+}

@@ -6,15 +6,17 @@
 use std::collections::BTreeSet;
 
 use sqlx::{SqliteConnection, SqlitePool};
-use time::Duration;
+use time::{Duration, OffsetDateTime};
 
 use crate::time::{now, now_utc, stamp};
 use crate::{AppState, allowance, attachments, series};
 
-/// How long another account's rejected entry keeps a series it cites alive when the
-/// series' creator deletes the account. Reason: a rejection may be the owner's
-/// mistake, and its author fixes the entry and resubmits.
-const REJECTION_KEEPS_SERIES_DAYS: i64 = 60;
+/// How long a rejected entry is kept after its rejection, readable by its author with
+/// its reasons, before the hourly tidy deletes it (design.md, Entry lifecycle; #132).
+/// While kept, another account's rejected entry also keeps a series it cites alive
+/// when the series' creator deletes the account. Reason: a rejection may be the
+/// owner's mistake, and its author fixes the entry and resubmits.
+pub const REJECTED_KEPT_DAYS: i64 = 60;
 
 /// What deleting an account would do, for the confirm page.
 pub struct Preview {
@@ -169,7 +171,7 @@ async fn delete_unused(
 
 /// Deletes the series the account made that no one but their members could read: no
 /// version is readable, and no other account's live entry cites one, nor one rejected
-/// within [`REJECTION_KEEPS_SERIES_DAYS`] (the owner's decisions, 2026-11-17); any
+/// within [`REJECTED_KEPT_DAYS`] (the owner's decisions, 2026-11-17); any
 /// other series outlives the account. An entry that still names one (taken out of it,
 /// or rejected earlier) loses the cite. A series the owner removed stays, as removed
 /// data does.
@@ -177,9 +179,7 @@ async fn delete_unread_series(
     transaction: &mut SqliteConnection,
     account_id: &str,
 ) -> Result<(), sqlx::Error> {
-    // No rejection time is stored; the latest submission stands in, since a
-    // rejection follows it within the screening hold or the review queue.
-    let rejected_since = stamp(now_utc() - Duration::days(REJECTION_KEEPS_SERIES_DAYS));
+    let rejected_since = stamp(now_utc() - Duration::days(REJECTED_KEPT_DAYS));
     let unread = sqlx::query_scalar!(
         r#"SELECT s.seq AS "seq!: i64" FROM series s
            WHERE s.account_id = ?1 AND s.removed_at IS NULL
@@ -191,7 +191,8 @@ async fn delete_unread_series(
                  WHERE e.series_seq = s.seq AND e.account_id != ?1
                    AND e.series_removed_at IS NULL
                    AND (e.status NOT IN ('rejected', 'withdrawn', 'removed')
-                        OR (e.status = 'rejected' AND e.submitted_at >= ?2)))"#,
+                        OR (e.status = 'rejected'
+                            AND COALESCE(e.rejected_at, e.submitted_at) >= ?2)))"#,
         account_id,
         rejected_since
     )
@@ -212,6 +213,53 @@ async fn delete_unread_series(
             statement.execute(&mut *transaction).await?;
         }
     }
+    Ok(())
+}
+
+/// Deletes, at `now`, every entry rejected more than [`REJECTED_KEPT_DAYS`] before,
+/// as a withdrawal deletes one, with what only it used, and records it, so its
+/// author's later read, and a retried `DELETE` of its batch, answer when (#132). An
+/// entry with no rejection time, as an older binary rejects one, counts from its
+/// latest submission. One whose batch has a member
+/// still waiting, in screening or on the owner, stays: that member, once published,
+/// goes back with its batch only while a rejected member is there to say so.
+pub async fn expire_rejected(state: &AppState, now: OffsetDateTime) -> Result<(), sqlx::Error> {
+    let before = stamp(now - Duration::days(REJECTED_KEPT_DAYS));
+    let writer = state.files.write().await;
+    let mut transaction = crate::db::write_tx(&state.pool).await?;
+    let expired = sqlx::query!(
+        r#"SELECT e.seq AS "seq!: i64", e.id, e.account_id, b.id AS "batch_id?"
+           FROM entries e LEFT JOIN batches b ON b.seq = e.batch_seq
+           WHERE e.status = 'rejected' AND COALESCE(e.rejected_at, e.submitted_at) < ?
+             AND NOT EXISTS (
+                 SELECT 1 FROM entries m
+                 WHERE m.batch_seq = e.batch_seq
+                   AND m.status NOT IN ('rejected', 'withdrawn', 'removed'))
+           ORDER BY e.seq"#,
+        before
+    )
+    .fetch_all(&mut *transaction)
+    .await?;
+    if expired.is_empty() {
+        return Ok(());
+    }
+    let seqs: Vec<i64> = expired.iter().map(|entry| entry.seq).collect();
+    delete_entries(&mut transaction, &seqs).await?;
+    let deleted_at = stamp(now);
+    for entry in &expired {
+        record_deleted(
+            &mut transaction,
+            &entry.account_id,
+            std::slice::from_ref(&entry.id),
+            entry.batch_id.as_deref(),
+            &deleted_at,
+        )
+        .await?;
+    }
+    let lone = attachments::delete_lone_files(&writer, &mut transaction).await?;
+    series::mark_readable(&mut transaction).await?;
+    transaction.commit().await?;
+    attachments::remove_bytes(&writer, &lone).await;
     Ok(())
 }
 

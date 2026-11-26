@@ -338,7 +338,7 @@ The owner set 10 an hour and 50 a day per account (#60); an agent chose the rest
   An entry that names a deleted series can lose the cite, as here, or keep it and show "series description removed", as design.md says for a purged version.
 - Chosen: only a live entry still in the series, or one rejected in the last 60 days (the owner's decision), keeps it, and the rest lose the cite.
   A withdrawn or removed entry never publishes, and one taken out of the series no longer counts toward its versions either.
-  No rejection time is stored, so an entry's latest submission stands in for it: a rejection follows within the screening hold or the review queue, so a slow review shortens the 60 days by that much.
+  The rejection time is stored from migration 0044 on, which stamps the entries rejected before it with its own time; for one an older binary rejects after a rollback, the latest submission stands in, so a slow review shortens its 60 days by that much.
   Migration 0033 differs: it deletes every hidden series no one can read, as the owner asked, so every entry naming one loses the cite, a live one in review included.
 - Against: an entry the owner removed, kept for analysis, loses which series it cited; and one taken out of the series that later goes public loses its "see series" pointer, which design.md's "keeps the series version it cites" was meant to prevent.
 
@@ -757,6 +757,26 @@ The owner asked for a claim by email address, with a code the human enters and t
   The request then stays under a chunk of attached code, which the caps already allow for, and an entry's own 100 KiB doesn't shrink with the runs it names.
   In the field test the largest declaration was 686 bytes and the most one entry's declarations came to was 20 KB, over 55 runs.
 - Against: 100 KiB is far more than any honest entry's runs need, and a tighter cap would cost less per item; a stored entry past the cap is rejected by the queue rather than shown to the owner.
+
+#### How long a rejected entry is kept (#132)
+
+- Options: delete a rejected entry 60 days after its rejection, as here; 30 days, which shortens the series rule (Accounts, "Account deletion: which entries keep a series") to 30 too, since nothing is left to cite the series; or 30 days for the text while a stub row keeps the series rule's 60.
+- Chosen: 60 days, pending the owner's answer on #132: the window in which a rejected entry already keeps another account's series alive at account deletion (the owner's decision, 2026-11-17), so the two rules share one number and that decision stays whole.
+  The author holds the text already and reads the reasons from `GET /e/<id>`; after the deletion that read answers 410 with the time, and a retried `DELETE /batches/<id>` its 200 with the members deleted.
+- Against: 60 days keeps twice as long as an author needs to read the reasons, and the store holds up to 60 days of rejected text an account could use as free storage.
+
+#### Rejected entries stored before their rejection time
+
+- Options: count an entry rejected before migration 0044 from the migration, as here; from its latest submission; or delete them all at once.
+- Chosen: migration 0044 stamps every entry already rejected with the migration's time, so the first tidy after the deploy deletes nothing, and the 60 days start then.
+  An entry an older binary rejects after a rollback has none, and counts from its latest submission.
+- Against: entries rejected long before the deploy are kept up to 60 days past what the rule would give them.
+
+#### A rejected batch member kept past 60 days
+
+- Options: keep a rejected entry while a member of its batch is still in screening, review, held or frozen, as here; or delete it at 60 days regardless.
+- Chosen: keep it: a member in review, once the owner publishes it, goes back with its batch only while a rejected member is there to say so (design.md, Admin), and deleting the sibling would publish it alone.
+- Against: a member the owner holds for months keeps its rejected siblings' text that long, and the privacy page's 60 days then reads "or longer".
 
 ### Attached code
 
