@@ -1281,6 +1281,11 @@ Python is fine for scripts and internal tools.
   A daily run takes at most 4 shards (`bin/mutants-shards`), so with a full run's 16 it stays within the org's 20 concurrent jobs.
   With no such run in the artifacts' 30 days, the base is the commit that added the workflow, so the first daily run is close to a full one.
   Each triage comments on #19 with a `Triaged run:` line, which marks the runs before it as addressed; llm-toolbox's `/upskill` lists the runs after it.
+- The commit checks' cargo steps build in one check slot per repo and machine, a tree and a target of their own that every worktree's checks share (the owner's decision, 2026-11-25, #146).
+  Reason: a check folder that built into the worktree's own target leaked builds both ways, since cargo calls a unit fresh when no source is newer than its last build, whichever tree ran it: a check passed on unstaged code the worktree had built, and a worktree's build after a check kept the check's copy of `skills/`.
+  In an agent's commit loop the slot measured as fast as before (#146's table); a new worktree's first check finds it warm.
+  Once a day a slot whose target passes 20 GB starts over, at the cost of one cold check (the owner's decision, 2026-11-25); Cargo keeps no record of which old builds are still used, so nothing finer can prune it.
+  A second slot waits on #147's week of lock waits and wipes.
 
 ## Distribution
 
@@ -1366,6 +1371,11 @@ The owner signed off on the fourth draft of the entry format on 2026-11-05.
 ## Rejected
 
 Bring one of these back only with the owner's agreement.
+
+- **A target of its own for each worktree's check folder** (2026-11-25, #146).
+  It would fix the leak between a worktree and its checks, but costs about 6 GB more per worktree, and a cold build to fill each one.
+  The owner: "6G per work tree seems likely to cost time even just to generate, and is a pretty big cost to space."
+  The one check slot per repo (Checks) fixes the leak for one extra target.
 
 - **Standing permission to post** (2026-11-07), a line in a project's instructions letting the agent post without asking.
   The owner wants the human asked about each result.

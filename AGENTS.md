@@ -212,6 +212,7 @@ The version and hashes live only there, and its docstring says how to move to a 
 The first commit on a machine without network access is refused; `SKIP=lychee git commit` skips only that check.
 So is a commit there that stages a shell script while uv's cache lacks the pinned shellcheck; `SKIP=shellcheck git commit` skips only that one, and CI still runs it.
 The same goes for zizmor and a staged workflow: `SKIP=zizmor git commit`.
+To run one of the commit's checks by hand at the version the hook pins, such as shellcheck, actionlint or zizmor, run it through pre-commit: `uvx pre-commit@4.7.0 run <hook id> --files PATH...`, with the hook id from `.pre-commit-config.yaml`.
 
 `bin/caddy` does the same for Caddy, pinned by SHA-512, and runs it with the given arguments.
 The tests in `bin/tests` that run a real Caddy against `ops/remote/caddy.sh`'s and `ops/remote/field-test-key.sh`'s config get it through conftest's `real_caddy` fixture, or from `$FILEDRAWER_TEST_CADDY` when that is set.
