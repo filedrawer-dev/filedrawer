@@ -180,6 +180,8 @@ The Rust tests run under cargo-nextest, set in `.config/nextest.toml` to print o
 To run them that way, run `cargo nextest run --cargo-quiet`. nextest skips doctests, so the full check also runs `cargo test --doc`.
 Each crate's integration tests build as one binary, `tests/it/main.rs`, with each file in `tests/it/` a module of it, so a new test file needs a `mod` line there; a test in `main.rs` fails without one.
 To run one file's tests, filter on its module: `cargo nextest run --cargo-quiet -p filedrawer-server -E 'test(/^read::/)'`.
+To see what each test took, run `NEXTEST_EXPERIMENTAL_LIBTEST_JSON=1 cargo nextest run --cargo-quiet --message-format libtest-json-plus`, whose lines give each test's `exec_time`; a profile with a `junit` table also gives when each test started.
+The run is bound by its total CPU, not by its slowest test (#138): to shorten it, profile the whole run (`profile-top`) rather than reorder tests, though nextest's `priority` overrides can start chosen tests first.
 The Python tests in `bin/tests` run through `bin/pytest`, the pinned pytest with pytest.ini's plugins: `heavy --few-seconds -- bin/pytest bin/tests/test_x.py`, in parallel, or `-n0 -k NAME` for a few tests, where starting the workers costs more than they save; plain `uv run pytest` lacks pytest-xdist, which pytest.ini's `-n` needs.
 The property tests (hypothesis) run 100 examples each; `HYPOTHESIS_PROFILE=dev` runs 20 while you write one, and `deep` 3000 before you trust a change (`bin/tests/conftest.py`).
 A whole file such as `test_provision_vps.py` run with `-n0` takes past a minute, which overruns `--few-seconds`; in parallel, six such files take about 16 s.
