@@ -296,3 +296,36 @@ github_oauth_setup() {
     note "To try it, log in at $site/login with GitHub."
   fi
 }
+
+# github_token_setup ENV STAGE: ENV's own GitHub token (#123), in a file only ENV's
+# unit reads, so staging's binary never holds production's. A token the server holds
+# is kept, sent empty; otherwise it asks for one, and the server refuses the other
+# environment's. STAGE names the wizard stage that changes it.
+github_token_setup() {
+  local env="$1" stage="$2" other=staging
+  [[ $env == production ]] || other=production
+  # The unit first, so it reads the file github-token.sh writes; for production it
+  # also moves the token both environments shared before #123 into production's file.
+  remote service.sh "ENVIRONMENT=$env"
+  TOKEN=""
+  if ! keep_secret "GitHub token for $env" "/etc/filedrawer/$env-github.env" "$stage"; then
+    say "Submissions ask GitHub whether a code link's commit is on one of the repository's"
+    say "own branches or tags: its commit page first, then its API when the page lists"
+    say "none or doesn't answer. Without a token the API allows 60 calls an hour; with"
+    say "one, 5,000. The server spends at most half, and leaves the rest to you."
+    say "Staging and production each get a token of their own. GitHub counts every token"
+    say "of one account against that account's limit, so a token on another GitHub account"
+    say "than $other's gives $env its own hourly limit; one on the same account shares it."
+    open_url "https://github.com/settings/personal-access-tokens/new"
+    step "Make a fine-grained token named such as 'filedrawer $env link checks'."
+    step "Repository access: 'Public repositories'. Add no permissions: it only reads."
+    step "Expiration: the longest offered. Put the date in your calendar to renew it."
+    ask_new_secret TOKEN "$env's token (github_pat_...):"
+  fi
+  remote_with_secret github-token.sh TOKEN "$TOKEN" "ENVIRONMENT=$env"
+  if [[ -n "$TOKEN" ]]; then
+    note "The token is on the server only, in a file only $env's service reads; the end"
+    note "of this run checks it with GitHub."
+  fi
+  unset TOKEN
+}

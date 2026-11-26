@@ -1,7 +1,7 @@
 """Tests for ops/remote/screening.sh, ops/remote/github-token.sh and
 ops/remote/admin-grant.sh, which ops/provision-vps runs as root on the VPS:
-staging's screening settings, the GitHub token the link checks call GitHub's API
-with, and making the owner's staging account the admin. Each runs as a process
+staging's screening settings, staging's GitHub token the link checks call GitHub's
+API with, and making the owner's staging account the admin. Each runs as a process
 against a temp root, with fake systemctl and runuser first on PATH.
 """
 
@@ -90,12 +90,12 @@ def test_screening_writes_the_settings_the_server_reads_and_restarts_staging(box
 TOKEN = "github_pat_" + "t" * 70
 
 
-def test_github_token_writes_the_shared_file_and_restarts_staging(box):
+def test_github_token_writes_stagings_file_and_restarts_staging(box):
     (box.root / "etc/systemd/system").mkdir(parents=True)
     (box.root / "etc/systemd/system/filedrawer-staging.service").write_text("")
     result = run(box, GITHUB_TOKEN, TOKEN=TOKEN)
     assert result.returncode == 0, result.stderr
-    env_file = box.root / "etc/filedrawer/github.env"
+    env_file = box.root / "etc/filedrawer/staging-github.env"
     assert env_file.read_text() == f"FILEDRAWER_GITHUB_TOKEN='{TOKEN}'\n"
     assert stat.S_IMODE(env_file.stat().st_mode) == 0o600
     log = box.log.read_text()
@@ -110,7 +110,7 @@ def test_github_token_writes_the_shared_file_and_restarts_staging(box):
 def test_github_token_refuses_what_isnt_a_token_and_writes_nothing(box, token):
     result = run(box, GITHUB_TOKEN, TOKEN=token)
     assert result.returncode != 0
-    assert not (box.root / "etc/filedrawer/github.env").exists()
+    assert not (box.root / "etc/filedrawer/staging-github.env").exists()
 
 
 def test_a_rerun_replaces_the_settings(box):

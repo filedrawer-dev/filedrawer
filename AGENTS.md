@@ -70,7 +70,7 @@ The field test's entries and logs are in `field-test/`, git-excluded and local o
   After an analyzer change, run `bin/field-test-diff` through `heavy` (`-h`): it builds entry-check at the commit your branch forked from, or at `--against REV`, and lists the field-test entries whose outcome changed, without their contents.
 - `crates/server`: the `filedrawer-server` binary, which the VPS installs as `bin/filedrawer` (design.md, Hosting and operations).
   `filedrawer-server -h` lists its commands and every setting, with what production refuses; a test (`cli::help_names_every_setting_serve_reads`) fails when it misses one `config.rs` reads, so read it there rather than keep a list here.
-  The GitHub token is shared with staging (`ops/provision-vps github`).
+  Staging and production each have a GitHub token of their own (`ops/provision-vps github` and `ops/provision-vps production github`, #123).
   Email goes to the log when no SMTP settings are set, but staging has real ones (`ops/remote/mail.sh`), so a feature that emails the owner reaches their inbox from staging too, where CI publishes test entries after each deploy.
   `crates/server/install.md` is what agents read at `/skill.md`: it has the agent ask its human, then download and run `crates/server/install.sh`, served at `/install.sh`, which installs the two skills in `skills/` from their tags.
   Production serves the script's bytes as they are, so a reader can compare it with the repo; staging and dev put their own address on its `base=` line.
