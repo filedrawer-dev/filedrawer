@@ -198,7 +198,8 @@ pub enum Screened {
 
 /// Screens `text` for `account_id` within the caps, and logs every call it made;
 /// for staging's smoke-test account, passes it unscreened, and for an account under
-/// the review guard, screens nothing and says so. The caller
+/// the review guard, screens nothing and says so. The account's display name rides
+/// along until a screen with it passes. The caller
 /// holds `screening_lock`, or is the series route, which takes it here.
 pub async fn screen_text(
     state: &AppState,
@@ -223,7 +224,13 @@ pub async fn screen_text(
     if over_cap(state, account_id, now).await? {
         return Ok(Screened::OverCap);
     }
-    let screening = state.screener.screen(text).await;
+    let name = accounts::unscreened_display_name(&state.pool, account_id).await?;
+    // The name is author text on every card, as a title is (design.md, Accounts).
+    let text = match &name {
+        Some(name) => crate::screening::with_display_name(name, text),
+        None => text.to_string(),
+    };
+    let screening = state.screener.screen(&text).await;
     state.screening_health.note(&screening, Subject::Submission);
     log_calls(
         &state.pool,
@@ -234,6 +241,9 @@ pub async fn screen_text(
         Subject::Submission,
     )
     .await?;
+    if let (Some(name), Ok(Verdict::Pass { .. })) = (&name, &screening.verdict) {
+        accounts::display_name_screened(&state.pool, account_id, name).await?;
+    }
     Ok(match screening.verdict {
         Ok(verdict) => Screened::Verdict(verdict),
         Err(error) => {
@@ -358,7 +368,28 @@ async fn screen_files(
             }
         }
     }
-    Ok(Files::Clear(doubts))
+    // The set's origins and repos last, once every file has its verdict, so an entry
+    // that waits on a file doesn't pay for them. They're the set's, not a file's, so
+    // no verdict is stored by hash: each entry citing the set screens them, and so
+    // does each retry of an entry whose text screen failed after they passed, which
+    // after_failure bounds.
+    let Some(origins) = attachments::origins_text(&state.pool, waiting.seq).await? else {
+        return Ok(Files::Clear(doubts));
+    };
+    let what = attachments::ORIGINS;
+    match screen_code(state, waiting, &origins, now, what).await? {
+        None => Ok(Files::Wait),
+        Some(FileCall::Pass(doubt)) => {
+            doubts.extend(doubt.map(|doubt| format!("{what}: {doubt}")));
+            Ok(Files::Clear(doubts))
+        }
+        Some(FileCall::Reject(reason)) => Ok(Files::Decided(Verdict::Reject {
+            reasons: vec![format!("{what}: {reason}")],
+        })),
+        Some(FileCall::Review(why)) => Ok(Files::Decided(Verdict::Review {
+            why: format!("{what}: {why}"),
+        })),
+    }
 }
 
 /// Screens one file, chunk by chunk, and stores a pass or a rejection. `None` when
@@ -402,8 +433,33 @@ async fn screen_file(
             return Ok(None);
         }
     };
+    let call = screen_code(state, waiting, &text, now, &file.sha256).await?;
+    match &call {
+        Some(FileCall::Pass(doubt)) => {
+            attachments::store_file_verdict(&state.pool, &file.sha256, "pass", doubt.as_deref())
+                .await?;
+        }
+        Some(FileCall::Reject(reason)) => {
+            attachments::store_file_verdict(&state.pool, &file.sha256, "reject", Some(reason))
+                .await?;
+        }
+        Some(FileCall::Review(_)) | None => {}
+    }
+    Ok(call)
+}
+
+/// Screens `text` as attached code, chunk by chunk, within the attachment caps: one
+/// file's text, or a set's origins. `None` when it must wait, as [`screen_file`]
+/// says. `what` names it in the log.
+async fn screen_code(
+    state: &AppState,
+    waiting: &Waiting,
+    text: &str,
+    now: OffsetDateTime,
+    what: &str,
+) -> Result<Option<FileCall>, sqlx::Error> {
     let mut doubts = Vec::new();
-    for chunk in attachments::chunks(&text) {
+    for chunk in attachments::chunks(text) {
         if attachments_over_cap(state, &waiting.account_id, now).await? {
             return Ok(None);
         }
@@ -421,15 +477,12 @@ async fn screen_file(
         match screening.verdict {
             Ok(Verdict::Pass { hazard_doubt, .. }) => doubts.extend(hazard_doubt),
             Ok(Verdict::Reject { reasons }) => {
-                let reason = reasons.join("; ");
-                attachments::store_file_verdict(&state.pool, &file.sha256, "reject", Some(&reason))
-                    .await?;
-                return Ok(Some(FileCall::Reject(reason)));
+                return Ok(Some(FileCall::Reject(reasons.join("; "))));
             }
             Ok(Verdict::Review { why }) => return Ok(Some(FileCall::Review(why))),
             Err(error) => {
                 // Logged as `screen_text` logs a failure on an entry's text.
-                tracing::warn!(%error, entry_seq = waiting.seq, sha256 = %file.sha256, "screening attached code failed");
+                tracing::warn!(%error, entry_seq = waiting.seq, what, "screening attached code failed");
                 return Ok(after_failure(state, waiting, &error)
                     .await?
                     .map(FileCall::Review));
@@ -437,7 +490,6 @@ async fn screen_file(
         }
     }
     let doubt = (!doubts.is_empty()).then(|| doubts.join("; "));
-    attachments::store_file_verdict(&state.pool, &file.sha256, "pass", doubt.as_deref()).await?;
     Ok(Some(FileCall::Pass(doubt)))
 }
 

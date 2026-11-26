@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE accounts SET display_name_screened = display_name\n         WHERE id = ? AND display_name = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "339c9c17b3eb2e5d3d94b1474dc45d89a014b51f4fd3b1807cccb51cd95cc80a"
+}

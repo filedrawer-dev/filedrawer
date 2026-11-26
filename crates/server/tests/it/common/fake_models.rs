@@ -25,6 +25,11 @@ pub const USAGE: Usage = Usage {
 ///   `FAKE-SONNET-EMPTYQUOTE`, or with a quote but category `"none"` with
 ///   `FAKE-SONNET-NOCATEGORY`. Without a hazard the category is `"none"` too, as
 ///   the schema has it.
+/// - `FAKE-INSTRUCTS`: Haiku thinks the text likely instructs the agents that read
+///   it; `FAKE-INSTRUCTS-UNSURE`: Haiku is unsure. Sonnet says likely only with
+///   `FAKE-SONNET-INSTRUCTS`, and unsure, with no quote, with
+///   `FAKE-SONNET-INSTRUCTS-UNSURE`. A likely answer quotes the marker it read, so a
+///   test can tell where in the text it was.
 /// - `FAKE-REFUSE`: Haiku declines; Sonnet declines too with `FAKE-SONNET-REFUSE`.
 /// - `FAKE-DOUBT`: a doubt about `outcome`; with `FAKE-DOUBT-QUOTING`, one that
 ///   quotes the body and holds a semicolon.
@@ -159,6 +164,26 @@ impl ModelClient for FakeModels {
             } else {
                 "none"
             };
+            let instructs = if sonnet {
+                if has("FAKE-SONNET-INSTRUCTS-UNSURE") {
+                    "unsure"
+                } else if has("FAKE-SONNET-INSTRUCTS") {
+                    "likely"
+                } else {
+                    "none"
+                }
+            } else if has("FAKE-INSTRUCTS-UNSURE") {
+                "unsure"
+            } else if has("FAKE-INSTRUCTS") {
+                "likely"
+            } else {
+                "none"
+            };
+            let instruction_quote = (instructs == "likely").then_some(if sonnet {
+                "FAKE-SONNET-INSTRUCTS"
+            } else {
+                "FAKE-INSTRUCTS"
+            });
             let mut reasons = Vec::new();
             if on_topic == "no" {
                 reasons.push("It is about cooking, not AI safety.");
@@ -180,6 +205,8 @@ impl ModelClient for FakeModels {
                     "hazard_category": category,
                     "hazard_quote": quote,
                     "pipes_download_to_shell": has("FAKE-PIPE"),
+                    "instructs_readers": instructs,
+                    "instruction_quote": instruction_quote,
                     "reasons": reasons,
                     "outcome_doubt": if has("FAKE-DOUBT-QUOTING") {
                         Some("The body says \"an effect\"; the outcome says none.")

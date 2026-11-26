@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT a.id, w.display_name, a.review_guard_at AS \"since!\"\n           FROM accounts a JOIN authors w ON w.id = a.id\n           WHERE a.review_guard_at IS NOT NULL ORDER BY a.review_guard_at, a.id",
+  "query": "SELECT a.id, CASE WHEN a.deleted_at IS NULL THEN a.display_name END AS \"display_name?\",\n                  a.review_guard_at AS \"since!\"\n           FROM accounts a\n           WHERE a.review_guard_at IS NOT NULL ORDER BY a.review_guard_at, a.id",
   "describe": {
     "columns": [
       {
@@ -15,7 +15,7 @@
         }
       },
       {
-        "name": "display_name",
+        "name": "display_name?",
         "ordinal": 1,
         "type_info": "Text",
         "origin": "Expression"
@@ -41,5 +41,5 @@
       true
     ]
   },
-  "hash": "019570370facff451b0a309ebd3883c899f64000bfd8ce501274d8d2960020ad"
+  "hash": "8a97e335d87b4588989a5c073c101a5c62012e0cd5d9eeb877b5219081cce5b9"
 }

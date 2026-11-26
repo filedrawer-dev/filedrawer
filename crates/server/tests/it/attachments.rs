@@ -1045,8 +1045,8 @@ mod screened {
         let second = set_of(&app, json!([flagged, file("author:b.py", "print(1)\n")])).await;
         let (_, status) = publish(&app, &second, "b").await;
         assert_eq!(status, "public");
-        // Only b.py and the entry's text were screened.
-        assert_eq!(models.asked().len(), asked + 2);
+        // Only b.py, the set's origins and the entry's text were screened.
+        assert_eq!(models.asked().len(), asked + 3);
     }
 
     #[tokio::test]
@@ -1427,6 +1427,101 @@ mod screened {
             })
             .collect();
         assert_eq!(order.first(), Some(&"without"), "{order:?}");
+    }
+
+    #[tokio::test]
+    async fn a_file_that_instructs_reading_agents_sends_the_entry_to_review() {
+        let models = FakeModels::default();
+        let app = app_with(&models, 1_000_000_000).await;
+        let set = set_of(
+            &app,
+            json!([file(
+                "author:run.py",
+                "# FAKE-INSTRUCTS FAKE-SONNET-INSTRUCTS\n"
+            )]),
+        )
+        .await;
+        let (_, status) = publish(&app, &set, "a").await;
+        assert_eq!(status, "review");
+    }
+
+    #[tokio::test]
+    async fn a_sets_origins_and_repos_are_screened_with_each_entry_that_cites_it() {
+        let models = FakeModels::default();
+        let app = app_with(&models, 1_000_000_000).await;
+        let reply = upload(
+            &app,
+            &app.token,
+            json!({"repos": {"lab": "https://github.com/example/lab"},
+                   "files": [file("lab@0123456:src/run.py", "print('a')\n")]}),
+        )
+        .await;
+        assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
+        let set = serde_json::from_str::<Value>(&reply.body).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let (_, first) = publish(&app, &set, "first").await;
+        assert_eq!(first, "public");
+        let listing = |text: &&String| text.contains("lab@0123456:src/run.py");
+        let listings: Vec<String> = models.screened().iter().filter(listing).cloned().collect();
+        assert_eq!(listings.len(), 1, "{listings:?}");
+        assert!(
+            listings[0].contains("lab: https://github.com/example/lab"),
+            "{}",
+            listings[0]
+        );
+        assert!(!listings[0].contains("print('a')"), "{}", listings[0]);
+
+        // The file passed by hash; its origins are the set's, so each entry screens them.
+        let (_, second) = publish(&app, &set, "second").await;
+        assert_eq!(second, "public");
+        assert_eq!(models.screened().iter().filter(listing).count(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_passed_file_under_an_origin_that_instructs_readers_sends_the_entry_to_review() {
+        let models = FakeModels::default();
+        let app = app_with(&models, 1_000_000_000).await;
+        let clean = set_of(&app, json!([file("author:run.py", "print('a')\n")])).await;
+        let (_, first) = publish(&app, &clean, "first").await;
+        assert_eq!(first, "public");
+
+        let cookie = common::owner(&app).await;
+        let renamed = set_of(
+            &app,
+            json!([file(
+                "author:FAKE-INSTRUCTS/FAKE-SONNET-INSTRUCTS/run.py",
+                "print('a')\n"
+            )]),
+        )
+        .await;
+        let (id, second) = publish(&app, &renamed, "second").await;
+        assert_eq!(second, "review");
+        let page = app.page(&format!("/admin/e/{id}"), Some(&cookie)).await;
+        assert!(
+            page.body.contains(
+                "the attached files&#39; origins: the screens saw instructions aimed at the agents that read it: &#34;FAKE-SONNET-INSTRUCTS&#34;"
+            ),
+            "{}",
+            page.body
+        );
+    }
+
+    #[tokio::test]
+    async fn an_origin_that_pipes_a_download_into_a_shell_rejects_the_entry_naming_it() {
+        let models = FakeModels::default();
+        let app = app_with(&models, 1_000_000_000).await;
+        let set = set_of(&app, json!([file("author:FAKE-PIPE.sh", "echo hi\n")])).await;
+        let (id, status) = publish(&app, &set, "a").await;
+        assert_eq!(status, "rejected");
+        let own = app.get_as_author(&format!("/e/{id}")).await;
+        assert!(
+            own.body
+                .contains("reason: the attached files' origins: a command pipes a download"),
+            "{}",
+            own.body
+        );
     }
 }
 

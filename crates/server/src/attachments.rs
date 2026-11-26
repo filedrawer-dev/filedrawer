@@ -545,6 +545,38 @@ pub async fn entry_set(pool: &SqlitePool, seq: i64) -> Result<Option<EntrySet>, 
     Ok(Some(EntrySet { id: set.id, files }))
 }
 
+/// What the screen and its reasons call a set's origins and repos.
+pub const ORIGINS: &str = "the attached files' origins";
+
+/// The origins of the files in the set entry `seq` cites, one a line, and the URL of
+/// each repo they name, as the entry's page shows them, under a line saying what
+/// they are, for the screen (design.md, Attached code); `None` when it cites no set.
+/// A file's contents are screened once by hash, but its origin is the set's, so an
+/// origin such as `author:<an instruction to readers>` needs a screen of its own.
+pub async fn origins_text(pool: &SqlitePool, seq: i64) -> Result<Option<String>, sqlx::Error> {
+    let Some(set) = entry_set(pool, seq).await? else {
+        return Ok(None);
+    };
+    let mut repos = BTreeMap::new();
+    let mut text = format!("--- {ORIGINS}, listed by the server ---\n");
+    for file in &set.files {
+        text.push_str(&file.origin);
+        text.push('\n');
+        if let (Some((Repo::Named(name), _)), Some(url)) =
+            (split_origin(&file.origin), &file.repo_url)
+        {
+            repos.insert(name, url);
+        }
+    }
+    if !repos.is_empty() {
+        text.push_str("--- the repos they name ---\n");
+        for (name, url) in repos {
+            text.push_str(&format!("{name}: {url}\n"));
+        }
+    }
+    Ok(Some(text))
+}
+
 /// Whether a public entry's set holds file `sha256`, and the owner hasn't removed it,
 /// so the files host may serve it. A banned file was removed when it was banned, and
 /// can't be uploaded again, so this covers bans too.

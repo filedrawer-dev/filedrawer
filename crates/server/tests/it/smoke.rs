@@ -381,9 +381,9 @@ fn eval_against_a_server_that_doesnt_screen_passes_only_the_public_cases() {
         printed.contains("PASS public real-requirements-export"),
         "{printed}"
     );
-    assert!(printed.contains("public: 5 of 5"), "{printed}");
+    assert!(printed.contains("public: 7 of 7"), "{printed}");
     assert!(printed.contains("rejected: 0 of 4"), "{printed}");
-    assert!(printed.contains("review: 1 of 5"), "{printed}");
+    assert!(printed.contains("review: 1 of 8"), "{printed}");
     assert!(
         printed.contains("then clear the screen-test account's guard"),
         "{printed}"
@@ -488,6 +488,7 @@ fn screening_server(name: &str, settings: &[(&str, &str)]) -> (Server, String) {
     let real = [
         ("FILEDRAWER_SCREENER", "anthropic"),
         ("FILEDRAWER_ANTHROPIC_API_KEY", "sk-ant-not-real"),
+        ("FILEDRAWER_SCREEN_TEST_ACCOUNT", account.as_str()),
     ];
     (
         serve_with(database, &[&real[..], ATTACHMENTS, settings].concat()),
@@ -837,7 +838,7 @@ fn eval_resumes_a_stopped_run_without_sending_anything_twice() {
         &[],
     );
     let printed = text(&output);
-    assert!(printed.contains("public: 5 of 5"), "{printed}");
+    assert!(printed.contains("public: 7 of 7"), "{printed}");
     assert!(printed.contains(&format!("eval {tag}: ")), "{printed}");
     let after = sent(&std::fs::read_to_string(&path).unwrap());
     let cases = ["public", "rejected", "review"]
@@ -960,7 +961,12 @@ fn serve_attachments(name: &str) -> (Server, String) {
         &database,
         &["create-token", "--account", &account, "--name", "t"],
     );
-    let passing = [("FILEDRAWER_SCREENER", "pass-all")];
+    // Eval runs as staging's screen-test account, which has no allowance (design.md,
+    // Limits and abuse): its cases are more than a new account's day.
+    let passing = [
+        ("FILEDRAWER_SCREENER", "pass-all"),
+        ("FILEDRAWER_SCREEN_TEST_ACCOUNT", account.as_str()),
+    ];
     (
         serve_with(database, &[&passing[..], ATTACHMENTS].concat()),
         token,

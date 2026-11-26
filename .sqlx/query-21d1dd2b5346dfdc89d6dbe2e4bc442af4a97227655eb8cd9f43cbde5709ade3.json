@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT e.seq AS \"seq!: i64\", e.id, e.status, e.source, e.account_id,\n                  a.display_name, h.login AS \"github_login?: String\", e.submitted_at, b.id AS \"batch_id?\", e.review_reason\n           FROM entries e JOIN authors a ON a.id = e.account_id\n         LEFT JOIN github_handles h ON h.account_id = e.account_id\n           LEFT JOIN batches b ON b.seq = e.batch_seq\n           WHERE (?1 IS NULL AND e.status IN ('review', 'held', 'frozen')) OR e.id = ?1\n           ORDER BY e.queue_position, e.submitted_at, e.seq",
+  "query": "SELECT e.seq AS \"seq!: i64\", e.id, e.status, e.source, e.account_id,\n                  -- The stored name, screened or not: the owner judges it here.\n                  CASE WHEN a.deleted_at IS NULL THEN a.display_name END AS \"display_name?\",\n                  h.login AS \"github_login?: String\", e.submitted_at, b.id AS \"batch_id?\", e.review_reason\n           FROM entries e JOIN accounts a ON a.id = e.account_id\n         LEFT JOIN github_handles h ON h.account_id = e.account_id\n           LEFT JOIN batches b ON b.seq = e.batch_seq\n           WHERE (?1 IS NULL AND e.status IN ('review', 'held', 'frozen')) OR e.id = ?1\n           ORDER BY e.queue_position, e.submitted_at, e.seq",
   "describe": {
     "columns": [
       {
@@ -59,7 +59,7 @@
         }
       },
       {
-        "name": "display_name",
+        "name": "display_name?",
         "ordinal": 5,
         "type_info": "Text",
         "origin": "Expression"
@@ -125,5 +125,5 @@
       true
     ]
   },
-  "hash": "d2446282e23bd39f537aaace0359b3a3868b03e2a68d605ad766b04a2d6abc98"
+  "hash": "21d1dd2b5346dfdc89d6dbe2e4bc442af4a97227655eb8cd9f43cbde5709ade3"
 }

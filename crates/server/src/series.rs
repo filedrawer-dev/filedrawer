@@ -464,10 +464,12 @@ pub async fn record_refusal(
 pub async fn refusals(pool: &SqlitePool) -> Result<Vec<Refused>, sqlx::Error> {
     sqlx::query_as!(
         Refused,
-        "SELECT r.id, r.account_id, a.display_name, r.series_id, r.title, r.description,
-                r.why, r.refused_at
-         FROM refused_series r JOIN authors a ON a.id = r.account_id
-         WHERE r.decision IS NULL ORDER BY r.refused_at, r.id"
+        // The stored name, screened or not: the owner judges it here.
+        r#"SELECT r.id, r.account_id,
+                CASE WHEN a.deleted_at IS NULL THEN a.display_name END AS "display_name?",
+                r.series_id, r.title, r.description, r.why, r.refused_at
+         FROM refused_series r JOIN accounts a ON a.id = r.account_id
+         WHERE r.decision IS NULL ORDER BY r.refused_at, r.id"#
     )
     .fetch_all(pool)
     .await

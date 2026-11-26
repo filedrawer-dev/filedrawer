@@ -50,7 +50,7 @@
       {
         "name": "display_name?: String",
         "ordinal": 4,
-        "type_info": "Text",
+        "type_info": "Null",
         "origin": "Expression"
       },
       {
@@ -164,7 +164,7 @@
       false,
       false,
       false,
-      false,
+      true,
       false,
       false,
       true,

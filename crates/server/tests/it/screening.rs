@@ -1416,3 +1416,230 @@ async fn the_screen_test_account_isnt_held_to_an_accounts_share_but_is_to_the_da
     let (_, status) = publish(&app, &entry("Steering 4", "slug: s4\n")).await;
     assert_eq!(status, "screening");
 }
+
+/// The owner's page for entry `id`.
+async fn admin_page(app: &TestApp, id: &str) -> String {
+    let cookie = common::owner(app).await;
+    app.page(&format!("/admin/e/{id}"), Some(&cookie))
+        .await
+        .body
+}
+
+#[tokio::test]
+async fn instructions_to_reading_agents_go_to_review_when_sonnet_quotes_them() {
+    let models = FakeModels::default();
+    let app = app_with(&models).await;
+    let (_, cleared) = publish(&app, &marked("FAKE-INSTRUCTS", "")).await;
+    assert_eq!(cleared, "public", "Sonnet read it and cleared it");
+    assert_eq!(models.asked(), vec![Model::Haiku, Model::Sonnet]);
+
+    let (id, held) = publish(&app, &marked("FAKE-INSTRUCTS FAKE-SONNET-INSTRUCTS", "")).await;
+    assert_eq!(held, "review");
+    let page = admin_page(&app, &id).await;
+    assert!(
+        page.contains(
+            "the screens saw instructions aimed at the agents that read it, in its text: &#34;FAKE-SONNET-INSTRUCTS&#34;"
+        ),
+        "the owner reads why, where and the quote: {page}"
+    );
+
+    // Haiku being unsure asks Sonnet too.
+    let (_, unsure) = publish(
+        &app,
+        &marked("FAKE-INSTRUCTS-UNSURE FAKE-SONNET-INSTRUCTS", ""),
+    )
+    .await;
+    assert_eq!(unsure, "review");
+}
+
+#[tokio::test]
+async fn sonnet_unsure_of_instructions_to_readers_passes_and_the_owner_sees_the_doubt() {
+    let models = FakeModels::default();
+    let app = app_with(&models).await;
+    let (id, status) = publish(
+        &app,
+        &marked("FAKE-INSTRUCTS FAKE-SONNET-INSTRUCTS-UNSURE", ""),
+    )
+    .await;
+    assert_eq!(status, "public");
+    let page = app.get(&format!("/e/{id}")).await;
+    assert!(!page.body.contains("screening note"), "{}", page.body);
+    let cookie = common::owner(&app).await;
+    let queue = app.page("/admin", Some(&cookie)).await;
+    assert!(
+        queue.body.contains(&format!("/admin/e/{id}/doubt-seen")),
+        "{}",
+        queue.body
+    );
+    assert!(
+        queue.body.contains("instructions to readers"),
+        "{}",
+        queue.body
+    );
+}
+
+#[tokio::test]
+async fn instructions_to_readers_go_to_review_rather_than_back_to_their_author() {
+    // A rejection's reasons would let the author reword them until they pass.
+    let models = FakeModels::default();
+    let app = app_with(&models).await;
+    let (_, status) = publish(
+        &app,
+        &marked(
+            "FAKE-SPAM FAKE-PIPE FAKE-INSTRUCTS FAKE-SONNET-INSTRUCTS",
+            "",
+        ),
+    )
+    .await;
+    assert_eq!(status, "review");
+}
+
+async fn rename(app: &TestApp, name: &str) {
+    sqlx::query("UPDATE accounts SET display_name = ? WHERE id = ?")
+        .bind(name)
+        .bind(&app.account)
+        .execute(&app.pool)
+        .await
+        .unwrap();
+}
+
+/// How many of the texts Haiku screened hold `needle`.
+fn screened_with(models: &FakeModels, needle: &str) -> usize {
+    models
+        .screened()
+        .iter()
+        .filter(|text| text.contains(needle))
+        .count()
+}
+
+#[tokio::test]
+async fn a_display_name_rides_along_with_its_accounts_screens_until_one_passes() {
+    let models = FakeModels::default();
+    let app = app_with(&models).await;
+    rename(&app, "Grace Q. Tester").await;
+    let (_, first) = publish(&app, &entry("Steering at 14", "")).await;
+    assert_eq!(first, "public");
+    let (_, second) = publish(&app, &entry("Steering at 15", "")).await;
+    assert_eq!(second, "public");
+    assert_eq!(models.screened().len(), 2);
+    assert_eq!(
+        screened_with(&models, "Grace Q. Tester"),
+        1,
+        "only the first"
+    );
+
+    // A new name, as when an unclaimed account is claimed, is screened again.
+    rename(&app, "Grace R. Tester").await;
+    publish(&app, &entry("Steering at 16", "")).await;
+    assert_eq!(screened_with(&models, "Grace R. Tester"), 1);
+}
+
+#[tokio::test]
+async fn a_display_name_that_instructs_readers_sends_the_entry_to_review_and_stays_unscreened() {
+    let models = FakeModels::default();
+    let app = app_with(&models).await;
+    rename(&app, "FAKE-INSTRUCTS FAKE-SONNET-INSTRUCTS").await;
+    let (id, held) = publish(&app, &entry("Steering at 14", "")).await;
+    assert_eq!(held, "review");
+    let page = admin_page(&app, &id).await;
+    assert!(
+        page.contains("in the author&#39;s display name: &#34;FAKE-SONNET-INSTRUCTS&#34;"),
+        "{page}"
+    );
+    // Review guards the account only once the owner rejects or holds, so the next
+    // entry is screened, and carries the name again.
+    publish(&app, &entry("Steering at 15", "")).await;
+    assert_eq!(screened_with(&models, "FAKE-SONNET-INSTRUCTS"), 2);
+}
+
+#[tokio::test]
+async fn a_series_carries_the_display_name_and_its_pass_screens_it() {
+    let models = FakeModels::default();
+    let app = app_with(&models).await;
+    rename(&app, "Grace Q. Tester").await;
+    let series = app
+        .post(
+            "/series",
+            common::series::series_doc("Steering family", "Shared setup."),
+        )
+        .await;
+    assert_eq!(series.status, StatusCode::CREATED, "{}", series.body);
+    publish(&app, &entry("Steering at 14", "")).await;
+    assert_eq!(
+        screened_with(&models, "Grace Q. Tester"),
+        1,
+        "the series only"
+    );
+}
+
+#[tokio::test]
+async fn a_series_whose_display_name_instructs_readers_is_held_for_the_owner() {
+    let models = FakeModels::default();
+    let app = app_with(&models).await;
+    rename(&app, "FAKE-INSTRUCTS FAKE-SONNET-INSTRUCTS").await;
+    let series = app
+        .post(
+            "/series",
+            common::series::series_doc("Steering family", "Shared setup."),
+        )
+        .await;
+    assert_eq!(
+        series.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        series.body
+    );
+    assert!(
+        series.body.contains("the archive's owner will look at it"),
+        "{}",
+        series.body
+    );
+}
+
+/// The byline of entry `id`'s public card.
+async fn byline(app: &TestApp, id: &str) -> String {
+    let page = app.get(&format!("/e/{id}")).await;
+    assert_eq!(page.status, StatusCode::OK, "{}", page.body);
+    page.body
+        .lines()
+        .find(|line| line.contains(&format!("account {}, ", app.account)))
+        .unwrap_or_else(|| panic!("no byline: {}", page.body))
+        .to_string()
+}
+
+#[tokio::test]
+async fn cards_show_the_last_screened_name_until_a_new_one_passes() {
+    let models = FakeModels::default();
+    let app = app_with(&models).await;
+    rename(&app, "Grace Q. Tester").await;
+    let (first, _) = publish(&app, &entry("Steering at 14", "")).await;
+    assert!(byline(&app, &first).await.contains("Grace Q. Tester"));
+
+    // A new name, as a claim sets, reaches no card before a screen passes it.
+    rename(&app, "Grace R. Tester").await;
+    let line = byline(&app, &first).await;
+    assert!(line.contains("Grace Q. Tester"), "{line}");
+    assert!(!line.contains("Grace R. Tester"), "{line}");
+
+    let (second, _) = publish(&app, &entry("Steering at 15", "")).await;
+    for id in [&first, &second] {
+        assert!(byline(&app, id).await.contains("Grace R. Tester"));
+    }
+}
+
+#[tokio::test]
+async fn an_entry_published_from_review_shows_no_unscreened_name() {
+    let models = FakeModels::default();
+    let app = app_with(&models).await;
+    rename(&app, "FAKE-INSTRUCTS FAKE-SONNET-INSTRUCTS").await;
+    let (id, held) = publish(&app, &entry("Steering at 14", "")).await;
+    assert_eq!(held, "review");
+    let cookie = common::owner(&app).await;
+    let decided = app
+        .form(&format!("/admin/e/{id}/publish"), &[], Some(&cookie))
+        .await;
+    assert_eq!(decided.status, StatusCode::SEE_OTHER, "{}", decided.body);
+    let line = byline(&app, &id).await;
+    assert!(!line.contains("FAKE-SONNET-INSTRUCTS"), "{line}");
+    assert!(line.contains("(no name)"), "{line}");
+}
