@@ -167,3 +167,47 @@ async fn a_refusal_for_want_of_a_place_counts_against_no_limit() {
     let signed_up = app.form("/signup", &signup, None).await;
     assert_eq!(signed_up.status, StatusCode::OK, "{}", signed_up.body);
 }
+
+/// The parameters argon2id records in a hash: `$argon2id$v=19$m=…,t=…,p=…$salt$hash`.
+fn parameters(hash: &str) -> &str {
+    hash.split('$').nth(3).unwrap()
+}
+
+#[tokio::test]
+async fn a_hasher_at_minimum_cost_hashes_with_argon2s_least_and_checks_as_any() {
+    let hasher = Hasher::new(1, PATIENT).at_minimum_cost();
+    let hash = hasher
+        .place()
+        .await
+        .unwrap()
+        .hash(PASSWORD.to_string())
+        .await;
+    assert!(hash.starts_with("$argon2id$v=19$"), "{hash}");
+    assert_eq!(parameters(&hash), "m=8,t=1,p=1");
+    let check = |password: &str, stored: Option<String>| {
+        let password = password.to_string();
+        let hasher = &hasher;
+        async move {
+            hasher
+                .place()
+                .await
+                .unwrap()
+                .matches(password, stored)
+                .await
+        }
+    };
+    assert!(check(PASSWORD, Some(hash.clone())).await);
+    assert!(!check("another password", Some(hash)).await);
+    assert!(!check(PASSWORD, None).await);
+}
+
+#[tokio::test]
+async fn the_sites_hasher_keeps_argon2s_defaults_and_any_hasher_checks_its_hashes() {
+    let site = Hasher::new(1, PATIENT);
+    let hash = site.place().await.unwrap().hash(PASSWORD.to_string()).await;
+    // argon2id's defaults (design.md, Accounts): 19 MiB, 2 passes, 1 lane.
+    assert_eq!(parameters(&hash), "m=19456,t=2,p=1");
+    let cheap = Hasher::new(1, PATIENT).at_minimum_cost();
+    let place = cheap.place().await.unwrap();
+    assert!(place.matches(PASSWORD.to_string(), Some(hash)).await);
+}

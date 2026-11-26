@@ -5,7 +5,7 @@ use std::str::FromStr;
 use std::time::{Duration, Instant};
 
 use sqlx::pool::PoolConnection;
-use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteOwnedBuf, SqlitePoolOptions};
 use sqlx::{Sqlite, SqlitePool, Transaction};
 
 /// How many of SQLite's virtual-machine steps run between two looks at a deadline.
@@ -51,19 +51,48 @@ pub async fn write_tx(pool: &SqlitePool) -> Result<Transaction<'static, Sqlite>,
 /// Opens (creating if needed) the database at `path` and runs the migrations.
 /// `:memory:` gives a private in-memory database, for tests.
 pub async fn open(path: &str) -> Result<SqlitePool, sqlx::Error> {
-    let in_memory = path == ":memory:";
-    let options = if in_memory {
-        SqliteConnectOptions::from_str("sqlite::memory:")?
+    let pool = if path == ":memory:" {
+        in_memory().await?
     } else {
-        SqliteConnectOptions::new()
+        let options = SqliteConnectOptions::new()
             .filename(path)
             .create_if_missing(true)
             .journal_mode(SqliteJournalMode::Wal)
-    }
-    .foreign_keys(true);
-    // Every connection to `:memory:` opens a database of its own, so tests use one.
-    let pool = SqlitePoolOptions::new()
-        .max_connections(if in_memory { 1 } else { 8 })
+            .foreign_keys(true);
+        pool(options, 8).await?
+    };
+    migrate(&pool).await?;
+    Ok(pool)
+}
+
+/// An in-memory database loaded from `image`, a serialized SQLite database such as a
+/// test's template, then migrated as [`open`] migrates one. Tests use it to skip
+/// running every migration for each fresh database.
+pub async fn open_image(image: &[u8]) -> Result<SqlitePool, sqlx::Error> {
+    let pool = in_memory().await?;
+    let image = SqliteOwnedBuf::try_from(image)?;
+    pool.acquire()
+        .await?
+        .deserialize(None, image, false)
+        .await?;
+    migrate(&pool).await?;
+    Ok(pool)
+}
+
+/// A pool on a private in-memory database, unmigrated. Every connection to `:memory:`
+/// opens a database of its own, so the pool has one.
+async fn in_memory() -> Result<SqlitePool, sqlx::Error> {
+    pool(
+        SqliteConnectOptions::from_str("sqlite::memory:")?.foreign_keys(true),
+        1,
+    )
+    .await
+}
+
+/// A pool of at most `connections` on `options`.
+async fn pool(options: SqliteConnectOptions, connections: u32) -> Result<SqlitePool, sqlx::Error> {
+    SqlitePoolOptions::new()
+        .max_connections(connections)
         // Ends a deadline `with_deadline` set. Taking the handle waits for the
         // connection's statement, so one abandoned mid-run still stops at its
         // deadline, and the next user of the connection starts with none.
@@ -74,15 +103,18 @@ pub async fn open(path: &str) -> Result<SqlitePool, sqlx::Error> {
             })
         })
         .connect_with(options)
-        .await?;
+        .await
+}
+
+/// Runs the migrations on `pool`, then refreshes what derives from entries' text.
+async fn migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     // A rollback runs an older binary on the schema a newer one migrated, so the
     // migrations it doesn't know don't stop it; a known one whose text changed still
     // does (design.md, Hosting and operations).
     let mut migrator = sqlx::migrate!("./migrations");
     migrator.set_ignore_missing(true);
-    migrator.run(&pool).await?;
-    refresh_derived(&pool).await?;
-    Ok(pool)
+    migrator.run(pool).await?;
+    refresh_derived(pool).await
 }
 
 /// Rebuilds each table derived from entries' text whose format has changed since it

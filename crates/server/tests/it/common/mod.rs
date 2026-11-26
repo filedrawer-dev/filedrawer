@@ -9,6 +9,7 @@ pub mod listening;
 pub mod scratch;
 pub mod series;
 pub mod skills;
+pub mod template;
 pub mod through_caddy;
 
 use std::path::PathBuf;
@@ -24,7 +25,7 @@ use filedrawer_server::mail::{Email, MailError, Mailer, Sending};
 use filedrawer_server::passwords::Hasher;
 use filedrawer_server::request_log::RequestLog;
 use filedrawer_server::search::Places;
-use filedrawer_server::{AppState, Screener, admin, app, db};
+use filedrawer_server::{AppState, Screener, admin, app};
 
 /// How a test's mailer fails an email, or `None` to send it.
 pub type Failing = fn(&Email) -> Option<MailError>;
@@ -258,7 +259,8 @@ pub fn state(pool: sqlx::SqlitePool, outbox: &Outbox, files_dir: &std::path::Pat
         backups_dir: files_dir.join("backups"),
         started_at: time::OffsetDateTime::UNIX_EPOCH,
         request_log: None,
-        passwords: Default::default(),
+        // Each hash takes microseconds rather than tens of milliseconds (#138).
+        passwords: Arc::new(Hasher::default().at_minimum_cost()),
         searches: Default::default(),
         reads: Default::default(),
         github_login: None,
@@ -272,8 +274,7 @@ pub async fn test_app() -> TestApp {
 /// A test app with its own screener and daily screening cap, in billionths of a
 /// dollar.
 pub async fn test_app_with(screener: Screener, daily_nano_usd: i64) -> TestApp {
-    let pool = db::open(":memory:").await.unwrap();
-    test_app_on_with(pool, screener, daily_nano_usd).await
+    test_app_on_with(template::fresh_pool().await, screener, daily_nano_usd).await
 }
 
 /// A test app on `pool`, such as a file's, where a test needs more than the one
