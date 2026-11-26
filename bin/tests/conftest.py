@@ -125,6 +125,20 @@ def own_tmpdir(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_machine_apt_config(tmp_path_factory, monkeypatch):
+    """Each test's apt reads no config but what the test gives it: apt-config -c adds
+    to the machine's /etc/apt, and on 2026-11-26 GitHub's runner, which sets an
+    APT::Update::Pre-Invoke of its own, failed a test that passed in the sandbox."""
+    apt = tmp_path_factory.mktemp("apt")
+    (apt / "apt.conf.d").mkdir()
+    conf = apt / "apt.conf"
+    conf.write_text(
+        f'Dir::Etc::main "/dev/null";\nDir::Etc::parts "{apt}/apt.conf.d";\n'
+    )
+    monkeypatch.setenv("APT_CONFIG", str(conf))
+
+
+@pytest.fixture(autouse=True)
 def own_check_slot(tmp_path_factory, monkeypatch):
     """Each test's processes get a check slot of their own (bin/agent-pre-commit), so a
     hook a test runs never brings the real one, in the workspace's cache/, to its own

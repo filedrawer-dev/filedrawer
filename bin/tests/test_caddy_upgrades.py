@@ -617,13 +617,6 @@ def test_the_installers_update_hooks_mark_only_the_last_updates_signature_failur
     install.run(f"ops@filedrawer.dev\t{PING}")
     conf = install.root / "etc/apt/apt.conf.d/52filedrawer-caddy"
     fake = tmp_path / "server"
-    # apt-config -c adds to the machine's own config, and GitHub's runner sets
-    # an APT::Update::Pre-Invoke of its own: point apt at an empty config.
-    parts = tmp_path / "apt.conf.d"
-    parts.mkdir()
-    main_conf = tmp_path / "apt.conf"
-    main_conf.write_text(f'Dir::Etc::main "/dev/null";\nDir::Etc::parts "{parts}";\n')
-    apt_env = {**os.environ, "APT_CONFIG": str(main_conf)}
 
     def hook(name: str) -> None:
         """Runs the hook as apt would, read through apt's own parser so a syntax
@@ -634,7 +627,6 @@ def test_the_installers_update_hooks_mark_only_the_last_updates_signature_failur
             capture_output=True,
             text=True,
             check=True,
-            env=apt_env,
         ).stdout
         [command] = [
             line.removeprefix(f'{key}:: "').removesuffix('";')
