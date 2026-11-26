@@ -1,9 +1,27 @@
 """Tests for conftest's no_network_tools guard: a test that shells out to gh, ssh,
 scp, sftp or curl gets a refusal, not the real tool, unless it uses fake_host."""
 
+import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
+from conftest import NETWORK_TOOLS, OPENERS, isolated
+
+
+@pytest.fixture(scope="module")
+def module_lookups(tmp_path_factory) -> dict[str, Path]:
+    """Where each network tool and opener resolves for a module's fixture under
+    isolated(). pytest sets up a module's fixtures before each test's autouse ones,
+    so without it these would be the real tools."""
+    with isolated(tmp_path_factory):
+        found = {tool: shutil.which(tool) for tool in (*NETWORK_TOOLS, *OPENERS)}
+    return {tool: Path(path) for tool, path in found.items() if path}
+
+
+@pytest.mark.parametrize("tool", [*NETWORK_TOOLS, *OPENERS])
+def test_a_module_fixture_under_isolated_gets_the_fakes(module_lookups, tool):
+    assert module_lookups[tool].parent.name.startswith(("no-network", "no-browser"))
 
 
 @pytest.mark.parametrize(

@@ -8,6 +8,7 @@ reach a real one. Each fake notes the URL in NO_BROWSER_DIR/opened. A test may s
 put its own recording fakes ahead of these.
 """
 
+import contextlib
 import os
 import re
 import shutil
@@ -15,7 +16,7 @@ import socket
 import socketserver
 import subprocess
 import threading
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 
 import pytest
@@ -77,6 +78,10 @@ exec "{curl}" "$@"
 
 @pytest.fixture(autouse=True)
 def no_browser(tmp_path_factory, monkeypatch):
+    _no_browser(tmp_path_factory, monkeypatch)
+
+
+def _no_browser(tmp_path_factory, monkeypatch):
     fakes = tmp_path_factory.mktemp("no-browser")
     for opener in OPENERS:
         fake = fakes / opener
@@ -94,6 +99,10 @@ def no_network_tools(tmp_path_factory, monkeypatch):
     URLs runs the real curl, as tests that serve a fake site on 127.0.0.1 need.
     fake_host's fakes go ahead of these. The one exception is the session-scoped
     real_caddy, set up before these, whose bin/caddy fetches the pinned Caddy."""
+    _no_network_tools(tmp_path_factory, monkeypatch)
+
+
+def _no_network_tools(tmp_path_factory, monkeypatch):
     fakes = tmp_path_factory.mktemp("no-network")
     for tool in NETWORK_TOOLS:
         fake = fakes / tool
@@ -112,6 +121,10 @@ def no_shared_sccache(monkeypatch):
     on the machine shares, which the test would leave running. Empty, not unset: a
     login or interactive bash sources /etc/sandbox-persistent.sh, which sets an unset
     one again; cargo takes an empty one as none."""
+    _no_shared_sccache(monkeypatch)
+
+
+def _no_shared_sccache(monkeypatch):
     monkeypatch.setenv("RUSTC_WRAPPER", "")
 
 
@@ -121,6 +134,10 @@ def own_tmpdir(tmp_path_factory, monkeypatch):
     so none writes to the real /tmp: agent-pre-commit keeps its check folder there, and
     the hook tests left one in /tmp per test repo. Python's own tempfile caches its
     folder before this runs, so this reaches only the processes a test starts."""
+    _own_tmpdir(tmp_path_factory, monkeypatch)
+
+
+def _own_tmpdir(tmp_path_factory, monkeypatch):
     monkeypatch.setenv("TMPDIR", str(tmp_path_factory.mktemp("tmpdir")))
 
 
@@ -129,8 +146,26 @@ def own_check_slot(tmp_path_factory, monkeypatch):
     """Each test's processes get a check slot of their own (bin/agent-pre-commit), so a
     hook a test runs never brings the real one, in the workspace's cache/, to its own
     scratch tree."""
+    _own_check_slot(tmp_path_factory, monkeypatch)
+
+
+def _own_check_slot(tmp_path_factory, monkeypatch):
     slot = tmp_path_factory.mktemp("slot") / "check-slot"
     monkeypatch.setenv("FILEDRAWER_CHECK_SLOT", str(slot))
+
+
+@contextlib.contextmanager
+def isolated(tmp_path_factory) -> Iterator[None]:
+    """The autouse fixtures' environment, for a fixture wider than one test: pytest
+    sets up a module's fixtures before the test's autouse ones, so what a module
+    fixture starts would otherwise reach a real browser, ssh or curl."""
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        _no_browser(tmp_path_factory, monkeypatch)
+        _no_network_tools(tmp_path_factory, monkeypatch)
+        _no_shared_sccache(monkeypatch)
+        _own_tmpdir(tmp_path_factory, monkeypatch)
+        _own_check_slot(tmp_path_factory, monkeypatch)
+        yield
 
 
 CADDY_SCRIPT = Path(__file__).resolve().parents[1] / "caddy"
@@ -312,12 +347,7 @@ class FakeHost:
 
     def calls(self, tool: str = "ssh") -> list[str]:
         """The command lines `tool` was called with, in order."""
-        prefix = f"{tool} "
-        return [
-            line[len(prefix) :]
-            for line in self.log.read_text().splitlines()
-            if line.startswith(prefix)
-        ]
+        return logged_calls(self.log.read_text(), tool)
 
     def sent(self, n: int) -> str:
         """The stdin of the nth ssh call, counting from 1."""
@@ -328,6 +358,12 @@ class FakeHost:
         (self.root / "rules" / f"{tool}.sh").write_text(
             "".join(f"{x}\n" for x in lines)
         )
+
+
+def logged_calls(log: str, tool: str) -> list[str]:
+    """The command lines `tool` was called with, in order, in a FakeHost's log."""
+    prefix = f"{tool} "
+    return [line[len(prefix) :] for line in log.splitlines() if line.startswith(prefix)]
 
 
 def sh_word(text: str) -> str:

@@ -3,13 +3,17 @@ remote_with_secret. A fake ssh runs the remote command line locally, through bas
 as the server's shell would, so the quoting is tested the way the server sees it.
 """
 
+import fcntl
+import json
 import os
 import subprocess
+from collections.abc import Callable
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from conftest import opened_urls
+from conftest import FakeHost, isolated, logged_calls, opened_urls
 
 REPO = Path(__file__).resolve().parents[2]
 WIZARD = REPO / "ops/provision-vps"
@@ -28,6 +32,68 @@ def run_wizard(
         text=True,
         check=False,
     )
+
+
+@dataclass(frozen=True)
+class Ran:
+    """What one wizard run left behind, copied out, so the tests that share a
+    module's run can read it but not change it for one another. A wizard run is
+    about 200 process starts and seconds of CPU, and a dozen tests asserting
+    different things about the same run once ran it a dozen times (#165)."""
+
+    returncode: int
+    stdout: str
+    stderr: str
+    # fake_host's log, and each ssh call's stdin in order.
+    log: str
+    sent: tuple[str, ...]
+    env_file: str
+    # The URLs it opened, or None when it opened none.
+    opened: str | None
+
+    @classmethod
+    def of(
+        cls, result: subprocess.CompletedProcess, host: FakeHost, env_file: Path
+    ) -> "Ran":
+        opened = opened_urls()
+        return cls(
+            returncode=result.returncode,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            log=host.log.read_text(),
+            sent=tuple(host.sent(n + 1) for n in range(len(host.calls()))),
+            env_file=env_file.read_text(),
+            opened=opened.read_text() if opened.exists() else None,
+        )
+
+    def calls(self, tool: str = "ssh") -> list[str]:
+        """As FakeHost.calls: the command lines `tool` was called with, in order."""
+        return logged_calls(self.log, tool)
+
+
+def run_once(tmp_path_factory, name: str, make: Callable[[Path, FakeHost], Ran]) -> Ran:
+    """make(root, host), with a fresh FakeHost under a fresh `root`, once per test
+    run. xdist sets up a module's fixtures in each worker that runs one of its tests,
+    which spread a dozen tests' one run over most workers, so the first worker to get
+    here runs it, under a lock in the folder all the run's workers share, and leaves
+    what it did there for the others."""
+
+    def make_isolated() -> Ran:
+        with isolated(tmp_path_factory):
+            root = tmp_path_factory.mktemp(name)
+            return make(root, FakeHost(root / "fake-host"))
+
+    if "PYTEST_XDIST_WORKER" not in os.environ:
+        return make_isolated()
+    # Each worker's base temp is a folder of the run's own.
+    shared = tmp_path_factory.getbasetemp().parent
+    saved = shared / f"{name}.json"
+    with (shared / f"{name}.lock").open("w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if not saved.exists():
+            saved.write_text(json.dumps(asdict(make_isolated())))
+    fields = json.loads(saved.read_text())
+    return Ran(**{**fields, "sent": tuple(fields["sent"])})
 
 
 @pytest.fixture
@@ -522,6 +588,42 @@ def rerun(tmp_path, fake_host):
     """Runs `ops/provision-vps` (a rerun) with empty stdin, so any prompt fails it,
     against fake_host answering as a server it has set up, and an ops/.vps.env
     holding every saved value."""
+    present = set_up_rerun(tmp_path, fake_host)
+
+    def run(*args: str, answers: str = "") -> subprocess.CompletedProcess:
+        return run_wizard(*args, cwd=tmp_path, answers=answers, env=fake_host.env)
+
+    def sent_scripts() -> list[str]:
+        return [fake_host.sent(n + 1) for n in range(len(fake_host.calls()))]
+
+    return SimpleNamespace(
+        run=run,
+        tmp=tmp_path,
+        host=fake_host,
+        secrets=fake_host.secrets,
+        log=fake_host.log,
+        present=present,
+        sent=sent_scripts,
+        opened=opened_urls(),
+    )
+
+
+@pytest.fixture(scope="module")
+def plain_rerun(tmp_path_factory) -> Ran:
+    """rerun's `run()`, run once for the tests that only read what it did."""
+
+    def make(root: Path, host: FakeHost) -> Ran:
+        set_up_rerun(root, host)
+        result = run_wizard(cwd=root, answers="", env=host.env)
+        return Ran.of(result, host, root / "ops/.vps.env")
+
+    return run_once(tmp_path_factory, "plain-rerun", make)
+
+
+def set_up_rerun(root: Path, fake_host: FakeHost):
+    """Sets fake_host up as a server the wizard has set up, and root/ops/.vps.env
+    with every saved value. Returns `present(*paths)`, which puts only those
+    settings files on the server."""
 
     def present(*paths: str) -> None:
         """Only these settings files are on the server."""
@@ -551,32 +653,15 @@ def rerun(tmp_path, fake_host):
     fake_host.answer("*", stdout="401\n", tool="curl")
     fake_host.answer("*robots.txt*", stdout="200\n", tool="curl")
     fake_host.answer("*X-Staging-Key*", stdout="200\n", tool="curl")
-    ops = tmp_path / "ops"
+    ops = root / "ops"
     ops.mkdir()
-    env_file = ops / ".vps.env"
-    env_file.write_text(
+    (ops / ".vps.env").write_text(
         "VPS_HOST='203.0.113.7'\nSTAGING_USER='owner'\n"
         f"STAGING_KEY='{STAGING_KEY}'\nSMTP_USER='noreply@filedrawer.dev'\n"
         "MAIL_FROM='File Drawer <noreply@filedrawer.dev>'\nSMOKE_ACCOUNT='a-smoke1'\n"
         "SCREENING_DAILY_USD='1'\nADMIN_ACCOUNT='a-owner1'\n"
     )
-
-    def run(*args: str, answers: str = "") -> subprocess.CompletedProcess:
-        return run_wizard(*args, cwd=tmp_path, answers=answers, env=fake_host.env)
-
-    def sent_scripts() -> list[str]:
-        return [fake_host.sent(n + 1) for n in range(len(fake_host.calls()))]
-
-    return SimpleNamespace(
-        run=run,
-        tmp=tmp_path,
-        host=fake_host,
-        secrets=fake_host.secrets,
-        log=fake_host.log,
-        present=present,
-        sent=sent_scripts,
-        opened=opened_urls(),
-    )
+    return present
 
 
 def script(name: str) -> str:
@@ -596,10 +681,10 @@ def test_a_rerun_with_the_old_only_new_flag_makes_the_ci_screen_account_once(rer
     assert "CI_SCREEN_ACCOUNT=a-ci bash -s" in rerun.log.read_text()
 
 
-def test_a_rerun_runs_every_stage_without_asking_for_anything_saved(rerun):
-    result = rerun.run()
+def test_a_rerun_runs_every_stage_without_asking_for_anything_saved(plain_rerun):
+    result = plain_rerun
     assert result.returncode == 0, result.stdout + result.stderr
-    sent = rerun.sent()
+    sent = result.sent
     assert script("service.sh") in sent
     assert script("base.sh") in sent
     # Caddy keeps the password hash on the server: no password, only the key.
@@ -609,7 +694,7 @@ def test_a_rerun_runs_every_stage_without_asking_for_anything_saved(rerun):
     for name in ("mail.sh", "screening.sh", "github-token.sh", "github-oauth.sh"):
         assert "\n" + script(name) in sent, name
     # The deploy key stays; its scripts are reinstalled.
-    log = rerun.log.read_text()
+    log = result.log
     assert "ssh-keygen" not in log
     assert "gh secret set DEPLOY_SSH_KEY" not in log
     assert script("filedrawer-receive") in sent
@@ -624,13 +709,13 @@ def test_a_rerun_runs_every_stage_without_asking_for_anything_saved(rerun):
     for question in ("Press Enter", "Make a new token anyway", "Run it on"):
         assert question not in result.stdout, question
     # Everything resolves, so nothing opens a browser.
-    assert not rerun.opened.exists(), rerun.opened.read_text()
+    assert result.opened is None, result.opened
 
 
-def test_staging_loads_the_loopback_rules_once_caddy_is_installed(rerun):
-    result = rerun.run()
+def test_staging_loads_the_loopback_rules_once_caddy_is_installed(plain_rerun):
+    result = plain_rerun
     assert result.returncode == 0, result.stdout + result.stderr
-    sent = rerun.sent()
+    sent = result.sent
     # The rules name the user caddy, which Caddy's install makes.
     caddy = next(i for i, text in enumerate(sent) if text.endswith(script("caddy.sh")))
     assert sent.index(script("loopback.sh")) > caddy
@@ -662,21 +747,7 @@ def production(tmp_path, fake_host):
     """Runs `ops/provision-vps production [...]` in a folder whose ops/.vps.env holds
     staging's saved values, against fake_host answering as a server staging's wizard
     set up: every name resolves, the Anthropic key works, and production is down."""
-    ops = tmp_path / "ops"
-    ops.mkdir()
-    env_file = ops / ".vps.env"
-    env_file.write_text(
-        "VPS_HOST='203.0.113.7'\nSTAGING_USER='owner'\n"
-        f"STAGING_KEY='{STAGING_KEY}'\nSMTP_USER='staging@filedrawer.dev'\n"
-        "MAIL_FROM='File Drawer staging <staging@filedrawer.dev>'\n"
-        "SCREENING_DAILY_USD='5'\nADMIN_ACCOUNT='a-staging1'\n"
-    )
-    fake_host.answer("*os-release*", stdout="ID=debian\n")
-    fake_host.answer("*ip -6*", stdout="2001:db8::7\n")
-    fake_host.answer("*", stdout="203.0.113.7 STREAM x\n", tool="getent")
-    fake_host.answer("*", stdout="503\n", tool="curl")
-    fake_host.answer("*www.filedrawer.dev*", stdout="301\n", tool="curl")
-    fake_host.answer("*api.anthropic.com*", stdout="200\n", tool="curl")
+    env_file = set_up_production(tmp_path, fake_host)
 
     def run(*args: str, answers: str = "") -> subprocess.CompletedProcess:
         return run_wizard(
@@ -694,6 +765,70 @@ def production(tmp_path, fake_host):
         sent=sent_scripts,
         opened=opened_urls(),
     )
+
+
+@pytest.fixture(scope="module")
+def full_run(tmp_path_factory) -> Ran:
+    """production's `run(answers=FULL_RUN)`, run once for the tests that only read
+    what it did."""
+
+    def make(root: Path, host: FakeHost) -> Ran:
+        env_file = set_up_production(root, host)
+        result = run_wizard("production", cwd=root, answers=FULL_RUN, env=host.env)
+        return Ran.of(result, host, env_file)
+
+    return run_once(tmp_path_factory, "full-run", make)
+
+
+@pytest.fixture(scope="module")
+def production_rerun(tmp_path_factory) -> Ran:
+    """`ops/provision-vps production` (a rerun) with empty stdin, on a server that
+    holds every setting production needs, and an ops/.vps.env with its values; run
+    once for the tests that only read what it did."""
+
+    def make(root: Path, host: FakeHost) -> Ran:
+        env_file = set_up_production(root, host)
+        for path in (
+            "production-mail.env",
+            "production-screening.env",
+            "production-ping.env",
+            "production-backup.env",
+            "github.env",
+            "production-github-oauth.env",
+            "caddy-upgrades.env",
+        ):
+            host.answer(f"test -f /etc/filedrawer/{path}")
+        env_file.write_text(
+            env_file.read_text()
+            + "PROD_SMTP_USER='prod@filedrawer.dev'\nPROD_SCREENING_DAILY_USD='1'\n"
+            + "PROD_MAIL_FROM='File Drawer <noreply@filedrawer.dev>'\n"
+            + "PROD_HETZNER_BACKUPS_SHOWN='yes'\nCADDY_ALERT_TO='ops@filedrawer.dev'\n"
+        )
+        result = run_wizard("production", cwd=root, answers="", env=host.env)
+        return Ran.of(result, host, env_file)
+
+    return run_once(tmp_path_factory, "production-rerun", make)
+
+
+def set_up_production(root: Path, fake_host: FakeHost) -> Path:
+    """Sets fake_host up as production's fixture describes, and root/ops/.vps.env
+    with staging's saved values; returns that file's path."""
+    ops = root / "ops"
+    ops.mkdir()
+    env_file = ops / ".vps.env"
+    env_file.write_text(
+        "VPS_HOST='203.0.113.7'\nSTAGING_USER='owner'\n"
+        f"STAGING_KEY='{STAGING_KEY}'\nSMTP_USER='staging@filedrawer.dev'\n"
+        "MAIL_FROM='File Drawer staging <staging@filedrawer.dev>'\n"
+        "SCREENING_DAILY_USD='5'\nADMIN_ACCOUNT='a-staging1'\n"
+    )
+    fake_host.answer("*os-release*", stdout="ID=debian\n")
+    fake_host.answer("*ip -6*", stdout="2001:db8::7\n")
+    fake_host.answer("*", stdout="203.0.113.7 STREAM x\n", tool="getent")
+    fake_host.answer("*", stdout="503\n", tool="curl")
+    fake_host.answer("*www.filedrawer.dev*", stdout="301\n", tool="curl")
+    fake_host.answer("*api.anthropic.com*", stdout="200\n", tool="curl")
+    return env_file
 
 
 # Answers for a full production run on a server with no production settings, in
@@ -717,15 +852,11 @@ FULL_RUN = (
 )
 
 
-def ssh_calls(production) -> list[str]:
-    return production.host.calls()
-
-
-def test_production_sends_each_script_for_production_in_order(production):
-    result = production.run(answers=FULL_RUN)
+def test_production_sends_each_script_for_production_in_order(full_run):
+    result = full_run
     assert result.returncode == 0, result.stdout + result.stderr
-    calls = ssh_calls(production)
-    sent = production.sent()
+    calls = result.calls()
+    sent = result.sent
 
     def at(name: str, setting: str = "") -> int:
         for i, (call, text) in enumerate(zip(calls, sent)):
@@ -770,22 +901,17 @@ def test_production_sends_each_script_for_production_in_order(production):
     )
 
 
-def test_production_sends_each_secret_on_stdin_and_shows_or_saves_none(production):
-    result = production.run(answers=FULL_RUN)
+def test_production_sends_each_secret_on_stdin_and_shows_or_saves_none(full_run):
+    result = full_run
     assert result.returncode == 0, result.stdout + result.stderr
-    sent = production.sent()
+    sent = result.sent
     assert f"{SMTP_PASSWORD}\n" + script("mail.sh") in sent
     assert f"{PROD_KEY}\n" + script("screening.sh") in sent
     assert f"{GITHUB_TOKEN}\n" + script("github-token.sh") in sent
     assert f"{PROD_CLIENT_SECRET}\n" + script("github-oauth.sh") in sent
     assert f"{DAILY_PING}\t{BACKUP_PING}\n" + script("ping.sh") in sent
     assert f"ops@filedrawer.dev\t{CADDY_PING}\n" + script("caddy-upgrades.sh") in sent
-    shown = (
-        production.log.read_text()
-        + production.env_file.read_text()
-        + result.stdout
-        + result.stderr
-    )
+    shown = result.log + result.env_file + result.stdout + result.stderr
     for secret in (
         SMTP_PASSWORD,
         PROD_KEY,
@@ -798,10 +924,10 @@ def test_production_sends_each_secret_on_stdin_and_shows_or_saves_none(productio
         assert secret not in shown, secret
 
 
-def test_production_saves_its_values_apart_from_stagings(production):
-    result = production.run(answers=FULL_RUN)
+def test_production_saves_its_values_apart_from_stagings(full_run):
+    result = full_run
     assert result.returncode == 0, result.stdout + result.stderr
-    saved = production.env_file.read_text()
+    saved = result.env_file
     assert "PROD_SMTP_USER='prod@filedrawer.dev'" in saved
     assert "PROD_MAIL_FROM='File Drawer <noreply@filedrawer.dev>'" in saved
     assert "PROD_SCREENING_DAILY_USD='1'" in saved
@@ -810,15 +936,15 @@ def test_production_saves_its_values_apart_from_stagings(production):
     # Staging's stay as they were.
     assert "SMTP_USER='staging@filedrawer.dev'" in saved
     assert "SCREENING_DAILY_USD='5'" in saved
-    log = production.log.read_text()
+    log = result.log
     assert "SMTP_USER=prod@filedrawer.dev" in log
     assert "DAILY_USD=1 " in log
 
 
-def test_production_never_offers_stagings_saved_values(production):
+def test_production_never_offers_stagings_saved_values(full_run):
     """Staging's mail user and cap are in ops/.vps.env, but production's prompts
     offer no saved value to keep."""
-    result = production.run(answers=FULL_RUN)
+    result = full_run
     assert result.returncode == 0, result.stdout + result.stderr
     assert "[Enter keeps current]" not in result.stdout
 
@@ -840,14 +966,13 @@ def test_production_lists_the_three_names_dns_needs(production):
     assert "staging.filedrawer.dev  A" not in result.stdout
 
 
-def test_production_says_the_spend_limit_and_the_healthchecks_periods(production):
-    result = production.run(answers=FULL_RUN)
+def test_production_says_the_spend_limit_and_the_healthchecks_periods(full_run):
+    result = full_run
     assert "$40" in result.stdout
     assert "Period: 1 day" in result.stdout
-    assert (
-        "https://console.anthropic.com/settings/keys" in production.opened.read_text()
-    )
-    assert "https://healthchecks.io/" in production.opened.read_text()
+    assert result.opened is not None
+    assert "https://console.anthropic.com/settings/keys" in result.opened
+    assert "https://healthchecks.io/" in result.opened
 
 
 def test_a_key_anthropic_refuses_stops_before_it_reaches_the_server(production):
@@ -877,8 +1002,8 @@ def test_production_keeps_the_shared_github_token_the_server_has(production):
     assert "shared with staging" in result.stdout
 
 
-def test_production_ends_listing_the_settings_the_server_still_lacks(production):
-    result = production.run(answers=FULL_RUN)
+def test_production_ends_listing_the_settings_the_server_still_lacks(full_run):
+    result = full_run
     assert result.returncode == 0, result.stdout + result.stderr
     # fake_host says no file exists, so all of them are listed.
     for path in (
@@ -891,8 +1016,8 @@ def test_production_ends_listing_the_settings_the_server_still_lacks(production)
     assert "won't start" in result.stdout
 
 
-def test_production_says_to_run_the_account_stage_after_the_first_deploy(production):
-    result = production.run(answers=FULL_RUN)
+def test_production_says_to_run_the_account_stage_after_the_first_deploy(full_run):
+    result = full_run
     assert "ops/provision-vps production account" in result.stdout
 
 
@@ -904,48 +1029,21 @@ def test_production_refuses_stagings_sending_user(production):
     assert not any(s.endswith(script("mail.sh")) for s in production.sent())
 
 
-def test_production_checks_the_site_from_outside(production):
-    result = production.run(answers=FULL_RUN)
+def test_production_checks_the_site_from_outside(full_run):
+    result = full_run
     assert result.returncode == 0, result.stdout + result.stderr
     assert "503" in result.stdout and "✓" in result.stdout
-    curl = production.host.calls("curl")
+    curl = result.calls("curl")
     [tags] = [c for c in curl if "https://filedrawer.dev/tags" in c]
     # A 503's Retry-After (120 s) would otherwise stretch curl's retries to minutes.
     assert "--retry-max-time 30" in tags
     assert any("https://www.filedrawer.dev/" in c for c in curl)
 
 
-def rerun_production(production) -> subprocess.CompletedProcess:
-    """Runs `ops/provision-vps production` (a rerun) with empty stdin, on a server
-    that holds every setting production needs, and an ops/.vps.env with its values."""
-    for path in (
-        "production-mail.env",
-        "production-screening.env",
-        "production-ping.env",
-        "production-backup.env",
-        "github.env",
-        "production-github-oauth.env",
-        "caddy-upgrades.env",
-    ):
-        production.host.answer(f"test -f /etc/filedrawer/{path}")
-    production.env_file.write_text(
-        production.env_file.read_text()
-        + "PROD_SMTP_USER='prod@filedrawer.dev'\nPROD_SCREENING_DAILY_USD='1'\n"
-        + "PROD_MAIL_FROM='File Drawer <noreply@filedrawer.dev>'\n"
-        + "PROD_HETZNER_BACKUPS_SHOWN='yes'\nCADDY_ALERT_TO='ops@filedrawer.dev'\n"
-    )
-    return run_wizard(
-        "production",
-        cwd=production.env_file.parent.parent,
-        answers="",
-        env=production.host.env,
-    )
-
-
-def test_a_production_rerun_asks_for_nothing_the_server_has(production):
-    result = rerun_production(production)
+def test_a_production_rerun_asks_for_nothing_the_server_has(production_rerun):
+    result = production_rerun
     assert result.returncode == 0, result.stdout + result.stderr
-    sent = production.sent()
+    sent = result.sent
     assert any(s.endswith(script("service.sh")) for s in sent)
     assert any(s.endswith(script("caddy.sh")) for s in sent)
     # Each secret is kept: its script goes, with the secret empty.
@@ -957,7 +1055,7 @@ def test_a_production_rerun_asks_for_nothing_the_server_has(production):
     # The guard's program, apt file and units still go; its settings stay.
     assert script("caddy-upgrade-check") in sent
     assert "ops@filedrawer.dev\t\n" + script("caddy-upgrades.sh") in sent
-    assert "--test-mail" not in " ".join(production.host.calls())
+    assert "--test-mail" not in " ".join(result.calls())
 
 
 def test_caddy_upgrades_alone_takes_an_address_and_a_ping_url(stage):
@@ -1071,28 +1169,30 @@ def test_account_under_only_new_takes_the_saved_id_and_opens_no_account_page(
     assert "https://filedrawer.dev/account" not in production.opened.read_text()
 
 
-def test_production_opens_the_workspaces_page_before_the_keys(production):
-    production.run(answers=FULL_RUN)
-    opened = production.opened.read_text().splitlines()
+def test_production_opens_the_workspaces_page_before_the_keys(full_run):
+    assert full_run.opened is not None
+    opened = full_run.opened.splitlines()
     assert opened.index(
         "https://console.anthropic.com/settings/workspaces"
     ) < opened.index("https://console.anthropic.com/settings/keys")
 
 
-def test_production_asks_the_owner_to_turn_on_hetzners_backups(production):
-    result = production.run(answers=FULL_RUN)
+def test_production_asks_the_owner_to_turn_on_hetzners_backups(full_run):
+    result = full_run
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "https://console.hetzner.cloud/" in production.opened.read_text()
+    assert result.opened is not None
+    assert "https://console.hetzner.cloud/" in result.opened
     assert "Enable backups" in result.stdout
     # Shown once: the next rerun leaves it out.
-    assert "PROD_HETZNER_BACKUPS_SHOWN='yes'" in production.env_file.read_text()
+    assert "PROD_HETZNER_BACKUPS_SHOWN='yes'" in result.env_file
 
 
-def test_a_production_rerun_leaves_hetzners_backups_to_the_first_run(production):
-    result = rerun_production(production)
+def test_a_production_rerun_leaves_hetzners_backups_to_the_first_run(
+    production_rerun,
+):
+    result = production_rerun
     assert result.returncode == 0, result.stdout + result.stderr
-    opened = production.opened.read_text() if production.opened.exists() else ""
-    assert "hetzner" not in opened
+    assert "hetzner" not in (result.opened or "")
 
 
 def test_production_refuses_a_stage_it_doesnt_have(production):
@@ -1171,13 +1271,12 @@ PRODUCTION_RERUN_EXEMPT = {
 }
 
 
-def sent_by_name(host) -> dict[str, list[str]]:
-    """The scripts in ops/remote/ that the ssh calls sent, each with the remote
-    command lines that took it. A secret's line may come first."""
+def sent_by_name(calls: list[str], stdins: list[str]) -> dict[str, list[str]]:
+    """The scripts in ops/remote/ that the ssh `calls` sent on `stdins`, each with
+    the remote command lines that took it. A secret's line may come first."""
     scripts = {path.name: path.read_text() for path in remote_scripts()}
     sent: dict[str, list[str]] = {}
-    for n, call in enumerate(host.calls(), start=1):
-        stdin = host.sent(n)
+    for call, stdin in zip(calls, stdins, strict=True):
         names = [name for name, text in scripts.items() if stdin.endswith(text)]
         assert len(names) <= 1, names
         for name in names:
@@ -1185,12 +1284,16 @@ def sent_by_name(host) -> dict[str, list[str]]:
     return sent
 
 
-def assert_every_script_sent_or_exempt(host, exempt: dict[str, str]) -> None:
+def assert_every_script_sent_or_exempt(
+    commands: list[str], stdins: list[str], exempt: dict[str, str]
+) -> None:
+    """Of the ssh `commands`, sent on `stdins`, each script in ops/remote/ is sent,
+    the way its kind goes to the server, or exempt."""
     scripts = {path.name for path in remote_scripts()}
     assert set(exempt) <= scripts, (
         f"exempt, not in ops/remote/: {set(exempt) - scripts}"
     )
-    sent = sent_by_name(host)
+    sent = sent_by_name(commands, stdins)
     unplaced = scripts - set(sent) - set(exempt)
     assert not unplaced, (
         f"a rerun sends none of {sorted(unplaced)}: send each, "
@@ -1215,13 +1318,19 @@ def test_a_rerun_sends_every_remote_script_or_exempts_it(rerun):
     (rerun.secrets / "CI_SCREEN_TOKEN").write_text("kept")
     result = rerun.run()
     assert result.returncode == 0, result.stdout + result.stderr
-    assert_every_script_sent_or_exempt(rerun.host, STAGING_RERUN_EXEMPT)
+    assert_every_script_sent_or_exempt(
+        rerun.host.calls(), rerun.sent(), STAGING_RERUN_EXEMPT
+    )
 
 
-def test_a_production_rerun_sends_every_remote_script_or_exempts_it(production):
-    result = rerun_production(production)
+def test_a_production_rerun_sends_every_remote_script_or_exempts_it(
+    production_rerun,
+):
+    result = production_rerun
     assert result.returncode == 0, result.stdout + result.stderr
-    assert_every_script_sent_or_exempt(production.host, PRODUCTION_RERUN_EXEMPT)
+    assert_every_script_sent_or_exempt(
+        result.calls(), list(result.sent), PRODUCTION_RERUN_EXEMPT
+    )
 
 
 # The outbound probe once the scripts have run (#102)
@@ -1287,10 +1396,10 @@ def test_a_stage_alone_probes_staging_when_it_restarts_it(stage, name, answers, 
     assert (PROBE_STAGING in stage.host.calls()) == probes
 
 
-def test_production_probes_its_way_out_with_the_current_install(production):
-    result = production.run(answers=FULL_RUN)
+def test_production_probes_its_way_out_with_the_current_install(full_run):
+    result = full_run
     assert result.returncode == 0, result.stdout + result.stderr
-    calls = production.host.calls()
+    calls = result.calls()
     probe = calls.index(PROBE_PRODUCTION)
     assert calls[probe - 1] == INSTALL_INSTALL
     assert PROBE_STAGING not in calls
@@ -1410,13 +1519,13 @@ def test_each_secret_has_a_stage_of_its_own(stage, args, script_name, first_line
     assert first_line + "\n" + script(script_name) in sent
 
 
-def test_a_plain_rerun_sends_each_held_secret_empty(rerun):
-    result = rerun.run()
+def test_a_plain_rerun_sends_each_held_secret_empty(plain_rerun):
+    result = plain_rerun
     assert result.returncode == 0, result.stdout + result.stderr
-    sent = rerun.sent()
+    sent = result.sent
     for name in ("mail.sh", "screening.sh", "github-token.sh", "github-oauth.sh"):
         assert "\n" + script(name) in sent, name
-    assert "ssh-keygen" not in rerun.log.read_text()
+    assert "ssh-keygen" not in result.log
 
 
 def test_ask_all_with_enter_everywhere_keeps_everything(rerun):
@@ -1486,12 +1595,12 @@ def test_a_first_run_waits_at_the_banner(stage):
     assert "Ready to start?" in first.stdout
 
 
-def test_a_rerun_doesnt_wait_at_the_banner(rerun):
-    assert "Ready to start?" not in rerun.run().stdout
+def test_a_rerun_doesnt_wait_at_the_banner(plain_rerun):
+    assert "Ready to start?" not in plain_rerun.stdout
 
 
-def test_a_kept_deploy_key_says_how_to_replace_it(rerun):
-    result = rerun.run()
+def test_a_kept_deploy_key_says_how_to_replace_it(plain_rerun):
+    result = plain_rerun
     lines = [line for line in result.stdout.splitlines() if "DEPLOY_SSH_KEY" in line]
     assert lines and all("--ask-all" in line for line in lines), lines
 
