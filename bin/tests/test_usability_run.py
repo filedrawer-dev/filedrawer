@@ -17,10 +17,10 @@ import json
 import os
 import subprocess
 import sys
-import threading
 from pathlib import Path
 
 import pytest
+from conftest import serve_in_background
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "ops" / "usability-run"
@@ -46,8 +46,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 @pytest.fixture
 def server():
     httpd = http.server.HTTPServer(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
-    thread.start()
+    serve_in_background(httpd)
     yield f"http://127.0.0.1:{httpd.server_port}"
     httpd.shutdown()
     httpd.server_close()
@@ -343,7 +342,7 @@ class InstallerSite(http.server.BaseHTTPRequestHandler):
 def serving(handler):
     """Serves HANDLER on a loopback port for the block, yielding its base URL."""
     httpd = http.server.HTTPServer(("127.0.0.1", 0), handler)
-    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    serve_in_background(httpd)
     try:
         yield f"http://127.0.0.1:{httpd.server_port}"
     finally:

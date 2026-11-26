@@ -15,13 +15,13 @@ import re
 import shutil
 import socket
 import subprocess
-import threading
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
 
 import pytest
+from conftest import serve_in_background
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "bin" / "live-preview"
@@ -162,7 +162,7 @@ def preview(tmp_path):
     a fake dev server."""
     copy_pages(tmp_path)
     fake = FakeServer()
-    threading.Thread(target=fake.serve_forever, daemon=True).start()
+    serve_in_background(fake)
     upstream = f"http://127.0.0.1:{fake.server_port}"
     process, url, _ = start("--root", tmp_path, "--upstream", upstream)
     try:

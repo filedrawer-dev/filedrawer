@@ -11,6 +11,7 @@ import threading
 from pathlib import Path
 
 import pytest
+from conftest import serve_in_background
 
 REPO = Path(__file__).resolve().parents[2]
 KEY = "test-key-never-printed"
@@ -74,8 +75,7 @@ class FakeApi:
 
         self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
-        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
-        self.thread.start()
+        self.thread = serve_in_background(self.server)
 
     def close(self):
         self.server.shutdown()

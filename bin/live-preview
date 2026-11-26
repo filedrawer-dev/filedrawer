@@ -1144,7 +1144,9 @@ def main() -> int:
                 print(f"live-preview: {public_url}{path}")
             sys.stdout.flush()
             serving.set()
-            listener.serve_forever()
+            # SIGTERM's shutdown() waits for the loop's next poll, 0.5 s by default,
+            # which each of its tests paid on top of the fake server's (#166).
+            listener.serve_forever(poll_interval=0.05)
         except KeyboardInterrupt:
             pass
         except DevServerFailed as failed:

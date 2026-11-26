@@ -5,10 +5,10 @@ import http.server
 import importlib.machinery
 import importlib.util
 import stat
-import threading
 from pathlib import Path
 
 import pytest
+from conftest import serve_in_background
 
 REPO = Path(__file__).resolve().parents[2]
 STAGING = "https://staging.filedrawer.dev"
@@ -121,7 +121,7 @@ def test_a_post_after_the_login_sends_the_session_cookie_back(
 ):
     monkeypatch.delenv("FILEDRAWER_STAGING_KEY", raising=False)
     httpd = http.server.HTTPServer(("127.0.0.1", 0), SessionSite)
-    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    serve_in_background(httpd)
     try:
         site = remove_entries.Site(f"http://127.0.0.1:{httpd.server_port}")
         site.post("/login", {"email": "a@x.dev", "password": "pw"})

@@ -7,11 +7,11 @@ import hashlib
 import json
 import os
 import subprocess
-import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
+from conftest import serve_in_background
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "ops/smoke-staging"
@@ -79,7 +79,7 @@ def fake_server(
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     server.posts = posts
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    serve_in_background(server)
     return server
 
 
@@ -111,6 +111,7 @@ def screen(tmp_path):
     yield run
     for server in servers:
         server.shutdown()
+        server.server_close()
 
 
 def test_a_failed_check_fails_even_when_the_day_is_spent_after_it(screen):
@@ -227,6 +228,7 @@ def eval_run(tmp_path):
     yield run
     for server in servers:
         server.shutdown()
+        server.server_close()
 
 
 def test_a_refused_attachment_set_is_a_failure_reported_again_on_resume(eval_run):
@@ -292,6 +294,7 @@ def test_a_labeled_cases_refused_files_are_a_failure_reported_again_on_resume(
         again = run("--resume", run_file)
     finally:
         server.shutdown()
+        server.server_close()
     assert failure in again.stdout, again.stdout + again.stderr
     assert again.returncode == 1
     # Refused, so never submitted, and its reasons stay out of the output.
@@ -392,6 +395,7 @@ def families_run(tmp_path):
     yield run
     for server in servers:
         server.shutdown()
+        server.server_close()
 
 
 SERIES_MADE = (201, f"id: s-1\nversion: 1\nkey: {JOIN_KEY}\n")
@@ -484,6 +488,7 @@ def test_a_sample_takes_entries_with_a_bom_or_windows_line_ends_and_nothing_else
         )
     finally:
         server.shutdown()
+        server.server_close()
     assert "PASS public field-test-2" in result.stdout, result.stdout
     assert "field-test-3" not in result.stdout
     assert server.posts.count("/entries") == len(LABELED) + 2, server.posts
@@ -534,6 +539,7 @@ def test_a_family_whose_entries_cant_be_read_is_a_failure_not_a_silent_gap(
         )
     finally:
         server.shutdown()
+        server.server_close()
     assert result.returncode == 1, result.stdout
     assert (
         "FAIL a family's entries: bin/field-test-batches couldn't read" in result.stdout
@@ -614,7 +620,7 @@ def site(commit: str = COMMIT) -> ThreadingHTTPServer:
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     server.requests = requests
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    serve_in_background(server)
     return server
 
 
@@ -644,6 +650,7 @@ def read(tmp_path):
     yield run
     for server in servers:
         server.shutdown()
+        server.server_close()
 
 
 def test_read_checks_a_server_with_no_key_and_writes_nothing(read):

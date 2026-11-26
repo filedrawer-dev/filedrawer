@@ -16,7 +16,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from conftest import unix_listener
+from conftest import serve_in_background, unix_listener
 
 REPO = Path(__file__).resolve().parents[2]
 SERVICE_USER = REPO / "ops/remote/service-user.sh"
@@ -1011,7 +1011,7 @@ def test_a_real_caddy_stops_reading_a_request_body_that_takes_too_long(
     defaults alone would give it for as long as they came."""
     assert caddy.run("production").returncode == 0
     upstream = QuietServer(("127.0.0.1", 0), CountingServer)
-    threading.Thread(target=upstream.serve_forever, daemon=True).start()
+    serve_in_background(upstream)
     apex, www = free_port(), free_port()
     site = caddy.dir / "sites/production.caddy"
     site.write_text(
@@ -1081,6 +1081,7 @@ def test_a_real_caddy_stops_reading_a_request_body_that_takes_too_long(
         server.terminate()
         server.wait()
         upstream.shutdown()
+        upstream.server_close()
 
 
 # An empty secret keeps the one stored (#112): the wizard sends one when the owner

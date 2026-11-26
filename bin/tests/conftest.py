@@ -13,8 +13,10 @@ import os
 import re
 import shutil
 import socket
+import socketserver
 import subprocess
 import sys
+import threading
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -184,6 +186,15 @@ def unix_listener(path: Path) -> socket.socket:
         os.chdir(before)
     listener.listen()
     return listener
+
+
+def serve_in_background(server: socketserver.BaseServer) -> threading.Thread:
+    """Runs SERVER's serve_forever in a daemon thread, checking for shutdown() every
+    10 ms: at the default 0.5 s, each test that stopped a server waited out most of
+    a poll, which summed to about 70 s of the suite (#166)."""
+    thread = threading.Thread(target=server.serve_forever, args=(0.01,), daemon=True)
+    thread.start()
+    return thread
 
 
 def opened_urls() -> Path:
