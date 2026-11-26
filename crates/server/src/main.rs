@@ -30,7 +30,10 @@ staging or dev), FILEDRAWER_SCREENER (pass-all; production refuses it) and
 FILEDRAWER_PUBLIC_URL (such as https://staging.filedrawer.dev), which emails link to
 and forms must come from. FILEDRAWER_SCREENER=anthropic screens with Claude and
 needs FILEDRAWER_ANTHROPIC_API_KEY, so production needs it too; FILEDRAWER_SCREENING_DAILY_USD caps what it
-spends in a UTC day (1.00 unless set). Attached files' bytes are kept in files/
+spends in a UTC day (1.00 unless set). FILEDRAWER_SCREENER=scripted, which only dev
+takes, gives the verdict a marker in the text names, [screen: review], [screen: reject],
+[screen: doubt] or [screen: note], and passes the rest, for bin/live-preview's review
+queue. Attached files' bytes are kept in files/
 beside the database file, and served from FILEDRAWER_FILES_URL (such as
 https://files.staging.filedrawer.dev); without it attachments are off.
 

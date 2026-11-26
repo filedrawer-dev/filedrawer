@@ -138,6 +138,10 @@ pub enum ConfigError {
     )]
     UnscreenedProduction,
     #[error(
+        "FILEDRAWER_SCREENER=scripted publishes whatever names no verdict, for a dev server's preview, so only dev takes it"
+    )]
+    ScriptedOutsideDev,
+    #[error(
         "FILEDRAWER_SMOKE_ACCOUNT publishes an account's entries unscreened, so production refuses it"
     )]
     SmokeAccountInProduction,
@@ -283,6 +287,8 @@ impl Config {
         };
         let screener = match get("FILEDRAWER_SCREENER")?.as_str() {
             "pass-all" => Screener::PassAll,
+            "scripted" if environment == Environment::Dev => Screener::Scripted,
+            "scripted" => return Err(ConfigError::ScriptedOutsideDev),
             "anthropic" => {
                 let key = var("FILEDRAWER_ANTHROPIC_API_KEY")
                     .filter(|key| !key.trim().is_empty())
@@ -293,7 +299,7 @@ impl Config {
                 return Err(ConfigError::Invalid {
                     name: "FILEDRAWER_SCREENER",
                     value: other.to_string(),
-                    expected: "anthropic or pass-all",
+                    expected: "anthropic, pass-all or scripted",
                 });
             }
         };

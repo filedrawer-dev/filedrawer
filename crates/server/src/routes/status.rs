@@ -27,6 +27,7 @@ pub async fn status(State(state): State<AppState>, format: Format) -> Result<Res
     };
     let (screener, models, screener_text) = match state.screener {
         Screener::PassAll => ("pass-all", vec![], "pass-all".to_string()),
+        Screener::Scripted => ("scripted", vec![], "scripted".to_string()),
         Screener::Models(_) => (
             "models",
             vec![Model::Haiku.id(), Model::Sonnet.id()],

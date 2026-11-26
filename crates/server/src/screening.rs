@@ -341,6 +341,10 @@ pub enum Screener {
     /// Passes everything. For dev and tests; production refuses it (see
     /// `Config::from_env`).
     PassAll,
+    /// Gives the verdict a marker in the text names, and passes text with none
+    /// ([`SCRIPTED_MARKERS`]), so a dev server can fill every section of the review
+    /// queue (`bin/live-preview`). Only dev takes it (see `Config::from_env`).
+    Scripted,
     /// Haiku, then Sonnet when needed, through this client.
     Models(Arc<dyn ModelClient>),
 }
@@ -349,6 +353,7 @@ impl std::fmt::Debug for Screener {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Screener::PassAll => f.write_str("PassAll"),
+            Screener::Scripted => f.write_str("Scripted"),
             Screener::Models(_) => f.write_str("Models"),
         }
     }
@@ -540,7 +545,43 @@ impl Screener {
                 }),
                 calls: Vec::new(),
             },
+            Screener::Scripted => Screening {
+                verdict: Ok(scripted(text)),
+                calls: Vec::new(),
+            },
             Screener::Models(client) => screen_with(client.as_ref(), text, subject).await,
+        }
+    }
+}
+
+/// The markers [`Screener::Scripted`] reads, with the verdict each gives, the first
+/// one the text holds deciding: the owner's review, a rejection, a pass with a hazard
+/// doubt for the owner, and a pass with a screening note on the card.
+pub const SCRIPTED_MARKERS: [&str; 4] = [
+    "[screen: review]",
+    "[screen: reject]",
+    "[screen: doubt]",
+    "[screen: note]",
+];
+
+fn scripted(text: &str) -> Verdict {
+    let [review, reject, doubt, note] = SCRIPTED_MARKERS;
+    if text.contains(review) {
+        Verdict::Review {
+            why: format!("the scripted screen read {review}"),
+        }
+    } else if text.contains(reject) {
+        Verdict::Reject {
+            reasons: vec![format!("the scripted screen read {reject}")],
+        }
+    } else {
+        Verdict::Pass {
+            note: text
+                .contains(note)
+                .then(|| format!("the scripted screen read {note}")),
+            hazard_doubt: text
+                .contains(doubt)
+                .then(|| format!("scripted: the text holds {doubt}")),
         }
     }
 }

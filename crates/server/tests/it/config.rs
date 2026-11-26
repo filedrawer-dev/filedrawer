@@ -444,3 +444,31 @@ fn with_github_sign_in_check_outbound_calls_github_com_and_its_api() {
     assert!(hosts.contains(&"github.com".to_string()), "{hosts:?}");
     assert!(hosts.contains(&"api.github.com".to_string()), "{hosts:?}");
 }
+
+#[test]
+fn only_dev_takes_the_scripted_screen() {
+    let scripted = ("FILEDRAWER_SCREENER", "scripted");
+    let dev = config(&[("FILEDRAWER_ENVIRONMENT", "dev"), scripted]).unwrap();
+    assert!(matches!(
+        dev.screener,
+        filedrawer_server::Screener::Scripted
+    ));
+    assert_eq!(
+        config(&[scripted]).unwrap_err(),
+        ConfigError::ScriptedOutsideDev
+    );
+    let mut production = vec![
+        ("FILEDRAWER_ENVIRONMENT", "production"),
+        ("FILEDRAWER_GITHUB_TOKEN", "github_pat_not_real"),
+        (
+            "FILEDRAWER_DAILY_EMAIL_PING",
+            "https://hc-ping.com/not-real",
+        ),
+        scripted,
+    ];
+    production.extend(SMTP);
+    assert_eq!(
+        config(&production).unwrap_err(),
+        ConfigError::ScriptedOutsideDev
+    );
+}

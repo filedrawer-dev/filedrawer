@@ -1,9 +1,11 @@
 """Tests for bin/live-preview, run as a process: against a fake dev server (--upstream),
 it renders the home page from a copy of the templates on each request, serves the
 stylesheet and script from disk, and forwards everything else; with a fake
-`filedrawer-server` binary in a scratch checkout, it seeds a new database once, starts the
-server in an environment of its own, and stops it. The build isn't tested: it is
-cargo's.
+`filedrawer-server` binary in a scratch checkout, it seeds a new database once, review
+queue and admin included, starts the server in an environment of its own, sends
+requests signed in as the admin, restarts the server after a rebuild that a template's
+save starts, and stops it. The build itself is a stand-in command: it is cargo's.
+crates/server/tests/it/live_preview.rs runs the seeding against the real server.
 """
 
 import http.server
@@ -330,7 +332,11 @@ def test_no_build_without_a_binary_is_refused_in_one_line(tmp_path):
 # as the real ones do, and print an ID and a token,
 # and `serve` answers on FILEDRAWER_LISTEN, accepting each entry unless its text holds
 # a word in ./refuse and exiting at the first publish when ./die-on-publish exists.
-# It notes each command in ./calls, and serve's environment and PID beside it.
+# It answers each step of seeding the review queue as the real one does, logging a
+# verification link for each signup, and a GET with the cookie it was sent, as a page
+# for /page.html. It notes each command and POST in ./calls, and serve's environment
+# and PID beside it. It refuses one login when ./refuse-login exists, deleting it, and
+# `serve` exits at once when ./die-on-serve does.
 FAKE_FILEDRAWER = r"""#!/usr/bin/env python3
 import http.server, json, os, sys
 from pathlib import Path
@@ -344,23 +350,37 @@ if sys.argv[1:3] == ["admin", "create-account"]:
     print("a-fake")
 elif sys.argv[1:3] == ["admin", "create-token"]:
     print("fdt_fake")
+elif sys.argv[1:] == ["serve"] and (here / "die-on-serve").exists():
+    sys.exit(3)
 elif sys.argv[1:] == ["serve"]:
     (here / "serve-env.json").write_text(json.dumps(dict(os.environ)))
     (here / "serve-pid").write_text(str(os.getpid()))
     refused = (here / "refuse").read_text().split() if (here / "refuse").exists() else []
     entries = []
 
+    signups = []
+
     class Handler(http.server.BaseHTTPRequestHandler):
-        def send(self, status, text):
+        def send(self, status, text, kind="text/plain", headers=()):
             body = text.encode()
             self.send_response(status)
-            self.send_header("Content-Type", "text/plain")
+            for key, value in headers:
+                self.send_header(key, value)
+            self.send_header("Content-Type", kind)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
 
         def do_GET(self):
-            self.send(200, "ok")
+            cookie = self.headers.get("Cookie", "none")
+            if self.path == "/account":
+                return self.send(200, "<code>a-admin</code>", "text/html")
+            if self.path == "/admin/invites":
+                return self.send(200, "<code>inv-fake</code>", "text/html")
+            if self.path == "/page.html":
+                page = f"<html><body>cookie {cookie}</body></html>"
+                return self.send(200, page, "text/html; charset=utf-8")
+            self.send(200, f"ok cookie {cookie}")
 
         def do_POST(self):
             body = self.rfile.read(int(self.headers.get("Content-Length") or 0)).decode()
@@ -368,12 +388,32 @@ elif sys.argv[1:] == ["serve"]:
                 if any(word in body for word in refused):
                     return self.send(422, "refused")
                 entries.append(body)
-                return self.send(200, f"id: e{len(entries)}\nstatus: pending\n")
-            if (here / "die-on-publish").exists():
-                os._exit(1)
+                return self.send(201, f"id: e{len(entries)}\nstatus: pending\n")
+            if self.path.endswith("/publish"):
+                if (here / "die-on-publish").exists():
+                    os._exit(1)
+                with (here / "calls").open("a") as calls:
+                    calls.write(f"publish {self.path}\n")
+                return self.send(200, "published")
             with (here / "calls").open("a") as calls:
-                calls.write(f"publish {self.path}\n")
-            self.send(200, "published")
+                calls.write(f"post {self.path} {self.headers.get('Origin')}\n")
+            if self.path == "/signup":
+                signups.append(body)
+                print(f"email body: http://x/verify?token=tok-{len(signups)}", flush=True)
+                return self.send(200, "sent")
+            if self.path == "/login" and (here / "refuse-login").exists():
+                (here / "refuse-login").unlink()
+                return self.send(200, "wrong password")
+            if self.path == "/login":
+                cookie = ("Set-Cookie", "__Host-fd_session=s-admin; Path=/; Secure")
+                return self.send(303, "", headers=[("Location", "/account"), cookie])
+            if self.path == "/account/tokens":
+                return self.send(200, "<code>fdt_made</code>", "text/html")
+            if self.path == "/series":
+                return self.send(422, "refused: held back")
+            if self.path.startswith("/admin/"):
+                return self.send(303, "", headers=[("Location", "/admin")])
+            self.send(200, "ok")
 
         def log_message(self, *args):
             pass
@@ -431,10 +471,9 @@ def test_a_new_database_is_seeded_once_with_each_fixture_published(tmp_path):
     assert any("smoke-fixture.md" in line for line in printed), printed
     calls = checkout.calls()
     assert sum(call.startswith("admin create-account") for call in calls) == 1, calls
+    # Then the review queue's four, made with the seed account's token.
     assert [call for call in calls if call.startswith("publish")] == [
-        "publish /e/e1/publish",
-        "publish /e/e2/publish",
-        "publish /e/e3/publish",
+        f"publish /e/e{n}/publish" for n in range(1, 8)
     ]
 
     process, _, printed = checkout.start()
@@ -496,6 +535,143 @@ def test_stopping_the_preview_stops_the_dev_server(tmp_path):
         except ProcessLookupError:
             break
         time.sleep(0.05)
+
+
+def fetch(url: str, headers: dict[str, str]) -> str:
+    request = urllib.request.Request(url, headers=headers)
+    with OPENER.open(request) as reply:
+        return reply.read().decode()
+
+
+def test_a_new_database_seeds_the_review_queue_with_forms_from_the_site(tmp_path):
+    checkout = Checkout(tmp_path)
+    process, url, printed = checkout.start()
+    stop(process)
+    assert any("seeded the review queue" in line for line in printed), printed
+    calls = checkout.calls()
+    assert "admin grant --account a-admin" in calls, calls
+    posts = [call.split() for call in calls if call.startswith("post ")]
+    signing_up = ["/signup", "/verify", "/login", "/account/tokens"]
+    assert [path for _, path, _ in posts] == [
+        *signing_up,
+        "/series",
+        "/admin/invites",
+        *signing_up,
+        "/admin/invites/inv-fake/revoke",
+        "/admin/e/e6/hold",
+    ]
+    port = url.rsplit(":", 1)[1]
+    assert {origin for _, _, origin in posts} == {f"http://localhost:{port}"}
+
+    process, _, printed = checkout.start()
+    stop(process)
+    assert not any("seeded the review queue" in line for line in printed), printed
+    later = [call.split()[:2] for call in checkout.calls()[len(calls) :]]
+    assert later == [["serve"], ["post", "/login"]], later
+
+
+def test_every_request_goes_signed_in_as_the_admin_unless_it_sends_a_session(
+    tmp_path,
+):
+    checkout = Checkout(tmp_path)
+    process, url, _ = checkout.start()
+    try:
+        assert fetch(url + "/x", {}) == "ok cookie __Host-fd_session=s-admin"
+        own = fetch(url + "/x", {"Cookie": "__Host-fd_session=mine"})
+        assert own == "ok cookie __Host-fd_session=mine"
+        other = fetch(url + "/x", {"Cookie": "theme=dark"})
+        assert other == "ok cookie theme=dark; __Host-fd_session=s-admin"
+    finally:
+        stop(process)
+
+
+def edited(path: Path) -> None:
+    path.write_text(path.read_text() + "<!-- edited -->\n")
+
+
+def printed_until(process: subprocess.Popen, ending: str) -> list[str]:
+    """What the preview prints from now until a line holding `ending`."""
+    lines = []
+    for line in process.stdout:
+        lines.append(line)
+        if ending in line:
+            return lines
+    raise AssertionError(f"it exited before printing {ending!r}: {lines}")
+
+
+def test_a_template_edit_rebuilds_and_restarts_the_server_whose_pages_reload(
+    tmp_path,
+):
+    checkout = Checkout(tmp_path)
+    env = dict(os.environ, LIVE_PREVIEW_BUILD="echo build >> target/debug/calls")
+    process, url, _ = checkout.start(env=env)
+    try:
+        preview = Preview(tmp_path, url, None)
+        _, _, page = preview.get("/page.html")
+        assert "/__live/version" in page, page
+        pid = (checkout.bin / "serve-pid").read_text()
+        # home.html renders on each request, so it builds nothing.
+        edited(preview.template("home.html"))
+        _, _, before = preview.get("/__live/version")
+        edited(preview.template("account.html"))
+        lines = printed_until(process, "restarted")
+        assert "live-preview: account.html changed; rebuilding\n" in lines, lines
+        assert "build" in checkout.calls()
+        assert (checkout.bin / "serve-pid").read_text() != pid
+        _, _, after = preview.get("/__live/version")
+        assert after != before
+        _, _, page = preview.get("/page.html")
+        assert "s-admin" in page, page
+    finally:
+        stop(process)
+
+
+def test_a_rebuilt_server_that_doesnt_start_says_why_and_the_next_save_retries(
+    tmp_path,
+):
+    checkout = Checkout(tmp_path)
+    process, url, _ = checkout.start(env=dict(os.environ, LIVE_PREVIEW_BUILD="true"))
+    try:
+        account = tmp_path / "crates/server/templates/account.html"
+        (checkout.bin / "die-on-serve").touch()
+        edited(account)
+        lines = printed_until(process, "the next change builds")
+        assert "the dev server exited (3)" in lines[-1], lines
+        (checkout.bin / "die-on-serve").unlink()
+        edited(account)
+        printed_until(process, "restarted the rebuilt dev server")
+        assert fetch(url + "/x", {}).startswith("ok")
+    finally:
+        stop(process)
+
+
+def test_a_seeded_database_whose_admin_cant_log_in_is_seeded_again(tmp_path):
+    checkout = Checkout(tmp_path)
+    process, _, _ = checkout.start()
+    stop(process)
+    (checkout.bin / "refuse-login").touch()
+    process, url, printed = checkout.start()
+    try:
+        assert any("can't log in; seeding a new database" in line for line in printed)
+        assert any("seeded the review queue" in line for line in printed), printed
+        creates = [c for c in checkout.calls() if c.startswith("admin create-account")]
+        assert len(creates) == 2, checkout.calls()
+        assert fetch(url + "/x", {}) == "ok cookie __Host-fd_session=s-admin"
+    finally:
+        stop(process)
+
+
+def test_a_failed_rebuild_leaves_the_server_as_it_was(tmp_path):
+    checkout = Checkout(tmp_path)
+    process, url, _ = checkout.start(env=dict(os.environ, LIVE_PREVIEW_BUILD="exit 1"))
+    try:
+        pid = (checkout.bin / "serve-pid").read_text()
+        edited(tmp_path / "crates/server/templates/admin.html")
+        printed_until(process, "the build failed")
+        assert (checkout.bin / "serve-pid").read_text() == pid
+        assert fetch(url + "/x", {}).startswith("ok")
+    finally:
+        stop(process)
 
 
 def test_a_template_error_shows_as_a_page_that_reloads(preview):
@@ -662,7 +838,7 @@ def test_the_start_lists_a_link_to_each_page_it_previews(tmp_path):
     try:
         for line in process.stdout:
             printed.append(line)
-            if "filedrawer-submit/SKILL.md" in line:
+            if line.endswith("/privacy\n"):
                 break
     finally:
         stop(process)
@@ -673,6 +849,10 @@ def test_the_start_lists_a_link_to_each_page_it_previews(tmp_path):
         "/skill.md",
         "/skills/filedrawer-search/SKILL.md",
         "/skills/filedrawer-submit/SKILL.md",
+        "/account",
+        "/admin",
+        "/terms",
+        "/privacy",
     ):
         assert f"http://localhost:{port}{path}\n" in listed, listed
 

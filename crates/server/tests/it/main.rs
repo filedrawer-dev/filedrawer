@@ -38,6 +38,7 @@ mod http_fetcher;
 mod invites;
 mod limits;
 mod link_checks;
+mod live_preview;
 mod mail_queue;
 mod migration_rollback;
 mod migrations;

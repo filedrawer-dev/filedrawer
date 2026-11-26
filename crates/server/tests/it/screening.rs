@@ -9,10 +9,11 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use common::fake_models::FakeModels;
 use common::{DELIMITER, TestApp, entry, field, id_in, test_app_with};
+use filedrawer_server::Screener;
 use filedrawer_server::jobs::publish_due;
 use filedrawer_server::screening::{
-    Answer, Model, ModelError, ModelRequest, Subject, Usage, parse_reply, request_body,
-    status_error,
+    Answer, Model, ModelError, ModelRequest, SCRIPTED_MARKERS, Subject, Usage, parse_reply,
+    request_body, status_error,
 };
 use serde_json::json;
 use time::{Duration, OffsetDateTime};
@@ -1415,4 +1416,66 @@ async fn the_screen_test_account_isnt_held_to_an_accounts_share_but_is_to_the_da
     }
     let (_, status) = publish(&app, &entry("Steering 4", "slug: s4\n")).await;
     assert_eq!(status, "screening");
+}
+
+/// The scripted screen, dev's, gives each marker in `SCRIPTED_MARKERS` its verdict
+/// and passes text with none, so bin/live-preview fills every section of the queue.
+#[tokio::test]
+async fn the_scripted_screen_gives_the_verdict_a_marker_names_and_passes_the_rest() {
+    let app = test_app_with(Screener::Scripted, DOLLAR).await;
+    let owner = common::owner(&app).await;
+    let [review, reject, doubt, note] = SCRIPTED_MARKERS;
+    // In the body: a marker isn't YAML a title can hold.
+    let marked = |marker: &str, slug: &str| {
+        format!(
+            "{}\n{marker}\n",
+            entry("Steering", &format!("slug: {slug}\n"))
+        )
+    };
+    let (plain, status) = publish(&app, &entry("Steering, unmarked", "")).await;
+    assert_eq!(status, "public");
+    let (in_review, status) = publish(&app, &marked(review, "review")).await;
+    assert_eq!(status, "review");
+    let (_, status) = publish(&app, &marked(reject, "reject")).await;
+    assert_eq!(status, "rejected");
+    let (doubted, status) = publish(&app, &marked(doubt, "doubt")).await;
+    assert_eq!(status, "public");
+    let (noted, status) = publish(&app, &marked(note, "note")).await;
+    assert_eq!(status, "public");
+
+    let read = app.get(&format!("/e/{noted}")).await;
+    assert!(read.body.contains("screening note"), "{}", read.body);
+    let read = app.get(&format!("/e/{plain}")).await;
+    assert!(!read.body.contains("screening note"), "{}", read.body);
+
+    let series = app
+        .post(
+            "/series",
+            format!("---\ntitle: Probes\n---\n\nSweeps {review}.\n"),
+        )
+        .await;
+    assert_eq!(
+        series.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        series.body
+    );
+    let queue = app.page("/admin", Some(&owner)).await;
+    for path in [
+        format!("/admin/e/{in_review}"),
+        format!("/admin/e/{doubted}/doubt-seen"),
+        "/admin/series-refusals/".to_string(),
+    ] {
+        assert!(queue.body.contains(&path), "no {path}: {}", queue.body);
+    }
+    assert!(
+        !queue.body.contains(&format!("/admin/e/{plain}")),
+        "{}",
+        queue.body
+    );
+    let calls: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM screenings")
+        .fetch_one(&app.pool)
+        .await
+        .unwrap();
+    assert_eq!(calls, 0, "the scripted screen calls no model");
 }

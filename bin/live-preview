@@ -3,7 +3,7 @@
 # requires-python = ">=3.11"
 # dependencies = ["jinja2==3.1.6"]
 # ///
-"""Preview the home page, and the documents agents read, live while drafting their text.
+"""Preview the site's pages, and the documents agents read, live while drafting their text.
 
     bin/live-preview                 build the server, start it with seed entries,
                                      and serve the preview on port 8090
@@ -38,14 +38,28 @@ web-shot): its stylesheet is inlined with the checkout's own font files, and
 copy.js is linked from the checkout. It names https://filedrawer.dev, or
 --public-url URL. It doesn't go with --print.
 
-Every other request (other pages, forms, an agent's GET /) goes to the dev server
-unchanged, so other pages' markup is what it was built with.
+Every other request (other pages, forms, an agent's GET /) goes to the dev server,
+signed in as its admin, so /account and /admin open in any browser with no login;
+a browser that logs in itself sends its own session instead. So anyone who can reach
+the preview's port, once it is published, is the admin of the dev server's data, which
+is only seeded. A logout from a browser without a session of its own ends the admin's
+session for every browser until the preview restarts. The other pages, such
+as /account, /admin, /terms and /privacy, are the dev server's, as built: a save of
+any template but home.html, or of a file in crates/server/legal/, rebuilds the
+server and restarts it, which takes as long as the build, and its pages then reload
+themselves. A build that fails leaves the server as it was, and says so here.
 
 The dev server is `filedrawer-server serve` in the dev environment, built first with
 `heavy --share -- cargo build --bin filedrawer-server` (plain cargo without heavy), on
-127.0.0.1:SERVER_PORT, with its database in target/live-preview/. A new database is
-seeded with the analyzer's example fixture, ops/smoke-fixture.md and
-ops/screen-eval/public/*.md, published at once, so the drawer isn't empty.
+127.0.0.1:SERVER_PORT, with its database in target/live-preview/. It screens with the
+scripted screen (FILEDRAWER_SCREENER=scripted, `filedrawer-server -h`). A new
+database is seeded with the analyzer's example fixture, ops/smoke-fixture.md and
+ops/screen-eval/public/*.md, published at once, so the drawer isn't empty, and with
+what fills each section of /admin: its admin, preview-admin@example.com, whose
+password is PASSWORD below, entries in review, held and frozen, a series the screen
+refused, entries that passed with a hazard doubt or a screening note, and the
+account the hold guards. A database an older preview seeded is made again. With
+--upstream nothing is seeded, rebuilt or signed in.
 
 From the host, publish the port once, then open http://localhost:8090:
 
@@ -63,8 +77,10 @@ heavy job it would hold the lane that every session's commit checks wait for.
 import argparse
 import contextlib
 import html
+import http.client
 import http.server
 import os
+import queue
 import re
 import shutil
 import signal
@@ -102,12 +118,31 @@ HOP_HEADERS = {
     "content-encoding",
 }
 
-# The fixtures a new database is seeded with, as git pathspecs.
+# The fixtures a new database is seeded with, as git pathspecs. The first is also the
+# text of the entries the review queue is seeded with.
 SEED_ENTRIES = (
     ":(glob)crates/analyzer/tests/**/fixtures/example.md",
     "ops/smoke-fixture.md",
     ":(glob)ops/screen-eval/public/*.md",
 )
+
+# What `seeded` holds once seeding ends; a database seeded by an older preview, which
+# wrote another or none, is made again.
+SEED_VERSION = "review queue"
+
+# The browser accounts seeding makes: the admin the preview signs every browser in as,
+# and an account signed up with an invite code, which is revoked to freeze its entry.
+ADMIN = ("preview-admin@example.com", "Preview Admin")
+INVITED = ("preview-invited@example.com", "Preview Invitee")
+PASSWORD = "live preview password"
+
+# The markers of the dev server's scripted screen (crates/server/src/screening.rs,
+# SCRIPTED_MARKERS) that seeding uses.
+REVIEW, DOUBT, NOTE = "[screen: review]", "[screen: doubt]", "[screen: note]"
+
+# The pages a template or a legal file renders, which the server compiles in: an
+# edit rebuilds and restarts the dev server. home.html shows at once instead.
+SERVER_PAGES = ("/account", "/admin", "/terms", "/privacy")
 
 
 # The site the skills' files and the installer name, which a deployment elsewhere
@@ -242,6 +277,14 @@ class Preview:
         self.lock = threading.Lock()
         self.last_drop = 0.0
         self.folder_stamps: list[int] = []
+        # The admin's session cookie, `name=value`, sent with every request a browser
+        # makes without one; None previewing a server it didn't start.
+        self.cookie: str | None = None
+        # Set while the dev server answers; cleared while a rebuilt one starts.
+        self.ready = threading.Event()
+        self.ready.set()
+        # How many times the dev server restarted, which pages reload on.
+        self.generation = 0
 
     def drop_caches(self) -> None:
         """Drop the kernel's dentry and inode caches, so a file the host replaced reads
@@ -265,7 +308,8 @@ class Preview:
             # A file renamed into place changes its folder.
             self.folder_stamps = stamps
             self.drop_caches()
-        return ",".join(self.stamp(path) for path in self.watched)
+        stamps = [self.stamp(path) for path in self.watched]
+        return ",".join([*stamps, str(self.generation)])
 
     @staticmethod
     def stamp(path: Path) -> str:
@@ -350,9 +394,34 @@ class Preview:
         )
 
 
+def with_cookie(headers: dict[str, str], cookie: str) -> dict[str, str]:
+    """`headers` with `cookie`, `name=value`, added unless they carry one of that
+    name, so a browser's own session, once it logs in, is the one sent."""
+    name = cookie.split("=", 1)[0]
+    key = next((k for k in headers if k.lower() == "cookie"), "Cookie")
+    sent = headers.get(key, "")
+    if any(part.strip().split("=", 1)[0] == name for part in sent.split(";")):
+        return headers
+    return {**headers, key: f"{sent}; {cookie}" if sent else cookie}
+
+
+def reloading(headers: list[tuple[str, str]], body: bytes) -> bytes:
+    """`body` with the reload script, when it is an HTML page, so a page the dev server
+    rendered reloads once a rebuilt one restarts."""
+    kind = next((v for k, v in headers if k.lower() == "content-type"), "")
+    if not kind.startswith("text/html") or b"</body>" not in body:
+        return body
+    return body.replace(b"</body>", RELOAD.encode() + b"\n</body>", 1)
+
+
 def error_page(error: Exception) -> str:
     message = html.escape(f"{type(error).__name__}: {error}")
     return f"<!DOCTYPE html><title>Template error</title><pre>{message}</pre>{RELOAD}"
+
+
+class DevServerFailed(Exception):
+    """The dev server didn't start or answered seeding wrongly; its message says so
+    in one line."""
 
 
 class ServerDown(Exception):
@@ -385,6 +454,10 @@ def handler_for(preview: Preview) -> type[http.server.BaseHTTPRequestHandler]:
             headers = {
                 k: v for k, v in self.headers.items() if k.lower() not in HOP_HEADERS
             }
+            if preview.cookie:
+                headers = with_cookie(headers, preview.cookie)
+            # A rebuilt server is starting: wait for it rather than answer a 502.
+            preview.ready.wait(120)
             request = urllib.request.Request(
                 preview.upstream + self.path,
                 data=body,
@@ -417,7 +490,7 @@ def handler_for(preview: Preview) -> type[http.server.BaseHTTPRequestHandler]:
             if self.command != "GET" or path != "/" or not browser:
                 status, headers, body = self.from_server()
                 kept = [(k, v) for k, v in headers if k.lower() not in HOP_HEADERS]
-                return self.send(status, kept, body)
+                return self.send(status, kept, reloading(kept, body))
             status, headers, body = self.from_server()
             if b'<nav class="guides"' not in body:
                 # The server's own refusal, such as a 400 for an unknown view.
@@ -512,38 +585,76 @@ class DevServer:
         # Written once seeding ends, so a database whose seeding was cut short is
         # made again rather than left half full.
         self.seeded = self.data / "seeded"
+        self.process: subprocess.Popen | None = None
+        # The token of each verification link the server logs, as it has no SMTP.
+        self.verify_links: queue.Queue[str] = queue.Queue()
 
     def environment(self) -> dict[str, str]:
         """Only what the server needs: no SMTP, GitHub or staging setting this shell
-        holds reaches it."""
+        holds reaches it. Its email goes to its log, at info."""
+        log = os.environ.get("RUST_LOG", "warn")
         return {
             "PATH": os.environ.get("PATH", ""),
             "HOME": os.environ.get("HOME", ""),
-            "RUST_LOG": os.environ.get("RUST_LOG", "warn"),
+            "RUST_LOG": f"{log},filedrawer_server::mail=info",
+            "NO_COLOR": "1",
             "FILEDRAWER_DATABASE": str(self.database),
             "FILEDRAWER_LISTEN": f"127.0.0.1:{self.port}",
             "FILEDRAWER_ENVIRONMENT": "dev",
-            "FILEDRAWER_SCREENER": "pass-all",
+            "FILEDRAWER_SCREENER": "scripted",
             "FILEDRAWER_LINK_CHECKS": "off",
             "FILEDRAWER_PUBLISHER_SECONDS": "2",
             "FILEDRAWER_PUBLIC_URL": self.public_url,
         }
 
-    def build(self) -> None:
+    def build(self) -> bool:
+        """Builds the server; says whether the build passed. LIVE_PREVIEW_BUILD, set
+        by its tests, is a shell command to run instead."""
+        print("live-preview: building the server", flush=True)
+        instead = os.environ.get("LIVE_PREVIEW_BUILD")
+        if instead:
+            done = subprocess.run(instead, shell=True, cwd=self.root, check=False)
+            return done.returncode == 0
         command = ["cargo", "build", "-q", "--bin", "filedrawer-server"]
         if shutil.which("heavy"):
             command = ["heavy", "--share", "--", *command]
-        print("live-preview: building the server", flush=True)
-        if subprocess.run(command, cwd=self.root, check=False).returncode != 0:
-            sys.exit("live-preview: the build failed; fix it, or run with --no-build")
+        return subprocess.run(command, cwd=self.root, check=False).returncode == 0
 
-    def start(self, cleanup: contextlib.ExitStack) -> None:
-        """Start the server, seeding a new database first; `cleanup` stops it."""
+    def is_seeded(self) -> bool:
+        try:
+            return self.seeded.read_text().strip() == SEED_VERSION
+        except OSError:
+            return False
+
+    def start(self, cleanup: contextlib.ExitStack) -> str:
+        """Start the server, seeding a new database first; `cleanup` stops it. Returns
+        the admin's session cookie. A seeded database whose admin can't log in, as
+        when its password was changed on /account or the account deleted, is seeded
+        again."""
         if not self.binary.exists():
-            sys.exit(
+            raise DevServerFailed(
                 f"live-preview: no server at {self.binary}; run without --no-build"
             )
-        if not self.seeded.exists():
+        cleanup.callback(lambda: self.process and stop(self.process))
+        cookie = self.start_once()
+        if cookie is None:
+            print(
+                f"live-preview: {ADMIN[0]} can't log in; seeding a new database",
+                flush=True,
+            )
+            stop(self.process)
+            self.seeded.unlink(missing_ok=True)
+            cookie = self.start_once()
+        if cookie is None:
+            raise DevServerFailed(
+                f"live-preview: {ADMIN[0]} can't log in to a new database"
+            )
+        return cookie
+
+    def start_once(self) -> str | None:
+        """Start the server, seeding a new database first; the admin's session
+        cookie, or None when it can't log in."""
+        if not self.is_seeded():
             shutil.rmtree(self.data, ignore_errors=True)
         self.data.mkdir(parents=True, exist_ok=True)
         token = None
@@ -551,11 +662,43 @@ class DevServer:
             # Before the server starts, since both would run the migrations on a new file.
             account = self.admin("create-account", "--display-name", "Live Preview")
             token = self.admin("create-token", "--account", account, "--name", "seed")
-        server = subprocess.Popen([self.binary, "serve"], env=self.environment())
-        cleanup.callback(stop, server)
-        self.wait_for(server)
+        self.launch()
         if token:
             self.seed(token)
+            cookie = self.seed_review_queue(token)
+            self.seeded.write_text(SEED_VERSION + "\n")
+            return cookie
+        try:
+            return self.log_in(ADMIN[0])
+        except DevServerFailed:
+            return None
+
+    def launch(self) -> None:
+        self.process = subprocess.Popen(
+            [self.binary, "serve"],
+            env=self.environment(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        threading.Thread(
+            target=self.read_log, args=(self.process.stdout,), daemon=True
+        ).start()
+        self.wait_for(self.process)
+
+    def restart(self) -> None:
+        """Stops the server and starts it again, as rebuilt."""
+        if self.process:
+            stop(self.process)
+        self.launch()
+
+    def read_log(self, stream) -> None:
+        """Passes the server's log on to stderr, noting each verification link."""
+        for line in stream:
+            found = re.search(r"/verify\?token=([\w-]+)", line)
+            if found:
+                self.verify_links.put(found.group(1))
+            sys.stderr.write(line)
 
     def admin(self, *args: str) -> str:
         return run([str(self.binary), "admin", *args], env=self.environment())
@@ -568,9 +711,11 @@ class DevServer:
             except OSError:
                 pass
             if server.poll() is not None:
-                sys.exit(f"live-preview: the dev server exited ({server.returncode})")
+                raise DevServerFailed(
+                    f"live-preview: the dev server exited ({server.returncode})"
+                )
             time.sleep(0.5)
-        sys.exit(
+        raise DevServerFailed(
             f"live-preview: the dev server didn't answer {self.url}/tags in a minute"
         )
 
@@ -590,17 +735,19 @@ class DevServer:
             raise
         except OSError as error:
             reason = getattr(error, "reason", error)
-            sys.exit(
+            raise DevServerFailed(
                 f"live-preview: the dev server stopped answering at {name} ({reason})"
             )
 
-    def seed(self, token: str) -> None:
-        """Submit each seed fixture with `token` and publish it at once."""
-        names = run(
+    def seed_names(self) -> list[str]:
+        return run(
             ["git", "-C", str(self.root), "ls-files", *SEED_ENTRIES]
         ).splitlines()
+
+    def seed(self, token: str) -> None:
+        """Submit each seed fixture with `token` and publish it at once."""
         published = 0
-        for name in names:
+        for name in self.seed_names():
             try:
                 text = self.post(
                     "/entries", token, name, (self.root / name).read_bytes()
@@ -617,8 +764,253 @@ class DevServer:
                 print(f"live-preview: the server refused {name}: {why[0]}")
                 continue
             published += 1
-        self.seeded.touch()
         print(f"live-preview: seeded {published} entries", flush=True)
+
+    def call(
+        self,
+        step: str,
+        path: str,
+        expect: int,
+        *,
+        form: dict[str, str] | None = None,
+        body: str | None = None,
+        token: str | None = None,
+        cookie: str | None = None,
+        method: str = "POST",
+    ) -> tuple[http.client.HTTPMessage, str]:
+        """The headers and text of the server's answer to one step of seeding the
+        review queue, sent as a form from the site when `form`; an exit naming the
+        step when the answer's status isn't `expect`."""
+        headers = {"Origin": self.public_url}
+        data = None
+        if form is not None:
+            data = urllib.parse.urlencode(form).encode()
+            headers["Content-Type"] = "application/x-www-form-urlencoded"
+        elif body is not None:
+            data = body.encode()
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        if cookie:
+            headers["Cookie"] = cookie
+        request = urllib.request.Request(
+            self.url + path, data=data, method=method, headers=headers
+        )
+        try:
+            with OPENER.open(request) as answer:
+                status, got, text = answer.status, answer.headers, answer.read()
+        except urllib.error.HTTPError as error:
+            status, got, text = error.code, error.headers, error.read()
+        except OSError as error:
+            reason = getattr(error, "reason", error)
+            raise DevServerFailed(
+                f"live-preview: the dev server stopped answering at {step} ({reason})"
+            )
+        text = text.decode()
+        if status != expect:
+            first = (text.strip().splitlines() or [""])[0][:200]
+            raise DevServerFailed(
+                f"live-preview: seeding the review queue, {step} got {status}, not"
+                f" {expect}: {first}"
+            )
+        return got, text
+
+    def log_in(self, email: str) -> str:
+        """The session cookie, `name=value`, of a login as `email`."""
+        headers, _ = self.call(
+            f"logging in as {email}",
+            "/login",
+            303,
+            form={"email": email, "password": PASSWORD},
+        )
+        return headers.get("Set-Cookie", "").split(";", 1)[0]
+
+    def sign_up(self, account: tuple[str, str], invite: str = "") -> str:
+        """Signs up `account`, an email and a display name, follows the link the
+        server logs, and logs in; returns the session cookie."""
+        email, name = account
+        form = {
+            "email": email,
+            "password": PASSWORD,
+            "display_name": name,
+            "invite": invite,
+        }
+        self.call(f"signing up {email}", "/signup", 200, form=form)
+        try:
+            link = self.verify_links.get(timeout=30)
+        except queue.Empty:
+            raise DevServerFailed(
+                f"live-preview: the dev server logged no verification link for {email}"
+            )
+        self.call(f"verifying {email}", "/verify", 200, form={"token": link})
+        return self.log_in(email)
+
+    def new_token(self, cookie: str) -> str:
+        """A token made on the account page of `cookie`'s session."""
+        _, page = self.call(
+            "making a token",
+            "/account/tokens",
+            200,
+            form={"name": "preview"},
+            cookie=cookie,
+        )
+        found = re.search(r"fdt_\w+", page)
+        if found is None:
+            raise DevServerFailed("live-preview: the account page showed no new token")
+        return found.group(0)
+
+    def seed_review_queue(self, token: str) -> str:
+        """Fills each section of /admin, and returns the session cookie of its admin:
+        entries in review, held and frozen, a series refusal, entries that passed
+        with a hazard doubt or a screening note, and the account the hold guards,
+        `token`'s, whose entries these are but the frozen one."""
+        cookie = self.sign_up(ADMIN)
+        _, page = self.call(
+            "reading the account page", "/account", 200, cookie=cookie, method="GET"
+        )
+        account = re.search(r"<code>(a-[^<]+)</code>", page)
+        if account is None:
+            raise DevServerFailed("live-preview: the account page showed no account ID")
+        self.admin("grant", "--account", account.group(1))
+        self.new_token(cookie)
+
+        names = self.seed_names()
+        base = (self.root / names[0]).read_text() if names else ""
+        ids = {}
+        for kind, marker in (
+            ("in review", REVIEW),
+            ("held", REVIEW),
+            ("passed with a hazard doubt", DOUBT),
+            ("passed with a screening note", NOTE),
+        ):
+            _, reply = self.call(
+                f"submitting the entry {kind}",
+                "/entries",
+                201,
+                body=marked(base, kind, marker),
+                token=token,
+            )
+            ids[kind] = id_in(reply)
+            self.call(
+                f"publishing the entry {kind}",
+                f"/e/{ids[kind]}/publish",
+                200,
+                token=token,
+            )
+        series = f"---\ntitle: A series the screen refused\n---\n\nIt says {REVIEW}.\n"
+        self.call(
+            "submitting the refused series", "/series", 422, body=series, token=token
+        )
+
+        invite_form = {"label": "Live preview", "uses": "1", "days": "30"}
+        self.call(
+            "making an invite code",
+            "/admin/invites",
+            303,
+            form=invite_form,
+            cookie=cookie,
+        )
+        _, page = self.call(
+            "reading the invite codes",
+            "/admin/invites",
+            200,
+            cookie=cookie,
+            method="GET",
+        )
+        code = re.search(r"inv-[\w-]+", page)
+        if code is None:
+            raise DevServerFailed("live-preview: /admin/invites showed no invite code")
+        invited = self.new_token(self.sign_up(INVITED, code.group(0)))
+        self.call(
+            "submitting the entry to freeze",
+            "/entries",
+            201,
+            body=marked(base, "frozen", ""),
+            token=invited,
+        )
+        self.call(
+            "revoking the invite code",
+            f"/admin/invites/{code.group(0)}/revoke",
+            303,
+            cookie=cookie,
+        )
+        self.call(
+            "holding an entry", f"/admin/e/{ids['held']}/hold", 303, cookie=cookie
+        )
+        print("live-preview: seeded the review queue", flush=True)
+        return cookie
+
+
+def marked(base: str, kind: str, marker: str) -> str:
+    """`base`, an entry, retitled for `kind`, with `marker` for the scripted screen."""
+    title = f"title: A seeded entry {kind}"
+    text = re.sub(r"^title: .*$", title, base, count=1, flags=re.MULTILINE)
+    return f"{text.rstrip()}\n\n{marker}\n" if marker else text
+
+
+def id_in(reply: str) -> str:
+    found = re.search(r"^id: (\S+)", reply, re.MULTILINE)
+    if found is None:
+        raise DevServerFailed("live-preview: no id in the server's answer")
+    return found.group(1)
+
+
+class Rebuilder:
+    """Rebuilds and restarts the dev server when a template other than home.html, or
+    a legal file, changes, since the server compiles them in. A failed build leaves
+    the server as it was, and the next change tries again."""
+
+    def __init__(self, server: DevServer, preview: Preview) -> None:
+        self.server = server
+        self.preview = preview
+        self.folders = [
+            server.root / "crates/server/templates",
+            server.root / "crates/server/legal",
+        ]
+        self.built = self.stamps()
+
+    def stamps(self) -> dict[str, str]:
+        found = {}
+        for folder in self.folders:
+            for path in sorted(folder.glob("*")):
+                if path.name != "home.html" and path.suffix in (".html", ".md"):
+                    with contextlib.suppress(OSError):
+                        found[path.name] = Preview.stamp(path)
+        return found
+
+    def run(self) -> None:
+        while True:
+            time.sleep(1)
+            now = self.stamps()
+            if now == self.built:
+                continue
+            # A save, a checkout or a rebase can change several files in a row.
+            while (later := self.stamps()) != now:
+                now = later
+                time.sleep(1)
+            changed = sorted(set(now.items()) ^ set(self.built.items()))
+            names = ", ".join(sorted({name for name, _ in changed}))
+            print(f"live-preview: {names} changed; rebuilding", flush=True)
+            if not self.server.build():
+                print(
+                    "live-preview: the build failed; the dev server runs as last"
+                    " built, and the next change builds again",
+                    flush=True,
+                )
+                self.built = now
+                continue
+            self.built = now
+            self.preview.ready.clear()
+            try:
+                self.server.restart()
+            except DevServerFailed as failed:
+                print(
+                    f"{failed}; the next change builds and starts it again", flush=True
+                )
+                continue
+            finally:
+                self.preview.ready.set()
+            self.preview.generation += 1
+            print("live-preview: restarted the rebuilt dev server", flush=True)
 
 
 def stop(server: subprocess.Popen) -> None:
@@ -729,25 +1121,34 @@ def main() -> int:
     with contextlib.ExitStack() as cleanup:
         try:
             upstream = args.upstream
+            server, cookie = None, None
             if upstream is None:
                 server = DevServer(root, args.server_port, public_url)
-                if not args.no_build:
-                    server.build()
-                server.start(cleanup)
+                if not args.no_build and not server.build():
+                    sys.exit(
+                        "live-preview: the build failed; fix it, or run with --no-build"
+                    )
+                cookie = server.start(cleanup)
                 upstream = server.url
             preview = Preview(root, upstream, public_url)
+            preview.cookie = cookie
+            if server:
+                rebuilder = Rebuilder(server, preview)
+                threading.Thread(target=rebuilder.run, daemon=True).start()
             listener.RequestHandlerClass = handler_for(preview)
             print(
                 f"live-preview: http://127.0.0.1:{listener.server_port}/ previews {root}; "
                 f"from the host, {public_url}",
             )
-            for path in preview.documents.links():
+            for path in [*preview.documents.links(), *SERVER_PAGES]:
                 print(f"live-preview: {public_url}{path}")
             sys.stdout.flush()
             serving.set()
             listener.serve_forever()
         except KeyboardInterrupt:
             pass
+        except DevServerFailed as failed:
+            sys.exit(str(failed))
     return 0
 
 
