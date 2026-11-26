@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT e.seq AS \"seq!: i64\" FROM attachment_files af\n                   JOIN entries e ON e.attachment_set_seq = af.set_seq\n                   WHERE af.sha256 = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "seq!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "seq"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "41577ca06d520a1bf9c34bb4fb05b17ad021ce7c79ad4ee449c5e0ac80daa1b6"
+}

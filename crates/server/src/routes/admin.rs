@@ -11,9 +11,11 @@ use axum::response::{IntoResponse, Redirect, Response};
 use crate::error::AppError;
 use crate::link_checks::{self, LinkFlags};
 use crate::pages::{
-    AdminAccountPage, AdminEntryPage, AdminFilePage, AdminInvitesPage, AdminQueuePage,
-    AdminSeriesPage, AdminUnknownFieldsPage, QueueRow, ShownFile, page,
+    AdminAccountPage, AdminEntryPage, AdminFilePage, AdminInvitesPage, AdminPurgeAccountPage,
+    AdminPurgeEntryPage, AdminPurgedPage, AdminQueuePage, AdminSeriesPage, AdminUnknownFieldsPage,
+    QueueRow, ShownFile, page,
 };
+use crate::purge;
 use crate::removed_entries::{self, Removed, Restored};
 use crate::removed_files::{self, Removal};
 use crate::removed_series::{self, Changed as SeriesChanged};
@@ -357,6 +359,124 @@ pub async fn restore_entry(
         ))),
         Restored::Refused(refusal) => Err(AppError::Conflict(refusal.text(&id))),
     }
+}
+
+/// Removes every version of the entry's chain at once.
+pub async fn remove_chain(
+    _: AdminSession,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Response, AppError> {
+    match removed_entries::remove_chain(&state.pool, &id).await? {
+        Removed::Done => Ok(Redirect::to(&format!("/admin/e/{id}")).into_response()),
+        Removed::NoEntry => Err(AppError::NotFound),
+        Removed::Already => Err(AppError::Conflict(format!(
+            "every version of entry {id}'s chain is already removed; reload its page"
+        ))),
+    }
+}
+
+/// The confirm page of an entry's purge: every version it deletes, and its files.
+pub async fn purge_entry_page(
+    _: AdminSession,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Response, AppError> {
+    let preview = purge::chain_preview(&state.pool, &id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    Ok(page(
+        StatusCode::OK,
+        &AdminPurgeEntryPage {
+            id: &id,
+            preview: &preview,
+        },
+    ))
+}
+
+#[derive(Deserialize)]
+pub struct PurgeEntryForm {
+    /// Present when the owner removed the entry for a hazard.
+    hazard: Option<String>,
+}
+
+/// Purges every version of the entry's chain, for an erasure request.
+pub async fn purge_entry(
+    _: AdminSession,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Form(form): Form<PurgeEntryForm>,
+) -> Result<Response, AppError> {
+    let record = purge::purge_chain(&state, &id, form.hazard.is_some())
+        .await?
+        .ok_or(AppError::NotFound)?;
+    Ok(page(
+        StatusCode::OK,
+        &AdminPurgedPage {
+            record: &record,
+            github_id: None,
+        },
+    ))
+}
+
+/// The confirm page of an account's purge, deleted accounts included.
+pub async fn purge_account_page(
+    _: AdminSession,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Response, AppError> {
+    let preview = purge::account_preview(&state.pool, &id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    Ok(page(
+        StatusCode::OK,
+        &AdminPurgeAccountPage { preview: &preview },
+    ))
+}
+
+#[derive(Deserialize)]
+pub struct PurgeAccountForm {
+    /// Present when every entry of the account goes too.
+    entries: Option<String>,
+    /// A GitHub ID whose kept exemption record goes too, for an account already
+    /// deleted; blank for none.
+    #[serde(default)]
+    github_id: String,
+}
+
+/// Purges an account's personal data, and with `entries` every entry of it.
+pub async fn purge_account(
+    _: AdminSession,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Form(form): Form<PurgeAccountForm>,
+) -> Result<Response, AppError> {
+    let typed = form.github_id.trim();
+    let github_id = match typed {
+        "" => None,
+        _ => Some(
+            typed
+                .parse::<i64>()
+                .ok()
+                .filter(|id| *id > 0)
+                .ok_or_else(|| {
+                    AppError::BadRequest(
+                        "a GitHub ID is a whole number, as api.github.com/users/<login> gives it"
+                            .to_string(),
+                    )
+                })?,
+        ),
+    };
+    let record = purge::purge_account(&state, &id, github_id, form.entries.is_some())
+        .await?
+        .ok_or(AppError::NotFound)?;
+    Ok(page(
+        StatusCode::OK,
+        &AdminPurgedPage {
+            record: &record,
+            github_id,
+        },
+    ))
 }
 
 /// One account: whether it is suspended, its entries, the series it made, and the form

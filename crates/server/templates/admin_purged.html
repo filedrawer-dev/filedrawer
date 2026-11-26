@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Purged{% endblock %}
+{% block content %}
+<p><a href="/admin">Review queue</a></p>
+<h1>Purged</h1>
+<p>Logged at {{ record.at }}.</p>
+{% if let Some(account) = record.account %}
+<p class="purged-account">Account <code>{{ account }}</code>{% if let Some(github_id) = github_id %}, and GitHub ID <code>{{ github_id }}</code>, which the log leaves out, so a restore brings it back{% endif %}.</p>
+{% endif %}
+{% if !record.entries.is_empty() %}
+<h2>Entries</h2>
+<ul class="purged-entries">
+{% for id in record.entries %}
+<li><code>{{ id }}</code></li>
+{% endfor %}
+</ul>
+{% endif %}
+{% if !record.files.is_empty() %}
+<h2>Attached files deleted</h2>
+<ul class="purged-files">
+{% for sha256 in record.files %}
+<li><code>{{ sha256 }}</code>{% if record.banned.contains(sha256) %}, banned{% endif %}</li>
+{% endfor %}
+</ul>
+{% endif %}
+{% endblock %}

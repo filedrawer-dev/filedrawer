@@ -4,6 +4,7 @@
 //! one test binary links, not one per file (#35, design.md, Stack).
 
 mod accounts;
+mod admin_purge;
 mod admin_removal;
 mod admin_series;
 mod admin_suspension;

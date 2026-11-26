@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT github_id, login FROM github_links WHERE account_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "github_id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "github_links",
+            "name": "github_id"
+          }
+        }
+      },
+      {
+        "name": "login",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "github_links",
+            "name": "login"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "8297954f01282b8e7e445c37accbac206ae9851c2b8f463e37b6cb66c11c19a7"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE entries SET removed_from = status, removed_at = ?, status = 'removed'\n             WHERE seq = ? AND status != 'removed'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "ec444c0910fd0c9a8a5420007e27f55f73563755cac1e3518802674f2aa36693"
+}

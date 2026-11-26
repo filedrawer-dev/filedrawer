@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM github_signups WHERE github_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "d26c67642b74c3160cf48da1b322bfdf705746dee4ec9e88a29cd548d7c05ce3"
+}

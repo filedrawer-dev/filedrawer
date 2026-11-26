@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Purge entry {{ id }}{% endblock %}
+{% block wide %} wide{% endblock %}
+{% block content %}
+<p><a href="/admin/e/{{ id }}">Back to the entry</a></p>
+<h1>Purge entry <code>{{ id }}</code></h1>
+<p>A purge is for an erasure request, and can't be undone: it deletes every version of the chain from the database, with its search rows, and logs their IDs, with no content, so the server deletes them again after any restore. To stop serving an entry and keep it for analysis, remove it instead.</p>
+<h2>Versions it deletes</h2>
+<ul class="purge-versions">
+{% for version in preview.versions %}
+<li><a href="/admin/e/{{ version.id }}"><code>{{ version.id }}</code></a>, {{ version.status }}</li>
+{% endfor %}
+</ul>
+<h2>Attached files</h2>
+{% if preview.files.is_empty() %}
+<p>None.</p>
+{% else %}
+<ul class="purge-files">
+{% for file in preview.files %}
+<li><a href="/admin/f/{{ file.sha256 }}"><code>{{ file.path }}</code></a>{% if file.shared %}: <span class="file-shared">another entry uses it too, so the purge doesn't delete it</span>{% else %}: deleted{% endif %}</li>
+{% endfor %}
+</ul>
+{% endif %}
+<form method="post" action="/admin/e/{{ id }}/purge">
+<p><label><input type="checkbox" name="hazard" value="on"> It was removed for a hazard: first remove each of these files as a hazard, banning its hash, so nobody attaches it again.</label></p>
+{% if !preview.files.is_empty() %}
+<div class="hazard-effects">
+<p>Ticked, the purge also:</p>
+<ul>
+{% for file in preview.shared() %}
+<li class="hazard-shared">removes and bans <a href="/admin/f/{{ file.sha256 }}"><code>{{ file.path }}</code></a> for every entry that uses it, other authors' included</li>
+{% endfor %}
+{% for account in preview.uploaders %}
+<li class="hazard-guarded">puts <a href="/admin/accounts/{{ account }}"><code>{{ account }}</code></a> under the review guard, as an uploader of one of the files</li>
+{% endfor %}
+</ul>
+</div>
+{% endif %}
+<button type="submit">Purge every version</button>
+</form>
+{% endblock %}

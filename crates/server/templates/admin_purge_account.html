@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Purge account {{ preview.id }}{% endblock %}
+{% block wide %} wide{% endblock %}
+{% block content %}
+<p><a href="/admin">Review queue</a></p>
+<h1>Purge account <code>{{ preview.id }}</code></h1>
+<p>A purge is for an erasure request, and can't be undone. It logs the account's ID, with no content, so the server purges it again after any restore.</p>
+{% if preview.deleted %}
+<p class="account-deleted">The account is deleted already, so its address, login, name, feedback and GitHub link are gone. What may be left: the GitHub ID kept so it can't exempt a second account, which no longer names the account, and its entries.</p>
+{% else %}
+<p>It deletes the account as its own deletion does: the address{% if let Some(email) = preview.email %} <code>{{ email }}</code>{% endif %}, login, name{% if let Some(name) = preview.display_name %} <code>{{ name }}</code>{% endif %}, tokens, private feedback, the GitHub link and every entry not yet public, except removed ones.</p>
+{% endif %}
+{% if let Some((github_id, login)) = preview.github %}
+<p class="github-linked">Linked to GitHub <code>{{ login }}</code>, ID <code>{{ github_id }}</code>, whose ID the purge deletes too.</p>
+{% else if preview.exemption %}
+<p class="github-exemption">An exemption record names it, from a GitHub account linked once; the purge deletes it.</p>
+{% endif %}
+<form method="post" action="/admin/accounts/{{ preview.id }}/purge">
+<p><label><input type="checkbox" name="entries" value="on"> Also purge every entry of it, {{ preview.entries }} in all, {{ preview.public }} of them public, with every version.</label></p>
+<p><label>GitHub ID to forget, when the person names a GitHub account the server no longer ties to this one: <input type="text" name="github_id" inputmode="numeric"></label></p>
+<button type="submit">Purge the account</button>
+</form>
+{% endblock %}

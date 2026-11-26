@@ -94,7 +94,9 @@ The restore reverts every write since the database you kept:
   Links in emails sent since then point at tokens the restored database lacks, so they fail.
 - Removals, suspensions, file bans and purges since then are undone.
   Redo each one, and every purge above all, since the privacy page promises erasure.
-  Nothing replays them for you yet: the purge log that would comes with #4.
+  The server applies `purges.log`, beside the database, again when it starts, which redoes the purges only when you restored the database file alone and kept the disk's log.
+  A restore of the whole server, such as from Hetzner's backups, rolls the log back too, so redo every purge since then by hand: the log leaves the disk only with #4.
+  A GitHub ID you typed on a purge's page isn't in the log, so purge it again after either kind of restore.
 - Mail waiting in the queue at the copy's time goes out again, so a person may get a second email with a link that fails.
 - Attached files uploaded since then stay on disk with nothing naming them.
 

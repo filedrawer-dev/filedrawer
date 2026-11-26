@@ -1,0 +1,78 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id AS \"id!\", display_name, email,\n                  deleted_at IS NOT NULL AS \"deleted!: bool\",\n                  (SELECT COUNT(*) FROM entries e WHERE e.account_id = a.id) AS \"entries!: i64\",\n                  (SELECT COUNT(*) FROM entries e\n                   WHERE e.account_id = a.id AND e.status = 'public') AS \"public!: i64\",\n                  EXISTS (SELECT 1 FROM github_exemptions x WHERE x.account_id = a.id)\n                      AS \"exemption!: bool\"\n           FROM accounts a WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "accounts",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "display_name",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "accounts",
+            "name": "display_name"
+          }
+        }
+      },
+      {
+        "name": "email",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "accounts",
+            "name": "email"
+          }
+        }
+      },
+      {
+        "name": "deleted!: bool",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "entries!: i64",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "public!: i64",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "exemption!: bool",
+        "ordinal": 6,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "d332c7c860fa656715a94d9068b200e51f3470033f2b35572c5ddfaf4b5eff69"
+}

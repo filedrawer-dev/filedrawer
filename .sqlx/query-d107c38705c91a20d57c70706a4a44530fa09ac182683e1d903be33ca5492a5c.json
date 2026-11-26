@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT DISTINCT s.account_id FROM attachment_files af\n                     JOIN attachment_sets s ON s.seq = af.set_seq WHERE af.sha256 = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "account_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "attachment_sets",
+            "name": "account_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "d107c38705c91a20d57c70706a4a44530fa09ac182683e1d903be33ca5492a5c"
+}

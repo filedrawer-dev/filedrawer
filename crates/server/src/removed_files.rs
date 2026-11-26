@@ -130,6 +130,19 @@ pub async fn remove(
 ) -> Result<bool, sqlx::Error> {
     let at = now();
     let mut transaction = crate::db::write_tx(pool).await?;
+    let done = remove_in(&mut transaction, sha256, removal, &at).await?;
+    transaction.commit().await?;
+    Ok(done)
+}
+
+/// [`remove`] in the caller's transaction, at `at`, as a purge of an entry removed
+/// for a hazard runs it.
+pub async fn remove_in(
+    transaction: &mut SqliteConnection,
+    sha256: &str,
+    removal: Removal,
+    at: &str,
+) -> Result<bool, sqlx::Error> {
     let done = sqlx::query!(
         "UPDATE files SET removed_at = COALESCE(removed_at, ?) WHERE sha256 = ?",
         at,
@@ -156,9 +169,8 @@ pub async fn remove(
         .fetch_all(&mut *transaction)
         .await?;
         for account_id in uploaders {
-            accounts::guard(&mut transaction, &account_id).await?;
+            accounts::guard(&mut *transaction, &account_id).await?;
         }
     }
-    transaction.commit().await?;
     Ok(true)
 }

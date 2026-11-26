@@ -976,6 +976,42 @@ The owner settled the email's sections and the rules in design.md's Admin sectio
 - The first run, or one after a wrong clock, reports from the previous UTC midnight.
   Against: a first run late in the day reports up to 48 hours.
 
+### Purges and removals (#15)
+
+#### The owner's withdrawal of a whole chain is a removal
+
+- Options: the owner's "withdraw a whole chain" (design.md, Entry lifecycle) removes every version, as `/admin/e/<id>` removes one, with no public notice, each restorable; or it withdraws each version with a public notice, as an author's withdrawal of a public version will (#31, not built).
+- Chosen: removal, as `POST /admin/e/<id>/remove-chain`: the reason given is a hazard, which wants no notice pointing at it, and removal is what the owner already uses for one version.
+- Against: "withdraw" in design.md may mean the notice, so readers of a cited version learn it is gone.
+
+#### A purge's hazard is the owner's checkbox, and bans every file the chain held
+
+- Options: the confirm page asks whether the entry was removed for a hazard; or the server infers it from the entry's files already being banned.
+  For which files: every file the chain's versions hold, or only those the purge deletes.
+- Chosen: the checkbox, since nothing records why an entry was removed; with it, every file the versions hold is removed as a hazard (banned, its uploaders guarded), as `/admin/f/<sha256>/remove-hazard` does, including a file another entry still uses.
+- Against: a shared file another author attached in good faith stops being served for their entry too.
+
+#### A purge deletes a file the owner removed
+
+- Options: the purge deletes a file no other entry uses even when the owner removed it; or it keeps removed files' records and bytes for analysis, as a deletion does.
+- Chosen: delete, since an erasure outranks analysis; a hazard's file keeps only its hash, on the banned list.
+- Against: a plainly removed file attached again later is served again, since its removal went with its record.
+
+#### What an account's purge leaves
+
+- Chosen: the account's row with its ID, creation time and flags (no name, address or password); the series it made and the series text the screen refused, which design.md's list doesn't name; its attachment sets' rows, emptied, whose bytes count toward the day; screening costs and allowance units, with no entry; and the rate limits' hashed address, which lasts a day.
+  With "every entry", every entry of it goes, public and removed ones included, with every version.
+- Against: a full erasure may be expected to take the series and refused series text too; they are the author's words.
+
+#### A deleted account's GitHub ID is typed by the owner, and the log leaves it out
+
+- Options: the purge form takes a GitHub ID, since account deletion keeps the ID without the account (design.md, Accounts); or account deletion keeps the account on the record until a purge.
+  For the log: leave the typed ID out; log it in clear; or log a keyed hash of it, under a secret the server holds and the log's copy doesn't, matched against the exemption records when the log is applied again.
+- Chosen: the typed ID, deleted only when no live account's record holds it, and left out of the log: in clear it would tie the bare ID to the account, which the privacy page says nothing does, and a plain hash of a GitHub ID, a small number, is undone by trying them all.
+  The server has no secret of its own to key a hash with (its keys are the Anthropic, SMTP and GitHub ones, which rotate for their own reasons).
+  An ID found through the account's own link or exemption record needs no logging, since a restored database has those rows again.
+- Against: after a database restore, a typed ID's exemption record comes back and stays until the owner purges again; a keyed hash would cover it, at the cost of a new secret to provision and keep.
+
 ## Architecture
 
 #### The unknown-field report: what it counts and shows
@@ -1067,6 +1103,16 @@ The owner settled the email's sections and the rules in design.md's Admin sectio
 - Against: what an older binary does wrong is small.
   It deletes a `change` or `change_notice` email unsent, or sends an admin's as an empty notice, so a change asked for just before the rollback never gets its link; its account deletion leaves the address a pending change holds, until a newer binary's tidy; and it treats a `change_email` GitHub start as expired.
   `safe` would keep the rollback, and 0038's line calls a like case safe.
+
+#### The purge log: where, when written, and when applied again
+
+- Chosen: `purges.log` beside the database, one JSON line per purge holding only IDs and file hashes, appended and synced inside the purge's transaction, before it commits, so a purge that committed is always logged; a purge whose line can't be written doesn't happen.
+  The database records the SHA-256 of each line it applied (`applied_purges`), and at each start, before it serves, the server applies the lines it lacks, each once, so a later account's GitHub sign-in isn't deleted again at every start.
+  A torn last line, left by a crash mid-write for a purge that never committed, is skipped, and cut off at the next purge; any other line that isn't a record is skipped too, mailed to the admins once a day, and new purges are refused until it is fixed, so no purge is logged after a line nobody can read.
+- What it protects: a database file swapped for an older copy on the same disk, such as a nightly copy from `backups/`.
+  A restore of the whole disk, such as Hetzner's, rolls the log back with it, so until the log has its copy in B2 (#4) the owner redoes each purge by hand after one (`ops/restore-production.md`, step 5).
+- Options: a command the owner runs after a restore; stopping the server at a bad line.
+- Against: an older binary, which doesn't read the log, still starts, so a rollback past this change wouldn't apply it.
 
 ### API
 
