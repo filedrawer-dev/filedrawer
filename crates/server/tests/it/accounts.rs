@@ -68,6 +68,9 @@ async fn the_session_cookie_is_host_only_http_only_secure_and_lax() {
     for attribute in ["HttpOnly", "Secure", "SameSite=Lax"] {
         assert!(header.contains(attribute), "{header}");
     }
+    // It lasts as long as the session the server keeps.
+    let max_age = reply.cookie_attribute("Max-Age");
+    assert_eq!(max_age.as_deref(), Some(common::SESSION_MAX_AGE));
 }
 
 #[tokio::test]

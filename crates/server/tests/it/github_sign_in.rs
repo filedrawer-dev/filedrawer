@@ -93,6 +93,8 @@ async fn a_start_sends_the_browser_to_github_with_pkce_the_email_scope_and_the_p
         cookie.contains("HttpOnly") && cookie.contains("SameSite=Lax"),
         "{cookie}"
     );
+    // START_MINUTES' 10 minutes, as long as the start it points to lasts.
+    assert_eq!(reply.cookie_attribute("Max-Age").as_deref(), Some("600"));
 }
 
 #[tokio::test]
@@ -193,6 +195,8 @@ async fn the_signup_form_offers_githubs_addresses_and_keeps_the_one_chosen() {
     let (state, browser) = start(&app, "/login/github", None).await;
     let back = come_back(&app, &state, "c1", &browser).await;
     let pending = back.cookie().unwrap();
+    // The waiting signup's cookie lasts START_MINUTES' 10 minutes, as the signup does.
+    assert_eq!(back.cookie_attribute("Max-Age").as_deref(), Some("600"));
     let form = app.page("/signup/github", Some(&pending)).await;
     assert!(form.body.contains("first@example.com") && form.body.contains("second@example.com"));
     // GitHub's name is the suggestion.
@@ -205,6 +209,9 @@ async fn the_signup_form_offers_githubs_addresses_and_keeps_the_one_chosen() {
         )
         .await;
     assert_eq!(done.status, StatusCode::SEE_OTHER, "{}", done.body);
+    // The first cookie is the session's, which lasts as long as the session.
+    let max_age = done.cookie_attribute("Max-Age");
+    assert_eq!(max_age.as_deref(), Some(common::SESSION_MAX_AGE));
     let email: String = sqlx::query_scalar(
         "SELECT a.email FROM accounts a JOIN github_links l ON l.account_id = a.id",
     )
@@ -244,6 +251,8 @@ async fn a_linked_github_user_signs_in_and_a_rename_shows() {
     let back = come_back(&app, &state, "c2", &browser).await;
     assert_eq!(back.status, StatusCode::SEE_OTHER, "{}", back.body);
     assert_eq!(back.location(), Some("/account"));
+    let max_age = back.cookie_attribute("Max-Age");
+    assert_eq!(max_age.as_deref(), Some(common::SESSION_MAX_AGE));
     let session = back.cookie().unwrap();
     assert_eq!(common::account_id(&app, &session).await, id);
     let page = app.page("/account", Some(&session)).await;

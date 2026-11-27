@@ -326,8 +326,21 @@ pub struct Reply {
 impl Reply {
     /// The `name=value` pair the reply's Set-Cookie sets, without its attributes.
     pub fn cookie(&self) -> Option<String> {
-        let header = self.headers.get("set-cookie")?.to_str().ok()?;
-        Some(header.split(';').next()?.to_string())
+        Some(self.set_cookie()?.split(';').next()?.to_string())
+    }
+
+    /// The reply's first Set-Cookie header.
+    fn set_cookie(&self) -> Option<&str> {
+        self.headers.get("set-cookie")?.to_str().ok()
+    }
+
+    /// The value of `attribute`, such as `Max-Age`, on the reply's first Set-Cookie.
+    pub fn cookie_attribute(&self, attribute: &str) -> Option<String> {
+        self.set_cookie()?.split(';').skip(1).find_map(|part| {
+            let (name, value) = part.trim().split_once('=')?;
+            name.eq_ignore_ascii_case(attribute)
+                .then(|| value.to_string())
+        })
     }
 
     pub fn location(&self) -> Option<&str> {
@@ -595,6 +608,10 @@ impl TestApp {
 
 /// The password the browser helpers sign up with.
 pub const PASSWORD: &str = "correct horse battery";
+
+/// A session cookie's `Max-Age`: `SESSION_DAYS`' 30 days in seconds, written out so
+/// a wrong product in the server can't also change what the tests expect.
+pub const SESSION_MAX_AGE: &str = "2592000";
 
 /// Signs up `email` as Grace, follows the emailed link, and verifies.
 pub async fn signed_up_and_verified(app: &TestApp, email: &str) {

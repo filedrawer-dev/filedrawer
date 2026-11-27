@@ -67,6 +67,8 @@ async fn the_address_claims_the_account_with_the_agents_code() {
     let done = confirm(&app, &link, &code, None).await;
     assert!(done.status.is_redirection(), "{}", done.body);
     let cookie = done.cookie().expect("the claim logs the browser in");
+    let max_age = done.cookie_attribute("Max-Age");
+    assert_eq!(max_age.as_deref(), Some(common::SESSION_MAX_AGE));
     assert_eq!(common::account_id(&app, &cookie).await, id);
     // The agent's token still posts, now under the name.
     let named = format!("{id} (Ada)");
