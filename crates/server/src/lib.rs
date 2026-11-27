@@ -40,6 +40,7 @@ pub mod outbound;
 mod pages;
 pub mod passwords;
 mod provenance;
+pub mod purge;
 mod queue;
 pub mod reads;
 mod removed_entries;
@@ -162,6 +163,8 @@ pub struct AppState {
     pub pinger: Option<std::sync::Arc<dyn daily_email::Pinger>>,
     /// The nightly copies of the database (`Config::backups_dir`).
     pub backups_dir: std::path::PathBuf,
+    /// The log of the owner's purges (`Config::purge_log`).
+    pub purge_log: std::path::PathBuf,
     /// When the server started, since the events the daily email counts are kept in
     /// memory.
     pub started_at: ::time::OffsetDateTime,
@@ -364,6 +367,11 @@ fn build(state: AppState) -> Routes<Router> {
         .route("/admin/e/{id}/doubt-seen", post(admin::doubt_seen))
         .route("/admin/e/{id}/remove", post(admin::remove_entry))
         .route("/admin/e/{id}/restore", post(admin::restore_entry))
+        .route("/admin/e/{id}/remove-chain", post(admin::remove_chain))
+        .route(
+            "/admin/e/{id}/purge",
+            get(admin::purge_entry_page).post(admin::purge_entry),
+        )
         .route(
             "/admin/series-refusals/{id}/confirm",
             post(admin::confirm_refusal),
@@ -379,6 +387,10 @@ fn build(state: AppState) -> Routes<Router> {
         .route("/admin/accounts/{id}", get(admin::account))
         .route("/admin/accounts/{id}/suspend", post(admin::suspend))
         .route("/admin/accounts/{id}/lift", post(admin::lift))
+        .route(
+            "/admin/accounts/{id}/purge",
+            get(admin::purge_account_page).post(admin::purge_account),
+        )
         .route("/admin/f/{sha256}", get(admin::file))
         .route("/admin/f/{sha256}/remove", post(admin::remove_file))
         .route(

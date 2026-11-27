@@ -44,6 +44,68 @@ pub async fn remove(pool: &SqlitePool, id: &str) -> Result<Removed, sqlx::Error>
     Ok(Removed::Done)
 }
 
+/// One version of a chain: its row and its public ID.
+pub struct ChainMember {
+    pub seq: i64,
+    pub id: String,
+    pub status: String,
+}
+
+/// Every version of entry `id`'s chain, itself included, oldest first; empty when
+/// there is no such entry. The chain is every entry its first version leads to
+/// through `previous`, rejected and removed versions included.
+pub async fn chain_of(
+    connection: &mut SqliteConnection,
+    id: &str,
+) -> Result<Vec<ChainMember>, sqlx::Error> {
+    sqlx::query_as!(
+        ChainMember,
+        r#"WITH RECURSIVE
+             up(seq, previous_seq) AS (
+               SELECT seq, previous_seq FROM entries WHERE id = ?1
+               UNION ALL
+               SELECT e.seq, e.previous_seq FROM entries e JOIN up ON e.seq = up.previous_seq),
+             down(seq) AS (
+               SELECT seq FROM up WHERE previous_seq IS NULL
+               UNION
+               SELECT e.seq FROM entries e JOIN down ON e.previous_seq = down.seq)
+           SELECT seq AS "seq!: i64", id, status FROM entries
+           WHERE seq IN (SELECT seq FROM down)
+           ORDER BY seq"#,
+        id
+    )
+    .fetch_all(connection)
+    .await
+}
+
+/// Removes every version of entry `id`'s chain that isn't removed yet, each keeping
+/// its status for a restore, so a hazard's first version doesn't outlive the removal
+/// of its second (design.md, Entry lifecycle). `Already` when every version was.
+pub async fn remove_chain(pool: &SqlitePool, id: &str) -> Result<Removed, sqlx::Error> {
+    let mut transaction = db::write_tx(pool).await?;
+    let chain = chain_of(&mut transaction, id).await?;
+    if chain.is_empty() {
+        return Ok(Removed::NoEntry);
+    }
+    if chain.iter().all(|version| version.status == "removed") {
+        return Ok(Removed::Already);
+    }
+    let at = now();
+    for version in &chain {
+        sqlx::query!(
+            "UPDATE entries SET removed_from = status, removed_at = ?, status = 'removed'
+             WHERE seq = ? AND status != 'removed'",
+            at,
+            version.seq
+        )
+        .execute(&mut *transaction)
+        .await?;
+    }
+    series::mark_readable(&mut transaction).await?;
+    transaction.commit().await?;
+    Ok(Removed::Done)
+}
+
 /// Removes every entry of `account_id` not already removed, in the caller's
 /// transaction, each keeping its own status for a restore, as a suspension does.
 pub async fn remove_all_of(

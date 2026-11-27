@@ -172,6 +172,14 @@ fn nightly_copies_are_read_from_backups_beside_the_database() {
 }
 
 #[test]
+fn the_purge_log_is_beside_the_database() {
+    assert_eq!(
+        config(&[]).unwrap().purge_log,
+        std::path::Path::new("/tmp/purges.log")
+    );
+}
+
+#[test]
 fn production_needs_a_github_token_and_debug_hides_it() {
     let mut production = vec![
         ("FILEDRAWER_ENVIRONMENT", "production"),

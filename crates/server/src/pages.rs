@@ -517,6 +517,27 @@ pub struct AdminAccountPage<'a> {
 }
 
 #[derive(Template)]
+#[template(path = "admin_purge_entry.html")]
+pub struct AdminPurgeEntryPage<'a> {
+    pub id: &'a str,
+    pub preview: &'a crate::purge::ChainPreview,
+}
+
+#[derive(Template)]
+#[template(path = "admin_purge_account.html")]
+pub struct AdminPurgeAccountPage<'a> {
+    pub preview: &'a crate::purge::AccountPreview,
+}
+
+#[derive(Template)]
+#[template(path = "admin_purged.html")]
+pub struct AdminPurgedPage<'a> {
+    pub record: &'a crate::purge::Record,
+    /// The GitHub ID the owner typed, which the log leaves out.
+    pub github_id: Option<i64>,
+}
+
+#[derive(Template)]
 #[template(path = "admin_series.html")]
 pub struct AdminSeriesPage<'a> {
     pub view: &'a crate::removed_series::OwnersView,

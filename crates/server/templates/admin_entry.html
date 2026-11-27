@@ -45,7 +45,10 @@
 <li><a href="/admin/e/{{ version.id }}"><code>{{ version.id }}</code></a>, {{ version.status }}</li>
 {% endfor %}
 </ul>
+<form method="post" action="/admin/e/{{ entry.id }}/remove-chain"><button type="submit">Remove every version</button></form>
+<p>Removes each version not removed yet, so an earlier version doesn't outlive a hazard's removal; restore each from its own page.</p>
 {% endif %}
+<p class="purge-links">For an erasure request: <a href="/admin/e/{{ entry.id }}/purge">purge this entry's chain</a>, or <a href="/admin/accounts/{{ entry.account_id }}/purge">its account</a>.</p>
 <h2>Card</h2>
 <pre>{{ card }}</pre>
 <h2>Text</h2>

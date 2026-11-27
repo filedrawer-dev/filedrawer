@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT github_id FROM github_links WHERE account_id = ?1\n         UNION SELECT github_id FROM github_exemptions WHERE account_id = ?1",
+  "describe": {
+    "columns": [
+      {
+        "name": "github_id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "github_links",
+            "name": "github_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "0df432d84eb62033e9cfa3cef07f0c1020f710747d4209081aa90d07c1ada0be"
+}

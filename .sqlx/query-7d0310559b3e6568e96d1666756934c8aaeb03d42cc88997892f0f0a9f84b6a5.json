@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT af.sha256 FROM entries e\n                 JOIN attachment_files af ON af.set_seq = e.attachment_set_seq\n                 WHERE e.seq = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "sha256",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "attachment_files",
+            "name": "sha256"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "7d0310559b3e6568e96d1666756934c8aaeb03d42cc88997892f0f0a9f84b6a5"
+}

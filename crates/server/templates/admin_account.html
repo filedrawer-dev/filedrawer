@@ -16,6 +16,7 @@
 <form method="post" action="/admin/accounts/{{ account.id }}/suspend"><button type="submit">Suspend</button></form>
 <p>Suspending stops it submitting, and removes every entry of it and every series it made, with no public notice. Its token can still read, and its author can still log in and delete the account.</p>
 {% endif %}
+<p class="purge-links">For an erasure request: <a href="/admin/accounts/{{ account.id }}/purge">purge the account</a>.</p>
 <h2>Series it made</h2>
 {% if series.is_empty() %}
 <p>None.</p>

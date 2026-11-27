@@ -8,6 +8,7 @@ use std::collections::BTreeSet;
 use sqlx::{SqliteConnection, SqlitePool};
 use time::Duration;
 
+use crate::file_store::Writer;
 use crate::time::{now, now_utc, stamp};
 use crate::{AppState, allowance, attachments, series};
 
@@ -72,8 +73,21 @@ pub async fn password_hash(
 pub async fn delete(state: &AppState, account_id: &str) -> Result<(), sqlx::Error> {
     let writer = state.files.write().await;
     let mut transaction = crate::db::write_tx(&state.pool).await?;
+    let lone = delete_in(&writer, &mut transaction, account_id).await?;
+    transaction.commit().await?;
+    attachments::remove_bytes(&writer, &lone).await;
+    Ok(())
+}
+
+/// [`delete`] in the caller's transaction, as the owner's purge runs it; returns the
+/// hashes of the files whose bytes go once it has committed.
+pub async fn delete_in(
+    writer: &Writer<'_>,
+    transaction: &mut SqliteConnection,
+    account_id: &str,
+) -> Result<Vec<String>, sqlx::Error> {
     // Its allowance goes with it, before the entries its units name.
-    allowance::delete_account(&mut transaction, account_id).await?;
+    allowance::delete_account(&mut *transaction, account_id).await?;
     let doomed = sqlx::query_scalar!(
         r#"SELECT seq AS "seq!: i64" FROM entries
            WHERE account_id = ? AND status NOT IN ('public', 'removed')"#,
@@ -81,12 +95,12 @@ pub async fn delete(state: &AppState, account_id: &str) -> Result<(), sqlx::Erro
     )
     .fetch_all(&mut *transaction)
     .await?;
-    delete_entries(&mut transaction, &doomed).await?;
-    delete_unused(&mut transaction, account_id).await?;
+    delete_entries(&mut *transaction, &doomed).await?;
+    delete_unused(&mut *transaction, account_id).await?;
     // Its entries may have been all that held a version back, so a series they
     // cited may be readable by now, and stays.
-    series::mark_readable(&mut transaction).await?;
-    delete_unread_series(&mut transaction, account_id).await?;
+    series::mark_readable(&mut *transaction).await?;
+    delete_unread_series(&mut *transaction, account_id).await?;
     let deleted_at = now();
     for statement in [
         sqlx::query!("DELETE FROM sessions WHERE account_id = ?", account_id),
@@ -123,10 +137,10 @@ pub async fn delete(state: &AppState, account_id: &str) -> Result<(), sqlx::Erro
     }
     // Its GitHub link goes; the bare GitHub ID stays, so it can't exempt another
     // account from the new-account limit.
-    crate::github_accounts::forget_account(&mut transaction, account_id).await?;
+    crate::github_accounts::forget_account(&mut *transaction, account_id).await?;
     // Attachment sets no kept entry cites go, and then files no set holds.
-    attachments::delete_uncited_sets(&mut transaction, Some(account_id), None).await?;
-    let lone = attachments::delete_lone_files(&writer, &mut transaction).await?;
+    attachments::delete_uncited_sets(&mut *transaction, Some(account_id), None).await?;
+    let lone = attachments::delete_lone_files(writer, &mut *transaction).await?;
     // The name column can't be empty; this placeholder is never shown, since every
     // read checks `deleted_at` first.
     sqlx::query!(
@@ -138,9 +152,7 @@ pub async fn delete(state: &AppState, account_id: &str) -> Result<(), sqlx::Erro
     )
     .execute(&mut *transaction)
     .await?;
-    transaction.commit().await?;
-    attachments::remove_bytes(&writer, &lone).await;
-    Ok(())
+    Ok(lone)
 }
 
 /// Deletes the account's runs and batches that nothing left uses, whichever entries
@@ -215,7 +227,7 @@ async fn delete_unread_series(
     Ok(())
 }
 
-/// Deletes entries `seqs`, none public or removed, in the caller's transaction, with
+/// Deletes entries `seqs` in the caller's transaction, with
 /// what was read from them, and then what only they used: their attachment sets, runs
 /// and batches that no remaining entry cites. A set's files leave it, and its row is
 /// marked deleted rather than dropped, so its bytes still count toward the day's

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM github_exemptions WHERE github_id = ? AND account_id IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "2e4710449493d35e7c27ec10341b2c21d147bd5e344a3026e391ecef79471b36"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT OR IGNORE INTO applied_purges (line_sha256, applied_at) VALUES (?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "a089f3b75bd102bafdc7af11ea7e09ced7962746a3ed22d163136f45d8e32ccb"
+}

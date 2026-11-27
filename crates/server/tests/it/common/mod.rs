@@ -259,6 +259,7 @@ pub fn state(pool: sqlx::SqlitePool, outbox: &Outbox, files_dir: &std::path::Pat
         link_checker: fake_web::FakeWeb::default().checker(5000),
         pinger: None,
         backups_dir: files_dir.join("backups"),
+        purge_log: files_dir.join("purges.log"),
         started_at: time::OffsetDateTime::UNIX_EPOCH,
         request_log: None,
         // Each hash takes microseconds rather than tens of milliseconds (#138).

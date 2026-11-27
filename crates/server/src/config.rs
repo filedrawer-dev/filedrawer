@@ -66,6 +66,9 @@ pub struct Config {
     /// Where the nightly copies of the database are: `backups/` beside the database
     /// file.
     pub backups_dir: PathBuf,
+    /// The log of the owner's purges, `purges.log` beside the database file, outside
+    /// the database so that a restore keeps it (design.md, Admin).
+    pub purge_log: PathBuf,
 }
 
 /// A healthchecks.io ping URL, which Debug output leaves out: anyone who has it can
@@ -370,6 +373,7 @@ impl Config {
         let beside_database = Path::new(&database).parent().unwrap_or(Path::new(""));
         let files_dir = beside_database.join("files");
         let backups_dir = beside_database.join("backups");
+        let purge_log = beside_database.join("purges.log");
         let attachment_store_cap_bytes = match environment {
             Environment::Production => 20_000_000_000,
             Environment::Staging | Environment::Dev => 2_000_000_000,
@@ -434,6 +438,7 @@ impl Config {
             github_oauth,
             daily_email_ping,
             backups_dir,
+            purge_log,
             link_checks,
             publisher_tick,
             github_token,

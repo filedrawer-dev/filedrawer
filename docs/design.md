@@ -578,6 +578,7 @@ Inconclusive entries are welcome and marked as such.
   The version it replaced, when public, is the chain's latest again, so search shows it and a new version may follow it.
   A run's description stays shown, since the version was public.
   The owner can withdraw a whole chain of versions at once, so a hazard's first version doesn't outlive the withdrawal of its second.
+  `/admin/e/<id>` does it as a removal of every version (#15; uncertainties.md, "The owner's withdrawal of a whole chain is a removal").
 - The account page withdraws an entry that is `pending` or `screening` (the owner's decision, 2026-11-08).
   Not one in `review`, `held` or `frozen`, which waits on the owner, nor one that reads `screening` with the owner's verdict on it, as an entry the owner passed or rejected does until the queue places it; and not a `rejected` or `public` one.
   The server checks every rule again in the transaction that deletes.
@@ -1064,6 +1065,7 @@ Reason: entries and feedback can carry instructions, such as "create an invite c
   A purge deletes the data from the database: the named entries with all their versions and search rows, or an account's email, login, display name, linked GitHub and ORCID handles and the GitHub ID kept for the exemption, private feedback and its triage-inbox summaries.
   It deletes attached files that no other entry uses.
   Reason: the VPS is in Germany, and people have a legal right to have their personal data erased.
+  - `/admin/e/<id>/purge` purges an entry's whole chain, and `/admin/accounts/<id>/purge` an account, deleted ones included, and optionally every entry of it; each is a confirm page and its POST (#15; uncertainties.md, Purges and removals).
   - Deleted rows' bytes may stay in SQLite's freed pages, its write-ahead log and the backups until they are overwritten or age out: the email address is the only private data the site keeps, and the privacy page promises no time (the owner's decision, 2026-11-17, which dropped `secure_delete`, the hourly emptying of the log (#65) and the 21-day promise).
   - The server logs each purge's IDs, with no content, in a file outside the database, with its own copy in B2.
     It applies the log again after any restore.

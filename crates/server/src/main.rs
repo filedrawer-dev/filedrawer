@@ -379,6 +379,7 @@ async fn serve() -> ExitCode {
                 as Arc<dyn filedrawer_server::daily_email::Pinger>
         }),
         backups_dir: config.backups_dir.clone(),
+        purge_log: config.purge_log.clone(),
         started_at: time::OffsetDateTime::now_utc(),
         passwords: Default::default(),
         searches: Default::default(),
@@ -395,6 +396,13 @@ async fn serve() -> ExitCode {
             })
         }),
     };
+    // Before anything serves: a database restored to before a purge loses that data
+    // again (design.md, Admin).
+    match filedrawer_server::purge::reapply(&state).await {
+        Ok(0) => {}
+        Ok(purges) => tracing::info!(purges, "applied the purge log again"),
+        Err(error) => return fail(&format!("can't apply the purge log again: {error}")),
+    }
     tokio::spawn(filedrawer_server::jobs::run_publisher(
         state.clone(),
         config.publisher_tick,
