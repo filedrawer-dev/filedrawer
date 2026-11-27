@@ -292,6 +292,36 @@ for unit in "${UNITS[@]}"; do
 done
 run find "$root/etc/systemd/system" -name '*.d' -type d
 
+heading "resource use: staging beside production"
+# What staging's limits would be sized from (#63), beside production's. A peak
+# counts from the service's last start, so from its last deploy: read it after a
+# day of CI's deploys and checks. systemd has MemoryPeak and MemorySwapCurrent only
+# from 255 (trixie), and the kernel memory.swap.peak only from 6.5; bookworm's 6.1
+# has memory.peak and memory.swap.current.
+run free -m
+run df -h / /tmp /srv/filedrawer
+for env in staging production; do
+  unit="filedrawer-$env.service"
+  run systemctl show "$unit" -p ActiveEnterTimestamp -p MemoryCurrent -p MemoryPeak \
+    -p MemorySwapCurrent -p TasksCurrent -p TasksMax -p CPUUsageNSec \
+    -p MemoryHigh -p MemoryMax -p CPUQuotaPerSecUSec
+  for file in memory.peak memory.swap.current memory.swap.peak memory.events \
+    memory.swap.events; do
+    run cat "$root/sys/fs/cgroup/system.slice/$unit/$file"
+  done
+  run du -ah --max-depth=1 "$root/srv/filedrawer/$env/data"
+  # PrivateTmp's folders, for /tmp and /var/tmp, both on the root disk.
+  shopt -s nullglob
+  tmps=("$root"/tmp/systemd-private-*-"$unit"-* "$root"/var/tmp/systemd-private-*-"$unit"-*)
+  shopt -u nullglob
+  if (( ${#tmps[@]} )); then
+    run du -sh "${tmps[@]}"
+  else
+    echo "$env's private /tmp and /var/tmp: none"
+  fi
+done
+run systemd-cgtop -b -1 -m --depth=3 system.slice
+
 heading "updates"
 # A simulation, with apt's package caches kept in memory, so it rewrites neither.
 run apt-get -s -o Debug::NoLocking=true -o Dir::Cache::pkgcache= -o Dir::Cache::srcpkgcache= upgrade

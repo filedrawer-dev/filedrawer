@@ -24,8 +24,10 @@ and mode of the secrets, databases, binaries and backups; the SHA-256, owner and
 mode of each unit and config the repo's scripts generate that holds no secret;
 whether each service user can read the other environment; Caddy's version, holds
 and global options; each unit's hardening settings and `systemd-analyze security`;
-failed units and timers; pending upgrades and unattended-upgrades' log; the
-journal's size and settings.
+failed units and timers; staging's memory, swap, tasks, CPU time and disk use
+beside production's, the numbers staging's limits would be sized from (#63), with
+each peak counted from the service's last start, so its last deploy; pending
+upgrades and unattended-upgrades' log; the journal's size and settings.
 
 From this checkout, after `git fetch origin`: whether each script the server keeps
 a root-owned copy of (filedrawer-install, filedrawer-backup, caddy-upgrade-check,

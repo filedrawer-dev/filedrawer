@@ -43,7 +43,7 @@ It takes kernels the same way, and `ops/remote/filedrawer-reboot-check` (`-h`), 
 Both source `ops/remote/filedrawer-alerts.sh`, their mail, ping and site check, and both stages install all three, so a change to any of them reaches the server with either stage.
 The owner deploys production from their own machine with `ops/deploy-production [COMMIT]` (`-h`), which promotes the binary CI built for the commit staging runs, or for an older one to roll back to, waiting first while CI still runs on main's tip, so a deploy can follow a push at once (#118); the install copies production's database first and puts it back if the new binary doesn't answer.
 An older binary runs on a newer schema, so a migration adds only what it can ignore unless `crates/server/migration-rollback.txt` says otherwise (CODING_STANDARDS.md, SQL).
-`ops/audit-vps` (`-h`), which the owner also runs from their own machine, prints a report of the server's state for a security review and changes no file the server keeps: sockets, firewall, sshd, sudo rules, owners and modes, unit hardening and pending upgrades, with no secret in it, and whether each root-owned script on the server is `origin/main`'s.
+`ops/audit-vps` (`-h`), which the owner also runs from their own machine, prints a report of the server's state for a security review and changes no file the server keeps: sockets, firewall, sshd, sudo rules, owners and modes, unit hardening, staging's memory and disk use beside production's, and pending upgrades, with no secret in it, and whether each root-owned script on the server is `origin/main`'s.
 
 The field test's entries and logs are in `field-test/`, git-excluded and local only; never commit or publish them without the owner's say.
 

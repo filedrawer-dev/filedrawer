@@ -172,7 +172,8 @@ def test_a_failed_ssh_fails_and_says_so(audit):
 
 # What the facts script reads files with, and what a command run as another user is.
 PLAIN_TOOLS = (
-    "bash cat cut find grep ls paste sed sh sha256sum stat tail test timeout true uname"
+    "bash cat cut du find grep ls paste sed sh sha256sum stat tail test timeout true"
+    " uname"
 ).split()
 SECRET = "hunter2-do-not-print"
 KEY_BLOB = "AAAAC3NzaC1lZDI1NTE5AAAAIPretendKeyMaterial0123456789abcdefghijk"
@@ -381,6 +382,59 @@ def test_a_service_user_that_reads_the_other_environment_is_named(server):
     )
 
 
+def usage_section(out: str) -> str:
+    return out.split("== resource use: staging beside production ==")[1].split("\n== ")[
+        0
+    ]
+
+
+def test_resource_use_reads_each_services_memory_tasks_and_cpu(server):
+    # A systemctl that names the unit and the properties it was asked for.
+    out = usage_section(server.run(systemctl='echo "show: $*"').stdout)
+    for unit in ("filedrawer-staging.service", "filedrawer-production.service"):
+        line = next(x for x in out.splitlines() if x.startswith(f"show: show {unit} "))
+        for prop in (
+            "ActiveEnterTimestamp",
+            "MemoryCurrent",
+            "MemoryPeak",
+            "MemorySwapCurrent",
+            "TasksCurrent",
+            "CPUUsageNSec",
+        ):
+            assert f"-p {prop}" in line, (unit, prop)
+
+
+def test_resource_use_reads_the_kernels_peak_where_systemd_has_none(server):
+    """Bookworm's systemd 252 has no MemoryPeak property; the cgroup file has it."""
+    cgroup = server.root / "sys/fs/cgroup/system.slice/filedrawer-staging.service"
+    cgroup.mkdir(parents=True)
+    (cgroup / "memory.peak").write_text("123456789\n")
+    # Bookworm's kernel 6.1 has no memory.swap.peak, only the current figure.
+    (cgroup / "memory.swap.current").write_text("4096\n")
+    out = usage_section(server.run().stdout)
+    files = "/sys/fs/cgroup/system.slice/filedrawer-staging.service"
+    assert f"{files}/memory.peak\n123456789\n" in out
+    assert f"{files}/memory.swap.current\n4096\n" in out
+    assert (
+        "production.service/memory.peak: No such file or directory\n(exit 1)\n" in out
+    )
+
+
+def test_resource_use_sizes_each_environments_data_and_private_tmp(server):
+    tmp = server.root / "tmp/systemd-private-ab12-filedrawer-staging.service-Xy9"
+    (tmp / "tmp").mkdir(parents=True)
+    (tmp / "tmp/upload").write_bytes(b"x" * 300_000)
+    var_tmp = server.root / "var/tmp/systemd-private-ab12-filedrawer-staging.service-Q7"
+    (var_tmp / "tmp").mkdir(parents=True)
+    out = usage_section(server.run().stdout)
+    assert f"{server.root}/srv/filedrawer/production/data/filedrawer.db\n" in out
+    assert "$ du -ah --max-depth=1 " in out
+    assert f"K\t{tmp}\n" in out
+    assert f"\t{var_tmp}\n" in out
+    assert "staging's private /tmp and /var/tmp: none" not in out
+    assert "production's private /tmp and /var/tmp: none\n" in out
+
+
 def test_only_accounts_with_a_login_shell_are_listed(server):
     users = server.run().stdout.split("== users ==")[1].split("== sudo ==")[0]
     assert "root:0:0:/root:/bin/bash" in users
@@ -430,6 +484,7 @@ def test_every_part_the_help_promises_has_a_heading(server):
         "caddy",
         "data and binaries",
         "units",
+        "resource use: staging beside production",
         "updates",
         "processes: user and name",
         "journal",
