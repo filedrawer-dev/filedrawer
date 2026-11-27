@@ -282,7 +282,7 @@ async fn entries_waiting_for_the_owner_nag_every_day_with_the_oldests_age() {
 }
 
 #[tokio::test]
-async fn frozen_entries_are_listed() {
+async fn frozen_entries_are_listed_and_production_mails_them_alone() {
     let (app, _) = app_in(Environment::Production, false).await;
     let cookie = owner(&app).await;
     let code = create_code(&app, &cookie, "Leaked", "10", "7").await;
@@ -292,15 +292,103 @@ async fn frozen_entries_are_listed() {
         .await;
     let id = id_in(&reply.body);
     revoke(&app, &cookie, &code).await;
+    let now = soon();
+    fresh_copy(&app, now.date());
 
-    send_daily_email(&app.state, soon()).await.unwrap();
+    let run = send_daily_email(&app.state, now).await.unwrap();
 
+    assert_eq!(run, DailyRun::Sent { to: 1 });
     let body = the_report(&app).body;
     assert!(body.contains("Frozen (1):"), "{body}");
+    assert!(!body.contains("Waiting for the owner"), "{body}");
     assert!(
         body.contains(&format!("- {id} http://localhost/admin/e/{id}")),
         "{body}"
     );
+}
+
+/// Email to the owner that the server took into its queue `hours` before `now`,
+/// each as `(mail, its kind, hours)`, and then failed to send at `now`: one taken
+/// a day or more ago is dropped unsent, a younger one waits.
+async fn undelivered(
+    app: &TestApp,
+    now: OffsetDateTime,
+    mails: impl IntoIterator<Item = (Queued, &str, i64)>,
+) {
+    let owner: String = sqlx::query_scalar("SELECT id FROM accounts WHERE email = ?")
+        .bind(OWNER)
+        .fetch_one(&app.pool)
+        .await
+        .unwrap();
+    for (mail, kind, hours) in mails {
+        mail_queue::queue(&app.state, &owner, mail).await.unwrap();
+        sqlx::query("UPDATE outgoing_mail SET created_at = ? WHERE kind = ?")
+            .bind(stamp(now - Duration::hours(hours)))
+            .bind(kind)
+            .execute(&app.pool)
+            .await
+            .unwrap();
+    }
+    app.outbox
+        .fail(Some(|_| Some(MailError::Unreachable("down".into()))));
+    mail_queue::send_due(&app.state, now).await.unwrap();
+    app.outbox.fail(None);
+}
+
+#[tokio::test]
+async fn production_mails_one_dropped_or_one_late_email_alone() {
+    let cases = [
+        (
+            (Queued::Taken, "taken", 25),
+            "Email: 1 dropped unsent, 0 waiting over an hour.",
+        ),
+        (
+            (Queued::Reset, "reset", 2),
+            "Email: 0 dropped unsent, 1 waiting over an hour.",
+        ),
+    ];
+    for (mail, line) in cases {
+        let (app, _) = app_in(Environment::Production, true).await;
+        let now = soon();
+        fresh_copy(&app, now.date());
+        undelivered(&app, now, [mail]).await;
+
+        let run = send_daily_email(&app.state, now + Duration::seconds(1))
+            .await
+            .unwrap();
+
+        assert_eq!(run, DailyRun::Sent { to: 1 }, "{line}");
+        let body = the_report(&app).body;
+        assert!(body.contains(line), "{body}");
+    }
+}
+
+#[tokio::test]
+async fn production_mails_an_account_at_its_share_alone() {
+    let (app, _) = app_in(Environment::Production, true).await;
+    let now = soon();
+    fresh_copy(&app, now.date());
+    // A fifth of yesterday's cap: past an account's share, short of the day's.
+    sqlx::query(
+        "INSERT INTO screenings (account_id, model, input_tokens, output_tokens, cost_nano_usd, at)
+         VALUES (?, 'm', 1, 1, ?, ?)",
+    )
+    .bind(&app.account)
+    .bind(DOLLAR / 5)
+    .bind(stamp(now - Duration::days(1)))
+    .execute(&app.pool)
+    .await
+    .unwrap();
+
+    let run = send_daily_email(&app.state, now).await.unwrap();
+
+    assert_eq!(run, DailyRun::Sent { to: 1 });
+    let body = the_report(&app).body;
+    assert!(
+        body.contains("Accounts at their share of the screening cap:"),
+        "{body}"
+    );
+    assert!(!body.contains("Screening cap: ran out"), "{body}");
 }
 
 #[tokio::test]
@@ -317,25 +405,12 @@ async fn production_mails_dropped_and_late_email_but_staging_only_lists_it() {
         }
         let now = soon();
         fresh_copy(&app, now.date());
-        let owner: String = sqlx::query_scalar("SELECT id FROM accounts WHERE email = ?")
-            .bind(OWNER)
-            .fetch_one(&app.pool)
-            .await
-            .unwrap();
-        for (mail, queued) in [(Queued::Taken, 25), (Queued::Reset, 2)] {
-            mail_queue::queue(&app.state, &owner, mail).await.unwrap();
-            let kind = if queued == 25 { "taken" } else { "reset" };
-            sqlx::query("UPDATE outgoing_mail SET created_at = ? WHERE kind = ?")
-                .bind(stamp(now - Duration::hours(queued)))
-                .bind(kind)
-                .execute(&app.pool)
-                .await
-                .unwrap();
-        }
-        app.outbox
-            .fail(Some(|_| Some(MailError::Unreachable("down".into()))));
-        mail_queue::send_due(&app.state, now).await.unwrap();
-        app.outbox.fail(None);
+        undelivered(
+            &app,
+            now,
+            [(Queued::Taken, "taken", 25), (Queued::Reset, "reset", 2)],
+        )
+        .await;
 
         let run = send_daily_email(&app.state, now + Duration::seconds(1))
             .await
