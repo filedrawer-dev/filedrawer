@@ -333,6 +333,37 @@ reboots_stage() {
   pause
 }
 
+# memory_stage: a timer that pings healthchecks.io as failed when processes use more
+# than half the RAM or the kernel swaps pages out (#64); one server, so it serves
+# both environments.
+memory_stage() {
+  stage "Memory: a check that says when to move up a server size"
+  say "Running processes should stay under half the RAM, leaving the rest for the"
+  say "page cache, and the swapfile only guards against the out-of-memory killer."
+  say "Every 5 minutes a timer pings healthchecks.io, as failed when processes use"
+  say "more than half the RAM or the kernel swapped pages out since the last check:"
+  say "the sign to move up a size."
+  # The program first: memory.sh runs it once.
+  install_on_server filedrawer-memory-check /usr/local/sbin
+  MEMORY_PING=""
+  if ! keep_secret "memory check's ping URL" /etc/filedrawer/memory.env memory; then
+    open_url "https://healthchecks.io/"
+    step "Add a check named 'filedrawer memory'. Period: 5 minutes. Grace: 30 minutes."
+    step "Copy its ping URL (https://hc-ping.com/...)."
+    ask_secret MEMORY_PING "The memory check's ping URL:"
+    if ! ping_url "$MEMORY_PING"; then
+      warn "That isn't a healthchecks.io ping URL (https://hc-ping.com/...). Rerun to try again."
+      exit 1
+    fi
+  fi
+  if ! remote_with_secret memory.sh MEMORY_PING "$MEMORY_PING"; then
+    warn "The memory check's setup failed; the server said why above."
+    SKIPPED+=("memory: setup failed; fix, then rerun ops/provision-vps memory")
+  fi
+  unset MEMORY_PING
+  pause
+}
+
 production_check_stage() {
   stage "Check filedrawer.dev from outside"
   local tags www
@@ -427,7 +458,7 @@ production_account_stage() {
 production() {
   case "${1:-}" in
     "")
-      TOTAL_STAGES=13
+      TOTAL_STAGES=14
       banner "File Drawer VPS: production setup"
       production_preflight_stage
       production_dns_stage
@@ -441,6 +472,7 @@ production() {
       production_backup_stage
       caddy_upgrades_stage
       reboots_stage
+      memory_stage
       outbound_check production
       production_check_stage
       ;;

@@ -247,6 +247,7 @@ def test_every_secret_held_gets_a_line(box):
     box.put("production-ping.env", f"FILEDRAWER_DAILY_EMAIL_PING={DAILY}\n")
     box.put("production-backup.env", f"BACKUP_PING={DAILY}\n")
     box.put("caddy-upgrades.env", f"ALERT_TO=a@b.dev\nPING={GUARD}\n")
+    box.put("memory.env", f"MEMORY_PING={GUARD}\n")
     put_oauth(box, "staging")
     put_oauth(box, "production")
     box.answer("api.anthropic.com", 200, "{}", "")
@@ -255,7 +256,7 @@ def test_every_secret_held_gets_a_line(box):
     box.answer("hc-ping.com", 200, "OK", "")
     result = box.run()
     assert result.returncode == 0, result.stdout + result.stderr
-    assert len(result.stdout.splitlines()) == 8
+    assert len(result.stdout.splitlines()) == 9
     assert all(
         line.startswith(("ok: ", "accepted: ")) for line in result.stdout.splitlines()
     )

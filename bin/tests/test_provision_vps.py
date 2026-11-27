@@ -654,6 +654,7 @@ PROD_KEY = "sk-ant-api03-" + "p" * 40
 DAILY_PING = "https://hc-ping.com/aaaaaaaa-0000-4000-8000-000000000001"
 BACKUP_PING = "https://hc-ping.com/aaaaaaaa-0000-4000-8000-000000000002"
 CADDY_PING = "https://hc-ping.com/aaaaaaaa-0000-4000-8000-000000000003"
+MEMORY_PING = "https://hc-ping.com/aaaaaaaa-0000-4000-8000-000000000004"
 SMTP_PASSWORD = "prod-mail-pw"
 
 
@@ -713,6 +714,8 @@ FULL_RUN = (
     + f"\n{CADDY_PING}\ny\n"
     # The guard's pause, then yes, the reboot check's test mail arrived.
     + "\ny\n"
+    # The reboots' pause, then the memory check's ping URL.
+    + f"\n{MEMORY_PING}\n"
     + "\n" * 10
 )
 
@@ -746,8 +749,11 @@ def test_production_sends_each_script_for_production_in_order(production):
         at("backup.sh"),
         at("caddy-upgrades.sh"),
         at("reboots.sh"),
+        at("memory.sh"),
     ]
     assert order == sorted(order), order
+    # memory.sh runs the check once, so the program is there first.
+    assert sent.index(script("filedrawer-memory-check")) < at("memory.sh")
     # The reboot check mails through the guard's settings, and its units start the
     # program, which is there first; the dry run comes once they're set up.
     assert sent.index(script("filedrawer-reboot-check")) < at("reboots.sh")
@@ -780,6 +786,7 @@ def test_production_sends_each_secret_on_stdin_and_shows_or_saves_none(productio
     assert f"{PROD_CLIENT_SECRET}\n" + script("github-oauth.sh") in sent
     assert f"{DAILY_PING}\t{BACKUP_PING}\n" + script("ping.sh") in sent
     assert f"ops@filedrawer.dev\t{CADDY_PING}\n" + script("caddy-upgrades.sh") in sent
+    assert f"{MEMORY_PING}\n" + script("memory.sh") in sent
     shown = (
         production.log.read_text()
         + production.env_file.read_text()
@@ -794,6 +801,7 @@ def test_production_sends_each_secret_on_stdin_and_shows_or_saves_none(productio
         DAILY_PING,
         BACKUP_PING,
         CADDY_PING,
+        MEMORY_PING,
     ):
         assert secret not in shown, secret
 
@@ -844,6 +852,7 @@ def test_production_says_the_spend_limit_and_the_healthchecks_periods(production
     result = production.run(answers=FULL_RUN)
     assert "$40" in result.stdout
     assert "Period: 1 day" in result.stdout
+    assert "Period: 5 minutes" in result.stdout
     assert (
         "https://console.anthropic.com/settings/keys" in production.opened.read_text()
     )
@@ -926,6 +935,7 @@ def rerun_production(production) -> subprocess.CompletedProcess:
         "github.env",
         "production-github-oauth.env",
         "caddy-upgrades.env",
+        "memory.env",
     ):
         production.host.answer(f"test -f /etc/filedrawer/{path}")
     production.env_file.write_text(
@@ -952,6 +962,7 @@ def test_a_production_rerun_asks_for_nothing_the_server_has(production):
     for kept in ("mail.sh", "screening.sh", "github-oauth.sh"):
         assert "\n" + script(kept) in sent, kept
     assert "\t\n" + script("ping.sh") in sent
+    assert "\n" + script("memory.sh") in sent
     assert not any(s.endswith(script("github-token.sh")) for s in sent)
     assert "won't start" not in result.stdout
     # The guard's program, apt file and units still go; its settings stay.
@@ -986,6 +997,34 @@ def test_reboots_alone_installs_the_programs_then_the_units_and_runs_a_dry_run(s
     assert "/usr/local/sbin/filedrawer-reboot-check --dry-run" in stage.host.calls()
     assert "Reboot check: a test" in result.stdout
     assert "test mail didn't arrive" not in result.stdout
+
+
+def test_memory_alone_installs_the_program_then_takes_a_ping_url(stage):
+    result = stage.run("memory", f"{MEMORY_PING}\n\n")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert stage.scripts()[:2] == [
+        script("filedrawer-memory-check"),
+        f"{MEMORY_PING}\n" + script("memory.sh"),
+    ]
+    assert "https://healthchecks.io/" in stage.opened.read_text()
+    for where in (stage.log.read_text(), stage.env_file.read_text(), result.stdout):
+        assert MEMORY_PING not in where
+
+
+def test_a_memory_rerun_keeps_the_ping_url_and_asks_nothing(stage):
+    stage.host.answer("test -f /etc/filedrawer/memory.env")
+    result = stage.run("memory", "")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "\n" + script("memory.sh") in stage.scripts()
+    assert not stage.opened.exists()
+    assert "--ask-all memory" in result.stdout
+
+
+def test_memory_refuses_a_ping_url_that_isnt_one_and_sends_none(stage):
+    result = stage.run("memory", "https://example.com/x\n\n")
+    assert result.returncode != 0
+    assert "isn't a healthchecks.io ping URL" in result.stdout
+    assert not any(s.endswith(script("memory.sh")) for s in stage.scripts())
 
 
 def test_a_reboots_rerun_runs_no_dry_run_and_asks_nothing(stage):
@@ -1122,6 +1161,7 @@ INSTALLED = {
     "caddy-upgrade-check": "/usr/local/sbin",
     "filedrawer-alerts.sh": "/usr/local/lib",
     "filedrawer-reboot-check": "/usr/local/sbin",
+    "filedrawer-memory-check": "/usr/local/sbin",
 }
 
 # Each reason says when the script does reach the server.
@@ -1133,6 +1173,10 @@ CADDY_GUARD = (
     "the guard serves the one server's Caddy."
 )
 AUDIT_FACTS = "ops/audit-vps sends it, when the owner audits the server."
+MEMORY_CHECK = (
+    "Production's wizard sends it on every run, and ops/provision-vps memory: "
+    "the memory check serves the one server."
+)
 STAGING_RERUN_EXEMPT = {
     "audit-facts.sh": AUDIT_FACTS,
     "deploy-facts.sh": "ops/deploy-production sends it, before each production deploy.",
@@ -1151,6 +1195,8 @@ STAGING_RERUN_EXEMPT = {
     "filedrawer-reboot-check": CADDY_GUARD,
     "reboots.sh": "Production's wizard sends it on every run, and ops/provision-vps "
     "reboots: the reboots serve the one server.",
+    "memory.sh": MEMORY_CHECK,
+    "filedrawer-memory-check": MEMORY_CHECK,
 }
 PRODUCTION_RERUN_EXEMPT = {
     "audit-facts.sh": AUDIT_FACTS,

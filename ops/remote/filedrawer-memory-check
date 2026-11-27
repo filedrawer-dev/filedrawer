@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# The server's memory check (#64; design.md, Hosting and operations): running
+# processes stay under half the RAM, and swap only guards against the out-of-memory
+# killer. filedrawer-memory-check.timer runs it every 5 minutes with memory.env's
+# MEMORY_PING; ops/remote/memory.sh installs both units.
+#
+# It reads /proc/meminfo and /proc/vmstat. Processes use MemTotal - MemAvailable:
+# MemAvailable counts the page cache the kernel can drop, which fills the rest of
+# the RAM by design, so MemFree would cross half on any busy day. Swap counts as
+# used when the kernel swapped pages out since the last run: vmstat's pswpout grew
+# past the value kept in $STATE_DIRECTORY/pswpout. Swap merely held (SwapTotal -
+# SwapFree) isn't the test: at Debian's swappiness of 60 the kernel swaps out idle
+# pages while the page cache fills the RAM, and a page swapped out stays counted
+# until it is read back, so the check would stay failed on a healthy server and hide
+# a real RAM alert. The first run, and the first after a reboot resets the counter,
+# only record it.
+#
+# More than half the RAM in use, or pages swapped out, pings MEMORY_PING/fail, the
+# signal to move up a server size; otherwise it pings MEMORY_PING. Either way the
+# body gives the figures, which healthchecks.io's log keeps. A meminfo or vmstat it
+# can't read pings /fail and exits 1, as does a ping that fails.
+#
+# Anyone holding the ping URL can report the server healthy, so it reaches curl on
+# stdin and no message prints it.
+set -euo pipefail
+
+# The override is for tests, which point it at a fake root.
+root="${FILEDRAWER_ROOT:-}"
+# systemd sets it from the unit's StateDirectory=.
+state="${STATE_DIRECTORY:-/var/lib/filedrawer-memory-check}/pswpout"
+ping_url="${MEMORY_PING-}"
+unset MEMORY_PING
+if [[ ! "$ping_url" =~ ^https://hc-ping\.com/[A-Za-z0-9_./-]+$ ]]; then
+  # With no ping there's nobody to tell.
+  echo "MEMORY_PING isn't a healthchecks.io ping URL; ops/remote/memory.sh writes it" >&2
+  exit 1
+fi
+
+# ping SUFFIX BODY: tells healthchecks.io, retrying for about a minute.
+ping() {
+  printf 'url = "%s%s"\n' "$ping_url" "$1" |
+    curl -fsS -m 10 --retry 5 --retry-all-errors --data-raw "$2" -K - >/dev/null 2>&1 || {
+      echo "memory check: the ping to healthchecks.io failed" >&2
+      return 1
+    }
+}
+
+# field NAME: NAME's value in kB from meminfo, or nothing.
+field() {
+  sed -n "/^$1: *[0-9][0-9]* kB\$/{s/^$1: *\([0-9]*\) kB\$/\1/p;q}" <<<"$info"
+}
+
+info=$(cat "$root/proc/meminfo" 2>/dev/null || true)
+total=$(field MemTotal)
+available=$(field MemAvailable)
+swap_total=$(field SwapTotal)
+swap_free=$(field SwapFree)
+pswpout=$(sed -n '/^pswpout [0-9][0-9]*$/{s/^pswpout //p;q}' "$root/proc/vmstat" 2>/dev/null || true)
+if [[ -z "$total" || -z "$available" || -z "$swap_total" || -z "$swap_free" || -z "$pswpout" ]] ||
+  (( total == 0 )); then
+  reason="couldn't read MemTotal, MemAvailable, SwapTotal and SwapFree from /proc/meminfo, or pswpout from /proc/vmstat"
+  echo "memory check: $reason" >&2
+  ping /fail "$reason" || true
+  exit 1
+fi
+
+# The last run's counter; none, or one above today's after a reboot, counts as 0
+# swapped out.
+last=$(sed -n '1{/^[0-9][0-9]*$/p}' "$state" 2>/dev/null || true)
+[[ -n "$last" ]] && (( last <= pswpout )) || last=$pswpout
+swapped=$(( pswpout - last ))
+printf '%s\n' "$pswpout" > "$state.new" && mv -f "$state.new" "$state" ||
+  echo "memory check: couldn't record pswpout in $state" >&2
+
+used=$(( total - available ))
+swap_used=$(( swap_total - swap_free ))
+figures="RAM: $(( used / 1024 )) of $(( total / 1024 )) MiB in use ($(( used * 100 / total ))%); swap: $(( swap_used / 1024 )) of $(( swap_total / 1024 )) MiB held, $swapped pages swapped out since the last check"
+# Swap counts from its first page out: the swapfile is never part of the plan.
+problems=()
+(( used * 2 > total )) && problems+=("processes use more than half the RAM")
+(( swapped > 0 )) && problems+=("the kernel swapped pages out")
+
+if (( ${#problems[@]} )); then
+  joined=$(printf '%s; ' "${problems[@]}")
+  ping /fail "${joined%; }: time to move up a server size (design.md, Hosting and operations).
+$figures"
+else
+  ping "" "$figures"
+fi

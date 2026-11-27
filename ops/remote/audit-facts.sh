@@ -24,6 +24,7 @@ UNITS=(
   filedrawer-backup.service filedrawer-loopback.service
   caddy-upgrade-check.service caddy-upgrade-daily.service
   filedrawer-reboot-check.service filedrawer-reboot-check-daily.service
+  filedrawer-memory-check.service
 )
 # The root-owned copies of the repo's scripts; ops/audit-vps compares each hash with
 # origin/main's.
@@ -33,6 +34,7 @@ INSTALLED=(
   /usr/local/sbin/caddy-upgrade-check
   /usr/local/lib/filedrawer-alerts.sh
   /usr/local/sbin/filedrawer-reboot-check
+  /usr/local/sbin/filedrawer-memory-check
   /usr/local/bin/filedrawer-receive
 )
 

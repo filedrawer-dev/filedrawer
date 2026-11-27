@@ -1490,6 +1490,23 @@ An agent chose these on 2026-11-20, with the owner away.
 - Not done: a check that the clock is synchronized (a server without an NTP daemon would never reboot), and a healthchecks.io check of its own (a new ping URL is a new secret, which the owner ruled out); the reboot check pings only `/fail`, since a success would hide a failing guard, so a failure it keeps finding shows as down at 05:00 and up at the guard's 08:00 success.
 - Against: the gaps between `ops/deploy-production`'s ssh calls hold no lock, so a production deploy started near 05:00 on the reboot's day can be cut off; the notice says not to deploy then.
 
+### Memory check
+
+#### Which healthchecks.io check the memory timer pings
+
+- Options: a check of its own, with a new ping URL in `/etc/filedrawer/memory.env` (chosen); or the Caddy guard's check, pinging only `/fail`, as the reboot check does, with no new secret.
+- Chosen: its own check, asked for by its own stage, `ops/provision-vps memory`, which production's run also runs (#64).
+  The issue asked for a check beside the others, and a check named for memory says what is wrong without opening its log; it pings every 5 minutes, so it also shows when the timer stops.
+- Against: the owner ruled out a new secret for the reboot check (2026-11-21), and this adds one; on the guard's check a lasting memory problem would show as down after each run and up at the guard's 08:00 success, still once a day.
+
+#### What counts as swap in use
+
+- Options: swap activity, pages swapped out since the last run (`/proc/vmstat`'s `pswpout`, its last value kept in the unit's `StateDirectory`) (chosen, pending the owner's ruling on #64); any swap held, SwapTotal less SwapFree above 0, as design.md words it; or `vm.swappiness=10` in base.sh plus a threshold on swap held.
+- Chosen: activity.
+  At Debian's default swappiness of 60 the kernel swaps out idle pages while the page cache fills the RAM, as it does by design here, and a swapped-out page stays counted until it is read back or swap is turned off, so "any swap held" would stay failed on a healthy server, and healthchecks.io would then say nothing of a real RAM alert.
+  The first run, and the first after a reboot resets the counter, only record it.
+- Against: a single page swapped out in a burst still fails one run, and recovers at the next; a server that swapped heavily once and stopped shows nothing after one run, where "held" would keep showing it.
+
 ### Packages
 
 #### The analyzer's library name
