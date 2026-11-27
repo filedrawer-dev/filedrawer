@@ -111,7 +111,7 @@ Entry text, series descriptions, feedback and screening notes are written by str
   The module docstring says the same.
 - Tests live in `bin/tests` and run under `bin/pytest bin/tests`, the pinned pytest with its plugins, as `bin/agent-pre-commit` does; `bin/tests/pytest.ini` sets the workers and the timeout, so name a path under `bin/tests` for pytest to find it, and add `-n0` only for a few tests (`-k`), where starting the workers costs more than they save.
   The tests run in parallel, so they share no files, ports or settings: each works in its own `tmp_path`, and a server binds port 0.
-  A test that runs a system tool points it at settings of its own, not the machine's, since CI's runner holds some the sandbox lacks: conftest's autouse `no_machine_apt_config` does this for apt.
+  A test that runs a system tool points it at settings of its own, not the machine's, since CI's runner holds some the sandbox lacks: conftest's autouse `no_machine_apt_config` does this for apt, and `own_git_config` for git, whose global config a test can't write, so a test that needs a git setting sets it in its own repository or with `git -c`.
   Each script has tests, and they don't touch the network: they serve fakes over `file://` or set an override variable, as `bin/tests/test_lychee.py` does.
   The one exception is conftest's `real_caddy` fixture, whose `bin/caddy` fetches the pinned Caddy once per machine for the tests that run a real one.
 - A test that starts a process stops it and waits for it to exit, even when the test fails: `bin/tests/leftover_processes.py`, whose fixtures `bin/tests/conftest.py` gives every test and module, kills what a test or a module's fixtures leave running and fails it, naming each process.

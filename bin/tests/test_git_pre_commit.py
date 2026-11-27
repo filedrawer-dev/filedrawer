@@ -71,7 +71,7 @@ def hook(
 ) -> subprocess.CompletedProcess:
     """Run the hook as git would. With `gate`, a folder holding a fake agent-commit-gate,
     the agent check's line runs it; without, the line is skipped."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env = dict(os.environ)
     env.pop("AI_AGENT", None)
     if gate is None:
         env["AGENT_PRE_COMMIT"] = "1"  # the slow agent check isn't under test

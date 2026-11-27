@@ -138,6 +138,43 @@ def no_machine_apt_config(tmp_path_factory, monkeypatch):
     monkeypatch.setenv("APT_CONFIG", str(conf))
 
 
+GIT_CONFIG = """[user]
+	name = t
+	email = t@example.com
+[init]
+	defaultBranch = main
+[core]
+	editor = false
+"""
+
+
+@pytest.fixture(scope="session", autouse=True)
+def own_git_config(tmp_path_factory):
+    """Each test's git reads only GIT_CONFIG above: no system config, and a global one
+    of the tests' own, which a test can't write, so none leaks a setting to the tests
+    beside it. The sandbox's global config rewrites `git@github.com:` to HTTPS and
+    names an identity, CI's runner and the owner's host hold others (#182). Every
+    other GIT_* variable is dropped: a hook or a rebase that runs the suite exports
+    GIT_DIR, GIT_INDEX_FILE and the like, which would send a test's git to the real
+    repository, and the sandbox sets GIT_EDITOR. An editor git would open fails at
+    once rather than waiting on a terminal. Session-wide, and in os.environ rather
+    than through monkeypatch, so a module's fixtures get it too."""
+    folder = tmp_path_factory.mktemp("git-config")
+    config = folder / "gitconfig"
+    config.write_text(GIT_CONFIG)
+    folder.chmod(0o555)
+    saved = {k: v for k, v in os.environ.items() if k.startswith("GIT_")}
+    for name in saved:
+        del os.environ[name]
+    os.environ["GIT_CONFIG_GLOBAL"] = str(config)
+    os.environ["GIT_CONFIG_NOSYSTEM"] = "1"
+    yield
+    for name in [k for k in os.environ if k.startswith("GIT_")]:
+        del os.environ[name]
+    os.environ.update(saved)
+    folder.chmod(0o755)
+
+
 @pytest.fixture(autouse=True)
 def own_check_slot(tmp_path_factory, monkeypatch):
     """Each test's processes get a check slot of their own (bin/agent-pre-commit), so a

@@ -244,8 +244,7 @@ def hook_env(repo: Path, env: dict | None, base: str | None) -> dict:
     out = {
         k: v
         for k, v in os.environ.items()
-        if not k.startswith("GIT_")
-        and k not in ("CHECK_BASE", "CHECK_QUEUE_EXIT", "CHECK_SECONDS_EXIT")
+        if k not in ("CHECK_BASE", "CHECK_QUEUE_EXIT", "CHECK_SECONDS_EXIT")
     }
     out |= {
         "PATH": f"{fakes}{os.pathsep}{os.environ['PATH']}",
@@ -2082,7 +2081,7 @@ def real_env(root: Path) -> dict:
     env = {
         k: v
         for k, v in os.environ.items()
-        if not k.startswith(("GIT_", "CARGO_TARGET_DIR"))
+        if not k.startswith("CARGO_TARGET_DIR")
         and k not in ("CHECK_BASE", "CHECK_QUEUE_EXIT", "CHECK_TIMINGS")
     }
     return env | {

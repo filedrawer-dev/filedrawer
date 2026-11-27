@@ -108,7 +108,7 @@ def test_every_python_script_reaches_ruff_check_and_ruff_format(tmp_path):
     subprocess.run(["git", "init", "-q", str(scratch)], check=True)
     log = tmp_path / "log"
     log.touch()
-    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env = dict(os.environ)
     env.update(
         LOG=str(log), PRE_COMMIT_HOME=str(tmp_path / "pre-commit"), UV_OFFLINE="1"
     )

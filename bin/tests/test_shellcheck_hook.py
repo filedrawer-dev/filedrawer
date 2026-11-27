@@ -70,7 +70,7 @@ def test_it_checks_the_shell_scripts_in_bin_and_ops_down_to_infos(tmp_path):
     write(root / ".shellcheckrc", "disable=all\n")
     subprocess.run(["git", "init", "-q", str(root)], check=True)
     subprocess.run(["git", "-C", str(root), "add", "."], check=True)
-    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env = dict(os.environ)
     env["PRE_COMMIT_HOME"] = str(tmp_path / "pre-commit-home")
     env["UV_OFFLINE"] = "1"
     done = subprocess.run(

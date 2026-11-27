@@ -2,7 +2,6 @@
 agent-commit-gate runs in place of agent-pre-commit, the first for an agent's small fix
 commit, the second for any other agent commit. Each runs clippy on what's staged."""
 
-import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -43,7 +42,6 @@ def run_check(repo, name):
     return subprocess.run(
         [str(repo / "bin" / name)],
         cwd=repo,
-        env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")},
         capture_output=True,
         text=True,
         check=False,
