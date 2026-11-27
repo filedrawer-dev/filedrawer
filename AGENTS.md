@@ -165,7 +165,7 @@ Each check's seconds show in the gate's pass line, and every run's timings go to
 The change is what differs from `$CHECK_BASE`, which llm-toolbox's `agent-commit-gate` sets to the nearest commit that passed: at a commit, usually HEAD, so what's staged; on wt-ship's recheck of a landing's tip, the tip of the branch it rebased onto.
 The Rust checks run for a build input: anything in `crates/`, the Cargo files, `.sqlx/`, `.cargo/` and `.config/`, and the files the crates embed or their tests read, such as `docs/entry-format.md` and `ops/smoke-staging`.
 `bin/tests` runs for a change in `bin/`, `ops/` or a crate (one of its tests reads the crates' references), or to a file those tests read, such as `.pre-commit-config.yaml`.
-Outside `bin/` and `ops/`, it runs only the test files that reach the change, so an analyzer change runs three of them, not the whole suite (`bin/checks-needed -h`, `--bin-tests`).
+Outside `bin/` and `ops/`, it runs only the test files that reach the change, so an analyzer change runs four of them, not the whole suite (`bin/checks-needed -h`, `--bin-tests`).
 A commit of other docs runs neither, and doesn't wait in heavy's queue either.
 Each check asks `agent-commit-gate` for a place there only as it starts (`$CHECK_QUEUE_EXIT`, `agent-commit-gate -h`), so a commit that needs none passes in seconds.
 One whose queued part takes seconds, such as a clippy the check slot has built for this toolchain and `Cargo.lock`, asks for a `--few-seconds` place instead (`$CHECK_SECONDS_EXIT`), which skips the line on quiet cores.
@@ -188,7 +188,8 @@ A clone set up by an older `install.py` keeps its links in `.git/hooks` to the m
 `rust-toolchain.toml` pins Rust to the version that built production's binary, so the sandbox, the owner's host and CI build with one compiler; a bump changes it and every workflow's `toolchain:` input together (`bin/tests/test_rust_toolchain.py`), and rebuilds every target once.
 
 The Rust tests run under cargo-nextest, set in `.config/nextest.toml` to print only the tests that fail, with their output, and a summary line.
-To run them that way, run `cargo nextest run --cargo-quiet`. nextest skips doctests, so the full check also runs `cargo test --doc`.
+To run them that way, run `cargo nextest run --cargo-quiet`.
+nextest skips doctests, and no check runs `cargo test --doc`, since the crates hold none: `bin/tests/test_no_doctests.py` fails on one, and its docstring says how to keep a real one (#36).
 Each crate's integration tests build as one binary, `tests/it/main.rs`, with each file in `tests/it/` a module of it, so a new test file needs a `mod` line there; a test in `main.rs` fails without one.
 To run one file's tests, filter on its module: `cargo nextest run --cargo-quiet -p filedrawer-server -E 'test(/^read::/)'`.
 To see what each test took, run `NEXTEST_EXPERIMENTAL_LIBTEST_JSON=1 cargo nextest run --cargo-quiet --message-format libtest-json-plus`, whose lines give each test's `exec_time`; a profile with a `junit` table also gives when each test started.

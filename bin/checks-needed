@@ -11,7 +11,7 @@ diffs against $CHECK_BASE, the nearest commit that passed the checks; by hand, H
 gives what's staged. It prints a line for each check the change needs, the check's
 name and the first path that needs it:
 
-    rust       cargo nextest, cargo test --doc and clippy
+    rust       cargo nextest and clippy
     bin-tests  pytest over bin/tests, or the test files --bin-tests picks
     skills     bin/skills sync --check, which needs no build
     routes     at a commit, the test that every route is named for agents or
@@ -44,8 +44,8 @@ changed, when a changed path lies in bin/ or ops/ or is .gitattributes, and when
 path is reached by a file in bin/tests that isn't a test_*.py file (a helper any test
 may import) or by a script no test names (one a test may run through PATH), in turn:
 a test names a script when it names one that names it, the changed script included.
-So an analyzer source change runs test_analyzer_docs.py, test_checks_needed.py and
-test_license_copies.py, not the whole suite.
+So an analyzer source change runs test_analyzer_docs.py, test_checks_needed.py,
+test_license_copies.py and test_no_doctests.py, not the whole suite.
 bin/tests/test_checks_needed_selection.py holds the rules to a search of every chain
 on random graphs.
 

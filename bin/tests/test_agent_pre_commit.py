@@ -201,7 +201,7 @@ def hook(
 ) -> tuple[set[str], subprocess.CompletedProcess]:
     """Run the hook with fake cargo and uvx, and CHECK_BASE set to `base` as
     `git rev-parse` gives it (None: unset), and check it exits with `code`; return the
-    checks it ran (nextest, doctest, clippy, pytest) and the hook's run."""
+    checks it ran (nextest, clippy, pytest) and the hook's run."""
     done = subprocess.run(
         [str(repo / "bin" / script), *args],
         cwd=repo,
@@ -214,7 +214,6 @@ def hook(
     calls = (repo.parent / "calls").read_text().splitlines()
     named = {
         "nextest": "cargo nextest run",
-        "doctest": "cargo test --doc",
         "clippy": "cargo clippy",
         "pytest": "uvx",
     }
@@ -309,7 +308,7 @@ def selected(tree: Path, *paths: str, env: dict | None = None) -> list[str]:
     return out.read_text().splitlines()
 
 
-RUST = {"nextest", "doctest", "clippy"}
+RUST = {"nextest", "clippy"}
 EVERY = RUST | {"pytest"}
 
 
@@ -322,6 +321,15 @@ def change(repo: Path, name: str, text: str = "changed\n") -> None:
 def test_a_docs_only_change_runs_no_check(repo):
     change(repo, "docs/notes.md")
     assert run(repo) == set()
+
+
+def test_the_full_check_runs_no_doctests(repo):
+    # The crates hold none, and bin/tests/test_no_doctests.py fails on one (#36).
+    change(repo, "crates/app/src/lib.rs", "pub fn f() {}\n")
+    run(repo)
+    calls = (repo.parent / "calls").read_text().splitlines()
+    assert "cargo nextest run --cargo-quiet" in calls, calls
+    assert not [call for call in calls if call.startswith("cargo test")], calls
 
 
 def test_a_change_under_crates_runs_the_cargo_checks_and_bin_tests(repo):
@@ -1360,7 +1368,6 @@ def test_the_hook_writes_each_check_it_runs_with_its_seconds(repo):
         "slot-wait",
         "nextest-build",
         "nextest",
-        "doctest",
         "clippy",
     ]
 
@@ -1485,7 +1492,7 @@ def in_slot(repo: Path, command: str) -> str:
         (("--quick",), ["clippy"]),
         (("--quick", "--routes"), ["clippy", "nextest"]),
         # Its version first, then the test build and the run.
-        ((), ["nextest", "nextest", "nextest", "test", "clippy"]),
+        ((), ["nextest", "nextest", "nextest", "clippy"]),
     ],
     ids=["quick", "routes", "full"],
 )

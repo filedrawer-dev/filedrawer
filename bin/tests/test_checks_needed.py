@@ -109,20 +109,26 @@ def selected(tmp_path: Path, *paths: str) -> list[str]:
     "path, tests",
     [
         # test_analyzer_docs.py reads the analyzer's sources, test_license_copies.py
-        # each crate's LICENSE, and this file's table the crates' references.
+        # each crate's LICENSE, test_no_doctests.py every crate's sources, and this
+        # file's table the crates' references.
         (
             "crates/analyzer/src/front_matter.rs",
             [
                 "bin/tests/test_analyzer_docs.py",
                 "bin/tests/test_checks_needed.py",
                 "bin/tests/test_license_copies.py",
+                "bin/tests/test_no_doctests.py",
             ],
         ),
         # test_live_preview.py copies the server's templates and static files, not
         # its sources.
         (
             "crates/server/src/routes/read.rs",
-            ["bin/tests/test_checks_needed.py", "bin/tests/test_license_copies.py"],
+            [
+                "bin/tests/test_checks_needed.py",
+                "bin/tests/test_license_copies.py",
+                "bin/tests/test_no_doctests.py",
+            ],
         ),
         (
             "crates/server/templates/home.html",
@@ -130,6 +136,7 @@ def selected(tmp_path: Path, *paths: str) -> list[str]:
                 "bin/tests/test_checks_needed.py",
                 "bin/tests/test_license_copies.py",
                 "bin/tests/test_live_preview.py",
+                "bin/tests/test_no_doctests.py",
             ],
         ),
         # test_npm_package.py runs pack.mjs, which packs the launcher beside it.
@@ -138,6 +145,7 @@ def selected(tmp_path: Path, *paths: str) -> list[str]:
             [
                 "bin/tests/test_checks_needed.py",
                 "bin/tests/test_license_copies.py",
+                "bin/tests/test_no_doctests.py",
                 "bin/tests/test_npm_package.py",
             ],
         ),

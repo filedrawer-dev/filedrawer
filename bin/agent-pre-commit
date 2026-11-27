@@ -47,10 +47,12 @@
 # check, through the link
 # .githooks/agent-pre-commit, so a commit that changes it, such as for a new plugin, is
 # checked by its own version. The Rust checks wait for Cargo.toml, and build in the
-# slot. The tests run under cargo-nextest, which prints
-# only the failures and a summary (.config/nextest.toml); it skips doctests, so cargo
-# test --doc runs those. nextest builds first, apart from the run, and each check's
-# seconds go to the file $CHECK_TIMINGS names, when agent-commit-gate names one: the
+# slot. The tests run under cargo-nextest, which prints only the failures and a
+# summary (.config/nextest.toml). It skips doctests, and no cargo test --doc runs
+# beside it, a build of its own each landing, since the crates hold none:
+# bin/tests/test_no_doctests.py fails on one (#36). nextest builds first, apart from
+# the run, and each check's seconds go to the file $CHECK_TIMINGS names, when
+# agent-commit-gate names one: the
 # gate shows them in its pass line and keeps them in .git/agent-check-timings.tsv.
 # Each check runs only when the change needs it: the Rust checks for a build input,
 # bin/tests for what those tests read, and of bin/tests only the test files that reach
@@ -464,7 +466,6 @@ if [ -f Cargo.toml ] && needs rust; then
       cat "$logs/build"
       cargo_failed=1
     fi
-    timed doctest slot_cargo test --doc --quiet >"$logs/doc" 2>&1 || { cat "$logs/doc"; cargo_failed=1; }
   fi
   if timed clippy slot_cargo clippy --quiet --all-targets -- -D warnings >"$logs/clippy" 2>&1; then
     remember_pair
